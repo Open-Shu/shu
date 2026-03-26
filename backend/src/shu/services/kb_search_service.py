@@ -75,7 +75,6 @@ JSONB_OBJECT_OPERATORS: dict[str, Any] = {
 CHUNK_SEARCHABLE_FIELDS: dict[str, tuple[str, Any]] = {
     "content": ("text", DocumentChunk.content),
     "summary": ("text", DocumentChunk.summary),
-    "keywords": ("jsonb_array", DocumentChunk.keywords),
     "topics": ("jsonb_array", DocumentChunk.topics),
 }
 
@@ -175,7 +174,6 @@ class KbSearchService:
             "knowledge_base_name": kb_name,
             "chunk_index": chunk.chunk_index,
             "summary": chunk.summary,
-            "keywords": chunk.keywords,
             "topics": chunk.topics,
             "word_count": chunk.word_count,
             "created_at": KbSearchService._serialize_datetime(chunk.created_at),
@@ -353,7 +351,7 @@ class KbSearchService:
 
         Args:
             knowledge_base_ids: KB IDs resolved from execution context.
-            field: One of ``content``, ``summary``, ``keywords``, ``topics``.
+            field: One of ``content``, ``summary``, ``topics``.
             operator: Operator name appropriate for the field type.
             value: The search value (string or list depending on operator).
             page: 1-indexed page number (default 1).

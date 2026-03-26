@@ -69,7 +69,7 @@ class KnowledgeBase(BaseModel):
     rag_full_doc_token_cap = Column(Integer, nullable=True)
 
     # Query Processing Configuration
-    rag_minimum_query_words = Column(Integer, default=3, nullable=False)
+    rag_minimum_query_words = Column(Integer, nullable=True)
 
     # Status and metadata
     status = Column(String(50), default="active", nullable=False)  # 'active', 'inactive', 'error'

@@ -411,6 +411,7 @@ class LLMService:
         if model and model.cost_per_input_token and model.cost_per_output_token:
             input_cost = Decimal(str(input_tokens)) * model.cost_per_input_token
             output_cost = Decimal(str(output_tokens)) * model.cost_per_output_token
+            total_cost = input_cost + output_cost
 
         usage = LLMUsage(
             provider_id=provider_id,

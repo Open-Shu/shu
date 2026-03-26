@@ -141,6 +141,7 @@ class DocumentChunkBase(BaseModel):
 
     chunk_index: int = Field(..., description="Chunk position within document")
     content: str = Field(..., description="Chunk content")
+    summary: str | None = Field(None, description="LLM-generated chunk summary")
     char_count: int = Field(..., description="Character count")
     word_count: int | None = Field(None, description="Word count")
     token_count: int | None = Field(None, description="Token count")

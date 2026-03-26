@@ -72,7 +72,7 @@ class TestMultiSurfaceSearchService:
         mock_session_factory = _make_mock_session_factory()
 
         await service.search(
-            "test query", uuid4(), keyword_terms=["test"], session_factory=mock_session_factory
+            "test query", uuid4(), session_factory=mock_session_factory
         )
 
         surface1.search.assert_called_once()
@@ -87,7 +87,7 @@ class TestMultiSurfaceSearchService:
         mock_session_factory = _make_mock_session_factory()
 
         await service.search(
-            "test query", uuid4(), keyword_terms=["test"], session_factory=mock_session_factory
+            "test query", uuid4(), session_factory=mock_session_factory
         )
 
         mock_embedding.embed_query.assert_called_once_with("test query")
@@ -119,7 +119,6 @@ class TestMultiSurfaceSearchService:
         result = await service.search(
             "test",
             kb_id,
-            keyword_terms=["test"],
             limit=5,
             threshold=0.5,
             session_factory=mock_session_factory,
@@ -150,7 +149,7 @@ class TestMultiSurfaceSearchService:
 
         # Should not raise, should log warning and continue
         await service.search(
-            "test", uuid4(), keyword_terms=["test"], session_factory=mock_session_factory
+            "test", uuid4(), session_factory=mock_session_factory
         )
 
         # Fusion should still be called with results from good surface
@@ -169,29 +168,10 @@ class TestMultiSurfaceSearchService:
         mock_session_factory = _make_mock_session_factory()
 
         result = await service.search(
-            "test", uuid4(), keyword_terms=["test"], session_factory=mock_session_factory
+            "test", uuid4(), session_factory=mock_session_factory
         )
 
         assert result == []
-
-    @pytest.mark.asyncio
-    async def test_search_passes_keyword_terms_to_surfaces(self):
-        """search() should pass keyword terms to surfaces."""
-        surface = self._make_mock_surface("test_surface")
-        service = self._make_service(surfaces=[surface])
-        mock_session_factory = _make_mock_session_factory()
-
-        await service.search(
-            "test query",
-            uuid4(),
-            keyword_terms=["budget", "marketing"],
-            session_factory=mock_session_factory,
-        )
-
-        call_args = surface.search.call_args
-        keyword_terms = call_args[0][2]  # Third positional arg
-        assert "budget" in keyword_terms
-        assert "marketing" in keyword_terms
 
     @pytest.mark.asyncio
     async def test_search_respects_timeout(self):
@@ -213,7 +193,7 @@ class TestMultiSurfaceSearchService:
 
         # Should not hang, should handle timeout
         result = await service.search(
-            "test", uuid4(), keyword_terms=["test"], session_factory=mock_session_factory
+            "test", uuid4(), session_factory=mock_session_factory
         )
 
         # Result should be empty (surface timed out)

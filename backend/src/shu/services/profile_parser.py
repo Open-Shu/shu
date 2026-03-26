@@ -16,6 +16,7 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     DocumentMetadataResponse,
     DocumentType,
+    SynthesizedQuery,
 )
 
 logger = structlog.get_logger(__name__)
@@ -26,7 +27,6 @@ class ProfileParser:
 
     # Limits for truncation
     MAX_SUMMARY_LENGTH = 500
-    MAX_KEYWORDS = 15
     MAX_TOPICS = 10
     DEFAULT_MAX_TOTAL_QUERIES = 100
 
@@ -90,8 +90,8 @@ class ProfileParser:
             question_domains=self._coerce_list(manifest_data.get("question_domains")),
         )
 
-    def _parse_chunk_queries(self, chunk_queries: list | None) -> list[str]:  # noqa: PLR0912
-        """Parse per-chunk queries into a flat list of query strings.
+    def _parse_chunk_queries(self, chunk_queries: list | None) -> list[SynthesizedQuery]:  # noqa: PLR0912
+        """Parse per-chunk queries into a list of SynthesizedQuery with chunk provenance.
 
         Handles the current chunk_queries structure:
         [{"chunk_index": 0, "queries": [...]}, ...]
@@ -106,49 +106,55 @@ class ProfileParser:
             chunk_queries: List of chunk query objects or legacy flat query list
 
         Returns:
-            Flat list of non-empty query strings, capped at max_total_queries
+            List of SynthesizedQuery with chunk_index provenance, capped at max_total_queries
 
         """
         if not chunk_queries:
             return []
 
-        result = []
+        result: list[SynthesizedQuery] = []
 
         for item in chunk_queries:
             if item is None:
                 continue
 
             if isinstance(item, dict):
+                chunk_index = item.get("chunk_index")
+                if isinstance(chunk_index, int):
+                    pass  # keep it
+                else:
+                    chunk_index = None
+
                 # Current format: {"chunk_index": N, "queries": [...]}
                 if "queries" in item:
                     for query in self._coerce_list(item.get("queries")):
                         text = str(query).strip() if query else ""
                         if text:
-                            result.append(text)
+                            result.append(SynthesizedQuery(query_text=text, chunk_index=chunk_index))
 
                 # Legacy format: {"chunk_index": N, "high": [...], "conversational": [...]}
                 elif "high" in item or "conversational" in item or "medium" in item:
                     for query in self._coerce_list(item.get("high")):
                         text = str(query).strip() if query else ""
                         if text:
-                            result.append(text)
+                            result.append(SynthesizedQuery(query_text=text, chunk_index=chunk_index))
                     casual_queries = item.get("conversational") or item.get("medium")
                     for query in self._coerce_list(casual_queries):
                         text = str(query).strip() if query else ""
                         if text:
-                            result.append(text)
+                            result.append(SynthesizedQuery(query_text=text, chunk_index=chunk_index))
 
                 # Legacy format: {"query_text": "..."}
                 elif "query_text" in item:
                     text = str(item["query_text"]).strip()
                     if text:
-                        result.append(text)
+                        result.append(SynthesizedQuery(query_text=text, chunk_index=chunk_index))
 
             else:
-                # Legacy format: plain string
+                # Legacy format: plain string (no chunk provenance)
                 text = str(item).strip()
                 if text:
-                    result.append(text)
+                    result.append(SynthesizedQuery(query_text=text, chunk_index=None))
 
         return result[: self.max_total_queries]
 
@@ -239,11 +245,9 @@ class ProfileParser:
                     profile_data = data[i]
                     # Coerce values to handle LLM returning null instead of missing keys
                     summary = self._coerce_string(profile_data.get("summary"))
-                    keywords = self._coerce_list(profile_data.get("keywords"))
                     topics = self._coerce_list(profile_data.get("topics"))
                     profile = ChunkProfile(
                         summary=summary[: self.MAX_SUMMARY_LENGTH],
-                        keywords=keywords[: self.MAX_KEYWORDS],
                         topics=topics[: self.MAX_TOPICS],
                     )
                     results.append(
@@ -296,7 +300,7 @@ class ProfileParser:
         return ChunkProfileResult(
             chunk_id=chunk.chunk_id,
             chunk_index=chunk.chunk_index,
-            profile=ChunkProfile(summary="", keywords=[], topics=[]),
+            profile=ChunkProfile(summary="", topics=[]),
             success=False,
             error=error,
         )

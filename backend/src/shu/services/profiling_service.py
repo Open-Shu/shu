@@ -5,7 +5,7 @@ It is a pure LLM-facing service with no database access. The profiling
 orchestrator handles DB operations and calls this service for LLM work.
 
 Key responsibilities:
-- Generate chunk profiles (summary, keywords, topics) for batch processing
+- Generate chunk profiles (summary, topics) for batch processing
 - Generate document metadata in a separate LLM call after all chunks are profiled
 - Enforce profiling_max_input_tokens limit on all LLM calls
 """
@@ -19,6 +19,7 @@ from ..schemas.profiling import (
     ChunkData,
     ChunkProfileResult,
     DocumentProfile,
+    SynthesizedQuery,
 )
 from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
@@ -35,7 +36,6 @@ PURPOSE: An AI agent scans these profiles to decide which chunks to retrieve. Ge
 For each chunk, generate:
 {
     "summary": "One-line summary with SPECIFIC content (names, figures, dates). Start with action verb.",
-    "keywords": ["extract", "every", "proper noun", "technical", "term", "entity"],
     "topics": ["specific categories", "not just 'database' but 'PostgreSQL indexing'"]
 }
 
@@ -43,15 +43,10 @@ Examples:
 BAD summary: "Discusses security configuration"
 GOOD summary: "Configures OAuth2 scopes for admin API endpoints with JWT expiry settings"
 
-BAD keywords: ["security", "configuration", "settings"]
-GOOD keywords: ["OAuth2", "admin API", "read:users scope", "JWT expiry"]
-
 Guidelines:
 - summary: One line only. Start with action verb ("Explains...", "Details...", "Lists..."). Include the SPECIFIC subject.
-- keywords: Extract EVERY specific identifier, proper noun, and entities that would help guide an LLM agent to the chunk.
-  NO dates. NO timespans (not "0.5h", "1h", "day 4"). NO raw numbers (not "100", "500").
 - topics: Specific enough to be useful (e.g., "PostgreSQL indexing" not just "databases").
-Limit to 5-10 keywords and 3-5 topics. Prioritize specificity over completeness."""
+Limit to 3-5 topics. Prioritize specificity over completeness."""
 
 # Document metadata prompt - focused solely on synthesizing document-level metadata
 # Used AFTER all chunks are profiled, receives accumulated summaries as input
@@ -67,7 +62,7 @@ Generate a JSON response with this exact structure:
     "document_type": "One of: narrative, transactional, technical, conversational",
     "capability_manifest": {{
         "answers_questions_about": [
-            "SPECIFIC topics consolidated from all chunks with keywords, topics, named entities and dates",
+            "SPECIFIC topics consolidated from all chunks with topics, named entities and dates",
             "Example: 'Acme Corp Q3 2024 revenue and profit margins'"
         ],
         "provides_information_type": ["facts", "opinions", "decisions", "instructions"],
@@ -99,21 +94,22 @@ QUERIES_JSON_ADDITION = """,
     ]"""
 
 QUERIES_GUIDELINES_TEMPLATE = """
-- chunk_queries: For EACH chunk summary above, generate {queries_per_chunk} capability queries.
+- chunk_queries: Generate capability queries for the document's chunks. The user message
+  specifies the exact number of queries to generate for this document.
 
   PURPOSE: These queries are embedded and matched against user searches at retrieval time.
   Users are searching ACROSS ALL documents — they have not selected this document yet.
   Every query must be grounded in the document's subject so it is findable in a global search.
 
   Other retrieval surfaces already handle content-level matching: raw chunk embeddings match
-  specific facts, chunk summary embeddings match topical descriptions, and keyword indexes
-  match named entities. Synthesized queries must cover what those surfaces CANNOT:
+  specific facts, chunk summary embeddings match topical descriptions, and BM25 full-text
+  search matches named entities. Synthesized queries must cover what those surfaces CANNOT:
   interpretive, thematic, and capability-oriented questions about the document's subject.
 
   GROUNDING RULE (mandatory):
   Every query MUST name the document's primary subject — the product, company, system,
   study, or topic that distinguishes this document from all others in the knowledge base.
-  Identify the subject from the document metadata and chunk keywords/topics. A query that
+  Identify the subject from the document metadata and chunk topics. A query that
   could apply to any document on a similar topic is ungrounded and useless.
 
   CAPABILITY QUERIES ask what the document can ANSWER, not what it contains.
@@ -153,9 +149,9 @@ QUERIES_GUIDELINES_TEMPLATE = """
   similarity, it is too specific and redundant. Step up one level of abstraction.
   If the query could appear in a search against ANY similar document, it is ungrounded.
 
-  Return chunk_queries as an array with one entry per chunk, in chunk_index order.
-  Maximum {max_total_queries} queries total — if the document has many chunks, prioritize
-  chunks with the most distinctive keywords/topics."""
+  Return chunk_queries as an array. Each entry has a chunk_index and queries array.
+  If the document has many chunks, select the most distinctive chunks to focus on.
+  Every query must be linked to a chunk_index for provenance."""
 
 
 class ProfilingService:
@@ -191,13 +187,9 @@ class ProfilingService:
         Always includes query synthesis sections — query generation is embedded
         in the same profiling LLM call at no additional cost.
         """
-        queries_guidelines = QUERIES_GUIDELINES_TEMPLATE.format(
-            queries_per_chunk=self.settings.query_synthesis_queries_per_chunk,
-            max_total_queries=self.settings.query_synthesis_max_total_queries,
-        )
         return DOCUMENT_METADATA_PROMPT_TEMPLATE.format(
             queries_json=QUERIES_JSON_ADDITION,
-            queries_guidelines=queries_guidelines,
+            queries_guidelines=QUERIES_GUIDELINES_TEMPLATE,
         )
 
     def _validate_input_tokens(self, content: str, context: str) -> SideCallResult | None:
@@ -239,7 +231,6 @@ class ProfilingService:
 
         Processes chunks in batches for efficiency. Each chunk gets:
         - summary: One-line description for agent scanning and retrieval
-        - keywords: Specific extractable terms
         - topics: Conceptual categories
 
         Args:
@@ -261,16 +252,16 @@ class ProfilingService:
         # Process in batches
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
-            batch_results, tokens = await self._profile_chunk_batch(batch, timeout)
+            batch_results, tokens = await self.profile_chunk_batch(batch, timeout)
             results.extend(batch_results)
             total_tokens += tokens
 
         return results, total_tokens
 
-    async def _profile_chunk_batch(
+    async def profile_chunk_batch(
         self,
         chunks: list[ChunkData],
-        timeout_ms: int,
+        timeout_ms: int | None = None,
     ) -> tuple[list[ChunkProfileResult], int]:
         """Profile a batch of chunks in a single LLM call.
 
@@ -278,6 +269,8 @@ class ProfilingService:
             Tuple of (chunk results, tokens used)
 
         """
+        timeout_ms = self._resolve_timeout_ms(timeout_ms)
+
         # Build user message with all chunks
         # Use batch-relative numbering (1 of N) to avoid confusion with document-level indices
         chunks_text = []
@@ -289,16 +282,15 @@ class ProfilingService:
             + "\n\n".join(chunks_text)
             + f"\n\nReturn a JSON array with EXACTLY {len(chunks)} objects in order: "
             + f"[profile for chunk 1, profile for chunk 2, ... profile for chunk {len(chunks)}]. "
-            + "Each object must have: summary, keywords, topics."
+            + "Each object must have: summary, topics."
         )
 
         # Add title chunk guidance when chunk 0 is in this batch
         if self.settings.title_chunk_enabled_default and any(c.chunk_index == 0 for c in chunks):
             user_content += (
                 "\n\nNOTE: Chunk 1 is the document title/subject. Use context from the other chunks "
-                "to infer what acronyms and identifiers in the title mean. Extract the abbreviation "
-                "itself (e.g., 'IACUC') as a keyword. If the expansion is useful, put it in the "
-                "summary rather than forcing it into the keyword list."
+                "to infer what acronyms and identifiers in the title mean. Include the abbreviation "
+                "and its expansion in the summary if useful."
             )
 
         # Validate input doesn't exceed max tokens
@@ -331,20 +323,20 @@ class ProfilingService:
         parsed_results = self.parser.parse_chunk_profiles(result.content, chunks)
         return parsed_results, result.tokens_used
 
-    async def _generate_document_metadata(
+    async def generate_document_metadata(
         self,
         accumulated_summaries: list[str],
-        document_metadata: dict | None,
-        timeout_ms: int,
-    ) -> tuple[DocumentProfile | None, list[str], int]:
+        document_metadata: dict | None = None,
+        timeout_ms: int | None = None,
+    ) -> tuple[DocumentProfile | None, list[SynthesizedQuery], int]:
         """Generate document-level metadata from accumulated chunk context.
 
-        This is a separate, focused LLM call that synthesizes chunk summaries,
-        keywords, and topics into document-level metadata (synopsis,
+        This is a separate, focused LLM call that synthesizes chunk summaries
+        and topics into document-level metadata (synopsis,
         capability_manifest, queries).
 
         Args:
-            accumulated_summaries: Context from all profiled chunks (summary + keywords + topics)
+            accumulated_summaries: Context from all profiled chunks (summary + topics)
             document_metadata: Optional document metadata (title, source, etc.)
             timeout_ms: Timeout for LLM call
 
@@ -352,28 +344,49 @@ class ProfilingService:
             Tuple of (document_profile, synthesized_queries, tokens_used)
 
         """
+        timeout_ms = self._resolve_timeout_ms(timeout_ms, for_metadata=True)
+
         if not accumulated_summaries:
             logger.warning("generate_document_metadata_called_with_no_summaries")
             return None, [], 0
 
-        # Build user message with accumulated chunk context
-        user_content = "Synthesize document-level metadata from these chunk profiles:\n\n"
-        user_content += "\n".join(accumulated_summaries)
-
-        # Build response instructions — always include per-chunk query synthesis
-        queries_per_chunk = self.settings.query_synthesis_queries_per_chunk
-        user_content += (
-            "\n\nRespond with a JSON object containing:\n"
-            "1. 'synopsis': 2-4 sentence summary of the ENTIRE document\n"
-            "2. 'document_type': narrative, transactional, technical, or conversational\n"
-            "3. 'capability_manifest': what questions this document can answer\n"
-            f"4. 'chunk_queries': for each chunk, generate {queries_per_chunk} capability "
-            "queries (see system prompt for format)"
-        )
+        # Build user message: document metadata + chunk summaries + target query count.
+        # All instructions and format rules are in the system prompt.
+        user_content = ""
 
         if document_metadata:
             meta_str = json.dumps(document_metadata, indent=2, default=str)
-            user_content = f"Document metadata:\n{meta_str}\n\n{user_content}"
+            user_content += f"Document metadata:\n{meta_str}\n\n"
+
+        user_content += "Chunk profiles:\n\n"
+        user_content += "\n".join(accumulated_summaries)
+
+        # Calculate target query count: scale with document size, cap at max
+        queries_per_chunk = self.settings.query_synthesis_queries_per_chunk
+        max_queries = self.settings.query_synthesis_max_total_queries
+        num_chunks = len(accumulated_summaries)
+        target_queries = min(num_chunks * queries_per_chunk, max_queries)
+
+        # Build distribution instruction based on ratio
+        if target_queries >= num_chunks * queries_per_chunk:
+            # Under cap: every chunk gets full allocation
+            distribution = f"{queries_per_chunk} queries per chunk"
+        elif target_queries >= num_chunks:
+            # Roughly 1 per chunk
+            distribution = "approximately 1 query per chunk"
+        else:
+            # Fewer queries than chunks: group chunks
+            chunks_per_query = num_chunks / target_queries
+            distribution = f"approximately 1 query per {chunks_per_query:.0f} chunks"
+
+        user_content += (
+            f"\n\nGenerate exactly {target_queries} capability queries"
+            f" distributed evenly across all {num_chunks} chunks"
+            f" ({distribution})."
+            f" Cover the entire document from beginning to end —"
+            f" do not cluster queries in early sections."
+            f" Link each query to its source chunk_index."
+        )
 
         # Validate input doesn't exceed max tokens
         error_result = self._validate_input_tokens(
@@ -391,13 +404,22 @@ class ProfilingService:
         )
 
         if not result.success:
-            logger.warning("document_metadata_generation_failed", error=result.error_message)
+            logger.warning(
+                "document_metadata_generation_failed",
+                error=result.error_message,
+                summary_count=len(accumulated_summaries),
+                tokens_used=result.tokens_used,
+            )
             return None, [], result.tokens_used
 
         # Parse the response using dedicated parser
         metadata_response = self.parser.parse_document_metadata_response(result.content)
         if not metadata_response:
-            logger.warning("failed_to_parse_document_metadata_response")
+            logger.warning(
+                "failed_to_parse_document_metadata_response",
+                summary_count=len(accumulated_summaries),
+                response_length=len(result.content) if result.content else 0,
+            )
             return None, [], result.tokens_used
 
         # Build DocumentProfile from response (document_type already validated by parser)
@@ -479,7 +501,7 @@ class ProfilingService:
             f"You MUST return exactly {len(failed_chunks)} profiles.\n\n"
             + "\n\n".join(chunks_text)
             + f"\n\nReturn a JSON array with EXACTLY {len(failed_chunks)} objects in order. "
-            + "Each object must have: summary, keywords, topics."
+            + "Each object must have: summary, topics."
         )
 
         # Validate input doesn't exceed max tokens
@@ -520,7 +542,7 @@ class ProfilingService:
         chunks: list[ChunkData],
         document_metadata: dict | None = None,
         timeout_ms: int | None = None,
-    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[str], int, float]:
+    ) -> tuple[list[ChunkProfileResult], DocumentProfile | None, list[SynthesizedQuery], int, float]:
         """Profile chunks incrementally, then generate document metadata separately.
 
         This method separates chunk profiling from document metadata generation:
@@ -554,7 +576,7 @@ class ProfilingService:
         # Phase 1: Profile ALL chunks in batches (uniform processing, no special cases)
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
-            batch_results, tokens = await self._profile_chunk_batch(batch, timeout)
+            batch_results, tokens = await self.profile_chunk_batch(batch, timeout)
             all_results.extend(batch_results)
             total_tokens += tokens
 
@@ -613,8 +635,6 @@ class ProfilingService:
             if self._is_chunk_profile_failed(r):
                 continue
             entry = f"Chunk {r.chunk_index}: {r.profile.summary}"
-            if r.profile.keywords:
-                entry += f"\n  Keywords: {', '.join(r.profile.keywords)}"
             if r.profile.topics:
                 entry += f"\n  Topics: {', '.join(r.profile.topics)}"
             accumulated_summaries.append(entry)
@@ -627,7 +647,7 @@ class ProfilingService:
         )
 
         # Phase 4: Generate document metadata from accumulated chunk context (separate LLM call)
-        doc_profile, queries, metadata_tokens = await self._generate_document_metadata(
+        doc_profile, queries, metadata_tokens = await self.generate_document_metadata(
             accumulated_summaries,
             document_metadata,
             metadata_timeout,

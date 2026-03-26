@@ -135,14 +135,18 @@ class SideCallService:
             # Calculate metrics
             response_time_ms = int((time.time() - start_time) * 1000)
             event_metadata = responses[-1].metadata or {}
-            tokens_used = (event_metadata.get("usage", {}) or {}).get("total_tokens", 0)
+            usage = event_metadata.get("usage", {}) or {}
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            tokens_used = usage.get("total_tokens", 0) or (input_tokens + output_tokens)
 
             # Record usage
             await self._record_usage(
                 model_config=model_config,
                 model=model,
                 user_id=user_id,
-                tokens_used=tokens_used,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 response_time_ms=response_time_ms,
                 success=True,
             )
@@ -184,7 +188,8 @@ class SideCallService:
                         model_config=model_config,
                         model=model,
                         user_id=user_id,
-                        tokens_used=0,
+                        input_tokens=0,
+                        output_tokens=0,
                         response_time_ms=response_time_ms,
                         success=False,
                         error_message=str(e),
@@ -610,14 +615,18 @@ class SideCallService:
             # Calculate metrics
             response_time_ms = int((time.time() - start_time) * 1000)
             event_metadata = responses[-1].metadata or {}
-            tokens_used = (event_metadata.get("usage", {}) or {}).get("total_tokens", 0)
+            usage = event_metadata.get("usage", {}) or {}
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            tokens_used = usage.get("total_tokens", 0) or (input_tokens + output_tokens)
 
             # Record usage (no user_id for profiling - it's a system operation)
             await self._record_usage(
                 model_config=model_config,
                 model=model,
                 user_id=None,
-                tokens_used=tokens_used,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 response_time_ms=response_time_ms,
                 success=True,
             )
@@ -756,7 +765,8 @@ class SideCallService:
         model_config: ModelConfiguration,
         model,
         user_id: str | None,
-        tokens_used: int,
+        input_tokens: int,
+        output_tokens: int,
         response_time_ms: int,
         success: bool,
         error_message: str | None = None,
@@ -767,25 +777,24 @@ class SideCallService:
             model_config: The model configuration used
             model: The model used
             user_id: ID of the user who made the request (None for system operations)
-            tokens_used: Number of tokens used
+            input_tokens: Number of input (prompt) tokens
+            output_tokens: Number of output (completion) tokens
             response_time_ms: Response time in milliseconds
             success: Whether the call was successful
             error_message: Error message if the call failed
 
         """
         try:
-            # Calculate cost (simplified - in production this would use actual pricing)
-            cost_per_token = Decimal("0.0001")  # Default cost per token
-            total_cost = Decimal(str(tokens_used)) * cost_per_token
-
             # Record usage in LLMUsage table
+            # LLMService.record_usage() computes input_cost, output_cost, and
+            # total_cost from the model's pricing columns — no need to duplicate here.
             await self.llm_service.record_usage(
                 provider_id=model_config.llm_provider_id,
                 model_id=model.id,
                 request_type="side_call",
-                input_tokens=0,  # We don't track input/output separately for side-calls
-                output_tokens=tokens_used,
-                total_cost=total_cost,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_cost=Decimal("0"),
                 user_id=user_id,
                 response_time_ms=response_time_ms,
                 success=success,

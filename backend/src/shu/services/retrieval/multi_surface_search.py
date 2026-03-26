@@ -64,7 +64,6 @@ class MultiSurfaceSearchService:
         query: str,
         kb_id: UUID,
         *,
-        keyword_terms: list[str],
         limit: int = 10,
         threshold: float = 0.0,
         session_factory: async_sessionmaker,
@@ -74,7 +73,6 @@ class MultiSurfaceSearchService:
         Args:
             query: The search query text.
             kb_id: Knowledge base ID to scope the search.
-            keyword_terms: Pre-extracted keyword terms from query preprocessing.
             limit: Maximum number of documents to return.
             threshold: Minimum final score threshold.
             session_factory: Factory for creating database sessions. Each surface
@@ -98,7 +96,6 @@ class MultiSurfaceSearchService:
                 surface,
                 query_text=query,
                 query_vector=query_vector,
-                keyword_terms=keyword_terms,
                 kb_id=kb_id,
                 session_factory=session_factory,
             )
@@ -166,7 +163,6 @@ class MultiSurfaceSearchService:
         *,
         query_text: str,
         query_vector: list[float],
-        keyword_terms: list[str],
         kb_id: UUID,
         session_factory: async_sessionmaker,
     ) -> SurfaceResult:
@@ -179,7 +175,6 @@ class MultiSurfaceSearchService:
             surface: The surface to execute.
             query_text: Original query text.
             query_vector: Pre-computed query embedding.
-            keyword_terms: Extracted keyword terms.
             kb_id: Knowledge base ID.
             session_factory: Factory for creating database sessions.
 
@@ -197,7 +192,6 @@ class MultiSurfaceSearchService:
                 surface.search(
                     query_text,
                     query_vector,
-                    keyword_terms,
                     kb_id=kb_id,
                     limit=self._surface_limit,
                     threshold=0.0,  # Let fusion handle threshold

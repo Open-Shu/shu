@@ -21,6 +21,7 @@ from shu.schemas.profiling import (
     DocumentProfile,
     DocumentType,
     ProfilingMode,
+    SynthesizedQuery,
 )
 from shu.services.profiling_orchestrator import ProfilingOrchestrator
 
@@ -91,12 +92,14 @@ def create_mock_kb(kb_id: str = "kb-123", embedding_model: str = "Snowflake/snow
     return kb
 
 
-def create_mock_chunk(chunk_id: str, index: int, content: str):
+def create_mock_chunk(chunk_id: str, index: int, content: str, summary: str | None = None):
     """Create a mock DocumentChunk."""
     chunk = MagicMock()
     chunk.id = chunk_id
     chunk.chunk_index = index
     chunk.content = content
+    chunk.summary = summary
+    chunk.topics = []
     chunk.set_profile = MagicMock()
     return chunk
 
@@ -117,24 +120,34 @@ class TestRunForDocument:
 
     @pytest.mark.asyncio
     async def test_chunk_aggregation_profiling(self, orchestrator, mock_db, mock_settings):
-        """Test incremental profiling path for large documents (SHU-582).
+        """Test profiling path with fresh chunks (no existing summaries).
 
-        Large documents use profile_chunks_incremental() which eliminates
-        the separate aggregation LLM call by having the final batch generate
-        document-level metadata from accumulated summaries.
+        Chunks without summaries are sent to profile_chunk_batch in batches.
+        Results are committed per batch. Then document metadata is generated
+        from DB-sourced summaries.
         """
         doc = create_mock_document()
         mock_kb = create_mock_kb()
-        chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}") for i in range(20)]
-        # get() called twice: once for Document, once for KnowledgeBase
+        # Chunks without summaries — need profiling
+        chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}", summary=None) for i in range(20)]
         mock_db.get = AsyncMock(side_effect=[doc, mock_kb])
 
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = chunks
-        mock_db.execute.return_value = mock_result
+        # execute() is called for: loading chunks, loading summaries, then DELETE in _persist_queries
+        mock_chunks_result = MagicMock()
+        mock_chunks_result.scalars.return_value.all.return_value = chunks
+
+        # After profiling, _load_chunk_summaries re-queries — simulate chunks now having summaries
+        mock_summaries_result = MagicMock()
+        profiled_chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}", summary=f"Summary {i}") for i in range(20)]
+        mock_summaries_result.scalars.return_value.all.return_value = profiled_chunks
+
+        # DELETE for existing queries returns a generic result
+        mock_delete_result = MagicMock()
+
+        mock_db.execute = AsyncMock(side_effect=[mock_chunks_result, mock_summaries_result, mock_delete_result])
 
         doc_profile = DocumentProfile(
-            synopsis="Incremental synopsis from accumulated summaries",
+            synopsis="Synopsis from accumulated summaries",
             document_type=DocumentType.NARRATIVE,
             capability_manifest=CapabilityManifest(),
         )
@@ -149,28 +162,84 @@ class TestRunForDocument:
                 ),
                 success=True,
             )
-            for i in range(20)
+            for i in range(10)  # One batch of 10
         ]
-        synthesized_queries = ["What is this about?", "How does it work?"]
+        synthesized_queries = [
+            SynthesizedQuery(query_text="What is this about?", chunk_index=0),
+            SynthesizedQuery(query_text="How does it work?", chunk_index=1),
+        ]
 
-        with patch.object(
-            orchestrator.profiling_service,
-            "profile_chunks_incremental",
-            new=AsyncMock(return_value=(chunk_results, doc_profile, synthesized_queries, 300, 100.0)),
+        with (
+            patch.object(
+                orchestrator.profiling_service,
+                "profile_chunk_batch",
+                new=AsyncMock(return_value=(chunk_results, 150)),
+            ),
+            patch.object(
+                orchestrator.profiling_service,
+                "generate_document_metadata",
+                new=AsyncMock(return_value=(doc_profile, synthesized_queries, 100)),
+            ),
         ):
             result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
         assert result.profiling_mode == ProfilingMode.CHUNK_AGGREGATION
-        assert result.document_profile.synopsis == "Incremental synopsis from accumulated summaries"
+        assert result.document_profile.synopsis == "Synopsis from accumulated summaries"
         assert result.chunk_coverage_percent == 100.0
-        # Artifact embedding is now handled by a separate INGESTION_EMBED job (SHU-637),
-        # so these fields stay at their defaults after profiling
         assert result.synopsis_embedded is False
         assert result.chunk_summaries_embedded == 0
         assert result.queries_embedded == 0
-        # Verify queries were persisted
-        assert mock_db.add.call_count == 2
+        assert mock_db.add.call_count == 2  # 2 queries persisted
+
+    @pytest.mark.asyncio
+    async def test_skip_already_profiled_chunks(self, orchestrator, mock_db, mock_settings):
+        """Test that chunks with existing summaries are skipped on retry.
+
+        When all chunks already have summaries (e.g., from a previous run where
+        only metadata generation failed), chunk profiling is skipped entirely
+        and the orchestrator goes straight to metadata generation.
+        """
+        doc = create_mock_document()
+        mock_kb = create_mock_kb()
+        # Chunks WITH summaries — should be skipped
+        chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}", summary=f"Existing summary {i}") for i in range(20)]
+        mock_db.get = AsyncMock(side_effect=[doc, mock_kb])
+
+        mock_chunks_result = MagicMock()
+        mock_chunks_result.scalars.return_value.all.return_value = chunks
+
+        mock_summaries_result = MagicMock()
+        mock_summaries_result.scalars.return_value.all.return_value = chunks
+
+        # DELETE for existing queries returns a generic result
+        mock_delete_result = MagicMock()
+        mock_db.execute = AsyncMock(side_effect=[mock_chunks_result, mock_summaries_result, mock_delete_result])
+
+        doc_profile = DocumentProfile(
+            synopsis="Synopsis on retry",
+            document_type=DocumentType.NARRATIVE,
+            capability_manifest=CapabilityManifest(),
+        )
+
+        with (
+            patch.object(
+                orchestrator.profiling_service,
+                "profile_chunk_batch",
+                new=AsyncMock(),
+            ) as mock_batch,
+            patch.object(
+                orchestrator.profiling_service,
+                "generate_document_metadata",
+                new=AsyncMock(return_value=(doc_profile, [], 100)),
+            ),
+        ):
+            result = await orchestrator.run_for_document("doc-123")
+
+        assert result.success is True
+        assert result.document_profile.synopsis == "Synopsis on retry"
+        # profile_chunk_batch should NOT have been called — all chunks skipped
+        mock_batch.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_exception_marks_failed(self, orchestrator, mock_db):
@@ -189,17 +258,13 @@ class TestRunForDocument:
         mock_db.commit.assert_called()
 
 
-class TestPersistResults:
-    """Tests for result persistence."""
+class TestPersistDocumentProfile:
+    """Tests for document profile persistence."""
 
     @pytest.mark.asyncio
     async def test_persist_success(self, orchestrator, mock_db):
-        """Test persisting successful profiling results."""
+        """Test persisting successful document profile."""
         doc = create_mock_document()
-        chunks = [
-            create_mock_chunk("c1", 0, "Content 1"),
-            create_mock_chunk("c2", 1, "Content 2"),
-        ]
         doc_profile = DocumentProfile(
             synopsis="Test synopsis",
             document_type=DocumentType.TECHNICAL,
@@ -208,123 +273,25 @@ class TestPersistResults:
                 provides_information_type=["instructions"],
             ),
         )
-        chunk_results = [
-            ChunkProfileResult(
-                chunk_id="c1",
-                chunk_index=0,
-                profile=ChunkProfile(
-                    summary="Explains API basics with OAuth examples",
-                    keywords=["k1"],
-                    topics=["t1"],
-                ),
-                success=True,
-            ),
-            ChunkProfileResult(
-                chunk_id="c2",
-                chunk_index=1,
-                profile=ChunkProfile(
-                    summary="Covers advanced usage patterns",
-                    keywords=["k2"],
-                    topics=["t2"],
-                ),
-                success=True,
-            ),
-        ]
 
-        await orchestrator._persist_results(doc, chunks, doc_profile, chunk_results)
+        await orchestrator._persist_document_profile(doc, doc_profile, 100.0)
 
         doc.mark_profiling_complete.assert_called_once()
         call_kwargs = doc.mark_profiling_complete.call_args[1]
         assert call_kwargs["synopsis"] == "Test synopsis"
         assert call_kwargs["document_type"] == "technical"
-
-        # Verify summary is passed to set_profile
-        chunks[0].set_profile.assert_called_once()
-        c1_call_kwargs = chunks[0].set_profile.call_args[1]
-        assert c1_call_kwargs["summary"] == "Explains API basics with OAuth examples"
-
-        chunks[1].set_profile.assert_called_once()
-        c2_call_kwargs = chunks[1].set_profile.call_args[1]
-        assert c2_call_kwargs["summary"] == "Covers advanced usage patterns"
-
         mock_db.commit.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_persist_with_failed_chunks(self, orchestrator, mock_db):
-        """Test that failed chunks don't get profiles set."""
-        doc = create_mock_document()
-        chunks = [create_mock_chunk("c1", 0, "Content")]
-        doc_profile = DocumentProfile(
-            synopsis="Test",
-            document_type=DocumentType.NARRATIVE,
-            capability_manifest=CapabilityManifest(),
-        )
-        chunk_results = [
-            ChunkProfileResult(
-                chunk_id="c1",
-                chunk_index=0,
-                profile=ChunkProfile(summary="", keywords=[], topics=[]),
-                success=False,
-                error="Failed",
-            ),
-        ]
-
-        await orchestrator._persist_results(doc, chunks, doc_profile, chunk_results)
-
-        chunks[0].set_profile.assert_not_called()
-        doc.mark_profiling_complete.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_persist_skips_empty_summary_chunks(self, orchestrator, mock_db):
-        """Test that chunks with success=True but empty summary are NOT persisted.
-
-        This matches the failure detection in ProfilingService._is_chunk_profile_failed()
-        which considers empty summaries as failures for coverage calculation.
-        """
-        doc = create_mock_document()
-        chunks = [
-            create_mock_chunk("c1", 0, "Content 1"),
-            create_mock_chunk("c2", 1, "Content 2"),
-        ]
-        doc_profile = DocumentProfile(
-            synopsis="Test",
-            document_type=DocumentType.NARRATIVE,
-            capability_manifest=CapabilityManifest(),
-        )
-        chunk_results = [
-            ChunkProfileResult(
-                chunk_id="c1",
-                chunk_index=0,
-                profile=ChunkProfile(summary="", keywords=["k1"], topics=["t1"]),  # Empty summary
-                success=True,  # success=True but empty summary should NOT be persisted
-            ),
-            ChunkProfileResult(
-                chunk_id="c2",
-                chunk_index=1,
-                profile=ChunkProfile(summary="Valid summary", keywords=["k2"], topics=["t2"]),
-                success=True,
-            ),
-        ]
-
-        await orchestrator._persist_results(doc, chunks, doc_profile, chunk_results)
-
-        # Chunk with empty summary should NOT have set_profile called
-        chunks[0].set_profile.assert_not_called()
-        # Chunk with valid summary SHOULD have set_profile called
-        chunks[1].set_profile.assert_called_once()
-        c2_call_kwargs = chunks[1].set_profile.call_args[1]
-        assert c2_call_kwargs["summary"] == "Valid summary"
 
     @pytest.mark.asyncio
     async def test_persist_no_doc_profile(self, orchestrator, mock_db):
         """Test handling when document profile is None."""
         doc = create_mock_document()
-        chunks = []
 
-        await orchestrator._persist_results(doc, chunks, None, [])
+        await orchestrator._persist_document_profile(doc, None, 100.0)
 
         doc.mark_profiling_failed.assert_called_once()
         doc.mark_profiling_complete.assert_not_called()
+        mock_db.commit.assert_called_once()
 
 
 class TestPersistQueries:
@@ -332,13 +299,19 @@ class TestPersistQueries:
 
     @pytest.mark.asyncio
     async def test_persist_queries_success(self, orchestrator, mock_db):
-        """Test persisting synthesized queries."""
+        """Test persisting synthesized queries with chunk provenance."""
         doc = create_mock_document()
+        chunks = [create_mock_chunk("c0", 0, "Content 0"), create_mock_chunk("c1", 1, "Content 1")]
         mock_db.execute = AsyncMock()  # Mock the delete execute
 
         queries_created = await orchestrator._persist_queries(
             doc,
-            ["What is X?", "How does Y work?", "Show me Z"],
+            [
+                SynthesizedQuery(query_text="What is X?", chunk_index=0),
+                SynthesizedQuery(query_text="How does Y work?", chunk_index=1),
+                SynthesizedQuery(query_text="Show me Z", chunk_index=None),
+            ],
+            chunks,
         )
 
         assert queries_created == 3
@@ -351,11 +324,18 @@ class TestPersistQueries:
     async def test_persist_queries_skips_empty(self, orchestrator, mock_db):
         """Test that empty queries are skipped."""
         doc = create_mock_document()
+        chunks = [create_mock_chunk("c0", 0, "Content 0")]
         mock_db.execute = AsyncMock()
 
         queries_created = await orchestrator._persist_queries(
             doc,
-            ["Valid query", "", "  ", "Another valid"],
+            [
+                SynthesizedQuery(query_text="Valid query", chunk_index=0),
+                SynthesizedQuery(query_text="", chunk_index=0),
+                SynthesizedQuery(query_text="  ", chunk_index=None),
+                SynthesizedQuery(query_text="Another valid", chunk_index=None),
+            ],
+            chunks,
         )
 
         assert queries_created == 2
@@ -367,7 +347,7 @@ class TestPersistQueries:
         doc = create_mock_document()
         mock_db.execute = AsyncMock()
 
-        queries_created = await orchestrator._persist_queries(doc, [])
+        queries_created = await orchestrator._persist_queries(doc, [], [])
 
         assert queries_created == 0
         # Delete is still called even for empty list (clears old queries)
@@ -380,9 +360,14 @@ class TestPersistQueries:
     async def test_persist_queries_deletes_existing(self, orchestrator, mock_db):
         """Test that existing queries are deleted before creating new ones (re-profiling)."""
         doc = create_mock_document()
+        chunks = [create_mock_chunk("c0", 0, "Content 0")]
         mock_db.execute = AsyncMock()
 
-        await orchestrator._persist_queries(doc, ["New query"])
+        await orchestrator._persist_queries(
+            doc,
+            [SynthesizedQuery(query_text="New query", chunk_index=0)],
+            chunks,
+        )
 
         # Verify delete was called with correct document_id filter
         mock_db.execute.assert_called_once()
@@ -614,12 +599,18 @@ class TestEmbedProfileArtifacts:
     async def test_embedding_not_called_inline_after_profiling(self, orchestrator, mock_db):
         """Test that artifact embedding is NOT called inline during profiling (SHU-637)."""
         doc = create_mock_document()
-        chunks = [create_mock_chunk("c1", 0, "Content")]
+        chunks = [create_mock_chunk("c1", 0, "Content", summary=None)]
         mock_db.get = AsyncMock(return_value=doc)
 
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = chunks
-        mock_db.execute.return_value = mock_result
+        mock_chunks_result = MagicMock()
+        mock_chunks_result.scalars.return_value.all.return_value = chunks
+
+        profiled_chunks = [create_mock_chunk("c1", 0, "Content", summary="Summary")]
+        mock_summaries_result = MagicMock()
+        mock_summaries_result.scalars.return_value.all.return_value = profiled_chunks
+
+        mock_delete_result = MagicMock()
+        mock_db.execute = AsyncMock(side_effect=[mock_chunks_result, mock_summaries_result, mock_delete_result])
 
         doc_profile = DocumentProfile(
             synopsis="Test synopsis",
@@ -638,8 +629,13 @@ class TestEmbedProfileArtifacts:
         with (
             patch.object(
                 orchestrator.profiling_service,
-                "profile_chunks_incremental",
-                new=AsyncMock(return_value=(chunk_results, doc_profile, ["query"], 100, 100.0)),
+                "profile_chunk_batch",
+                new=AsyncMock(return_value=(chunk_results, 100)),
+            ),
+            patch.object(
+                orchestrator.profiling_service,
+                "generate_document_metadata",
+                new=AsyncMock(return_value=(doc_profile, [], 50)),
             ),
             patch(
                 "shu.services.profiling_orchestrator.embed_profile_artifacts",
@@ -649,7 +645,6 @@ class TestEmbedProfileArtifacts:
             result = await orchestrator.run_for_document("doc-123")
 
         assert result.success is True
-        # embed_profile_artifacts should NOT be called from within run_for_document
         embed_spy.assert_not_called()
         assert result.synopsis_embedded is False
         assert result.chunk_summaries_embedded == 0

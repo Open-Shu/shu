@@ -4,8 +4,6 @@ This module defines the Document and DocumentChunk models which store
 document metadata, content, and vector embeddings.
 """
 
-import re
-import string
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, ClassVar
@@ -14,8 +12,6 @@ from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
-
-from ..utils.text import fold_unicode_to_ascii
 
 try:
     from pgvector.sqlalchemy import Vector
@@ -394,8 +390,6 @@ class DocumentChunk(BaseModel):
     # Summary embedding for semantic retrieval (SHU-632) — query-encoded because summaries
     # are short (~1 sentence) and semantically closer to queries than documents
     summary_embedding = Column(Vector(), nullable=True)
-    # Keywords: Specific extractable terms (names, numbers, dates, technical terms)
-    keywords = Column(JSONB, nullable=True)
     # Topics: Conceptual categories the chunk relates to (broader themes, domains)
     topics = Column(JSONB, nullable=True)
 
@@ -420,7 +414,6 @@ class DocumentChunk(BaseModel):
                 "embedding_created_at": self.embedding_created_at.isoformat() if self.embedding_created_at else None,
                 # Profile fields
                 "summary": self.summary,
-                "keywords": self.keywords,
                 "topics": self.topics,
             }
         )
@@ -441,91 +434,17 @@ class DocumentChunk(BaseModel):
     def set_profile(
         self,
         summary: str,
-        keywords: list[str],
         topics: list[str],
     ) -> None:
         """Set the chunk profile data.
 
         Args:
             summary: One-line description with specific content for agent scanning and retrieval.
-            keywords: Specific extractable terms (names, numbers, dates, technical terms).
             topics: Conceptual categories the chunk relates to (broader themes, domains).
 
         """
         self.summary = summary
-        # Normalize keywords: split any multi-word phrases the LLM emitted, lowercase,
-        # strip trailing punctuation, and deduplicate. This guards against prompt
-        # non-compliance and ensures the GIN ?| index matches correctly against
-        # lowercased query terms.
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for raw_kw in keywords:
-            kw = fold_unicode_to_ascii(raw_kw)
-            if self._should_skip_keyword_phrase(kw):
-                continue
-            for token in kw.split():
-                # Strip trailing punctuation (e.g., "Q3," -> "Q3") but preserve
-                # leading and internal punctuation for identifiers like "$2.5M", "ICBN-123,445"
-                lowered = token.lower().rstrip(string.punctuation)
-                if self._should_skip_keyword_token(lowered):
-                    continue
-                if lowered and lowered not in seen:
-                    seen.add(lowered)
-                    normalized.append(lowered)
-        self.keywords = normalized
         self.topics = topics
-
-    @staticmethod
-    def _should_skip_keyword_phrase(keyword: str) -> bool:
-        """Return True for phrases that are timing noise, not retrieval keywords."""
-        cleaned = keyword.lower().strip()
-        if not cleaned:
-            return True
-
-        # Single alphabetic characters are too low-signal for keyword retrieval.
-        if len(cleaned) == 1 and cleaned.isalpha():
-            return True
-
-        # Timespans like "0.5 h", "12h", "3 days"
-        if re.fullmatch(
-            r"\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|min|mins|minute|minutes|day|days|week|weeks|month|months|year|years)",
-            cleaned,
-        ):
-            return True
-
-        # Sequences of bare numbers like "1 2 4 8 12"
-        return bool(re.fullmatch(r"\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)+", cleaned))
-
-    @staticmethod
-    def _should_skip_keyword_token(token: str) -> bool:
-        """Return True for low-signal tokens produced after splitting."""
-        if not token:
-            return True
-
-        # Drop raw numbers like "0.5", "1", "12"
-        if re.fullmatch(r"\d+(?:\.\d+)?", token):
-            return True
-
-        # Drop standalone temporal units (same set as the timespan regex in _should_skip_keyword_phrase)
-        return token in {
-            "h",
-            "hr",
-            "hrs",
-            "hour",
-            "hours",
-            "min",
-            "mins",
-            "minute",
-            "minutes",
-            "day",
-            "days",
-            "week",
-            "weeks",
-            "month",
-            "months",
-            "year",
-            "years",
-        }
 
     @property
     def is_profiled(self) -> bool:
@@ -596,9 +515,19 @@ class DocumentQuery(BaseModel):
     # Vector embedding for similarity search — dimensionless; dimension derived from embedding model at runtime
     query_embedding = Column(Vector(), nullable=True)
 
+    # Chunk provenance — which chunk inspired this query (SHU-645)
+    # SET NULL on chunk deletion so queries survive re-chunking
+    source_chunk_id = Column(
+        String,
+        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
     document = relationship("Document", back_populates="queries")
     knowledge_base = relationship("KnowledgeBase")
+    source_chunk = relationship("DocumentChunk", foreign_keys=[source_chunk_id])
 
     def __repr__(self) -> str:
         """Represent as string."""
@@ -615,6 +544,7 @@ class DocumentQuery(BaseModel):
             {
                 "query_text": self.query_text,
                 "has_embedding": self.query_embedding is not None,
+                "source_chunk_id": self.source_chunk_id,
             }
         )
         return base_dict
@@ -635,6 +565,7 @@ class DocumentQuery(BaseModel):
         knowledge_base_id: str,
         query_text: str,
         query_embedding: list[float] | None = None,
+        source_chunk_id: str | None = None,
     ) -> "DocumentQuery":
         """Create a synthesized query for a document."""
         return cls(
@@ -642,6 +573,7 @@ class DocumentQuery(BaseModel):
             knowledge_base_id=knowledge_base_id,
             query_text=query_text,
             query_embedding=query_embedding,
+            source_chunk_id=source_chunk_id,
         )
 
 

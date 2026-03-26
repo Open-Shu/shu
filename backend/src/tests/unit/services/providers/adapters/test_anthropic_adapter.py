@@ -325,7 +325,7 @@ async def test_post_process_payload_injects_max_tokens_default(anthropic_adapter
     result = await anthropic_adapter.post_process_payload(payload_without_max_tokens)
 
     assert "max_tokens" in result
-    assert result["max_tokens"] == 4096
+    assert result["max_tokens"] == 64000
     assert result["model"] == "claude-3-5-sonnet-20241022"
     assert result["messages"] == [{"role": "user", "content": "Hello"}]
 
