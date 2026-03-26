@@ -346,12 +346,12 @@ export default function SourcePreview({
         summary: chunk.summary || null,
       };
 
-      // Extract document info
+      // Extract document info — totalChunks is unknown until the modal
+      // fetches from the API; don't seed it from contributing_chunks.length
+      // which only reflects search-result hits, not the document's real count.
       const docInfo = {
         document_id: docOrResult.document_id,
         document_title: docOrResult.document_title || docOrResult.title || 'Unknown Document',
-        // For multi-surface results, contributing_chunks gives us total
-        totalChunks: docOrResult.contributing_chunks?.length || docOrResult.chunks?.length || null,
       };
 
       setSelectedChunk(normalizedChunk);
@@ -463,7 +463,6 @@ export default function SourcePreview({
           documentId={selectedDocument.document_id}
           documentTitle={selectedDocument.document_title}
           initialChunk={selectedChunk}
-          totalChunks={selectedDocument.totalChunks}
         />
       )}
     </Box>

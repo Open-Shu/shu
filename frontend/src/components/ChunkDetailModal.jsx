@@ -28,17 +28,8 @@ import { extractDataFromResponse, knowledgeBaseAPI } from '../services/api';
  * - documentId: string - Document ID for fetching chunks
  * - documentTitle: string - Document title for display
  * - initialChunk: object - Initial chunk data from search results (has chunk_id, chunk_index, surface, score, snippet, summary)
- * - totalChunks: number - Total number of chunks in document (optional, for navigation)
  */
-export default function ChunkDetailModal({
-  open,
-  onClose,
-  knowledgeBaseId,
-  documentId,
-  documentTitle,
-  initialChunk,
-  totalChunks,
-}) {
+export default function ChunkDetailModal({ open, onClose, knowledgeBaseId, documentId, documentTitle, initialChunk }) {
   const [currentIndex, setCurrentIndex] = React.useState(initialChunk?.chunk_index ?? 0);
   // Window anchor - only moves when navigating outside loaded range
   const [windowAnchor, setWindowAnchor] = React.useState(initialChunk?.chunk_index ?? 0);
@@ -75,7 +66,9 @@ export default function ChunkDetailModal({
   );
 
   const chunks = chunksData?.items || [];
-  const total = chunksData?.total ?? totalChunks ?? 0;
+  // Total comes from the API response only — never seed from search-result counts
+  // which reflect contributing hits, not the document's real chunk count.
+  const total = chunksData?.total ?? null;
 
   // Loaded range based on actual response
   const loadedStart = windowOffset;
@@ -89,7 +82,7 @@ export default function ChunkDetailModal({
   const summary = currentChunk?.summary || initialChunk?.summary || null;
 
   const canGoPrev = currentIndex > 0;
-  const canGoNext = currentIndex < total - 1;
+  const canGoNext = total !== null && currentIndex < total - 1;
 
   const handlePrev = () => {
     if (canGoPrev) {
@@ -107,7 +100,7 @@ export default function ChunkDetailModal({
       const newIndex = currentIndex + 1;
       setCurrentIndex(newIndex);
       // Move window if approaching edge (within 1 of loaded boundary)
-      if (newIndex >= loadedEnd && newIndex < total - 1) {
+      if (newIndex >= loadedEnd && (total === null || newIndex < total - 1)) {
         setWindowAnchor(newIndex);
       }
     }
@@ -255,7 +248,7 @@ export default function ChunkDetailModal({
             <NavigateBeforeIcon />
           </IconButton>
           <Typography variant="body2" color="text.secondary">
-            {currentIndex + 1} of {total}
+            {total !== null ? `${currentIndex + 1} of ${total}` : `#${currentIndex}`}
           </Typography>
           <IconButton onClick={handleNext} disabled={!canGoNext || isLoading} size="small" aria-label="Next chunk">
             <NavigateNextIcon />
