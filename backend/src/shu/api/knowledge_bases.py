@@ -678,12 +678,8 @@ async def get_document_chunks(
                 status_code=404,
             )
 
-        # Get chunks
-        all_chunks = await doc_service.get_document_chunks(document_id)
-
-        # Apply pagination
-        total = len(all_chunks)
-        paginated_chunks = all_chunks[offset : offset + limit]
+        # Get paginated chunks (server-side limit/offset)
+        chunks, total = await doc_service.get_document_chunks_paginated(document_id, limit=limit, offset=offset)
 
         items = [
             {
@@ -699,7 +695,7 @@ async def get_document_chunks(
                 "has_embedding": chunk.has_embedding,
                 "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
             }
-            for chunk in paginated_chunks
+            for chunk in chunks
         ]
 
         return ShuResponse.success({"items": items, "total": total, "limit": limit, "offset": offset})
