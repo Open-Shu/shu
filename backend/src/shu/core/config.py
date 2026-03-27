@@ -419,6 +419,14 @@ class Settings(BaseSettings):
     # Chat Plugins (disabled by default; enable when Chat M1 slice resumes)
     chat_plugins_enabled: bool = Field(False, alias="SHU_CHAT_PLUGINS_ENABLED")
 
+    # MCP client defaults (per-connection overrides stored in McpServerConnection.timeouts)
+    mcp_connect_timeout_ms: int = Field(5_000, alias="SHU_MCP_CONNECT_TIMEOUT_MS")
+    mcp_call_timeout_ms: int = Field(30_000, alias="SHU_MCP_CALL_TIMEOUT_MS")
+    mcp_read_timeout_ms: int = Field(30_000, alias="SHU_MCP_READ_TIMEOUT_MS")
+    mcp_response_size_limit_bytes: int = Field(10 * 1024 * 1024, alias="SHU_MCP_RESPONSE_SIZE_LIMIT_BYTES")
+    mcp_max_retries: int = Field(3, alias="SHU_MCP_MAX_RETRIES")
+    mcp_retry_base_delay_ms: int = Field(1000, alias="SHU_MCP_RETRY_BASE_DELAY_MS")
+
     llm_dev_mode: bool = Field(False, alias="SHU_LLM_DEV_MODE")
 
     # OAuth Token Encryption

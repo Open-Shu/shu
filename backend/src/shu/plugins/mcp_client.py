@@ -1,0 +1,348 @@
+"""MCP client for Streamable HTTP transport.
+
+Connects to external MCP servers over HTTP + SSE, implementing the
+JSON-RPC based MCP protocol for tool discovery and invocation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from shu.core.config import get_settings_instance
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class McpError(Exception):
+    """Base exception for MCP client errors."""
+
+    def __init__(self, message: str, server_url: str | None = None) -> None:
+        self.server_url = server_url
+        super().__init__(message)
+
+
+class McpConnectionError(McpError):
+    """Raised when the MCP server is unreachable."""
+
+
+class McpTimeoutError(McpError):
+    """Raised when an MCP operation exceeds the configured timeout."""
+
+
+class McpProtocolError(McpError):
+    """Raised on MCP protocol violations (version mismatch, invalid JSON-RPC)."""
+
+    def __init__(self, message: str, server_url: str | None = None, code: int | None = None) -> None:
+        self.code = code
+        super().__init__(message, server_url)
+
+
+class McpResponseTooLarge(McpError):
+    """Raised when the server response exceeds the configured size cap."""
+
+    def __init__(self, message: str, server_url: str | None = None, limit_bytes: int | None = None) -> None:
+        self.limit_bytes = limit_bytes
+        super().__init__(message, server_url)
+
+
+@dataclass(frozen=True)
+class McpToolInfo:
+    """Describes an MCP tool discovered from a server."""
+
+    name: str
+    description: str | None = None
+    input_schema: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class McpToolResult:
+    """Result from calling an MCP tool."""
+
+    content: list[dict[str, Any]] = field(default_factory=list)
+    is_error: bool = False
+
+
+MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_SUPPORTED_VERSIONS = {"2024-11-05", "2025-03-26"}
+
+
+class McpClient:
+    """Async MCP client using Streamable HTTP transport.
+
+    Sends JSON-RPC requests via HTTP POST and handles both direct JSON
+    responses and SSE-streamed responses.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeouts: dict[str, int] | None = None,
+        response_size_limit: int | None = None,
+        max_retries: int | None = None,
+        retry_base_delay_ms: int | None = None,
+    ) -> None:
+        settings = get_settings_instance()
+        self._url = url
+        self._headers = headers or {}
+        self._response_size_limit = (
+            response_size_limit if response_size_limit is not None else settings.mcp_response_size_limit_bytes
+        )
+        self._max_retries = max_retries if max_retries is not None else settings.mcp_max_retries
+        self._retry_base_delay_ms = (
+            retry_base_delay_ms if retry_base_delay_ms is not None else settings.mcp_retry_base_delay_ms
+        )
+        self._request_id = 0
+
+        timeouts = timeouts or {}
+        connect_s = timeouts.get("connect_ms", settings.mcp_connect_timeout_ms) / 1000.0
+        call_s = timeouts.get("call_ms", settings.mcp_call_timeout_ms) / 1000.0
+        read_s = timeouts.get("read_ms", settings.mcp_read_timeout_ms) / 1000.0
+
+        self._timeout = httpx.Timeout(connect=connect_s, read=read_s, write=call_s, pool=connect_s)
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                **self._headers,
+            },
+            follow_redirects=True,
+        )
+
+    def _next_request_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    async def _post(self, payload: dict[str, Any]) -> httpx.Response:
+        """POST JSON to the MCP server with retry on transient failures.
+
+        Retries on connection errors and timeouts with exponential backoff.
+        """
+        last_exc: McpError | None = None
+        method = payload.get("method", "unknown")
+        for attempt in range(1 + self._max_retries):
+            try:
+                return await self._client.post(self._url, json=payload)
+            except httpx.ConnectError as exc:
+                last_exc = McpConnectionError(
+                    f"Failed to connect to MCP server: {exc}", server_url=self._url
+                )
+                last_exc.__cause__ = exc
+            except httpx.TimeoutException as exc:
+                last_exc = McpTimeoutError(
+                    f"MCP request timed out: {exc}", server_url=self._url
+                )
+                last_exc.__cause__ = exc
+            if attempt < self._max_retries:
+                delay_s = (self._retry_base_delay_ms / 1000.0) * (2 ** attempt)
+                logger.warning(
+                    "mcp.retry",
+                    url=self._url,
+                    method=method,
+                    attempt=attempt + 1,
+                    max_retries=self._max_retries,
+                    delay_s=delay_s,
+                    error=str(last_exc),
+                )
+                await asyncio.sleep(delay_s)
+        raise last_exc  # type: ignore[misc]
+
+    async def _send_jsonrpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Send a JSON-RPC request and return the result.
+
+        Handles both direct JSON responses and SSE-streamed responses.
+        Enforces the configured response size limit.
+        """
+        request_id = self._next_request_id()
+        payload: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": request_id,
+        }
+        if params is not None:
+            payload["params"] = params
+
+        logger.debug("mcp.jsonrpc.send", method=method, request_id=request_id, url=self._url)
+        response = await self._post(payload)
+
+        content_type = response.headers.get("content-type", "")
+
+        if "text/event-stream" in content_type:
+            return self._parse_sse_response(response.text, request_id)
+
+        self._check_response_size(len(response.content))
+        return self._parse_json_response(response, request_id)
+
+    def _check_response_size(self, size: int) -> None:
+        """Raise McpResponseTooLarge if size exceeds the configured limit."""
+        if size > self._response_size_limit:
+            raise McpResponseTooLarge(
+                f"Response size {size} bytes exceeds limit of {self._response_size_limit} bytes",
+                server_url=self._url,
+                limit_bytes=self._response_size_limit,
+            )
+
+    def _extract_jsonrpc_result(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Validate a parsed JSON-RPC envelope and return the result.
+
+        Raises McpProtocolError on JSON-RPC error responses.
+        """
+        if "error" in data:
+            error = data["error"]
+            code = error.get("code") if isinstance(error, dict) else None
+            message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+            raise McpProtocolError(f"JSON-RPC error: {message}", server_url=self._url, code=code)
+        return data.get("result", {})
+
+    def _parse_json_response(self, response: httpx.Response, request_id: int) -> dict[str, Any]:
+        """Parse a direct JSON-RPC response."""
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise McpProtocolError(
+                f"Invalid JSON in MCP response: {exc}", server_url=self._url
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise McpProtocolError("MCP response is not a JSON object", server_url=self._url)
+
+        return self._extract_jsonrpc_result(data)
+
+    def _parse_sse_response(self, body: str, request_id: int) -> dict[str, Any]:
+        """Parse an SSE-streamed response, assembling the final JSON-RPC result.
+
+        Reads event: message lines and extracts the last complete JSON-RPC
+        response from the data fields.
+        """
+        self._check_response_size(len(body.encode("utf-8")))
+
+        event_type: str | None = None
+        data_lines: list[str] = []
+        last_result: dict[str, Any] | None = None
+
+        for line in body.split("\n"):
+            if line.startswith("event:"):
+                event_type = line[len("event:"):].strip()
+                continue
+
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:"):].strip())
+                continue
+
+            if line.strip() == "" and data_lines:
+                if event_type == "message" or event_type is None:
+                    last_result = self._try_parse_sse_event(data_lines, last_result)
+                data_lines = []
+                event_type = None
+
+        if data_lines and (event_type == "message" or event_type is None):
+            last_result = self._try_parse_sse_event(data_lines, last_result)
+
+        if last_result is None:
+            raise McpProtocolError("No valid JSON-RPC result found in SSE stream", server_url=self._url)
+
+        return last_result
+
+    def _try_parse_sse_event(
+        self, data_lines: list[str], fallback: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Try to parse assembled SSE data lines as a JSON-RPC response."""
+        raw = "\n".join(data_lines)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return fallback
+        if not isinstance(parsed, dict):
+            return fallback
+        return self._extract_jsonrpc_result(parsed)
+
+    async def connect(self) -> dict[str, Any]:
+        """Perform the MCP initialize handshake.
+
+        Sends an initialize request, verifies the server's protocol version
+        is supported, then sends an initialized notification.
+
+        Returns the server's capabilities and info from the initialize response.
+        """
+        result = await self._send_jsonrpc("initialize", {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "shu", "version": "1.0"},
+        })
+
+        server_version = result.get("protocolVersion", "")
+        if server_version not in MCP_SUPPORTED_VERSIONS:
+            raise McpProtocolError(
+                f"Unsupported MCP protocol version: {server_version!r} "
+                f"(supported: {', '.join(sorted(MCP_SUPPORTED_VERSIONS))})",
+                server_url=self._url,
+            )
+
+        self._server_info = result.get("serverInfo", {})
+        logger.info(
+            "mcp.connected",
+            url=self._url,
+            server_name=self._server_info.get("name"),
+            protocol_version=server_version,
+        )
+
+        await self._send_notification("notifications/initialized")
+        return result
+
+    async def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
+        """Send a JSON-RPC notification (no id, no response expected).
+
+        Retries on transient connection/timeout failures.
+        """
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            payload["params"] = params
+        await self._post(payload)
+
+    async def list_tools(self) -> list[McpToolInfo]:
+        """Enumerate available tools from the MCP server."""
+        result = await self._send_jsonrpc("tools/list")
+        raw_tools = result.get("tools", [])
+        tools = []
+        for t in raw_tools:
+            if not isinstance(t, dict) or "name" not in t:
+                continue
+            tools.append(McpToolInfo(
+                name=t["name"],
+                description=t.get("description"),
+                input_schema=t.get("inputSchema"),
+            ))
+        logger.info("mcp.tools_discovered", url=self._url, tool_count=len(tools))
+        return tools
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> McpToolResult:
+        """Invoke a tool on the MCP server."""
+        params: dict[str, Any] = {"name": name}
+        if arguments:
+            params["arguments"] = arguments
+
+        logger.info("mcp.tool_call", url=self._url, tool=name)
+        result = await self._send_jsonrpc("tools/call", params)
+
+        content = result.get("content", [])
+        is_error = result.get("isError", False)
+        return McpToolResult(content=content, is_error=is_error)
+
+    async def health_check(self) -> bool:
+        """Lightweight connectivity test via the initialize handshake."""
+        try:
+            await self.connect()
+            return True
+        except McpError:
+            return False
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()
