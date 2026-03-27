@@ -21,8 +21,11 @@ import {
   Switch,
   Slider,
   Divider,
+  Snackbar,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
-import { Search as SearchIcon } from '@mui/icons-material';
+import { Search as SearchIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import {
   knowledgeBaseAPI,
   queryAPI,
@@ -36,6 +39,7 @@ import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
 import { log } from '../utils/log';
+import { formatResultsForJudgment } from '../utils/exportForJudgment';
 
 const RAG_MODE_OPTIONS = [
   { value: 'no_rag', label: 'No RAG (model only)' },
@@ -54,12 +58,15 @@ function QueryTester() {
   const [titleWeightMultiplier, setTitleWeightMultiplier] = useState(3.0);
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
-  // Multi-surface search weights
+  const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+  const [exportLoading, setExportLoading] = useState(false);
+  // Multi-surface search weights and fusion
   const [chunkVectorWeight, setChunkVectorWeight] = useState(0.25);
   const [queryMatchWeight, setQueryMatchWeight] = useState(0.2);
   const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.15);
   const [bm25Weight, setBm25Weight] = useState(0.15);
   const [chunkSummaryWeight, setChunkSummaryWeight] = useState(0.25);
+  const [fusionFormula, setFusionFormula] = useState('max_sqrt_mean_max');
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -116,6 +123,7 @@ function QueryTester() {
           synopsis_match_weight: params.synopsisMatchWeight,
           bm25_weight: params.bm25Weight,
           chunk_summary_weight: params.chunkSummaryWeight,
+          fusion_formula: params.fusionFormula,
         });
       }
 
@@ -153,6 +161,7 @@ function QueryTester() {
       synopsisMatchWeight: synopsisMatchWeight,
       bm25Weight: bm25Weight,
       chunkSummaryWeight: chunkSummaryWeight,
+      fusionFormula: fusionFormula,
     });
   };
 
@@ -187,6 +196,7 @@ function QueryTester() {
         synopsis_match_weight: synopsisMatchWeight,
         bm25_weight: bm25Weight,
         chunk_summary_weight: chunkSummaryWeight,
+        fusion_formula: fusionFormula,
       };
     } else {
       return {
@@ -196,6 +206,37 @@ function QueryTester() {
         title_weighting_enabled: titleWeightingEnabled,
         title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
       };
+    }
+  };
+
+  const handleExportForJudgment = async () => {
+    if (!queryResults?.multi_surface_results || !selectedKB) {
+      return;
+    }
+    setExportLoading(true);
+    try {
+      const topN = parseInt(limit);
+
+      // Run a separate similarity search to get true baseline results
+      const baselineResponse = await queryAPI.search(selectedKB, {
+        query: queryText,
+        limit: topN,
+        query_type: 'similarity',
+        similarity_threshold: parseFloat(threshold),
+        rag_rewrite_mode: 'raw_query',
+      });
+      const baselineData = extractDataFromResponse(baselineResponse);
+      const baselineResults = baselineData?.results || [];
+
+      // MS results already have full content, summary, matched_query from backend
+      const text = formatResultsForJudgment(queryText, baselineResults, queryResults.multi_surface_results, topN);
+      await navigator.clipboard.writeText(text);
+      setSnackbar({ open: true, message: 'Exported to clipboard' });
+    } catch (err) {
+      log.error('Export for judgment failed:', err);
+      setSnackbar({ open: true, message: 'Export failed — see console' });
+    } finally {
+      setExportLoading(false);
     }
   };
 
@@ -473,6 +514,19 @@ function QueryTester() {
                       Adjust weights to control how much each surface contributes to the final score
                     </Typography>
                   </Box>
+
+                  <Divider sx={{ my: 2 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Fusion Formula
+                    </Typography>
+                  </Divider>
+
+                  <FormControl fullWidth size="small">
+                    <Select value={fusionFormula} onChange={(e) => setFusionFormula(e.target.value)}>
+                      <MenuItem value="max_sqrt_mean_max">Max × √(mean/max)</MenuItem>
+                      <MenuItem value="weighted_average">Weighted Average</MenuItem>
+                    </Select>
+                  </FormControl>
                 </Box>
               )}
 
@@ -495,13 +549,22 @@ function QueryTester() {
             <CardContent>
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="h6">Results</Typography>
-                {queryResults && (
-                  <Chip
-                    label={`${queryResults.multi_surface_results?.length || queryResults.results?.length || 0} results`}
-                    color="primary"
-                    size="small"
-                  />
-                )}
+                <Box display="flex" gap={1} alignItems="center">
+                  {queryResults?.multi_surface_results?.length > 0 && (
+                    <Tooltip title="Export for LLM Judgment">
+                      <IconButton size="small" onClick={handleExportForJudgment} disabled={exportLoading}>
+                        {exportLoading ? <CircularProgress size={18} /> : <ContentCopyIcon fontSize="small" />}
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {queryResults && (
+                    <Chip
+                      label={`${queryResults.multi_surface_results?.length || queryResults.results?.length || 0} results`}
+                      color="primary"
+                      size="small"
+                    />
+                  )}
+                </Box>
               </Box>
 
               {queryMutation.isLoading && (
@@ -601,6 +664,12 @@ function QueryTester() {
           </Card>
         </Grid>
       </Grid>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar({ open: false, message: '' })}
+        message={snackbar.message}
+      />
     </Box>
   );
 }

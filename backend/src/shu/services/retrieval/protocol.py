@@ -70,9 +70,11 @@ class ContributingChunk:
     surface: str
     score: float
     snippet: str
+    content: str = ""
     summary: str | None = None
     start_char: int | None = None
     end_char: int | None = None
+    matched_query: str | None = None
 
 
 @dataclass

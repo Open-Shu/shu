@@ -293,9 +293,11 @@ class ScoreFusionService:
                                     surface=surface_name,
                                     score=hit.score,
                                     snippet=snippet,
+                                    content=content,
                                     summary=summary,
                                     start_char=start_char,
                                     end_char=end_char,
+                                    matched_query=hit.metadata.get("matched_query"),
                                 )
                             )
 

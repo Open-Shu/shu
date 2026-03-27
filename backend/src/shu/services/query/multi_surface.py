@@ -57,7 +57,7 @@ class MultiSurfaceSearchMixin:
     """Mixin providing multi-surface search orchestration."""
 
     @measure_execution_time
-    async def _multi_surface_search(
+    async def _multi_surface_search(  # noqa: PLR0915
         self,
         knowledge_base_id: str,
         query: str,
@@ -69,6 +69,7 @@ class MultiSurfaceSearchMixin:
         synopsis_match_weight: float | None = None,
         bm25_weight: float | None = None,
         chunk_summary_weight: float | None = None,
+        fusion_formula: str | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
@@ -142,8 +143,11 @@ class MultiSurfaceSearchMixin:
 
             surfaces = _build_surfaces(vector_store, weights, settings.execute_zero_weight_surfaces)
 
-            # Create fusion service with configured weights
-            fusion_service = ScoreFusionService(weights=weights)
+            # Create fusion service with configured weights and optional formula override
+            fusion_kwargs: dict[str, Any] = {"weights": weights}
+            if fusion_formula:
+                fusion_kwargs["fusion_formula"] = fusion_formula
+            fusion_service = ScoreFusionService(**fusion_kwargs)
 
             # Create orchestrator
             search_service = MultiSurfaceSearchService(
@@ -230,7 +234,9 @@ class MultiSurfaceSearchMixin:
                             "surface": c.surface,
                             "score": c.score,
                             "snippet": c.snippet,
+                            "content": c.content,
                             "summary": c.summary,
+                            "matched_query": c.matched_query,
                         }
                         for c in r.contributing_chunks
                     ],

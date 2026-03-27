@@ -83,6 +83,9 @@ class QueryRequest(BaseModel):
     chunk_summary_weight: float | None = Field(
         None, ge=0.0, le=1.0, description="Weight for chunk summary surface (None = use config default)"
     )
+    fusion_formula: str | None = Field(
+        None, description="Score fusion formula: 'weighted_average' or 'max_sqrt_mean_max' (None = use default)"
+    )
 
     @field_validator("query")
     @classmethod
