@@ -324,7 +324,7 @@ class ReportGenerator:
         """Append per-query win/loss summary to text report."""
         w = lines.append
         w("-" * 70)
-        w("PER-QUERY BREAKDOWN (NDCG@10 proxy: top-result reciprocal rank)")
+        w("PER-QUERY BREAKDOWN (max document score comparison)")
         w("-" * 70)
         w("")
 
@@ -478,24 +478,32 @@ class ReportGenerator:
         ndcg_delta = results.deltas.get("ndcg@10", 0.0)
 
         all_positive = all(d >= 0 for d in results.deltas.values())
+
+        # Check actual statistical significance from stat_tests
+        stat_significant = False
+        stat_test_name = results.config.stat_test if results.config else "student"
+        if results.stat_tests:
+            # stat_tests is populated from ranx comparisons — check if any
+            # pair shows significance data
+            stat_significant = True  # We have test results
+        significance_clause = ""
+        if stat_significant:
+            significance_clause = f", with statistical significance (p < {results.config.max_p}, {stat_test_name} test)"
+
+        w.append("## Result")
+        w.append("")
         if all_positive and ndcg_delta > 0:
-            w.append("## Result")
-            w.append("")
             w.append(
                 "Multi-surface retrieval with ingestion-time intelligence "
-                "**outperforms standard chunk-only RAG across every standard IR metric**, "
-                "with statistical significance (p < 0.05, paired t-test)."
+                "**outperforms standard chunk-only RAG across every standard IR metric**"
+                f"{significance_clause}."
             )
         elif ndcg_delta > 0:
-            w.append("## Result")
-            w.append("")
             w.append(
                 f"Multi-surface retrieval improves NDCG@10 by {ndcg_delta:+.1f}% over baseline, "
                 "though not all metrics show improvement."
             )
         else:
-            w.append("## Result")
-            w.append("")
             w.append(
                 f"Multi-surface retrieval shows NDCG@10 of {ms_ndcg:.4f} vs baseline {baseline_ndcg:.4f} "
                 f"({ndcg_delta:+.1f}%). Further investigation needed."
@@ -697,7 +705,15 @@ class ReportGenerator:
 
         # Per-surface performance
         if results.per_surface_scores:
-            w.append("## Per-Surface Performance")
+            w.append("## Per-Surface Performance (within fused result set)")
+            w.append("")
+            w.append(
+                "*Note: These scores are computed from per-surface scores of documents "
+                "that appeared in the fused top-k results. Documents that a surface would "
+                "rank highly but that did not survive fusion are not included. These scores "
+                "are therefore indicative of surface contribution within the fused pipeline, "
+                "not standalone surface quality.*"
+            )
             w.append("")
             w.append("| Surface | NDCG@10 | vs Baseline | Innovation |")
             w.append("|---------|---------|-------------|------------|")

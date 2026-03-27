@@ -173,17 +173,22 @@ async def test_multi_surface_run_collection(client, db, auth_headers):
     # Collect multi-surface run
     collector = ResultCollector(client, kb_id, auth_headers)
     config = SearchConfig(limit=50, threshold=0.0)
-    run_dict, surface_scores, stats = await collector.collect_multi_surface_run(dataset.queries, id_map, config)
+    run_dict, surface_scores, stats, all_surface_scores = await collector.collect_multi_surface_run(dataset.queries, id_map, config)
 
     assert stats.query_count == 10
     assert stats.total_results > 0
 
-    # Verify surface_scores structure
+    # Verify surface_scores structure (fused top-k)
     for query_id, doc_surfaces in surface_scores.items():
         for doc_id, surfaces in doc_surfaces.items():
             assert isinstance(surfaces, dict), f"Expected dict of surface scores, got {type(surfaces)}"
-            # At minimum, chunk_vector should contribute (always has data after embedding)
-            # Other surfaces may or may not contribute depending on profiling status
+
+    # Verify untruncated all_surface_scores includes at least as many docs as fused top-k
+    for query_id in surface_scores:
+        if query_id in all_surface_scores:
+            assert len(all_surface_scores[query_id]) >= len(surface_scores[query_id]), (
+                f"Untruncated scores should have >= docs than fused top-k for query {query_id}"
+            )
 
 
 async def test_metric_computation(client, db, auth_headers):

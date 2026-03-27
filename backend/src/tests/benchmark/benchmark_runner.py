@@ -233,7 +233,7 @@ class BenchmarkRunner:
         )
 
         logger.info("Running multi-surface search (%d queries)...", dataset.query_count)
-        ms_run_dict, ms_surface_scores, ms_stats = await collector.collect_multi_surface_run(
+        ms_run_dict, ms_surface_scores, ms_stats, ms_all_surface_scores = await collector.collect_multi_surface_run(
             dataset.queries, id_map, ms_search_cfg,
         )
 
@@ -241,11 +241,12 @@ class BenchmarkRunner:
         embedding_model, profiling_model = await self._get_model_provenance(kb_id)
         fusion_formula = self._get_fusion_formula()
 
-        # 7. Evaluate per-surface rankings from surface_scores (no extra API calls)
+        # 7. Evaluate per-surface rankings using untruncated surface scores
+        #    (all documents scored by any surface, not just fused top-k).
         #    BM25 baseline comes from the ParadeDB BM25 surface in the multi-surface run.
-        logger.info("Evaluating per-surface rankings...")
+        logger.info("Evaluating per-surface rankings (untruncated: %d queries)...", len(ms_all_surface_scores))
         per_surface_scores, best_novel_scores = self._evaluate_per_surface(
-            dataset.qrels, ms_surface_scores,
+            dataset.qrels, ms_all_surface_scores if ms_all_surface_scores else ms_surface_scores,
         )
 
         # Extract BM25 baseline from per-surface evaluation (ParadeDB BM25, not a separate run)
@@ -293,7 +294,7 @@ class BenchmarkRunner:
             threshold_analysis=threshold_analysis,
             baseline_run_dict=baseline_run_dict,
             multi_surface_run_dict=ms_run_dict,
-            multi_surface_surface_scores=ms_surface_scores,
+            multi_surface_surface_scores=ms_all_surface_scores if ms_all_surface_scores else ms_surface_scores,
             qrels_dict=dataset.qrels,
         )
 
@@ -429,6 +430,12 @@ class BenchmarkRunner:
 
         Uses per-surface scores from the multi-surface search response to rank
         documents by each surface's score alone. No extra API calls needed.
+
+        IMPORTANT: surface_scores only contains documents that appeared in the
+        fused top-k results. Documents that a surface would rank highly but
+        that did not survive score fusion are not included. These metrics
+        therefore reflect surface contribution within the fused pipeline,
+        not standalone surface quality.
 
         Novel surfaces: chunk_summary, query_match, synopsis_match
         (excludes chunk_vector as baseline equivalent and bm25 as prior art)

@@ -156,7 +156,7 @@ class MultiSurfaceSearchMixin:
 
             # Execute search (pass session factory for safe parallel execution)
             kb_uuid = UUID(knowledge_base_id)
-            fused_results = await search_service.search(
+            fused_results, all_surface_scores = await search_service.search(
                 query=query,
                 kb_id=kb_uuid,
                 limit=limit,
@@ -237,6 +237,9 @@ class MultiSurfaceSearchMixin:
                 }
                 for r in fused_results
             ]
+
+            # Per-surface scores for all scored documents (before top-k truncation)
+            response_dict["all_surface_scores"] = all_surface_scores
 
             return response_dict
 

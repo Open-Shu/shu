@@ -99,7 +99,12 @@ class ResultCollector:
         queries: dict[str, BeirQuery],
         id_map: dict[str, str],
         config: SearchConfig | None = None,
-    ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, dict[str, float]]], CollectionStats]:
+    ) -> tuple[
+        dict[str, dict[str, float]],
+        dict[str, dict[str, dict[str, float]]],
+        CollectionStats,
+        dict[str, dict[str, dict[str, float]]],
+    ]:
         """Run all queries through multi-surface search.
 
         Args:
@@ -110,17 +115,21 @@ class ResultCollector:
         Returns:
             Tuple of:
                 - ranx run dict: {query_id: {beir_doc_id: score, ...}, ...}
-                - surface scores: {query_id: {beir_doc_id: {surface: score}}}
+                - surface scores (fused top-k): {query_id: {beir_doc_id: {surface: score}}}
                 - collection stats
+                - all surface scores (untruncated): {query_id: {beir_doc_id: {surface: score}}}
+                  Contains per-surface scores for ALL documents scored by any surface,
+                  not just the fused top-k. Used for unbiased per-surface evaluation.
         """
         cfg = config or SearchConfig()
         run_dict: dict[str, dict[str, float]] = {}
         surface_scores: dict[str, dict[str, dict[str, float]]] = {}
+        all_surface_scores: dict[str, dict[str, dict[str, float]]] = {}
         stats = CollectionStats()
         start = time.monotonic()
 
         for query_id, query in queries.items():
-            ms_results = await self._run_multi_surface_search(query.text, cfg)
+            ms_results, query_all_scores = await self._run_multi_surface_search(query.text, cfg)
             doc_scores, per_doc_surfaces = self._extract_multi_surface_results(ms_results, id_map)
 
             if doc_scores:
@@ -130,6 +139,16 @@ class ResultCollector:
             else:
                 stats.queries_with_no_results += 1
 
+            # Map all surface scores from shu UUIDs to BEIR IDs
+            if query_all_scores:
+                mapped: dict[str, dict[str, float]] = {}
+                for shu_doc_id, scores in query_all_scores.items():
+                    beir_id = id_map.get(shu_doc_id)
+                    if beir_id:
+                        mapped[beir_id] = scores
+                if mapped:
+                    all_surface_scores[query_id] = mapped
+
             stats.query_count += 1
 
             if stats.query_count % 50 == 0:
@@ -137,12 +156,14 @@ class ResultCollector:
 
         stats.elapsed_seconds = time.monotonic() - start
         logger.info(
-            "Multi-surface run collected: %d queries, %d total results (%.1fs)",
+            "Multi-surface run collected: %d queries, %d total results, "
+            "%d queries with untruncated surface scores (%.1fs)",
             stats.query_count,
             stats.total_results,
+            len(all_surface_scores),
             stats.elapsed_seconds,
         )
-        return run_dict, surface_scores, stats
+        return run_dict, surface_scores, stats, all_surface_scores
 
     async def _run_similarity_search(self, query_text: str, config: SearchConfig) -> list[dict[str, Any]]:
         """Execute a single similarity search via the API."""
@@ -166,8 +187,18 @@ class ResultCollector:
         data = resp.json().get("data", {})
         return data.get("results", [])
 
-    async def _run_multi_surface_search(self, query_text: str, config: SearchConfig) -> list[dict[str, Any]]:
-        """Execute a single multi-surface search via the API."""
+    async def _run_multi_surface_search(
+        self,
+        query_text: str,
+        config: SearchConfig,
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, float]]]:
+        """Execute a single multi-surface search via the API.
+
+        Returns:
+            Tuple of (results, all_surface_scores) where all_surface_scores
+            is {doc_id_str: {surface: score}} for all scored documents
+            (before top-k truncation).
+        """
         payload: dict[str, Any] = {
             "query": query_text,
             "query_type": "multi_surface",
@@ -186,10 +217,10 @@ class ResultCollector:
 
         if resp.status_code != 200:
             logger.warning("Multi-surface search failed (status %d): %s", resp.status_code, query_text[:80])
-            return []
+            return [], {}
 
         data = resp.json().get("data", {})
-        return data.get("multi_surface_results", [])
+        return data.get("multi_surface_results", []), data.get("all_surface_scores", {})
 
     def _aggregate_to_document_level(
         self,
