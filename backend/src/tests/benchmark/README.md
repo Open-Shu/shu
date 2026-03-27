@@ -48,9 +48,6 @@ python -m tests.benchmark.run_benchmark --dataset nfcorpus --reuse-kb <kb-id>
 # Exclude keyword_match surface (recommended — it's not a novel contribution)
 python -m tests.benchmark.run_benchmark --dataset nfcorpus --reuse-kb <kb-id> --exclude-surface keyword_match
 
-# Skip ablation study
-python -m tests.benchmark.run_benchmark --dataset nfcorpus --reuse-kb <kb-id> --skip-ablation
-
 # Wait for content_processed only (skip profiling wait — faster but only chunk_vector has data)
 python -m tests.benchmark.run_benchmark --dataset nfcorpus --target-status content_processed
 
@@ -171,7 +168,6 @@ tests/benchmark/
 ├── corpus_ingestor.py           # Ingests docs via ingest_text()
 ├── result_collector.py          # Runs searches via API, collects ranx Runs
 ├── report_generator.py          # JSON, text, and executive summary output
-├── ablation_runner.py           # Surface contribution analysis
 ├── query_classifier.py          # Heuristic query type classification
 ├── beir_reference_scores.py     # Published BEIR scores and methodologies
 ├── download_datasets.py         # Dataset download utility
