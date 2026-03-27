@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from shu.core.logging import get_logger
@@ -138,24 +139,34 @@ class McpPluginAdapter:
         Returns McpToolResult on success, or PluginResult on error.
         """
         arguments = {k: v for k, v in params.items() if k != "op"}
+        start = time.monotonic()
 
         try:
             result = await self._client.call_tool(op, arguments or None)
         except McpConnectionError as exc:
+            self._log_tool_call(op, start, "error", 0, code="mcp_connection_error")
             return PluginResult.err(str(exc), code="mcp_connection_error")
         except McpTimeoutError as exc:
+            self._log_tool_call(op, start, "error", 0, code="mcp_timeout")
             return PluginResult.err(str(exc), code="mcp_timeout")
         except McpResponseTooLarge as exc:
+            self._log_tool_call(op, start, "error", 0, code="mcp_response_too_large")
             return PluginResult.err(str(exc), code="mcp_response_too_large")
         except McpProtocolError as exc:
+            self._log_tool_call(op, start, "error", 0, code="mcp_protocol_error")
             return PluginResult.err(str(exc), code="mcp_protocol_error")
         except McpError as exc:
+            self._log_tool_call(op, start, "error", 0, code="mcp_server_error")
             return PluginResult.err(str(exc), code="mcp_server_error")
+
+        result_size = len(json.dumps(result.content)) if result.content else 0
 
         if result.is_error:
             error_text = self._extract_text_content(result)
+            self._log_tool_call(op, start, "error", result_size, code="mcp_server_error")
             return PluginResult.err(error_text or "MCP tool returned an error", code="mcp_server_error")
 
+        self._log_tool_call(op, start, "ok", result_size)
         return result
 
     async def _execute_chat_callable(self, op: str, params: dict[str, Any]) -> PluginResult:
@@ -239,6 +250,11 @@ class McpPluginAdapter:
         if cursor_field and cursor_param and last_cursor:
             await self._save_cursor(host, kb_id, last_cursor)
 
+        logger.info(
+            "mcp.ingest_complete [%s/%s] ingested=%d skipped=%d errors=%d total=%d",
+            self.name, op, ingested_count, skipped_count, error_count, total_items,
+        )
+
         return PluginResult.ok(
             data={
                 "ingested_count": ingested_count,
@@ -291,7 +307,7 @@ class McpPluginAdapter:
             return (1, 0, 0)
         except Exception as exc:
             warnings.append(f"Item {idx}: ingest failed: {exc}")
-            logger.warning("mcp.ingest_item_failed", plugin=self.name, op=op, item_idx=idx, error=str(exc))
+            logger.warning("mcp.ingest_item_failed [%s/%s] item=%d: %s", self.name, op, idx, exc)
             return (0, 0, 1)
 
     async def _load_cursor(self, host: Any, kb_id: str) -> str | None:
@@ -310,7 +326,7 @@ class McpPluginAdapter:
         try:
             await host.cursor.set(kb_id, cursor)
         except Exception:
-            logger.warning("mcp.cursor_save_failed", plugin=self.name, kb_id=kb_id)
+            logger.warning("mcp.cursor_save_failed [%s] kb=%s", self.name, kb_id)
 
     def _assemble_response_data(self, result: McpToolResult) -> dict[str, Any]:
         """Assemble MCP tool result content into a single data dict.
@@ -373,3 +389,10 @@ class McpPluginAdapter:
             if isinstance(block, dict) and block.get("type") == "text":
                 texts.append(block.get("text", ""))
         return "\n".join(texts)
+
+    def _log_tool_call(
+        self, op: str, start: float, status: str, result_size: int, code: str | None = None
+    ) -> None:
+        """Log a structured tool call event."""
+        duration_ms = int((time.monotonic() - start) * 1000)
+        logger.info("mcp.tool_call [%s/%s] %dms status=%s size=%d code=%s", self.name, op, duration_ms, status, result_size, code)

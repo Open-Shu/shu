@@ -4,16 +4,15 @@ Caches loaded plugins in-process.
 
 from __future__ import annotations
 
-import logging
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.logging import get_logger
 from ..models.plugin_registry import PluginDefinition  # v0 registry model reused for v1 enablement checks
 from .base import Plugin
 from .loader import PluginLoader, PluginRecord
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PluginRegistry:
@@ -25,6 +24,17 @@ class PluginRegistry:
     def refresh(self) -> None:
         self._manifest = self._loader.discover()
         self._cache.clear()
+
+    async def _refresh_mcp(self, session: AsyncSession) -> None:
+        """Load MCP plugin records from the database and merge into the manifest."""
+        from ..services.mcp_service import McpService
+
+        try:
+            service = McpService(session)
+            for record in await service.generate_all_plugin_records():
+                self._manifest[record.name] = record
+        except Exception:
+            logger.warning("Failed to refresh MCP plugin records")
 
     def get_manifest(self, refresh_if_empty: bool = True) -> dict[str, PluginRecord]:
         """Return current manifest; optionally refresh if empty.
@@ -50,12 +60,15 @@ class PluginRegistry:
         purged = 0
         if not self._manifest:
             self.refresh()
+        await self._refresh_mcp(session)
         discovered_names = set(self._manifest.keys())
         # Upsert discovered plugins
         for name, record in self._manifest.items():
             res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
             row = res.scalars().first()
-            if not row:
+            if name.startswith("mcp:"):
+                created += await self._sync_mcp_definition(name, record, row, session)
+            elif not row:
                 # load plugin to fetch schema
                 try:
                     plugin = self._loader.load(record)
@@ -111,7 +124,7 @@ class PluginRegistry:
                 except Exception:
                     # non-fatal, continue
                     pass
-        # Purge DB rows not present on disk anymore
+        # Purge DB rows not present on disk or MCP anymore
         try:
             res = await session.execute(select(PluginDefinition))
             all_rows = res.scalars().all()
@@ -126,6 +139,7 @@ class PluginRegistry:
                         await session.rollback()
         except Exception:
             pass
+
         return {
             "created": created,
             "updated": updated,
@@ -133,37 +147,75 @@ class PluginRegistry:
             "discovered": len(self._manifest),
         }
 
+    async def _sync_mcp_definition(
+        self, name: str, record: PluginRecord, row: PluginDefinition | None, session: AsyncSession
+    ) -> int:
+        """Create a PluginDefinition row for an MCP plugin if it doesn't exist.
+
+        Returns 1 if a new row was created, 0 otherwise.
+        """
+        if row:
+            return 0
+
+        row = PluginDefinition(
+            name=name,
+            version=getattr(record, "version", "1.0"),
+            enabled=False,
+        )
+        session.add(row)
+        await session.commit()
+        return 1
+
     async def resolve(self, name: str, session: AsyncSession) -> Plugin | None:
+        from ..services.mcp_service import McpService
+
         # If cached, verify enablement from DB before returning to honor runtime toggles
         if name in self._cache:
-            try:
-                res = await session.execute(select(PluginDefinition.enabled).where(PluginDefinition.name == name))
-                enabled = bool(res.scalar() or False)
-                if not enabled:
-                    # Evict stale cache entry when disabled
-                    self._cache.pop(name, None)
-                    logger.info("Plugin '%s' evicted from cache due to disable toggle", name)
-                    return None
-            except Exception:
-                # On DB error, fall through to normal resolution path which re-checks enablement
-                self._cache.pop(name, None)
+            if name.startswith("mcp:"):
+                enabled = await McpService(session).is_connection_enabled(name.removeprefix("mcp:"))
             else:
-                return self._cache[name]
+                try:
+                    res = await session.execute(select(PluginDefinition.enabled).where(PluginDefinition.name == name))
+                    enabled = bool(res.scalar() or False)
+                except Exception:
+                    enabled = False
+            if not enabled:
+                self._cache.pop(name, None)
+                logger.info("Plugin '%s' evicted from cache due to disable toggle", name)
+                return None
+            return self._cache[name]
+
         if not self._manifest:
             self.refresh()
         record = self._manifest.get(name)
         if not record:
             logger.warning("Plugin '%s' not found in plugin manifest(s)", name)
             return None
-        # Check DB enablement (by name; version can be matched later if needed)
-        res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
-        row = res.scalars().first()
-        if not row or not row.enabled:
-            logger.warning("Plugin '%s' is disabled or not registered in DB", name)
-            return None
-        plugin = self._loader.load(record)
-        self._cache[name] = plugin
+
+        if name.startswith("mcp:"):
+            plugin = await self._resolve_mcp(name, session)
+        else:
+            # Check DB enablement for native plugins
+            res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
+            row = res.scalars().first()
+            if not row or not row.enabled:
+                logger.warning("Plugin '%s' is disabled or not registered in DB", name)
+                return None
+            plugin = self._loader.load(record)
+
+        if plugin is not None:
+            self._cache[name] = plugin
         return plugin
+
+    async def _resolve_mcp(self, name: str, session: AsyncSession) -> Plugin | None:
+        """Resolve an MCP plugin by delegating adapter creation to McpService."""
+        from ..services.mcp_service import McpService
+
+        try:
+            return await McpService(session).resolve_adapter(name.removeprefix("mcp:"))
+        except Exception:
+            logger.warning("Failed to resolve MCP plugin '%s'", name)
+            return None
 
 
 REGISTRY = PluginRegistry()

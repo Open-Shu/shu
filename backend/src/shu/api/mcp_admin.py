@@ -24,14 +24,12 @@ from ..schemas.mcp_admin import (
     McpSyncResult,
     McpToolConfigUpdate,
 )
-from ..services.mcp_service import McpService
+from ..services.mcp_service import DEGRADED_THRESHOLD, McpService
 from .dependencies import get_db
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/mcp", tags=["mcp-admin"])
-
-DEGRADED_THRESHOLD = 5
 
 
 def _derive_status(conn) -> McpConnectionStatus:
@@ -83,10 +81,10 @@ async def create_connection(
         connection = await service.create_connection(body, str(user.id))
         return ShuResponse.created(_to_response(connection))
     except ShuException as e:
-        logger.error("Failed to create MCP connection", extra={"error": str(e)})
+        logger.error("Failed to create MCP connection: %s", e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error("Unexpected error creating MCP connection", extra={"error": str(e)})
+        logger.error("Unexpected error creating MCP connection: %s", e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -106,10 +104,10 @@ async def list_connections(
             )
         )
     except ShuException as e:
-        logger.error("Failed to list MCP connections", extra={"error": str(e)})
+        logger.error("Failed to list MCP connections: %s", e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error("Unexpected error listing MCP connections", extra={"error": str(e)})
+        logger.error("Unexpected error listing MCP connections: %s", e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -125,10 +123,10 @@ async def get_connection(
         connection = await service.get_connection(connection_id, str(user.id))
         return ShuResponse.success(_to_response(connection))
     except ShuException as e:
-        logger.error("Failed to get MCP connection", extra={"error": str(e), "connection_id": connection_id})
+        logger.error("Failed to get MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error("Unexpected error getting MCP connection", extra={"error": str(e), "connection_id": connection_id})
+        logger.error("Unexpected error getting MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -145,12 +143,10 @@ async def update_connection(
         connection = await service.update_connection(connection_id, body, str(user.id))
         return ShuResponse.success(_to_response(connection))
     except ShuException as e:
-        logger.error("Failed to update MCP connection", extra={"error": str(e), "connection_id": connection_id})
+        logger.error("Failed to update MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error(
-            "Unexpected error updating MCP connection", extra={"error": str(e), "connection_id": connection_id}
-        )
+        logger.error("Unexpected error updating MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -169,12 +165,10 @@ async def delete_connection(
         await service.delete_connection(connection_id, str(user.id))
         return ShuResponse.no_content()
     except ShuException as e:
-        logger.error("Failed to delete MCP connection", extra={"error": str(e), "connection_id": connection_id})
+        logger.error("Failed to delete MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error(
-            "Unexpected error deleting MCP connection", extra={"error": str(e), "connection_id": connection_id}
-        )
+        logger.error("Unexpected error deleting MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -190,10 +184,10 @@ async def sync_connection(
         result = await service.sync_connection(connection_id, str(user.id))
         return ShuResponse.success(result)
     except ShuException as e:
-        logger.error("Failed to sync MCP connection", extra={"error": str(e), "connection_id": connection_id})
+        logger.error("Failed to sync MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error("Unexpected error syncing MCP connection", extra={"error": str(e), "connection_id": connection_id})
+        logger.error("Unexpected error syncing MCP connection %s: %s", connection_id, e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -214,14 +208,8 @@ async def update_tool_config(
         connection = await service.update_tool_config(connection_id, tool_name, body, str(user.id))
         return ShuResponse.success(_to_response(connection))
     except ShuException as e:
-        logger.error(
-            "Failed to update MCP tool config",
-            extra={"error": str(e), "connection_id": connection_id, "tool_name": tool_name},
-        )
+        logger.error("Failed to update MCP tool config %s/%s: %s", connection_id, tool_name, e)
         return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
     except Exception as e:
-        logger.error(
-            "Unexpected error updating MCP tool config",
-            extra={"error": str(e), "connection_id": connection_id, "tool_name": tool_name},
-        )
+        logger.error("Unexpected error updating MCP tool config %s/%s: %s", connection_id, tool_name, e)
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)

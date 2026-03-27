@@ -483,6 +483,53 @@ class TestUpdateToolConfig:
                 await service.update_tool_config("conn-1", "nonexistent", data, "admin")
 
 
+class TestGenerateAllPluginRecords:
+    """Verify bulk record generation from enabled connections."""
+
+    @pytest.mark.asyncio
+    async def test_returns_records_for_enabled_connections(self):
+        """Each enabled connection with tool_configs produces a PluginRecord."""
+        conn_a = _make_connection(
+            name="alpha",
+            server_info={"version": "1.0"},
+            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+        )
+        conn_b = _make_connection(
+            name="beta",
+            server_info={"version": "2.0"},
+            tool_configs={"ingest_docs": {"type": "ingest", "enabled": True}},
+        )
+
+        db = _mock_db()
+        scalars_mock = MagicMock()
+        scalars_mock.all.return_value = [conn_a, conn_b]
+        execute_result = MagicMock()
+        execute_result.scalars.return_value = scalars_mock
+        db.execute.return_value = execute_result
+
+        service = McpService(db)
+        records = await service.generate_all_plugin_records()
+
+        assert len(records) == 2
+        names = {r.name for r in records}
+        assert names == {"mcp:alpha", "mcp:beta"}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_connections(self):
+        """No enabled connections returns an empty list."""
+        db = _mock_db()
+        scalars_mock = MagicMock()
+        scalars_mock.all.return_value = []
+        execute_result = MagicMock()
+        execute_result.scalars.return_value = scalars_mock
+        db.execute.return_value = execute_result
+
+        service = McpService(db)
+        records = await service.generate_all_plugin_records()
+
+        assert records == []
+
+
 class TestListConnections:
     """Verify PBAC-filtered listing returns only authorized connections."""
 
@@ -528,3 +575,73 @@ class TestListConnections:
             result = await service.list_connections(user_id="user-1")
 
         assert result == []
+
+
+def _scalar_result(value):
+    """Build an execute result whose .scalar() returns value."""
+    result = MagicMock()
+    result.scalar.return_value = value
+    return result
+
+
+class TestIsConnectionEnabled:
+    """Verify is_connection_enabled checks the enabled column."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_enabled(self):
+        """An enabled connection returns True."""
+        db = _mock_db()
+        db.execute.return_value = _scalar_result(True)
+
+        service = McpService(db)
+        assert await service.is_connection_enabled("my-server") is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_disabled(self):
+        """A disabled connection returns False."""
+        db = _mock_db()
+        db.execute.return_value = _scalar_result(False)
+
+        service = McpService(db)
+        assert await service.is_connection_enabled("my-server") is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_not_found(self):
+        """A non-existent connection returns False."""
+        db = _mock_db()
+        db.execute.return_value = _scalar_result(None)
+
+        service = McpService(db)
+        assert await service.is_connection_enabled("missing") is False
+
+
+class TestResolveAdapter:
+    """Verify resolve_adapter loads connection and builds McpPluginAdapter."""
+
+    @pytest.mark.asyncio
+    async def test_returns_adapter_for_enabled_connection(self):
+        """An enabled connection produces an McpPluginAdapter instance."""
+        conn = _make_connection(name="wiki", enabled=True)
+        db = _mock_db()
+        db.execute.return_value = _scalar_one_or_none(conn)
+
+        mock_client = AsyncMock()
+
+        with patch.object(McpService, "make_client", new_callable=AsyncMock, return_value=mock_client):
+            service = McpService(db)
+            result = await service.resolve_adapter("wiki")
+
+        assert result is not None
+        assert result._connection is conn
+        assert result._client is mock_client
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_not_found(self):
+        """A missing or disabled connection returns None."""
+        db = _mock_db()
+        db.execute.return_value = _scalar_one_or_none(None)
+
+        service = McpService(db)
+        result = await service.resolve_adapter("missing")
+
+        assert result is None

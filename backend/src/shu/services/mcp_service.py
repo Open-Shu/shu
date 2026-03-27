@@ -18,6 +18,7 @@ from shu.core.logging import get_logger
 from shu.models.mcp_server_connection import McpServerConnection
 from shu.models.plugin_feed import PluginFeed
 from shu.plugins.loader import PluginRecord
+from shu.plugins.mcp_adapter import McpPluginAdapter
 from shu.plugins.mcp_client import McpClient, McpError
 from shu.schemas.mcp_admin import (
     McpConnectionCreate,
@@ -29,6 +30,8 @@ from shu.services.plugin_secrets import delete_secret, get_secret, list_secret_k
 from shu.services.policy_engine import POLICY_CACHE, enforce_pbac
 
 logger = get_logger(__name__)
+
+DEGRADED_THRESHOLD = 5
 
 
 class McpService:
@@ -67,7 +70,7 @@ class McpService:
         if data.headers:
             await self._store_headers(connection.name, data.headers, user_id)
 
-        logger.info("mcp.connection_created", connection_id=connection.id, name=connection.name)
+        logger.info("mcp.connection_created [%s] %s", connection.name, connection.url)
         return connection
 
     async def update_connection(
@@ -105,7 +108,7 @@ class McpService:
         if data.headers is not None:
             await self._store_headers(connection.name, data.headers, user_id)
 
-        logger.info("mcp.connection_updated", connection_id=connection_id, name=connection.name)
+        logger.info("mcp.connection_updated [%s] %s", connection.name, connection.url)
         return connection
 
     async def delete_connection(self, connection_id: str, user_id: str) -> None:
@@ -128,7 +131,7 @@ class McpService:
         await self.db.delete(connection)
         await self.db.commit()
 
-        logger.info("mcp.connection_deleted", connection_id=connection_id, name=connection.name)
+        logger.info("mcp.connection_deleted [%s] %s", connection.name, connection.url)
 
     async def list_connections(self, user_id: str) -> list[McpServerConnection]:
         """Return MCP server connections the user has read access to."""
@@ -166,6 +169,13 @@ class McpService:
         except McpError as exc:
             self._record_failure(connection, str(exc))
             await self.db.commit()
+            logger.info(
+                "mcp.sync_failed [%s] %s failures=%d error=%s",
+                connection.name,
+                connection.url,
+                connection.consecutive_failures,
+                exc,
+            )
             return McpSyncResult(tools_discovered=0, errors=[str(exc)])
         finally:
             await client.close()
@@ -179,12 +189,12 @@ class McpService:
         await self.db.refresh(connection)
 
         logger.info(
-            "mcp.sync_complete",
-            connection_id=connection_id,
-            latency_ms=latency_ms,
-            tool_count=len(result.tools),
-            added=result.added,
-            removed=result.removed,
+            "mcp.sync_complete [%s] %dms tools=%d added=%s removed=%s",
+            connection.name,
+            latency_ms,
+            len(result.tools),
+            result.added,
+            result.removed,
         )
         return result
 
@@ -211,12 +221,7 @@ class McpService:
         await self.db.commit()
         await self.db.refresh(connection)
 
-        logger.info(
-            "mcp.tool_config_updated",
-            connection_id=connection_id,
-            tool_name=tool_name,
-            tool_type=data.type.value,
-        )
+        logger.info("mcp.tool_config_updated [%s] tool=%s type=%s", connection.name, tool_name, data.type.value)
         return connection
 
     def _merge_discovered_tools(
@@ -260,6 +265,39 @@ class McpService:
             removed=removed,
         )
 
+    async def generate_all_plugin_records(self) -> list[PluginRecord]:
+        """Query all enabled MCP connections and build a PluginRecord for each."""
+        result = await self.db.execute(select(McpServerConnection).where(McpServerConnection.enabled.is_(True)))
+        records = []
+        for conn in result.scalars().all():
+            try:
+                records.append(self.generate_plugin_record(conn))
+            except Exception:
+                logger.warning("Failed to generate PluginRecord for MCP connection '%s'", conn.name)
+        return records
+
+    async def is_connection_enabled(self, connection_name: str) -> bool:
+        """Check if an MCP connection is enabled by its connection name."""
+        result = await self.db.execute(
+            select(McpServerConnection.enabled).where(McpServerConnection.name == connection_name)
+        )
+        return bool(result.scalar())
+
+    async def resolve_adapter(self, connection_name: str):
+        """Load an enabled connection and return an McpPluginAdapter instance, or None."""
+        result = await self.db.execute(
+            select(McpServerConnection).where(
+                McpServerConnection.name == connection_name,
+                McpServerConnection.enabled.is_(True),
+            )
+        )
+        connection = result.scalar_one_or_none()
+        if not connection:
+            return None
+
+        client = await self.make_client(connection)
+        return McpPluginAdapter(connection, client)
+
     def generate_plugin_record(self, connection: McpServerConnection) -> PluginRecord:
         """Build a PluginRecord from the connection's tool_configs."""
         configs = connection.tool_configs or {}
@@ -295,8 +333,17 @@ class McpService:
 
     def _record_failure(self, connection: McpServerConnection, error: str) -> None:
         """Update health tracking on failed connection."""
-        connection.consecutive_failures = (connection.consecutive_failures or 0) + 1
+        previous_failures = connection.consecutive_failures or 0
+        connection.consecutive_failures = previous_failures + 1
         connection.last_error = error[:500]
+
+        if previous_failures < DEGRADED_THRESHOLD <= connection.consecutive_failures:
+            logger.info(
+                "mcp.connection_degraded [%s] %s failures=%d",
+                connection.name,
+                connection.url,
+                connection.consecutive_failures,
+            )
 
     async def make_client(self, connection: McpServerConnection) -> McpClient:
         """Create a new McpClient for a connection, loading headers from plugin secrets."""

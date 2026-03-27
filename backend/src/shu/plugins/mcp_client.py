@@ -99,6 +99,7 @@ class McpClient:
             retry_base_delay_ms if retry_base_delay_ms is not None else settings.mcp_retry_base_delay_ms
         )
         self._request_id = 0
+        self._session_id: str | None = None
 
         timeouts = timeouts or {}
         connect_s = timeouts.get("connect_ms", settings.mcp_connect_timeout_ms) / 1000.0
@@ -124,12 +125,18 @@ class McpClient:
         """POST JSON to the MCP server with retry on transient failures.
 
         Retries on connection errors and timeouts with exponential backoff.
+        Captures and sends the Mcp-Session-Id header per the Streamable HTTP spec.
         """
         last_exc: McpError | None = None
         method = payload.get("method", "unknown")
+        headers = {"Mcp-Session-Id": self._session_id} if self._session_id else None
         for attempt in range(1 + self._max_retries):
             try:
-                return await self._client.post(self._url, json=payload)
+                response = await self._client.post(self._url, json=payload, headers=headers)
+                session_id = response.headers.get("mcp-session-id")
+                if session_id:
+                    self._session_id = session_id
+                return response
             except httpx.ConnectError as exc:
                 last_exc = McpConnectionError(
                     f"Failed to connect to MCP server: {exc}", server_url=self._url
@@ -143,13 +150,8 @@ class McpClient:
             if attempt < self._max_retries:
                 delay_s = (self._retry_base_delay_ms / 1000.0) * (2 ** attempt)
                 logger.warning(
-                    "mcp.retry",
-                    url=self._url,
-                    method=method,
-                    attempt=attempt + 1,
-                    max_retries=self._max_retries,
-                    delay_s=delay_s,
-                    error=str(last_exc),
+                    "mcp.retry [%s] %s attempt=%d/%d delay=%.1fs error=%s",
+                    self._url, method, attempt + 1, self._max_retries, delay_s, last_exc,
                 )
                 await asyncio.sleep(delay_s)
         raise last_exc  # type: ignore[misc]
@@ -169,7 +171,7 @@ class McpClient:
         if params is not None:
             payload["params"] = params
 
-        logger.debug("mcp.jsonrpc.send", method=method, request_id=request_id, url=self._url)
+        logger.debug("mcp.jsonrpc.send [%s] %s id=%s", self._url, method, request_id)
         response = await self._post(payload)
 
         content_type = response.headers.get("content-type", "")
@@ -287,10 +289,8 @@ class McpClient:
 
         self._server_info = result.get("serverInfo", {})
         logger.info(
-            "mcp.connected",
-            url=self._url,
-            server_name=self._server_info.get("name"),
-            protocol_version=server_version,
+            "mcp.connected [%s] server=%s protocol=%s",
+            self._url, self._server_info.get("name"), server_version,
         )
 
         await self._send_notification("notifications/initialized")
@@ -319,7 +319,7 @@ class McpClient:
                 description=t.get("description"),
                 input_schema=t.get("inputSchema"),
             ))
-        logger.info("mcp.tools_discovered", url=self._url, tool_count=len(tools))
+        logger.info("mcp.tools_discovered [%s] count=%d", self._url, len(tools))
         return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> McpToolResult:
@@ -328,7 +328,7 @@ class McpClient:
         if arguments:
             params["arguments"] = arguments
 
-        logger.info("mcp.tool_call", url=self._url, tool=name)
+        logger.info("mcp.tool_call [%s] tool=%s", self._url, name)
         result = await self._send_jsonrpc("tools/call", params)
 
         content = result.get("content", [])
