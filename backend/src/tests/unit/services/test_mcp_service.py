@@ -645,3 +645,37 @@ class TestResolveAdapter:
         result = await service.resolve_adapter("missing")
 
         assert result is None
+
+
+class TestGetConnectionSchema:
+    """Verify get_connection_schema builds schema from discovered tools."""
+
+    @pytest.mark.asyncio
+    async def test_returns_schema_from_discovered_tools(self):
+        """A connection with discovered tools returns a valid schema."""
+        conn = _make_connection(
+            name="wiki",
+            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            discovered_tools=[
+                {
+                    "name": "search",
+                    "description": "Search the wiki",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"q": {"type": "string"}},
+                        "required": ["q"],
+                    },
+                }
+            ],
+        )
+        db = _mock_db()
+        db.execute.return_value = _scalar_one_or_none(conn)
+
+        service = McpService(db)
+        schema = await service.get_connection_schema("wiki")
+
+        assert schema is not None
+        assert schema["type"] == "object"
+        assert "op" in schema["properties"]
+        assert "search" in schema["properties"]["op"]["enum"]
+        assert schema["allOf"][0]["then"]["properties"]["q"] == {"type": "string"}

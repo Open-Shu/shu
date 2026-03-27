@@ -141,17 +141,22 @@ class TestSyncMcpDefinitions:
         scalars_first.first.return_value = None
         exec_result_none = MagicMock()
         exec_result_none.scalars.return_value = scalars_first
-        # Second execute: purge query returns empty
+        # Second execute: McpServerConnection query → None (no connection row)
+        conn_scalars = MagicMock()
+        conn_scalars.return_value = None
+        exec_result_conn = MagicMock()
+        exec_result_conn.scalar_one_or_none.return_value = None
+        # Third execute: purge query returns empty
         scalars_all = MagicMock()
         scalars_all.all.return_value = []
         exec_result_all = MagicMock()
         exec_result_all.scalars.return_value = scalars_all
 
-        session.execute = AsyncMock(side_effect=[exec_result_none, exec_result_all])
+        session.execute = AsyncMock(side_effect=[exec_result_none, exec_result_conn, exec_result_all])
         session.add = MagicMock()
 
-        with patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
-            # Pre-populate manifest as if _refresh_mcp already ran
+        with patch.object(registry, "refresh"), \
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
             registry._manifest = {"mcp:wiki": mcp_record}
             result = await registry.sync(session)
 
@@ -178,7 +183,8 @@ class TestSyncMcpDefinitions:
         exec_result_all.scalars.return_value = scalars_all
         session.execute = AsyncMock(return_value=exec_result_all)
 
-        with patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
+        with patch.object(registry, "refresh"), \
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
             result = await registry.sync(session)
 
         session.delete.assert_awaited_once_with(stale_row)
@@ -199,6 +205,7 @@ class TestSyncMcpDefinitions:
         existing_row = MagicMock()
         existing_row.name = "mcp:existing"
         existing_row.version = "1.0"
+        existing_row.input_schema = None
 
         session = AsyncMock()
         # First execute: PluginDefinition exists
@@ -206,16 +213,20 @@ class TestSyncMcpDefinitions:
         scalars_first.first.return_value = existing_row
         exec_result_exists = MagicMock()
         exec_result_exists.scalars.return_value = scalars_first
-        # Second execute: purge query returns the same row (in discovered_names, so not purged)
+        # Second execute: McpServerConnection query → None
+        exec_result_conn = MagicMock()
+        exec_result_conn.scalar_one_or_none.return_value = None
+        # Third execute: purge query returns the same row (in discovered_names, so not purged)
         scalars_all = MagicMock()
         scalars_all.all.return_value = [existing_row]
         exec_result_all = MagicMock()
         exec_result_all.scalars.return_value = scalars_all
 
-        session.execute = AsyncMock(side_effect=[exec_result_exists, exec_result_all])
+        session.execute = AsyncMock(side_effect=[exec_result_exists, exec_result_conn, exec_result_all])
         session.add = MagicMock()
 
-        with patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
+        with patch.object(registry, "refresh"), \
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
             registry._manifest = {"mcp:existing": mcp_record}
             result = await registry.sync(session)
 

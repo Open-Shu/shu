@@ -17,6 +17,7 @@ from shu.core.exceptions import ConflictError, NotFoundError
 from shu.core.logging import get_logger
 from shu.models.mcp_server_connection import McpServerConnection
 from shu.models.plugin_feed import PluginFeed
+from shu.models.plugin_registry import PluginDefinition
 from shu.plugins.loader import PluginRecord
 from shu.plugins.mcp_adapter import McpPluginAdapter
 from shu.plugins.mcp_client import McpClient, McpError
@@ -98,6 +99,7 @@ class McpService:
 
         if data.enabled is not None:
             connection.enabled = data.enabled
+            await self._sync_plugin_enabled(f"mcp:{connection.name}", data.enabled)
 
         await self.db.commit()
         await self.db.refresh(connection)
@@ -298,6 +300,14 @@ class McpService:
         client = await self.make_client(connection)
         return McpPluginAdapter(connection, client)
 
+    async def get_connection_schema(self, connection_name: str) -> dict | None:
+        """Build the input schema for an MCP connection from its discovered tools."""
+        result = await self.db.execute(select(McpServerConnection).where(McpServerConnection.name == connection_name))
+        connection = result.scalar_one_or_none()
+        if not connection:
+            return None
+        return McpPluginAdapter(connection).get_schema()
+
     def generate_plugin_record(self, connection: McpServerConnection) -> PluginRecord:
         """Build a PluginRecord from the connection's tool_configs."""
         configs = connection.tool_configs or {}
@@ -324,6 +334,13 @@ class McpService:
             allowed_feed_ops=feed_ops or None,
             chat_callable_ops=chat_ops or None,
         )
+
+    async def _sync_plugin_enabled(self, plugin_name: str, enabled: bool) -> None:
+        """Keep PluginDefinition.enabled in sync with the MCP connection state."""
+        result = await self.db.execute(select(PluginDefinition).where(PluginDefinition.name == plugin_name))
+        row = result.scalars().first()
+        if row and row.enabled != enabled:
+            row.enabled = enabled
 
     def _record_success(self, connection: McpServerConnection) -> None:
         """Update health tracking on successful connection."""

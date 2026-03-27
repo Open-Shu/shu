@@ -319,6 +319,7 @@ async def test_connect_alternate_supported_version(client: McpClient) -> None:
 @pytest.mark.asyncio
 async def test_list_tools_parsing(client: McpClient) -> None:
     """list_tools() parses tool array into McpToolInfo list."""
+    client._connected = True
     tools_result = {
         "tools": [
             {"name": "echo", "description": "Echo input", "inputSchema": {"type": "object"}},
@@ -340,6 +341,7 @@ async def test_list_tools_parsing(client: McpClient) -> None:
 @pytest.mark.asyncio
 async def test_call_tool_success(client: McpClient) -> None:
     """call_tool() returns McpToolResult with content."""
+    client._connected = True
     tool_result = {
         "content": [{"type": "text", "text": "hello"}],
         "isError": False,
@@ -360,6 +362,7 @@ async def test_call_tool_success(client: McpClient) -> None:
 @pytest.mark.asyncio
 async def test_call_tool_error_response(client: McpClient) -> None:
     """call_tool() with isError=true returns McpToolResult with is_error set."""
+    client._connected = True
     tool_result = {
         "content": [{"type": "text", "text": "something went wrong"}],
         "isError": True,
@@ -375,7 +378,8 @@ async def test_call_tool_error_response(client: McpClient) -> None:
 
 @pytest.mark.asyncio
 async def test_call_tool_no_arguments(client: McpClient) -> None:
-    """call_tool() without arguments omits the arguments key from params."""
+    """call_tool() without arguments sends empty arguments dict."""
+    client._connected = True
     tool_result = {"content": [], "isError": False}
     client._client.post = AsyncMock(
         return_value=_make_response(_jsonrpc_result(tool_result))
@@ -383,8 +387,7 @@ async def test_call_tool_no_arguments(client: McpClient) -> None:
 
     await client.call_tool("noop")
     payload = client._client.post.call_args.kwargs["json"]
-    assert payload["params"] == {"name": "noop"}
-    assert "arguments" not in payload["params"]
+    assert payload["params"] == {"name": "noop", "arguments": {}}
 
 
 @pytest.mark.asyncio

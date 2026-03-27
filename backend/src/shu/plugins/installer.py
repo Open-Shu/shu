@@ -99,6 +99,8 @@ def _load_manifest(plugin_root: Path) -> dict:
     entry = m.get("module")
     if not name or not entry:
         raise InstallError("manifest missing required fields: 'name' and 'module'")
+    if name.startswith("mcp-"):
+        raise InstallError("plugin names starting with 'mcp-' are reserved for MCP server integrations")
     return m
 
 

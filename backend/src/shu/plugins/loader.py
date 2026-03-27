@@ -205,6 +205,9 @@ class PluginLoader:
                 chat_callable_ops = m.get("chat_callable_ops") or []
                 if not (name and entry):
                     continue
+                if name.startswith("mcp-"):
+                    logger.warning("Skipping plugin '%s': 'mcp-' prefix is reserved", name)
+                    continue
                 rec = PluginRecord(
                     name=name,
                     version=version,

@@ -100,6 +100,7 @@ class McpClient:
         )
         self._request_id = 0
         self._session_id: str | None = None
+        self._connected = False
 
         timeouts = timeouts or {}
         connect_s = timeouts.get("connect_ms", settings.mcp_connect_timeout_ms) / 1000.0
@@ -171,8 +172,9 @@ class McpClient:
         if params is not None:
             payload["params"] = params
 
-        logger.debug("mcp.jsonrpc.send [%s] %s id=%s", self._url, method, request_id)
+        logger.debug("mcp.jsonrpc.send [%s] %s id=%s payload=%s", self._url, method, request_id, json.dumps(payload)[:500])
         response = await self._post(payload)
+        logger.debug("mcp.jsonrpc.recv [%s] %s status=%d body=%s", self._url, method, response.status_code, response.text[:500])
 
         content_type = response.headers.get("content-type", "")
 
@@ -294,6 +296,7 @@ class McpClient:
         )
 
         await self._send_notification("notifications/initialized")
+        self._connected = True
         return result
 
     async def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
@@ -306,16 +309,26 @@ class McpClient:
             payload["params"] = params
         await self._post(payload)
 
+    async def _ensure_connected(self) -> None:
+        """Perform the initialize handshake if not already connected."""
+        if not self._connected:
+            await self.connect()
+
     async def list_tools(self) -> list[McpToolInfo]:
         """Enumerate available tools from the MCP server."""
+        await self._ensure_connected()
         result = await self._send_jsonrpc("tools/list")
         raw_tools = result.get("tools", [])
         tools = []
         for t in raw_tools:
             if not isinstance(t, dict) or "name" not in t:
                 continue
+            name = t["name"]
+            if "__" in name:
+                logger.warning("mcp.tool_skipped [%s] name=%s reason=contains '__' delimiter", self._url, name)
+                continue
             tools.append(McpToolInfo(
-                name=t["name"],
+                name=name,
                 description=t.get("description"),
                 input_schema=t.get("inputSchema"),
             ))
@@ -324,9 +337,8 @@ class McpClient:
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> McpToolResult:
         """Invoke a tool on the MCP server."""
-        params: dict[str, Any] = {"name": name}
-        if arguments:
-            params["arguments"] = arguments
+        await self._ensure_connected()
+        params: dict[str, Any] = {"name": name, "arguments": arguments or {}}
 
         logger.info("mcp.tool_call [%s] tool=%s", self._url, name)
         result = await self._send_jsonrpc("tools/call", params)

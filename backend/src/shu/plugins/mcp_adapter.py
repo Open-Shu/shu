@@ -30,7 +30,7 @@ class McpPluginAdapter:
     Implements the Plugin protocol for use by PluginExecutor and the feed scheduler.
     """
 
-    def __init__(self, connection: McpServerConnection, client: McpClient) -> None:
+    def __init__(self, connection: McpServerConnection, client: McpClient | None = None) -> None:
         self._connection = connection
         self._client = client
         self.name: str = f"mcp:{connection.name}"
@@ -108,6 +108,34 @@ class McpPluginAdapter:
 
         return schema
 
+    def get_schema_for_op(self, op: str) -> dict[str, Any] | None:
+        """Return a flat per-op schema matching the native plugin format.
+
+        Used by build_agent_tools so each MCP tool gets a clean schema
+        in the LLM payload rather than the combined allOf blob from get_schema().
+        """
+        enabled = self._enabled_tools()
+        if op not in enabled:
+            return None
+
+        discovered = self._discovered_tools_by_name()
+        tool_info = discovered.get(op, {})
+        input_schema = tool_info.get("inputSchema")
+
+        properties: dict[str, Any] = {}
+        required: list[str] = ["op"]
+
+        if input_schema and isinstance(input_schema, dict):
+            properties.update(input_schema.get("properties", {}))
+            required.extend(input_schema.get("required", []))
+
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": True,
+        }
+
     def get_output_schema(self) -> dict[str, Any] | None:
         """MCP output schemas are ephemeral — return None."""
         return None
@@ -144,26 +172,26 @@ class McpPluginAdapter:
         try:
             result = await self._client.call_tool(op, arguments or None)
         except McpConnectionError as exc:
-            self._log_tool_call(op, start, "error", 0, code="mcp_connection_error")
+            self._log_tool_call(op, start, "error", 0, code="mcp_connection_error", error=str(exc))
             return PluginResult.err(str(exc), code="mcp_connection_error")
         except McpTimeoutError as exc:
-            self._log_tool_call(op, start, "error", 0, code="mcp_timeout")
+            self._log_tool_call(op, start, "error", 0, code="mcp_timeout", error=str(exc))
             return PluginResult.err(str(exc), code="mcp_timeout")
         except McpResponseTooLarge as exc:
-            self._log_tool_call(op, start, "error", 0, code="mcp_response_too_large")
+            self._log_tool_call(op, start, "error", 0, code="mcp_response_too_large", error=str(exc))
             return PluginResult.err(str(exc), code="mcp_response_too_large")
         except McpProtocolError as exc:
-            self._log_tool_call(op, start, "error", 0, code="mcp_protocol_error")
+            self._log_tool_call(op, start, "error", 0, code="mcp_protocol_error", error=str(exc))
             return PluginResult.err(str(exc), code="mcp_protocol_error")
         except McpError as exc:
-            self._log_tool_call(op, start, "error", 0, code="mcp_server_error")
+            self._log_tool_call(op, start, "error", 0, code="mcp_server_error", error=str(exc))
             return PluginResult.err(str(exc), code="mcp_server_error")
 
         result_size = len(json.dumps(result.content)) if result.content else 0
 
         if result.is_error:
             error_text = self._extract_text_content(result)
-            self._log_tool_call(op, start, "error", result_size, code="mcp_server_error")
+            self._log_tool_call(op, start, "error", result_size, code="mcp_server_error", error=error_text)
             return PluginResult.err(error_text or "MCP tool returned an error", code="mcp_server_error")
 
         self._log_tool_call(op, start, "ok", result_size)
@@ -391,8 +419,12 @@ class McpPluginAdapter:
         return "\n".join(texts)
 
     def _log_tool_call(
-        self, op: str, start: float, status: str, result_size: int, code: str | None = None
+        self, op: str, start: float, status: str, result_size: int,
+        code: str | None = None, error: str | None = None,
     ) -> None:
         """Log a structured tool call event."""
         duration_ms = int((time.monotonic() - start) * 1000)
-        logger.info("mcp.tool_call [%s/%s] %dms status=%s size=%d code=%s", self.name, op, duration_ms, status, result_size, code)
+        logger.info(
+            "mcp.tool_call [%s/%s] %dms status=%s size=%d code=%s error=%s",
+            self.name, op, duration_ms, status, result_size, code, error,
+        )

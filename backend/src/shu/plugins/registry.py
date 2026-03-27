@@ -25,6 +25,11 @@ class PluginRegistry:
         self._manifest = self._loader.discover()
         self._cache.clear()
 
+    async def full_refresh(self, session: AsyncSession) -> None:
+        """Async refresh: discover filesystem plugins and MCP connections."""
+        self.refresh()
+        await self._refresh_mcp(session)
+
     async def _refresh_mcp(self, session: AsyncSession) -> None:
         """Load MCP plugin records from the database and merge into the manifest."""
         from ..services.mcp_service import McpService
@@ -58,16 +63,16 @@ class PluginRegistry:
         created = 0
         updated = 0
         purged = 0
-        if not self._manifest:
-            self.refresh()
-        await self._refresh_mcp(session)
+        await self.full_refresh(session)
         discovered_names = set(self._manifest.keys())
         # Upsert discovered plugins
         for name, record in self._manifest.items():
             res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
             row = res.scalars().first()
             if name.startswith("mcp:"):
-                created += await self._sync_mcp_definition(name, record, row, session)
+                c, u = await self._sync_mcp_definition(name, record, row, session)
+                created += c
+                updated += u
             elif not row:
                 # load plugin to fetch schema
                 try:
@@ -149,22 +154,36 @@ class PluginRegistry:
 
     async def _sync_mcp_definition(
         self, name: str, record: PluginRecord, row: PluginDefinition | None, session: AsyncSession
-    ) -> int:
-        """Create a PluginDefinition row for an MCP plugin if it doesn't exist.
+    ) -> tuple[int, int]:
+        """Create or update a PluginDefinition row for an MCP plugin.
 
-        Returns 1 if a new row was created, 0 otherwise.
+        Queries the McpServerConnection and uses McpPluginAdapter.get_schema()
+        so schema logic lives in one place.
+
+        Returns (created, updated) counts.
         """
-        if row:
-            return 0
+        from ..services.mcp_service import McpService
 
+        connection_name = name.removeprefix("mcp:")
+        schema = await McpService(session).get_connection_schema(connection_name)
+
+        if row:
+            if schema and row.input_schema != schema:
+                row.input_schema = schema
+                await session.commit()
+                return 0, 1
+            return 0, 0
+
+        version = getattr(record, "version", "1.0")[:50]
         row = PluginDefinition(
-            name=name,
-            version=getattr(record, "version", "1.0"),
+            name=name[:100],
+            version=version,
             enabled=False,
+            input_schema=schema,
         )
         session.add(row)
         await session.commit()
-        return 1
+        return 1, 0
 
     async def resolve(self, name: str, session: AsyncSession) -> Plugin | None:
         from ..services.mcp_service import McpService
