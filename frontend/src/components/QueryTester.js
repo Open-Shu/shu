@@ -228,8 +228,8 @@ function QueryTester() {
       const baselineData = extractDataFromResponse(baselineResponse);
       const baselineResults = baselineData?.results || [];
 
-      // MS results already have full content, summary, matched_query from backend
-      const text = formatResultsForJudgment(queryText, baselineResults, queryResults.multi_surface_results, topN);
+      // Use formatted_results from backend (SHU-652) — already deduplicated, annotated, title-filtered
+      const text = formatResultsForJudgment(queryText, baselineResults, queryResults.formatted_results || [], topN);
       await navigator.clipboard.writeText(text);
       setSnackbar({ open: true, message: 'Exported to clipboard' });
     } catch (err) {

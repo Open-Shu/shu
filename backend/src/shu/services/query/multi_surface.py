@@ -154,13 +154,14 @@ class MultiSurfaceSearchMixin:
                 surfaces=surfaces,
                 embedding_service=embedding_service,
                 fusion_service=fusion_service,
+                vector_store=vector_store,
                 surface_limit=settings.multi_surface_chunk_limit,
                 timeout_ms=settings.multi_surface_timeout_ms,
             )
 
             # Execute search (pass session factory for safe parallel execution)
             kb_uuid = UUID(knowledge_base_id)
-            fused_results, all_surface_scores = await search_service.search(
+            fused_results, all_surface_scores, formatted_docs = await search_service.search(
                 query=query,
                 kb_id=kb_uuid,
                 limit=limit,
@@ -242,6 +243,32 @@ class MultiSurfaceSearchMixin:
                     ],
                 }
                 for r in fused_results
+            ]
+
+            # Structured document context from result formatter (SHU-652)
+            response_dict["formatted_results"] = [
+                {
+                    "document_id": doc.document_id,
+                    "document_title": doc.document_title,
+                    "final_score": doc.final_score,
+                    "surface_scores": doc.surface_scores,
+                    "synopsis": doc.synopsis,
+                    "title_summary": doc.title_summary,
+                    "chunks": [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "chunk_index": c.chunk_index,
+                            "score": c.score,
+                            "content": c.content,
+                            "surfaces": c.surfaces,
+                            "summary": c.summary,
+                            "matched_query": c.matched_query,
+                            "promoted": c.promoted,
+                        }
+                        for c in doc.chunks
+                    ],
+                }
+                for doc in formatted_docs
             ]
 
             # Per-surface scores for all scored documents (before top-k truncation)

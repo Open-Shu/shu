@@ -284,7 +284,7 @@ class ScoreFusionService:
                     if hit.id_type == "chunk":
                         details = chunk_details.get(hit.id)
                         if details:
-                            chunk_index, content, summary, start_char, end_char = details
+                            chunk_index, content, summary, start_char, end_char, chunk_meta = details
                             snippet = self._make_snippet(content)
                             contributing_chunks.append(
                                 ContributingChunk(
@@ -298,15 +298,16 @@ class ScoreFusionService:
                                     start_char=start_char,
                                     end_char=end_char,
                                     matched_query=hit.metadata.get("matched_query"),
+                                    chunk_metadata=chunk_meta,
                                 )
                             )
 
             # Sort contributing chunks by score descending
             contributing_chunks.sort(key=lambda c: c.score, reverse=True)
 
-            # Get document metadata (title, file_type, source_url, source_id, created_at)
-            title, file_type, source_url, source_id, created_at = doc_metadata.get(
-                doc_id, ("Unknown", "txt", None, None, None)
+            # Get document metadata (title, file_type, source_url, source_id, created_at, synopsis)
+            title, file_type, source_url, source_id, created_at, synopsis = doc_metadata.get(
+                doc_id, ("Unknown", "txt", None, None, None, None)
             )
 
             results.append(
@@ -321,6 +322,7 @@ class ScoreFusionService:
                     source_url=source_url,
                     source_id=source_id,
                     created_at=created_at,
+                    synopsis=synopsis,
                 )
             )
 
@@ -350,7 +352,7 @@ class ScoreFusionService:
 
     async def _load_document_metadata(
         self, doc_ids: list[UUID], db: AsyncSession
-    ) -> dict[UUID, tuple[str, str, str | None, str | None, datetime | None]]:
+    ) -> dict[UUID, tuple[str, str, str | None, str | None, datetime | None, str | None]]:
         """Load document metadata for a list of document IDs.
 
         Args:
@@ -358,7 +360,7 @@ class ScoreFusionService:
             db: Async database session.
 
         Returns:
-            Mapping of document_id -> (title, file_type, source_url, source_id, created_at).
+            Mapping of document_id -> (title, file_type, source_url, source_id, created_at, synopsis).
 
         """
         if not doc_ids:
@@ -371,15 +373,16 @@ class ScoreFusionService:
             Document.source_url,
             Document.source_id,
             Document.created_at,
+            Document.synopsis,
         ).where(Document.id.in_([str(did) for did in doc_ids]))
         result = await db.execute(stmt)
         rows = result.fetchall()
 
-        return {_ensure_uuid(row[0]): (row[1], row[2] or "txt", row[3], row[4], row[5]) for row in rows}
+        return {_ensure_uuid(row[0]): (row[1], row[2] or "txt", row[3], row[4], row[5], row[6]) for row in rows}
 
     async def _load_chunk_details(
         self, chunk_ids: list[UUID], db: AsyncSession
-    ) -> dict[UUID, tuple[int, str, str | None, int | None, int | None]]:
+    ) -> dict[UUID, tuple[int, str, str | None, int | None, int | None, dict | None]]:
         """Load chunk details for contributing chunks.
 
         Args:
@@ -387,7 +390,7 @@ class ScoreFusionService:
             db: Async database session.
 
         Returns:
-            Mapping of chunk_id -> (chunk_index, content, summary, start_char, end_char).
+            Mapping of chunk_id -> (chunk_index, content, summary, start_char, end_char, chunk_metadata).
 
         """
         if not chunk_ids:
@@ -400,11 +403,12 @@ class ScoreFusionService:
             DocumentChunk.summary,
             DocumentChunk.start_char,
             DocumentChunk.end_char,
+            DocumentChunk.chunk_metadata,
         ).where(DocumentChunk.id.in_([str(cid) for cid in chunk_ids]))
         result = await db.execute(stmt)
         rows = result.fetchall()
 
-        return {_ensure_uuid(row[0]): (row[1], row[2], row[3], row[4], row[5]) for row in rows}
+        return {_ensure_uuid(row[0]): (row[1], row[2], row[3], row[4], row[5], row[6]) for row in rows}
 
     def _make_snippet(self, content: str) -> str:
         """Create a snippet from chunk content.
