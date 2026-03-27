@@ -21,7 +21,7 @@ Usage:
 
     # Then: Run benchmark with custom qrels
     python -m tests.benchmark.run_benchmark --dataset nfcorpus \
-        --reuse-kb <kb-id> --skip-ablation
+        --reuse-kb <kb-id>
 """
 
 from __future__ import annotations

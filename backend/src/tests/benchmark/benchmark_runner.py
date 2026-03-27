@@ -50,6 +50,8 @@ class BenchmarkConfig:
     stat_test: str = "student"
     max_p: float = 0.05
     exclude_surfaces: list[str] = field(default_factory=list)
+    weight_overrides: dict[str, float] = field(default_factory=dict)
+    fusion_formula_override: str | None = None
     qrels_split: str = "test"
 
     def __post_init__(self) -> None:
@@ -106,6 +108,15 @@ class BenchmarkResults:
     # Threshold analysis: how many relevant documents survive at practical
     # score thresholds? This measures what users actually experience.
     threshold_analysis: dict[str, Any] = field(default_factory=dict)
+
+    # Surface contribution analysis (computed locally from all_surface_scores)
+    # Fusion impact: {surface_removed: {metric: score}} — what happens to fused
+    # ranking when a surface is zeroed out, recomputed locally from surface scores.
+    fusion_impact: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Contribution matrix: {query_type: {surface: avg_fraction_of_fused_score}}
+    contribution_matrix: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Weight recommendations: {surface: recommended_weight}
+    weight_recommendations: dict[str, float] = field(default_factory=dict)
 
     # Raw run data for reproducibility
     baseline_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -212,7 +223,7 @@ class BenchmarkRunner:
             dataset.queries, id_map, search_cfg,
         )
 
-        # 5. Collect multi-surface run (with excluded surfaces zeroed out)
+        # 5. Collect multi-surface run (with weight overrides)
         weight_overrides: dict[str, float] = {}
         surface_weight_params = {
             "chunk_vector": "chunk_vector_weight",
@@ -221,6 +232,12 @@ class BenchmarkRunner:
             "synopsis_match": "synopsis_match_weight",
             "bm25": "bm25_weight",
         }
+        # Apply explicit weight overrides first
+        for surface, weight in self.config.weight_overrides.items():
+            if surface in surface_weight_params:
+                weight_overrides[surface_weight_params[surface]] = weight
+                logger.info("Weight override: %s = %.2f", surface, weight)
+        # Then apply exclusions (zeroing takes precedence)
         for surface in self.config.exclude_surfaces:
             if surface in surface_weight_params:
                 weight_overrides[surface_weight_params[surface]] = 0.0
@@ -252,6 +269,58 @@ class BenchmarkRunner:
         # Extract BM25 baseline from per-surface evaluation (ParadeDB BM25, not a separate run)
         bm25_scores = per_surface_scores.get("bm25", {m: 0.0 for m in self.config.metrics})
 
+        # 8b. Compute effective weights and eval surface scores (needed for
+        #     fusion override, contribution analysis, and fusion impact).
+        effective_weights = self._get_effective_weights()
+        eval_surface_scores = ms_all_surface_scores if ms_all_surface_scores else ms_surface_scores
+
+        # 8c. If fusion formula override is set, recompute fused rankings locally
+        #     from the collected surface scores using the alternative formula/weights.
+        if self.config.fusion_formula_override:
+            from shu.services.retrieval.score_fusion import _FUSION_FUNCTIONS
+
+            override_formula = self.config.fusion_formula_override
+            if override_formula not in _FUSION_FUNCTIONS:
+                raise ValueError(
+                    f"Unknown fusion formula '{override_formula}'. "
+                    f"Supported: {list(_FUSION_FUNCTIONS.keys())}"
+                )
+            fuse_fn = _FUSION_FUNCTIONS[override_formula]
+            override_weights = effective_weights
+
+            logger.info(
+                "Recomputing fusion locally: formula=%s, weights=%s",
+                override_formula, override_weights,
+            )
+
+            # Debug: inspect first query's surface scores
+            if eval_surface_scores:
+                sample_qid = next(iter(eval_surface_scores))
+                sample_docs = eval_surface_scores[sample_qid]
+                if sample_docs:
+                    sample_doc = next(iter(sample_docs))
+                    logger.info(
+                        "Sample surface scores: query=%s doc=%s scores=%s",
+                        sample_qid, sample_doc, sample_docs[sample_doc],
+                    )
+
+            recomputed_run: dict[str, dict[str, float]] = {}
+            for query_id, doc_scores_map in eval_surface_scores.items():
+                query_docs: dict[str, float] = {}
+                for doc_id, scores in doc_scores_map.items():
+                    fused = fuse_fn(scores, override_weights)
+                    if fused > 0:
+                        query_docs[doc_id] = fused
+                if query_docs:
+                    recomputed_run[query_id] = query_docs
+
+            ms_run_dict = recomputed_run
+            fusion_formula = override_formula
+            logger.info(
+                "Recomputed %d queries (of %d with surface scores) with %s fusion",
+                len(ms_run_dict), len(eval_surface_scores), override_formula,
+            )
+
         # 9. Compute aggregate metrics
         logger.info("Computing IR metrics...")
         baseline_scores, ms_scores, deltas, stat_tests, comparison_table = self._evaluate(
@@ -268,6 +337,22 @@ class BenchmarkRunner:
         logger.info("Computing threshold analysis...")
         threshold_analysis = self._compute_threshold_analysis(
             dataset.qrels, baseline_run_dict, ms_run_dict,
+        )
+
+        # 12. Compute surface contribution analysis (locally from surface scores)
+        logger.info("Computing fusion impact (local ablation)...")
+        full_fusion_scores, fusion_impact = self._compute_fusion_impact(
+            dataset.qrels, eval_surface_scores, fusion_formula, effective_weights,
+        )
+
+        logger.info("Computing contribution matrix by query type...")
+        contribution_matrix = self._compute_contribution_matrix(
+            eval_surface_scores, dataset.queries, effective_weights,
+        )
+
+        logger.info("Computing weight recommendations...")
+        weight_recommendations = self._compute_weight_recommendations(
+            full_fusion_scores, fusion_impact,
         )
 
         return BenchmarkResults(
@@ -292,6 +377,9 @@ class BenchmarkRunner:
             bm25_scores=bm25_scores,
             head_to_head=head_to_head,
             threshold_analysis=threshold_analysis,
+            fusion_impact=fusion_impact,
+            contribution_matrix=contribution_matrix,
+            weight_recommendations=weight_recommendations,
             baseline_run_dict=baseline_run_dict,
             multi_surface_run_dict=ms_run_dict,
             multi_surface_surface_scores=ms_all_surface_scores if ms_all_surface_scores else ms_surface_scores,
@@ -353,6 +441,21 @@ class BenchmarkRunner:
         from shu.services.retrieval.score_fusion import DEFAULT_FUSION_FORMULA
 
         return DEFAULT_FUSION_FORMULA
+
+    def _get_effective_weights(self) -> dict[str, float]:
+        """Read the current default surface weights, applying overrides and exclusions."""
+        from shu.services.retrieval.score_fusion import DEFAULT_SURFACE_WEIGHTS
+
+        weights = dict(DEFAULT_SURFACE_WEIGHTS)
+        # Apply explicit weight overrides
+        for surface, weight in self.config.weight_overrides.items():
+            if surface in weights:
+                weights[surface] = weight
+        # Apply exclusions (zeroing takes precedence)
+        for surface in self.config.exclude_surfaces:
+            if surface in weights:
+                weights[surface] = 0.0
+        return weights
 
     async def _create_kb(self) -> str:
         """Create a benchmark knowledge base via the API."""
@@ -430,12 +533,8 @@ class BenchmarkRunner:
 
         Uses per-surface scores from the multi-surface search response to rank
         documents by each surface's score alone. No extra API calls needed.
-
-        IMPORTANT: surface_scores only contains documents that appeared in the
-        fused top-k results. Documents that a surface would rank highly but
-        that did not survive score fusion are not included. These metrics
-        therefore reflect surface contribution within the fused pipeline,
-        not standalone surface quality.
+        When all_surface_scores is available (untruncated), this evaluates
+        on ALL documents scored by any surface, not just the fused top-k.
 
         Novel surfaces: chunk_summary, query_match, synopsis_match
         (excludes chunk_vector as baseline equivalent and bm25 as prior art)
@@ -840,3 +939,162 @@ class BenchmarkRunner:
             "relevance_scale": "graded" if is_graded else "binary",
             "highly_relevant_threshold": max_rel,  # 2 for graded (NFCorpus), 1 for binary (SciFact)
         }
+
+    def _compute_fusion_impact(
+        self,
+        qrels_dict: dict[str, dict[str, int]],
+        all_surface_scores: dict[str, dict[str, dict[str, float]]],
+        fusion_formula: str,
+        weights: dict[str, float],
+    ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+        """Compute the impact of removing each surface on the fused ranking.
+
+        Recomputes fusion locally with each surface zeroed out, then evaluates
+        against qrels. No API calls needed — uses pre-collected surface scores.
+
+        Args:
+            qrels_dict: Ground truth relevance judgments.
+            all_surface_scores: {query_id: {doc_id: {surface: score}}} (untruncated).
+            fusion_formula: Name of the fusion function to use.
+            weights: Surface weights for fusion.
+
+        Returns:
+            Tuple of:
+                - full_run_scores: {metric: score} for full fusion (all surfaces)
+                - impact: {surface_removed: {metric: score}} for each ablation
+        """
+        from ranx import Qrels, Run, evaluate
+
+        from shu.services.retrieval.score_fusion import _FUSION_FUNCTIONS
+
+        fuse_fn = _FUSION_FUNCTIONS[fusion_formula]
+        qrels = Qrels(qrels_dict, name="ground_truth")
+        surfaces = [s for s in weights if weights[s] > 0]
+
+        def _build_fused_run(
+            score_data: dict[str, dict[str, dict[str, float]]],
+            w: dict[str, float],
+        ) -> dict[str, dict[str, float]]:
+            """Build a ranx run dict by applying fusion locally."""
+            run_dict: dict[str, dict[str, float]] = {}
+            for query_id, doc_scores in score_data.items():
+                query_docs: dict[str, float] = {}
+                for doc_id, scores in doc_scores.items():
+                    fused = fuse_fn(scores, w)
+                    if fused > 0:
+                        query_docs[doc_id] = fused
+                if query_docs:
+                    run_dict[query_id] = query_docs
+            return run_dict
+
+        # Full run (all surfaces at original weights)
+        full_run_dict = _build_fused_run(all_surface_scores, weights)
+        full_run = Run(full_run_dict, name="full_fusion")
+        full_scores = evaluate(qrels, full_run, self.config.metrics, make_comparable=True)
+        logger.info("  Full fusion: NDCG@10=%.4f", full_scores.get("ndcg@10", 0))
+
+        # Ablate each surface
+        impact: dict[str, dict[str, float]] = {}
+        for surface in surfaces:
+            ablated_weights = {**weights, surface: 0.0}
+            ablated_run_dict = _build_fused_run(all_surface_scores, ablated_weights)
+
+            if ablated_run_dict:
+                ablated_run = Run(ablated_run_dict, name=f"without_{surface}")
+                ablated_scores = evaluate(qrels, ablated_run, self.config.metrics, make_comparable=True)
+            else:
+                ablated_scores = {m: 0.0 for m in self.config.metrics}
+
+            impact[surface] = ablated_scores
+            ndcg_full = full_scores.get("ndcg@10", 0.0)
+            ndcg_ablated = ablated_scores.get("ndcg@10", 0.0)
+            delta = ((ndcg_ablated - ndcg_full) / ndcg_full * 100) if ndcg_full > 0 else 0.0
+            logger.info("  without %s: NDCG@10=%.4f (%+.1f%%)", surface, ndcg_ablated, delta)
+
+        return full_scores, impact
+
+    @staticmethod
+    def _compute_contribution_matrix(
+        all_surface_scores: dict[str, dict[str, dict[str, float]]],
+        queries: dict[str, Any],
+        weights: dict[str, float],
+    ) -> dict[str, dict[str, float]]:
+        """Compute surface contribution fractions by query type.
+
+        For each query+document, computes what fraction of total weighted surface
+        score each surface contributed, then averages by query type.
+
+        Args:
+            all_surface_scores: {query_id: {doc_id: {surface: score}}} (untruncated).
+            queries: {query_id: BeirQuery} for query text classification.
+            weights: Surface weights (only surfaces with weight > 0 are included).
+
+        Returns:
+            {query_type: {surface: avg_contribution_fraction}}
+        """
+        from .query_classifier import QueryType, classify_query
+
+        surfaces = [s for s in weights if weights[s] > 0]
+
+        # Classify queries
+        query_types: dict[str, QueryType] = {
+            qid: classify_query(q.text) for qid, q in queries.items()
+        }
+
+        # Accumulate contributions per query type
+        type_contributions: dict[str, dict[str, list[float]]] = {}
+        for qtype in QueryType:
+            type_contributions[qtype.value] = {s: [] for s in surfaces}
+
+        for query_id, doc_surfaces in all_surface_scores.items():
+            qtype = query_types.get(query_id, QueryType.UNKNOWN).value
+
+            for _doc_id, scores in doc_surfaces.items():
+                total = sum(scores.get(s, 0.0) for s in surfaces)
+                if total <= 0:
+                    continue
+                for surface in surfaces:
+                    fraction = scores.get(surface, 0.0) / total
+                    type_contributions[qtype][surface].append(fraction)
+
+        # Average
+        matrix: dict[str, dict[str, float]] = {}
+        for qtype, surface_lists in type_contributions.items():
+            row = {}
+            for surface, fractions in surface_lists.items():
+                row[surface] = sum(fractions) / len(fractions) if fractions else 0.0
+            if any(v > 0 for v in row.values()):
+                matrix[qtype] = row
+
+        return matrix
+
+    @staticmethod
+    def _compute_weight_recommendations(
+        full_scores: dict[str, float],
+        fusion_impact: dict[str, dict[str, float]],
+    ) -> dict[str, float]:
+        """Generate weight recommendations based on fusion impact.
+
+        Surfaces whose removal causes the largest NDCG@10 drop get
+        higher weights (proportional allocation).
+        """
+        ndcg_key = "ndcg@10"
+        full_ndcg = full_scores.get(ndcg_key, 0.0)
+
+        if full_ndcg <= 0:
+            surfaces = list(fusion_impact.keys())
+            return {s: round(1.0 / len(surfaces), 2) for s in surfaces} if surfaces else {}
+
+        # Impact = how much NDCG@10 drops when surface is removed
+        impacts: dict[str, float] = {}
+        for surface, scores in fusion_impact.items():
+            ablated_ndcg = scores.get(ndcg_key, 0.0)
+            drop = max(0.0, full_ndcg - ablated_ndcg)
+            impacts[surface] = drop
+
+        total_impact = sum(impacts.values())
+        if total_impact <= 0:
+            return {s: round(1.0 / len(impacts), 2) for s in impacts}
+
+        weights = {s: round(impacts[s] / total_impact, 2) for s in impacts}
+        return weights

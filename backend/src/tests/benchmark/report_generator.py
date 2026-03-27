@@ -1,7 +1,7 @@
 """Benchmark report generation.
 
 Produces JSON (machine-readable) and text (human-readable) reports
-from benchmark results and optional ablation analysis.
+from benchmark results.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .ablation_runner import AblationResults
     from .benchmark_runner import BenchmarkResults
 
 logger = logging.getLogger(__name__)
@@ -25,7 +24,6 @@ class ReportGenerator:
     def generate_full_report(
         self,
         results: BenchmarkResults,
-        ablation_results: AblationResults | None,
         output_dir: Path,
     ) -> list[Path]:
         """Generate all report files.
@@ -40,12 +38,12 @@ class ReportGenerator:
 
         # JSON report
         json_path = output_dir / f"{prefix}_report.json"
-        self._write_json_report(results, ablation_results, json_path)
+        self._write_json_report(results, json_path)
         files.append(json_path)
 
         # Text report
         text_path = output_dir / f"{prefix}_report.txt"
-        self._write_text_report(results, ablation_results, text_path)
+        self._write_text_report(results, text_path)
         files.append(text_path)
 
         # Raw run data
@@ -64,7 +62,6 @@ class ReportGenerator:
     def _write_json_report(
         self,
         results: BenchmarkResults,
-        ablation_results: AblationResults | None,
         path: Path,
     ) -> None:
         """Write structured JSON report."""
@@ -104,6 +101,9 @@ class ReportGenerator:
                     if k != "per_query"
                 } if results.head_to_head else {},
                 "threshold_analysis": results.threshold_analysis if results.threshold_analysis else {},
+                "fusion_impact": results.fusion_impact,
+                "contribution_matrix": results.contribution_matrix,
+                "weight_recommendations": results.weight_recommendations,
             },
             "timing": {
                 "ingestion_seconds": results.ingestion_time_s,
@@ -124,9 +124,6 @@ class ReportGenerator:
             },
         }
 
-        if ablation_results:
-            report["ablation"] = ablation_results.to_dict()
-
         with open(path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, default=str)
         logger.info("JSON report written: %s", path)
@@ -134,7 +131,6 @@ class ReportGenerator:
     def _write_text_report(
         self,
         results: BenchmarkResults,
-        ablation_results: AblationResults | None,
         path: Path,
     ) -> None:
         """Write human-readable text report."""
@@ -260,14 +256,6 @@ class ReportGenerator:
         w(f"Ingestion:     {results.ingestion_time_s:.1f}s")
         w("")
 
-        # Ablation section
-        if ablation_results:
-            w("-" * 70)
-            w("ABLATION STUDY")
-            w("-" * 70)
-            w("")
-            self._write_ablation_text(ablation_results, lines)
-
         # Configuration
         w("-" * 70)
         w("CONFIGURATION")
@@ -370,72 +358,6 @@ class ReportGenerator:
             if len(query_results) > display_count:
                 w(f"  ... and {len(query_results) - display_count} more queries")
         w("")
-
-    def _write_ablation_text(self, ablation_results: AblationResults, lines: list[str]) -> None:
-        """Append ablation analysis to text report."""
-        w = lines.append
-
-        # Solo surface performance — each surface in isolation vs baseline
-        if ablation_results.solo_surface_scores:
-            w("Individual Surface Performance (each surface alone):")
-            w("")
-            w(f"{'Surface':<25} {'NDCG@10':>10} {'P@10':>10} {'MRR@10':>10}")
-            w(f"{'-'*25} {'-'*10} {'-'*10} {'-'*10}")
-
-            for surface, scores in ablation_results.solo_surface_scores.items():
-                ndcg = scores.get("ndcg@10", 0.0)
-                p10 = scores.get("precision@10", 0.0)
-                mrr = scores.get("mrr@10", 0.0)
-                w(f"{surface:<25} {ndcg:>10.4f} {p10:>10.4f} {mrr:>10.4f}")
-
-            w("")
-            w("(Compare against baseline similarity search in OVERALL METRICS above)")
-            w("")
-
-        # Impact of removing each surface
-        w("Impact of Removing Each Surface (NDCG@10 change):")
-        w("")
-        w(f"{'Surface Removed':<25} {'NDCG@10':>10} {'vs Full':>10}")
-        w(f"{'-'*25} {'-'*10} {'-'*10}")
-
-        full_ndcg = ablation_results.full_run_scores.get("ndcg@10", 0.0)
-        for surface, scores in ablation_results.ablation_run_scores.items():
-            ablated_ndcg = scores.get("ndcg@10", 0.0)
-            delta = ((ablated_ndcg - full_ndcg) / full_ndcg * 100) if full_ndcg > 0 else 0.0
-            w(f"{surface:<25} {ablated_ndcg:>10.4f} {delta:>+9.1f}%")
-
-        w("")
-
-        # Surface contribution matrix
-        if ablation_results.contribution_matrix:
-            w("Surface Contribution by Query Type (avg % of final score):")
-            w("")
-            surfaces = list(next(iter(ablation_results.contribution_matrix.values())).keys())
-            header = f"{'Query Type':<18}" + "".join(f"{s:>16}" for s in surfaces)
-            w(header)
-            w("-" * len(header))
-            for qtype, contributions in ablation_results.contribution_matrix.items():
-                row = f"{qtype:<18}"
-                for surface in surfaces:
-                    pct = contributions.get(surface, 0.0) * 100
-                    row += f"{pct:>15.1f}%"
-                w(row)
-
-        w("")
-
-        # Low-contribution warnings
-        if ablation_results.low_contribution_surfaces:
-            w("WARNING: Surfaces contributing < 5% average score:")
-            for surface in ablation_results.low_contribution_surfaces:
-                w(f"  - {surface}")
-            w("")
-
-        # Weight recommendations
-        if ablation_results.weight_recommendations:
-            w("Weight Tuning Recommendations:")
-            for surface, weight in ablation_results.weight_recommendations.items():
-                w(f"  {surface}: {weight:.2f}")
-            w("")
 
     def _write_raw_runs(self, results: BenchmarkResults, path: Path) -> None:
         """Write raw run data for reproducibility."""
@@ -705,15 +627,7 @@ class ReportGenerator:
 
         # Per-surface performance
         if results.per_surface_scores:
-            w.append("## Per-Surface Performance (within fused result set)")
-            w.append("")
-            w.append(
-                "*Note: These scores are computed from per-surface scores of documents "
-                "that appeared in the fused top-k results. Documents that a surface would "
-                "rank highly but that did not survive fusion are not included. These scores "
-                "are therefore indicative of surface contribution within the fused pipeline, "
-                "not standalone surface quality.*"
-            )
+            w.append("## Per-Surface Performance")
             w.append("")
             w.append("| Surface | NDCG@10 | vs Baseline | Innovation |")
             w.append("|---------|---------|-------------|------------|")
@@ -750,6 +664,74 @@ class ReportGenerator:
             fusion_delta = ndcg_delta
             w.append(f"| **Weighted fusion** | **{ms_ndcg:.4f}** | **{fusion_delta:+.1f}%** | Score fusion across active surfaces |")
             w.append(f"| Baseline | {baseline_ndcg:.4f} | — | Standard RAG |")
+            w.append("")
+
+        # Fusion impact analysis (local ablation)
+        if results.fusion_impact:
+            w.append("## Fusion Impact: Effect of Removing Each Surface")
+            w.append("")
+            w.append(
+                "Each row shows fused NDCG@10 when that surface is zeroed out, "
+                "computed locally from collected per-surface scores (no extra API calls)."
+            )
+            w.append("")
+            w.append("| Surface Removed | NDCG@10 | vs Full | Impact |")
+            w.append("|-----------------|---------|---------|--------|")
+
+            full_ndcg_for_impact = results.multi_surface_scores.get("ndcg@10", 0.0)
+            for surface, scores in sorted(
+                results.fusion_impact.items(),
+                key=lambda x: x[1].get("ndcg@10", 0.0),
+            ):
+                ablated_ndcg = scores.get("ndcg@10", 0.0)
+                delta = ((ablated_ndcg - full_ndcg_for_impact) / full_ndcg_for_impact * 100) if full_ndcg_for_impact > 0 else 0.0
+                # Larger drop = more important surface
+                impact_label = "critical" if delta < -5 else "significant" if delta < -2 else "moderate" if delta < -0.5 else "minimal"
+                w.append(f"| {surface} | {ablated_ndcg:.4f} | {delta:+.1f}% | {impact_label} |")
+
+            w.append("")
+
+        # Contribution matrix by query type
+        if results.contribution_matrix:
+            w.append("## Surface Contribution by Query Type")
+            w.append("")
+            w.append(
+                "Average fraction of fused score contributed by each surface, "
+                "broken down by query type. Higher = that surface drives more of "
+                "the ranking for that query type."
+            )
+            w.append("")
+
+            # Get surface list from first row
+            first_row = next(iter(results.contribution_matrix.values()))
+            surfaces = list(first_row.keys())
+            header = "| Query Type | " + " | ".join(surfaces) + " |"
+            separator = "|------------|" + "|".join("-" * (max(len(s), 6) + 2) for s in surfaces) + "|"
+            w.append(header)
+            w.append(separator)
+
+            for qtype, contributions in sorted(results.contribution_matrix.items()):
+                row = f"| {qtype} |"
+                for surface in surfaces:
+                    pct = contributions.get(surface, 0.0) * 100
+                    row += f" {pct:.1f}% |"
+                w.append(row)
+
+            w.append("")
+
+        # Weight recommendations
+        if results.weight_recommendations:
+            w.append("## Weight Recommendations")
+            w.append("")
+            w.append(
+                "Proportional weights based on fusion impact — surfaces whose "
+                "removal causes the largest NDCG@10 drop get higher weights."
+            )
+            w.append("")
+            w.append("| Surface | Recommended Weight |")
+            w.append("|---------|-------------------|")
+            for surface, weight in sorted(results.weight_recommendations.items(), key=lambda x: x[1], reverse=True):
+                w.append(f"| {surface} | {weight:.2f} |")
             w.append("")
 
         # Leaderboard comparison

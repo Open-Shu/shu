@@ -10,9 +10,6 @@ Usage:
     # Reuse existing KB (skip ingestion)
     python -m tests.benchmark.run_benchmark --dataset nfcorpus --reuse-kb <kb-id>
 
-    # Run ablation only
-    python -m tests.benchmark.run_benchmark --dataset nfcorpus --reuse-kb <kb-id> --ablation-only
-
     # Quick test with the small test subset
     python -m tests.benchmark.run_benchmark --dataset test_subset --output-dir tests/benchmark/.results
 """
@@ -22,7 +19,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -52,16 +48,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Reuse existing KB ID (skip ingestion)",
-    )
-    parser.add_argument(
-        "--ablation-only",
-        action="store_true",
-        help="Only run ablation study (requires --reuse-kb)",
-    )
-    parser.add_argument(
-        "--skip-ablation",
-        action="store_true",
-        help="Skip ablation study",
     )
     parser.add_argument(
         "--limit",
@@ -101,6 +87,20 @@ def parse_args() -> argparse.Namespace:
         help="Exclude a surface from multi-surface search (can repeat, e.g. --exclude-surface bm25)",
     )
     parser.add_argument(
+        "--weight",
+        action="append",
+        default=[],
+        dest="weights",
+        metavar="SURFACE=VALUE",
+        help="Set surface weight (can repeat, e.g. --weight chunk_vector=0.42 --weight query_match=0.30)",
+    )
+    parser.add_argument(
+        "--fusion-formula",
+        type=str,
+        default=None,
+        help="Fusion formula override (e.g. 'weighted_average' or 'max_sqrt_mean_max')",
+    )
+    parser.add_argument(
         "--qrels-split",
         type=str,
         default="test",
@@ -138,15 +138,20 @@ async def run(args: argparse.Namespace) -> None:
     """Execute the benchmark."""
     from tests.integ.integration_test_runner import IntegrationTestRunner
 
-    from .ablation_runner import AblationRunner
     from .benchmark_runner import BenchmarkConfig, BenchmarkRunner
-    from .beir_loader import BeirLoader
-    from .corpus_ingestor import CorpusIngestor
     from .report_generator import ReportGenerator
-    from .result_collector import ResultCollector, SearchConfig
 
     dataset_dir = resolve_dataset_dir(args.dataset)
     dataset_name = dataset_dir.name
+
+    # Parse --weight SURFACE=VALUE pairs
+    weight_overrides: dict[str, float] = {}
+    for w in args.weights:
+        if "=" not in w:
+            logger.error("Invalid --weight format '%s', expected SURFACE=VALUE", w)
+            return
+        surface, value = w.split("=", 1)
+        weight_overrides[surface.strip()] = float(value.strip())
 
     config = BenchmarkConfig(
         dataset_dir=dataset_dir,
@@ -158,6 +163,8 @@ async def run(args: argparse.Namespace) -> None:
         search_threshold=args.threshold,
         stat_test=args.stat_test,
         exclude_surfaces=args.exclude_surfaces,
+        weight_overrides=weight_overrides,
+        fusion_formula_override=args.fusion_formula,
         qrels_split=args.qrels_split,
     )
 
@@ -166,87 +173,12 @@ async def run(args: argparse.Namespace) -> None:
     await runner.setup()
 
     try:
-        if args.ablation_only:
-            if not args.reuse_kb:
-                logger.error("--ablation-only requires --reuse-kb")
-                sys.exit(1)
-
-            # Load dataset for queries and qrels
-            loader = BeirLoader(dataset_dir, name=dataset_name)
-            dataset = loader.load(qrels_split=args.qrels_split)
-
-            # Build ID map
-            ingestor = CorpusIngestor(runner.db, args.reuse_kb, user_id="benchmark")
-            profiled_only = args.target_status == "profile_processed"
-            id_map = await ingestor.build_id_map(profiled_only=profiled_only)
-
-            # Filter to same population as main benchmark: queries with qrels
-            # against profiled documents
-            profiled_beir_ids = set(id_map.values())
-            filtered_qrels = {
-                qid: {did: rel for did, rel in docs.items() if did in profiled_beir_ids}
-                for qid, docs in dataset.qrels.items()
-            }
-            filtered_qrels = {qid: docs for qid, docs in filtered_qrels.items() if docs}
-            filtered_queries = {
-                qid: q for qid, q in dataset.queries.items() if qid in filtered_qrels
-            }
-
-            # Run ablation
-            collector = ResultCollector(runner.client, args.reuse_kb, runner.auth_headers)
-            search_cfg = SearchConfig(limit=args.limit, threshold=args.threshold)
-            ablation = AblationRunner(
-                collector=collector,
-                id_map=id_map,
-                queries=filtered_queries,
-                qrels_dict=filtered_qrels,
-                metrics=config.metrics,
-                search_config=search_cfg,
-            )
-            ablation_results = await ablation.run()
-
-            # Generate ablation-only report
-            # We need a minimal BenchmarkResults — run the full benchmark instead
-            logger.info("Ablation complete. Run without --ablation-only for full report.")
-            print(f"\nAblation weight recommendations: {ablation_results.weight_recommendations}")
-            return
-
-        # Full benchmark
         benchmark = BenchmarkRunner(runner.client, runner.db, runner.auth_headers, config)
         results = await benchmark.run()
 
-        # Ablation — uses the same filtered query set as the main benchmark
-        # (only queries with qrels against profiled documents) to ensure
-        # ablation results are directly comparable to headline metrics.
-        ablation_results = None
-        if not args.skip_ablation:
-            collector = ResultCollector(runner.client, results.kb_id, runner.auth_headers)
-            ingestor = CorpusIngestor(runner.db, results.kb_id, user_id="benchmark")
-            id_map = await ingestor.build_id_map()
-            search_cfg = SearchConfig(limit=args.limit, threshold=args.threshold)
-
-            # Reconstruct the filtered query set from qrels_dict (same population
-            # as the main benchmark used — only queries with ground truth against
-            # profiled documents).
-            loader = BeirLoader(dataset_dir, name=dataset_name)
-            all_queries = loader.load().queries
-            filtered_queries = {
-                qid: q for qid, q in all_queries.items() if qid in results.qrels_dict
-            }
-
-            ablation = AblationRunner(
-                collector=collector,
-                id_map=id_map,
-                queries=filtered_queries,
-                qrels_dict=results.qrels_dict,
-                metrics=config.metrics,
-                search_config=search_cfg,
-            )
-            ablation_results = await ablation.run()
-
         # Generate reports
         report_gen = ReportGenerator()
-        files = report_gen.generate_full_report(results, ablation_results, args.output_dir)
+        files = report_gen.generate_full_report(results, args.output_dir)
 
         print(f"\nBenchmark complete. Reports written to {args.output_dir}:")
         for f in files:
