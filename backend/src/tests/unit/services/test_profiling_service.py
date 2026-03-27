@@ -68,12 +68,10 @@ class TestChunkProfiling:
         llm_response = json.dumps([
             {
                 "summary": "Covers user authentication",
-                "keywords": ["user", "auth"],
                 "topics": ["security"],
             },
             {
                 "summary": "Explains API endpoints",
-                "keywords": ["REST", "HTTP"],
                 "topics": ["integration"],
             },
         ])
@@ -92,7 +90,6 @@ class TestChunkProfiling:
         assert results[0].success is True
         assert results[0].chunk_id == "c1"
         assert results[0].profile.summary == "Covers user authentication"
-        assert "user" in results[0].profile.keywords
         assert results[1].success is True
         assert results[1].profile.summary == "Explains API endpoints"
         mock_side_call_service.call_for_profiling.assert_called_once()
@@ -114,7 +111,7 @@ class TestChunkProfiling:
 
         def make_response(call_count):
             profiles = [
-                {"summary": f"Profile {i}", "keywords": [], "topics": []}
+                {"summary": f"Profile {i}", "topics": []}
                 for i in range(2)
             ]
             return SideCallResult(content=json.dumps(profiles), success=True, tokens_used=100)
@@ -154,12 +151,10 @@ class TestChunkProfiling:
 
     @pytest.mark.asyncio
     async def test_profile_chunks_truncates_long_lists(self, profiling_service, mock_side_call_service):
-        """Test that excessively long keywords/topics lists are truncated."""
+        """Test that excessively long summary/topics lists are truncated."""
         long_summary = "y" * 1000
-        long_keywords = [f"kw{i}" for i in range(50)]
         llm_response = json.dumps([{
             "summary": long_summary,
-            "keywords": long_keywords,
             "topics": [f"t{i}" for i in range(20)],
         }])
         mock_side_call_service.call_for_profiling.return_value = SideCallResult(
@@ -170,7 +165,6 @@ class TestChunkProfiling:
         results, _ = await profiling_service.profile_chunks(chunks)
 
         assert len(results[0].profile.summary) <= 500
-        assert len(results[0].profile.keywords) <= 15
         assert len(results[0].profile.topics) <= 10
 
 
@@ -213,12 +207,10 @@ class TestIncrementalProfiling:
         chunk_response = json.dumps([
             {
                 "summary": "Explains OAuth2 flow",
-                "keywords": ["OAuth2", "PKCE"],
                 "topics": ["authentication"],
             },
             {
                 "summary": "Covers token refresh",
-                "keywords": ["refresh_token"],
                 "topics": ["token_management"],
             },
         ])
@@ -267,7 +259,7 @@ class TestIncrementalProfiling:
         assert doc_profile.document_type == DocumentType.TECHNICAL
 
         assert len(queries) == 2
-        assert "OAuth2 PKCE" in queries[0]
+        assert "OAuth2 PKCE" in queries[0].query_text
 
         assert tokens == 300  # 200 for chunks + 100 for metadata
         assert coverage == 100.0  # All chunks successful
@@ -285,12 +277,10 @@ class TestIncrementalProfiling:
         batch1_response = json.dumps([
             {
                 "summary": "Batch 1 chunk 0",
-                "keywords": ["k0"],
                 "topics": ["t0"],
             },
             {
                 "summary": "Batch 1 chunk 1",
-                "keywords": ["k1"],
                 "topics": ["t1"],
             },
         ])
@@ -299,7 +289,6 @@ class TestIncrementalProfiling:
         batch2_response = json.dumps([
             {
                 "summary": "Batch 2 chunk",
-                "keywords": ["k2"],
                 "topics": ["t2"],
             },
         ])
@@ -352,12 +341,12 @@ class TestIncrementalProfiling:
         mock_settings.chunk_profiling_batch_size = 2
 
         batch1_response = json.dumps([
-            {"summary": "First summary", "keywords": [], "topics": []},
-            {"summary": "Second summary", "keywords": [], "topics": []},
+            {"summary": "First summary", "topics": []},
+            {"summary": "Second summary", "topics": []},
         ])
 
         batch2_response = json.dumps([
-            {"summary": "Third summary", "keywords": [], "topics": []},
+            {"summary": "Third summary", "topics": []},
         ])
 
         metadata_response = json.dumps({
@@ -418,12 +407,12 @@ class TestIncrementalProfiling:
         mock_settings.chunk_profiling_batch_size = 2
 
         batch1_response = json.dumps([
-            {"summary": "Summary 0", "keywords": [], "topics": []},
-            {"summary": "Summary 1", "keywords": [], "topics": []},
+            {"summary": "Summary 0", "topics": []},
+            {"summary": "Summary 1", "topics": []},
         ])
 
         batch2_response = json.dumps([
-            {"summary": "Summary 2", "keywords": [], "topics": []},
+            {"summary": "Summary 2", "topics": []},
         ])
 
         mock_side_call_service.call_for_profiling.side_effect = [
@@ -494,7 +483,7 @@ class TestIncrementalProfiling:
         # First batch fails
         # Second batch succeeds
         batch2_response = json.dumps([
-            {"summary": "Second batch chunk", "keywords": [], "topics": []},
+            {"summary": "Second batch chunk", "topics": []},
         ])
 
         # Metadata generation succeeds with limited context
@@ -548,7 +537,7 @@ class TestDocumentMetadataPrompt:
         mock_settings.chunk_profiling_batch_size = 10
 
         chunk_response = json.dumps([
-            {"summary": "Test chunk", "keywords": [], "topics": []},
+            {"summary": "Test chunk", "topics": []},
         ])
 
         metadata_response = json.dumps({
@@ -568,10 +557,13 @@ class TestDocumentMetadataPrompt:
 
         # Check the second call (metadata generation)
         metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
-        # Verify prompt uses configured per-chunk query count (queries_per_chunk=2 from mock_settings)
-        assert "2 capability queries" in metadata_call_kwargs["system_prompt"]
-        # Should be focused on synthesis, not FINAL batch
+        # System prompt should be focused on synthesis
         assert "synthesizing" in metadata_call_kwargs["system_prompt"].lower()
+        # System prompt should have query guidelines
+        assert "chunk_queries" in metadata_call_kwargs["system_prompt"]
+        # User content should have the concrete target query count
+        user_content = metadata_call_kwargs["message_sequence"][0]["content"]
+        assert "Generate exactly 2 capability queries" in user_content
 
     @pytest.mark.asyncio
     async def test_metadata_generation_includes_document_metadata(
@@ -581,7 +573,7 @@ class TestDocumentMetadataPrompt:
         mock_settings.chunk_profiling_batch_size = 10
 
         chunk_response = json.dumps([
-            {"summary": "Test chunk", "keywords": [], "topics": []},
+            {"summary": "Test chunk", "topics": []},
         ])
 
         metadata_response = json.dumps({
@@ -621,7 +613,7 @@ class TestQuerySynthesisInPrompt:
         service = ProfilingService(mock_side_call_service, mock_settings)
 
         chunk_response = json.dumps([
-            {"summary": "Test chunk", "keywords": [], "topics": []},
+            {"summary": "Test chunk", "topics": []},
         ])
 
         metadata_response = json.dumps({
@@ -644,11 +636,12 @@ class TestQuerySynthesisInPrompt:
         system_prompt = metadata_call_kwargs["system_prompt"]
         user_content = metadata_call_kwargs["message_sequence"][0]["content"]
 
-        # System prompt should mention chunk queries
+        # System prompt should have query format and guidelines
         assert "chunk_queries" in system_prompt
         assert "capability queries" in system_prompt
-        # User content should ask for chunk queries
-        assert "chunk_queries" in user_content
+        # User content should have the concrete target count (not format instructions)
+        assert "Generate exactly" in user_content
+        assert "capability queries" in user_content
 
 
 class TestMetadataContextEnrichment:
@@ -665,7 +658,6 @@ class TestMetadataContextEnrichment:
         chunk_response = json.dumps([
             {
                 "summary": "Q3 revenue grew 15% YoY",
-                "keywords": ["Q3 2024", "revenue", "$42M", "EMEA"],
                 "topics": ["financial performance", "regional growth"],
             },
         ])
@@ -688,8 +680,7 @@ class TestMetadataContextEnrichment:
         metadata_call_kwargs = mock_side_call_service.call_for_profiling.call_args_list[1][1]
         user_content = metadata_call_kwargs["message_sequence"][0]["content"]
 
-        # Keywords and topics should be present
-        assert "Keywords: Q3 2024, revenue, $42M, EMEA" in user_content
+        # Topics should be present (keywords were removed from chunk profiling)
         assert "Topics: financial performance, regional growth" in user_content
 
     @pytest.mark.asyncio
@@ -701,7 +692,7 @@ class TestMetadataContextEnrichment:
         service = ProfilingService(mock_side_call_service, mock_settings)
 
         chunk_response = json.dumps([
-            {"summary": "Brief chunk", "keywords": [], "topics": []},
+            {"summary": "Brief chunk", "topics": []},
         ])
 
         metadata_response = json.dumps({
@@ -739,13 +730,11 @@ class TestProfileParserNullHandling:
             {
                 "index": 0,
                 "summary": None,
-                "keywords": None,
                 "topics": None,
             },
             {
                 "index": 1,
                 "summary": "Valid summary",
-                "keywords": ["keyword1"],
                 "topics": ["topic1"],
             },
         ])
@@ -769,12 +758,10 @@ class TestProfileParserNullHandling:
 
         # First chunk should have empty values
         assert results[0].profile.summary == ""
-        assert results[0].profile.keywords == []
         assert results[0].profile.topics == []
 
         # Second chunk should have actual values
         assert results[1].profile.summary == "Valid summary"
-        assert results[1].profile.keywords == ["keyword1"]
         assert results[1].profile.topics == ["topic1"]
 
 
@@ -792,13 +779,13 @@ class TestRetryMechanism:
 
         # Initial batch: chunk 0 fails (empty summary), chunk 1 succeeds
         initial_response = json.dumps([
-            {"summary": "", "keywords": [], "topics": []},  # Will be retried
-            {"summary": "Chunk 1 success", "keywords": ["k1"], "topics": ["t1"]},
+            {"summary": "", "topics": []},  # Will be retried
+            {"summary": "Chunk 1 success", "topics": ["t1"]},
         ])
 
         # Retry: chunk 0 now succeeds
         retry_response = json.dumps([
-            {"summary": "Chunk 0 recovered", "keywords": ["k0"], "topics": ["t0"]},
+            {"summary": "Chunk 0 recovered", "topics": ["t0"]},
         ])
 
         # Metadata generation
@@ -843,17 +830,17 @@ class TestRetryMechanism:
 
         # Initial: chunk 0 fails
         initial_response = json.dumps([
-            {"summary": "", "keywords": [], "topics": []},
+            {"summary": "", "topics": []},
         ])
 
         # First retry: still fails
         retry1_response = json.dumps([
-            {"summary": "", "keywords": [], "topics": []},
+            {"summary": "", "topics": []},
         ])
 
         # Second retry: now succeeds
         retry2_response = json.dumps([
-            {"summary": "Finally recovered", "keywords": [], "topics": []},
+            {"summary": "Finally recovered", "topics": []},
         ])
 
         # Metadata
@@ -893,12 +880,12 @@ class TestRetryMechanism:
 
         # Initial: chunk 0 fails
         initial_response = json.dumps([
-            {"summary": "", "keywords": [], "topics": []},
+            {"summary": "", "topics": []},
         ])
 
         # First retry: succeeds (should not need retry 2 or 3)
         retry1_response = json.dumps([
-            {"summary": "Recovered on first retry", "keywords": [], "topics": []},
+            {"summary": "Recovered on first retry", "topics": []},
         ])
 
         # Metadata
@@ -934,7 +921,7 @@ class TestRetryMechanism:
 
         # Initial: chunk fails (empty summary)
         initial_response = json.dumps([
-            {"summary": "", "keywords": [], "topics": []},
+            {"summary": "", "topics": []},
         ])
 
         mock_side_call_service.call_for_profiling.side_effect = [

@@ -34,7 +34,6 @@ class ChunkSummaryVectorSurface(RetrievalSurface):
         self,
         query_text: str,
         query_vector: list[float],
-        keyword_terms: list[str],
         *,
         kb_id: UUID,
         limit: int = 50,

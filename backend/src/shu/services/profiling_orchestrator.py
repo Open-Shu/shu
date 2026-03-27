@@ -27,6 +27,7 @@ from ..schemas.profiling import (
     ChunkProfileResult,
     ProfilingMode,
     ProfilingResult,
+    SynthesizedQuery,
 )
 from .profiling_service import ProfilingService
 from .side_call_service import SideCallService
@@ -99,39 +100,58 @@ class ProfilingOrchestrator:
                 chunk_count=len(chunks),
             )
 
-            # Prepare chunk data
-            chunk_data = [
-                ChunkData(
-                    chunk_id=c.id,
-                    chunk_index=c.chunk_index,
-                    content=c.content,
-                )
-                for c in chunks
-            ]
+            # Phase 1: Profile chunks in batches, skipping batches where all
+            # chunks already have summaries.  Commit after each batch so work
+            # is not lost if a later phase fails.
+            chunk_results, phase1_tokens, chunks_skipped, chunks_profiled = await self._profile_chunks_incrementally(
+                chunks, document_id
+            )
+            total_tokens += phase1_tokens
 
-            # Two-phase profiling with retry: all chunks profiled first,
-            # failed chunks retried with context, then document metadata generated
-            (
-                chunk_results,
-                doc_profile,
-                synthesized_queries,
-                tokens,
-                coverage_percent,
-            ) = await self.profiling_service.profile_chunks_incremental(
-                chunks=chunk_data,
+            # Phase 2: Generate document metadata from DB-sourced summaries.
+            # Re-read summaries from the database (not in-memory results) so
+            # that retries after a metadata-only failure don't need to
+            # re-profile any chunks.
+            await self.db.refresh(document)  # Pick up any chunk commits
+            accumulated_summaries = await self._load_chunk_summaries(document_id)
+
+            successful_count = len(accumulated_summaries)
+            coverage_percent = (successful_count / len(chunks)) * 100 if chunks else 100.0
+
+            logger.info(
+                "chunk_profiling_coverage",
+                document_id=document_id,
+                total_chunks=len(chunks),
+                successful_chunks=successful_count,
+                chunks_skipped=chunks_skipped,
+                chunks_profiled=chunks_profiled,
+                coverage_percent=round(coverage_percent, 1),
+            )
+
+            doc_profile, synthesized_queries, metadata_tokens = await self.profiling_service.generate_document_metadata(
+                accumulated_summaries,
                 document_metadata={"title": document.title},
             )
-            total_tokens += tokens
+            total_tokens += metadata_tokens
 
-            # Persist results (including coverage)
-            await self._persist_results(document, chunks, doc_profile, chunk_results, coverage_percent)
+            if not doc_profile:
+                logger.warning(
+                    "document_metadata_generation_returned_none",
+                    document_id=document_id,
+                    summary_count=len(accumulated_summaries),
+                    metadata_tokens=metadata_tokens,
+                    total_chunks=len(chunks),
+                )
+
+            # Persist document-level profile
+            await self._persist_document_profile(document, doc_profile, coverage_percent)
 
             # Persist synthesized queries (even if empty, to delete stale queries on re-profile)
             # Isolated from main try block so query failures don't mark profiling as failed
             queries_created = 0
             if doc_profile:
                 try:
-                    queries_created = await self._persist_queries(document, synthesized_queries)
+                    queries_created = await self._persist_queries(document, synthesized_queries, chunks)
                 except Exception as e:
                     await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
@@ -174,15 +194,162 @@ class ProfilingOrchestrator:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
 
-    async def _persist_queries(self, document: Document, queries: list[str]) -> int:
+    async def _profile_chunks_incrementally(
+        self,
+        chunks: list[DocumentChunk],
+        document_id: str,
+    ) -> tuple[list[ChunkProfileResult], int, int, int]:
+        """Profile chunks in batches, skipping batches where all chunks are already profiled.
+
+        Walks through chunks sequentially in batch-sized windows. If every chunk
+        in the batch already has a non-empty summary, skips it. If any chunk in
+        the batch is missing a summary, sends the whole batch (preserving
+        sequential context for the LLM). Commits results after each batch.
+
+        Args:
+            chunks: All document chunks in order.
+            document_id: Document ID for logging.
+
+        Returns:
+            Tuple of (all chunk results, total tokens, chunks skipped, chunks profiled).
+
+        """
+        batch_size = self.settings.chunk_profiling_batch_size
+        all_results: list[ChunkProfileResult] = []
+        total_tokens = 0
+        chunks_skipped = 0
+        chunks_profiled = 0
+
+        for i in range(0, len(chunks), batch_size):
+            batch_chunks = chunks[i : i + batch_size]
+
+            # Check if all chunks in this batch already have summaries
+            all_have_summaries = all(c.summary and c.summary.strip() for c in batch_chunks)
+
+            if all_have_summaries:
+                chunks_skipped += len(batch_chunks)
+                continue
+
+            # At least one chunk needs profiling — send the full batch
+            chunk_data = [
+                ChunkData(
+                    chunk_id=c.id,
+                    chunk_index=c.chunk_index,
+                    content=c.content,
+                )
+                for c in batch_chunks
+            ]
+
+            batch_results, tokens = await self.profiling_service.profile_chunk_batch(
+                chunk_data,
+            )
+            total_tokens += tokens
+            all_results.extend(batch_results)
+
+            # Persist this batch immediately
+            chunk_map = {c.id: c for c in batch_chunks}
+            for result in batch_results:
+                chunk = chunk_map.get(result.chunk_id)
+                if (
+                    chunk
+                    and result.success
+                    and result.profile
+                    and result.profile.summary
+                    and result.profile.summary.strip()
+                ):
+                    chunk.set_profile(
+                        summary=result.profile.summary,
+                        topics=result.profile.topics,
+                    )
+            await self.db.commit()
+            chunks_profiled += len(batch_chunks)
+
+            logger.debug(
+                "chunk_batch_committed",
+                document_id=document_id,
+                batch_start=i,
+                batch_size=len(batch_chunks),
+                tokens=tokens,
+            )
+
+        return all_results, total_tokens, chunks_skipped, chunks_profiled
+
+    async def _load_chunk_summaries(self, document_id: str) -> list[str]:
+        """Load committed chunk summaries from the database for metadata generation.
+
+        Returns accumulated summary strings in chunk_index order, matching the
+        format expected by generate_document_metadata().
+
+        """
+        stmt = (
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.summary.isnot(None))  # type: ignore[union-attr]
+            .order_by(DocumentChunk.chunk_index)
+        )
+        result = await self.db.execute(stmt)
+        chunks = result.scalars().all()
+
+        accumulated = []
+        for chunk in chunks:
+            summary: str = chunk.summary or ""  # type: ignore[assignment]
+            if not summary.strip():
+                continue
+            entry = f"Chunk {chunk.chunk_index}: {summary}"
+            topics: list = chunk.topics if isinstance(chunk.topics, list) else []  # type: ignore[assignment]
+            if topics:
+                entry += f"\n  Topics: {', '.join(topics)}"
+            accumulated.append(entry)
+
+        return accumulated
+
+    async def _persist_document_profile(
+        self,
+        document: Document,
+        doc_profile,
+        coverage_percent: float,
+    ) -> None:
+        """Persist document-level profile (synopsis, type, manifest).
+
+        Separated from chunk persistence so that chunk results survive
+        even if metadata generation fails.
+
+        """
+        if doc_profile:
+            document.mark_profiling_complete(
+                synopsis=doc_profile.synopsis,
+                document_type=doc_profile.document_type.value,
+                capability_manifest=doc_profile.capability_manifest.model_dump(),
+                coverage_percent=coverage_percent,
+            )
+        else:
+            document.mark_profiling_failed("Failed to generate document profile")
+
+        await self.db.commit()
+
+        logger.info(
+            "document_profile_persisted",
+            document_id=document.id,
+            doc_profile_success=doc_profile is not None,
+            coverage_percent=round(coverage_percent, 1),
+        )
+
+    async def _persist_queries(
+        self,
+        document: Document,
+        queries: list[SynthesizedQuery],
+        chunks: list[DocumentChunk],
+    ) -> int:
         """Persist synthesized queries to the database.
 
         Deletes any existing queries for this document before creating new ones
-        to handle re-profiling scenarios.
+        to handle re-profiling scenarios. Resolves chunk_index from the LLM
+        response to chunk_id for direct FK linkage (SHU-645).
 
         Args:
             document: The document being profiled
-            queries: List of query strings
+            queries: List of SynthesizedQuery with optional chunk_index provenance
+            chunks: Document chunks for chunk_index → chunk_id resolution
 
         Returns:
             Number of queries created
@@ -191,13 +358,18 @@ class ProfilingOrchestrator:
         # Delete existing queries for this document (re-profiling case)
         await self.db.execute(delete(DocumentQuery).where(DocumentQuery.document_id == document.id))
 
+        # Build chunk_index → chunk_id map for provenance resolution
+        chunk_index_to_id: dict[int, str] = {c.chunk_index: c.id for c in chunks}
+
         queries_created = 0
-        for query_text in queries:
-            if query_text.strip():  # Skip empty queries
+        for sq in queries:
+            if sq.query_text.strip():
+                source_chunk_id = chunk_index_to_id.get(sq.chunk_index) if sq.chunk_index is not None else None
                 doc_query = DocumentQuery.create_for_document(
                     document_id=document.id,
                     knowledge_base_id=document.knowledge_base_id,
-                    query_text=query_text.strip(),
+                    query_text=sq.query_text.strip(),
+                    source_chunk_id=source_chunk_id,
                 )
                 self.db.add(doc_query)
                 queries_created += 1
@@ -212,70 +384,6 @@ class ProfilingOrchestrator:
             )
 
         return queries_created
-
-    async def _persist_results(
-        self,
-        document: Document,
-        chunks: list[DocumentChunk],
-        doc_profile,
-        chunk_results: list[ChunkProfileResult],
-        coverage_percent: float = 100.0,
-    ) -> None:
-        """Persist profiling results to the database.
-
-        Updates Document with profile data and marks complete/failed.
-        Updates DocumentChunks with their profiles.
-
-        Args:
-            document: The document being profiled
-            chunks: List of DocumentChunk records
-            doc_profile: DocumentProfile or None if generation failed
-            chunk_results: Results for each chunk
-            coverage_percent: Percentage of chunks successfully profiled
-
-        """
-        # Update document profile
-        if doc_profile:
-            document.mark_profiling_complete(
-                synopsis=doc_profile.synopsis,
-                document_type=doc_profile.document_type.value,
-                capability_manifest=doc_profile.capability_manifest.model_dump(),
-                coverage_percent=coverage_percent,
-            )
-        else:
-            document.mark_profiling_failed("Failed to generate document profile")
-
-        # Update chunk profiles
-        # Only persist profiles for chunks that succeeded AND have non-empty summaries
-        # (mirrors the failure detection in ProfilingService._is_chunk_profile_failed)
-        chunk_map = {c.id: c for c in chunks}
-        chunks_persisted = 0
-        for result in chunk_results:
-            chunk = chunk_map.get(result.chunk_id)
-            if (
-                chunk
-                and result.success
-                and result.profile
-                and result.profile.summary
-                and result.profile.summary.strip()
-            ):
-                chunk.set_profile(
-                    summary=result.profile.summary,
-                    keywords=result.profile.keywords,
-                    topics=result.profile.topics,
-                )
-                chunks_persisted += 1
-
-        await self.db.commit()
-
-        logger.info(
-            "profiling_results_persisted",
-            document_id=document.id,
-            doc_profile_success=doc_profile is not None,
-            chunks_persisted=chunks_persisted,
-            chunks_failed=len(chunk_results) - chunks_persisted,
-            coverage_percent=round(coverage_percent, 1),
-        )
 
     async def is_profiling_enabled(self) -> bool:
         """Check if document profiling is enabled."""

@@ -58,7 +58,7 @@ function QueryTester() {
   const [chunkVectorWeight, setChunkVectorWeight] = useState(0.25);
   const [queryMatchWeight, setQueryMatchWeight] = useState(0.2);
   const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.15);
-  const [keywordMatchWeight, setKeywordMatchWeight] = useState(0.15);
+  const [bm25Weight, setBm25Weight] = useState(0.15);
   const [chunkSummaryWeight, setChunkSummaryWeight] = useState(0.25);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
@@ -114,7 +114,7 @@ function QueryTester() {
           chunk_vector_weight: params.chunkVectorWeight,
           query_match_weight: params.queryMatchWeight,
           synopsis_match_weight: params.synopsisMatchWeight,
-          keyword_match_weight: params.keywordMatchWeight,
+          bm25_weight: params.bm25Weight,
           chunk_summary_weight: params.chunkSummaryWeight,
         });
       }
@@ -151,7 +151,7 @@ function QueryTester() {
       chunkVectorWeight: chunkVectorWeight,
       queryMatchWeight: queryMatchWeight,
       synopsisMatchWeight: synopsisMatchWeight,
-      keywordMatchWeight: keywordMatchWeight,
+      bm25Weight: bm25Weight,
       chunkSummaryWeight: chunkSummaryWeight,
     });
   };
@@ -185,7 +185,7 @@ function QueryTester() {
         chunk_vector_weight: chunkVectorWeight,
         query_match_weight: queryMatchWeight,
         synopsis_match_weight: synopsisMatchWeight,
-        keyword_match_weight: keywordMatchWeight,
+        bm25_weight: bm25Weight,
         chunk_summary_weight: chunkSummaryWeight,
       };
     } else {
@@ -444,11 +444,11 @@ function QueryTester() {
                     />
 
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Keyword Match: {keywordMatchWeight.toFixed(2)}
+                      Keyword Search: {bm25Weight.toFixed(2)}
                     </Typography>
                     <Slider
-                      value={keywordMatchWeight}
-                      onChange={(_, newValue) => setKeywordMatchWeight(newValue)}
+                      value={bm25Weight}
+                      onChange={(_, newValue) => setBm25Weight(newValue)}
                       min={0}
                       max={1}
                       step={0.05}
@@ -547,9 +547,15 @@ function QueryTester() {
                           sources={queryResults.multi_surface_results}
                           title="Multi-Surface Results"
                           searchQuery={queryText}
+                          knowledgeBaseId={selectedKB}
                         />
                       ) : queryResults.results && queryResults.results.length > 0 ? (
-                        <SourcePreview sources={queryResults.results} title="Query Results" searchQuery={queryText} />
+                        <SourcePreview
+                          sources={queryResults.results}
+                          title="Query Results"
+                          searchQuery={queryText}
+                          knowledgeBaseId={selectedKB}
+                        />
                       ) : (
                         <Alert severity="info">No results found for this query.</Alert>
                       )}

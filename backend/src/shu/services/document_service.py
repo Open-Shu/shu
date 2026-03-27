@@ -414,6 +414,38 @@ class DocumentService:
 
         return result
 
+    async def get_document_chunks_paginated(
+        self, doc_id: str, *, limit: int = 20, offset: int = 0
+    ) -> tuple[list[DocumentChunk], int]:
+        """Get a page of chunks for a document with server-side pagination.
+
+        Args:
+            doc_id: Document ID
+            limit: Maximum chunks to return
+            offset: Number of chunks to skip (by chunk_index order)
+
+        Returns:
+            Tuple of (chunks, total_count)
+
+        """
+        doc_result = await self.db.execute(select(Document).where(Document.id == doc_id))
+        if not doc_result.scalar_one_or_none():
+            raise DocumentNotFoundError(doc_id)
+
+        count_result = await self.db.execute(select(func.count()).where(DocumentChunk.document_id == doc_id))
+        total = count_result.scalar() or 0
+
+        chunks_result = await self.db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == doc_id)
+            .order_by(DocumentChunk.chunk_index)
+            .limit(limit)
+            .offset(offset)
+        )
+        chunks = chunks_result.scalars().all()
+
+        return chunks, total
+
     async def search_documents(self, search_request: DocumentSearchRequest) -> DocumentSearchResponse:
         """Search documents by query."""
         logger.debug(

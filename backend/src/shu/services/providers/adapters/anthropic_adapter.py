@@ -724,7 +724,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         """Inject default values for required Anthropic parameters.
 
         Anthropic requires max_tokens to be specified. If not provided,
-        inject a reasonable default of 4096 tokens.
+        inject a reasonable default of 64000 tokens.
 
         Args:
             payload: The request payload to be sent to Anthropic
@@ -735,7 +735,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         """
         # Inject default max_tokens if not provided
         if "max_tokens" not in payload:
-            payload["max_tokens"] = 4096
+            payload["max_tokens"] = 64000
 
         return payload
 

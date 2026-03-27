@@ -1,6 +1,8 @@
 import React from 'react';
-import { Box, Typography, Paper, Chip, Divider, Card, CardContent, Collapse, IconButton } from '@mui/material';
+import { Box, Typography, Paper, Chip, Divider, Card, CardContent, Collapse, IconButton, Button } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import ChunkDetailModal from './ChunkDetailModal';
 
 function safeGet(obj, keys, fallback = '') {
   for (const k of keys) {
@@ -52,9 +54,12 @@ function groupByDocument(items) {
 /**
  * Render a single multi-surface result (document with surface scores and contributing chunks)
  */
-function MultiSurfaceItem({ result, rank }) {
+function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false }) {
   const [expanded, setExpanded] = React.useState(true);
+  const [showAll, setShowAll] = React.useState(showAllChunks);
   const chunks = result.contributing_chunks || [];
+  const displayChunks = showAll ? chunks : chunks.slice(0, 5);
+  const hasMoreChunks = chunks.length > 5;
 
   return (
     <Card variant="outlined" sx={{ mb: 2 }}>
@@ -73,7 +78,7 @@ function MultiSurfaceItem({ result, rank }) {
               color = 'info';
             } else if (surface === 'query_match') {
               color = 'success';
-            } else if (surface === 'keyword_match') {
+            } else if (surface === 'bm25') {
               color = 'warning';
             } else if (surface === 'chunk_summary') {
               color = 'default';
@@ -95,25 +100,6 @@ function MultiSurfaceItem({ result, rank }) {
             Matched query: "{result.surface_metadata.query_match.matched_query}"
           </Typography>
         )}
-        {/* Display matched terms from keyword_match surface */}
-        {Array.isArray(result.surface_metadata?.keyword_match?.matched_terms) &&
-          result.surface_metadata.keyword_match.matched_terms.length > 0 && (
-            <Box sx={{ mb: 1 }}>
-              <Typography variant="body2" color="text.secondary" component="span">
-                Matched keywords:{' '}
-              </Typography>
-              {result.surface_metadata.keyword_match.matched_terms.map((term, index) => (
-                <Chip
-                  key={`${term}-${index}`}
-                  label={term}
-                  size="small"
-                  color="warning"
-                  variant="outlined"
-                  sx={{ mr: 0.5, mb: 0.5 }}
-                />
-              ))}
-            </Box>
-          )}
         {chunks.length > 0 && (
           <Box>
             <Box display="flex" alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => setExpanded(!expanded)}>
@@ -129,15 +115,31 @@ function MultiSurfaceItem({ result, rank }) {
             </Box>
             <Collapse in={expanded}>
               <Box sx={{ mt: 1 }}>
-                {chunks.slice(0, 5).map((chunk, index) => (
+                {displayChunks.map((chunk, index) => (
                   <Box
                     key={chunk.chunk_id || `chunk-${chunk.chunk_index ?? index}`}
+                    onClick={() => onChunkClick && onChunkClick(chunk, result)}
+                    onKeyDown={(e) => {
+                      if (onChunkClick && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        onChunkClick(chunk, result);
+                      }
+                    }}
+                    role={onChunkClick ? 'button' : undefined}
+                    tabIndex={onChunkClick ? 0 : undefined}
                     sx={{
                       bgcolor: 'grey.100',
                       p: 1,
                       borderRadius: 1,
                       mb: 1,
                       fontSize: '0.875rem',
+                      cursor: onChunkClick ? 'pointer' : 'default',
+                      transition: 'background-color 0.15s',
+                      '&:hover': onChunkClick
+                        ? {
+                            bgcolor: 'grey.200',
+                          }
+                        : {},
                     }}
                   >
                     <Box display="flex" alignItems="center" gap={1} mb={0.5}>
@@ -158,6 +160,7 @@ function MultiSurfaceItem({ result, rank }) {
                         size="small"
                         variant="outlined"
                       />
+                      {onChunkClick && <VisibilityIcon fontSize="small" sx={{ ml: 'auto', color: 'action.active' }} />}
                     </Box>
                     <Typography variant="body2" sx={{ mt: 0.5 }}>
                       {chunk.snippet}
@@ -169,10 +172,29 @@ function MultiSurfaceItem({ result, rank }) {
                     )}
                   </Box>
                 ))}
-                {chunks.length > 5 && (
-                  <Typography variant="caption" color="text.secondary">
-                    +{chunks.length - 5} more chunks
-                  </Typography>
+                {hasMoreChunks && !showAll && (
+                  <Button
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowAll(true);
+                    }}
+                    sx={{ mt: 0.5 }}
+                  >
+                    Show all {chunks.length} chunks
+                  </Button>
+                )}
+                {hasMoreChunks && showAll && (
+                  <Button
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowAll(false);
+                    }}
+                    sx={{ mt: 0.5 }}
+                  >
+                    Show fewer
+                  </Button>
                 )}
               </Box>
             </Collapse>
@@ -186,9 +208,12 @@ function MultiSurfaceItem({ result, rank }) {
 /**
  * Render grouped regular results (chunks grouped by document)
  */
-function GroupedDocumentItem({ group, rank }) {
+function GroupedDocumentItem({ group, rank, onChunkClick }) {
   const [expanded, setExpanded] = React.useState(true);
+  const [showAll, setShowAll] = React.useState(false);
   const chunks = [...group.chunks].sort((a, b) => b.score - a.score);
+  const displayChunks = showAll ? chunks : chunks.slice(0, 5);
+  const hasMoreChunks = chunks.length > 5;
 
   return (
     <Card variant="outlined" sx={{ mb: 2 }}>
@@ -209,7 +234,7 @@ function GroupedDocumentItem({ group, rank }) {
         </Box>
         <Collapse in={expanded}>
           <Box sx={{ mt: 1 }}>
-            {chunks.slice(0, 5).map((chunk, idx) => {
+            {displayChunks.map((chunk, idx) => {
               const chunkIndex = safeGet(chunk, ['chunk_index', 'index'], idx);
               const snippet = safeGet(chunk, ['snippet', 'content_snippet', 'content_preview', 'content'], '');
               const url = safeGet(chunk, ['source_url', 'url', 'link'], '');
@@ -217,12 +242,28 @@ function GroupedDocumentItem({ group, rank }) {
               return (
                 <Box
                   key={chunk.id || idx}
+                  onClick={() => onChunkClick && onChunkClick(chunk, group)}
+                  onKeyDown={(e) => {
+                    if (onChunkClick && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      onChunkClick(chunk, group);
+                    }
+                  }}
+                  role={onChunkClick ? 'button' : undefined}
+                  tabIndex={onChunkClick ? 0 : undefined}
                   sx={{
                     bgcolor: 'grey.100',
                     p: 1,
                     borderRadius: 1,
                     mb: 1,
                     fontSize: '0.875rem',
+                    cursor: onChunkClick ? 'pointer' : 'default',
+                    transition: 'background-color 0.15s',
+                    '&:hover': onChunkClick
+                      ? {
+                          bgcolor: 'grey.200',
+                        }
+                      : {},
                   }}
                 >
                   <Box display="flex" alignItems="center" gap={1} mb={0.5}>
@@ -234,6 +275,7 @@ function GroupedDocumentItem({ group, rank }) {
                     />
                     <Chip label={`${(chunk.score * 100).toFixed(1)}%`} size="small" variant="outlined" />
                     {chunk.source_type && <Chip label={chunk.source_type} size="small" variant="outlined" />}
+                    {onChunkClick && <VisibilityIcon fontSize="small" sx={{ ml: 'auto', color: 'action.active' }} />}
                   </Box>
                   {url && (
                     <Typography variant="caption" color="primary" sx={{ display: 'block', mb: 0.5 }}>
@@ -248,10 +290,29 @@ function GroupedDocumentItem({ group, rank }) {
                 </Box>
               );
             })}
-            {chunks.length > 5 && (
-              <Typography variant="caption" color="text.secondary">
-                +{chunks.length - 5} more chunks
-              </Typography>
+            {hasMoreChunks && !showAll && (
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowAll(true);
+                }}
+                sx={{ mt: 0.5 }}
+              >
+                Show all {chunks.length} chunks
+              </Button>
+            )}
+            {hasMoreChunks && showAll && (
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowAll(false);
+                }}
+                sx={{ mt: 0.5 }}
+              >
+                Show fewer
+              </Button>
             )}
           </Box>
         </Collapse>
@@ -267,10 +328,66 @@ function GroupedDocumentItem({ group, rank }) {
  * - sources: Array<any> - regular chunk results or multi-surface results
  * - searchQuery?: string
  * - groupByDoc?: boolean - group regular results by document (default: true)
+ * - knowledgeBaseId?: string - KB ID for fetching full chunk content (enables click-to-view)
  */
-export default function SourcePreview({ title = 'Sources', sources = [], searchQuery = '', groupByDoc = true }) {
+export default function SourcePreview({
+  title = 'Sources',
+  sources = [],
+  searchQuery = '',
+  groupByDoc = true,
+  knowledgeBaseId = null,
+}) {
   const items = Array.isArray(sources) ? sources : [];
   const isMultiSurface = items.length > 0 && isMultiSurfaceResult(items[0]);
+
+  // State for chunk detail modal
+  const [modalOpen, setModalOpen] = React.useState(false);
+  const [selectedChunk, setSelectedChunk] = React.useState(null);
+  const [selectedDocument, setSelectedDocument] = React.useState(null);
+
+  // Handle chunk click - open modal to view full content
+  const handleChunkClick = React.useCallback(
+    (chunk, docOrResult) => {
+      if (!knowledgeBaseId) {
+        return; // No KB ID means no modal functionality
+      }
+
+      const documentId = docOrResult.document_id || docOrResult.id;
+      const chunkId = chunk.chunk_id || chunk.id;
+      if (!documentId || !chunkId) {
+        return; // Can't open modal without real identifiers
+      }
+
+      // Normalize chunk data for the modal
+      const normalizedChunk = {
+        chunk_id: chunkId,
+        chunk_index: chunk.chunk_index ?? chunk.index,
+        surface: chunk.surface || null,
+        score: chunk.score ?? chunk.similarity_score ?? null,
+        snippet: chunk.snippet || chunk.content_snippet || chunk.content_preview || chunk.content || '',
+        summary: chunk.summary || null,
+      };
+
+      // Extract document info — totalChunks is unknown until the modal
+      // fetches from the API; don't seed it from contributing_chunks.length
+      // which only reflects search-result hits, not the document's real count.
+      const docInfo = {
+        document_id: documentId,
+        document_title: docOrResult.document_title || docOrResult.title || 'Unknown Document',
+      };
+
+      setSelectedChunk(normalizedChunk);
+      setSelectedDocument(docInfo);
+      setModalOpen(true);
+    },
+    [knowledgeBaseId]
+  );
+
+  const handleModalClose = () => {
+    setModalOpen(false);
+    setSelectedChunk(null);
+    setSelectedDocument(null);
+  };
 
   // Count documents vs chunks for display
   const docCount = isMultiSurface ? items.length : groupByDoc ? groupByDocument(items).length : items.length;
@@ -296,7 +413,12 @@ export default function SourcePreview({ title = 'Sources', sources = [], searchQ
         // Multi-surface results - already grouped by document
         <Box>
           {items.slice(0, 20).map((result, idx) => (
-            <MultiSurfaceItem key={result.document_id} result={result} rank={idx + 1} />
+            <MultiSurfaceItem
+              key={result.document_id}
+              result={result}
+              rank={idx + 1}
+              onChunkClick={knowledgeBaseId ? handleChunkClick : null}
+            />
           ))}
         </Box>
       ) : groupByDoc ? (
@@ -305,7 +427,12 @@ export default function SourcePreview({ title = 'Sources', sources = [], searchQ
           {groupByDocument(items)
             .slice(0, 20)
             .map((group, idx) => (
-              <GroupedDocumentItem key={group.document_id} group={group} rank={idx + 1} />
+              <GroupedDocumentItem
+                key={group.document_id}
+                group={group}
+                rank={idx + 1}
+                onChunkClick={knowledgeBaseId ? handleChunkClick : null}
+              />
             ))}
         </Box>
       ) : (
@@ -347,6 +474,18 @@ export default function SourcePreview({ title = 'Sources', sources = [], searchQ
             );
           })}
         </Box>
+      )}
+
+      {/* Chunk detail modal */}
+      {knowledgeBaseId && selectedChunk && selectedDocument && (
+        <ChunkDetailModal
+          open={modalOpen}
+          onClose={handleModalClose}
+          knowledgeBaseId={knowledgeBaseId}
+          documentId={selectedDocument.document_id}
+          documentTitle={selectedDocument.document_title}
+          initialChunk={selectedChunk}
+        />
       )}
     </Box>
   );

@@ -6,6 +6,7 @@ applies weighted combination, and returns ranked FusedResults.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -29,11 +30,67 @@ DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
     "chunk_summary": 0.25,
     "query_match": 0.20,
     "synopsis_match": 0.15,
-    "keyword_match": 0.15,
+    "bm25": 0.15,
 }
 
 # Maximum snippet length for contributing chunks
 MAX_SNIPPET_LENGTH = 200
+
+# Supported fusion formulas
+FUSION_FORMULA_MAX_SQRT = "max_sqrt_mean_max"
+FUSION_FORMULA_WEIGHTED_AVG = "weighted_average"
+DEFAULT_FUSION_FORMULA = FUSION_FORMULA_MAX_SQRT
+
+
+def _fuse_max_sqrt_mean_max(
+    surface_scores: dict[str, float],
+    weights: dict[str, float],
+) -> float:
+    """Max x √(mean/max) fusion.
+
+    The max score determines the ceiling. The mean/max ratio measures
+    surface agreement using actual scores. Documents with balanced scores
+    across surfaces get full credit; those dominated by a single surface
+    are penalized proportionally.
+
+    Best for: single-chunk corpora where surfaces produce correlated scores.
+    """
+    vector_scores = [score for name, score in surface_scores.items() if weights.get(name, 0) > 0]
+    max_surface_score = max(vector_scores) if vector_scores else 0.0
+    if max_surface_score > 0:
+        mean_score = sum(vector_scores) / len(vector_scores)
+        agreement = mean_score / max_surface_score
+        return max_surface_score * math.sqrt(agreement)
+    return 0.0
+
+
+def _fuse_weighted_average(
+    surface_scores: dict[str, float],
+    weights: dict[str, float],
+) -> float:
+    """Weighted average fusion.
+
+    Each surface contributes proportionally to its configured weight.
+    Allows genuine multi-surface consensus without penalizing documents
+    found strongly by a single surface.
+
+    Best for: multi-chunk corpora where surfaces find genuinely different
+    content in different parts of the document.
+    """
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for name, score in surface_scores.items():
+        w = weights.get(name, 0)
+        if w > 0 and score > 0:
+            weighted_sum += score * w
+            total_weight += w
+    return weighted_sum / total_weight if total_weight > 0 else 0.0
+
+
+_FUSION_FUNCTIONS = {
+    FUSION_FORMULA_MAX_SQRT: _fuse_max_sqrt_mean_max,
+    FUSION_FORMULA_WEIGHTED_AVG: _fuse_weighted_average,
+}
 
 
 def _ensure_uuid(val: UUID | str) -> UUID:
@@ -52,15 +109,27 @@ class ScoreFusionService:
     applies weighted combination, and produces ranked FusedResults.
     """
 
-    def __init__(self, weights: dict[str, float] | None = None) -> None:
-        """Initialize with optional custom weights.
+    def __init__(
+        self,
+        weights: dict[str, float] | None = None,
+        fusion_formula: str = DEFAULT_FUSION_FORMULA,
+    ) -> None:
+        """Initialize with optional custom weights and fusion formula.
 
         Args:
             weights: Mapping of surface_name -> weight. If not provided,
                      uses DEFAULT_SURFACE_WEIGHTS.
+            fusion_formula: Which fusion function to use. One of
+                     "max_sqrt_mean_max" or "weighted_average".
 
         """
         self._weights = weights or DEFAULT_SURFACE_WEIGHTS
+        if fusion_formula not in _FUSION_FUNCTIONS:
+            raise ValueError(
+                f"Unknown fusion formula '{fusion_formula}'. " f"Supported: {list(_FUSION_FUNCTIONS.keys())}"
+            )
+        self._fusion_formula = fusion_formula
+        self._fuse_fn = _FUSION_FUNCTIONS[fusion_formula]
 
     async def fuse(  # noqa: PLR0912, PLR0915
         self,
@@ -136,17 +205,19 @@ class ScoreFusionService:
             total_weight = 0.0
 
             for surface_name, hits in surface_hits.items():
-                weight = self._weights.get(surface_name, 0.1)
-                if weight <= 0:
-                    # Skip surfaces with non-positive weights
-                    continue
+                weight = self._weights.get(surface_name, 0)
 
                 # Use max score from this surface for this document
                 best_hit = max(hits, key=lambda h: h.score)
                 max_score = best_hit.score
+
+                # Always record the score for visibility in results
                 surface_scores[surface_name] = max_score
-                weighted_sum += max_score * weight
-                total_weight += weight
+
+                # Only include in weighted sum if weight > 0
+                if weight > 0:
+                    weighted_sum += max_score * weight
+                    total_weight += weight
 
                 # Collect metadata from best-scoring hit (for document-level surfaces)
                 if best_hit.metadata:
@@ -162,8 +233,7 @@ class ScoreFusionService:
                 if surface_name not in surface_scores:
                     surface_scores[surface_name] = 0.0
 
-            # Normalize by total weight used
-            final_score = weighted_sum / total_weight
+            final_score = self._fuse_fn(surface_scores, self._weights)
             doc_scores[doc_id] = (final_score, surface_scores, surface_metadata)
 
         # Step 5: Filter by threshold and sort

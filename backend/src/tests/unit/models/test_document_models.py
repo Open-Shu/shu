@@ -280,36 +280,12 @@ class TestDocumentChunk:
 
         chunk.set_profile(
             summary="Q3 budget approval record",
-            keywords=["Q3", "$2.5M", "Sarah"],
             topics=["budget planning", "approvals"],
         )
 
         assert chunk.summary == "Q3 budget approval record"
-        # Keywords are normalized: lowercased for GIN index matching
-        assert chunk.keywords == ["q3", "$2.5m", "sarah"]
         assert chunk.topics == ["budget planning", "approvals"]
         assert chunk.is_profiled is True
-
-    def test_set_profile_filters_raw_numbers_and_timespans(self):
-        """Drop timing noise while keeping useful retrieval terms."""
-        chunk = DocumentChunk()
-        chunk.content = "OAuth2 scope config API key rotation 0.5 h 1 2 4 8 12"
-        chunk.char_count = len(chunk.content)
-
-        chunk.set_profile(
-            summary="API key rotation schedule",
-            keywords=["oauth2 scope config", "api key rotation", "k", "0.5 h", "1 2 4 8 12"],
-            topics=["api security"],
-        )
-
-        assert chunk.keywords == [
-            "oauth2",
-            "scope",
-            "config",
-            "api",
-            "key",
-            "rotation",
-        ]
 
     def test_is_profiled_property(self):
         """Test is_profiled property."""
@@ -348,13 +324,11 @@ class TestDocumentChunk:
         chunk.content = "Test"
         chunk.char_count = 4
         chunk.summary = "Test summary"
-        chunk.keywords = ["test"]
         chunk.topics = ["testing"]
 
         result = chunk.to_dict()
 
         assert result["summary"] == "Test summary"
-        assert result["keywords"] == ["test"]
         assert result["topics"] == ["testing"]
 
 

@@ -22,11 +22,42 @@ def _redact(text: str) -> str:
     return f"[len={len(text)} hash={h}]"
 
 
+def _build_surfaces(vector_store, weights: dict[str, float], execute_zero_weight: bool) -> list:
+    """Construct retrieval surfaces, optionally skipping those with zero weight.
+
+    In production (execute_zero_weight=False), surfaces whose configured weight
+    is 0 are omitted to save DB round-trips.  Set SHU_EXECUTE_ZERO_WEIGHT_SURFACES=true
+    to run all surfaces so their scores are available for benchmarking analysis.
+    """
+    from ..retrieval.surfaces import (
+        BM25Surface,
+        ChunkSummaryVectorSurface,
+        ChunkVectorSurface,
+        QueryMatchSurface,
+        SynopsisMatchSurface,
+    )
+
+    all_surfaces = [
+        ChunkVectorSurface(vector_store),
+        ChunkSummaryVectorSurface(vector_store),
+        QueryMatchSurface(vector_store),
+        SynopsisMatchSurface(vector_store),
+        BM25Surface(),
+    ]
+    if execute_zero_weight:
+        return all_surfaces
+    surfaces = [s for s in all_surfaces if weights.get(s.name, 0) > 0]
+    skipped = [s.name for s in all_surfaces if s not in surfaces]
+    if skipped:
+        logger.info(f"Skipping zero-weight surfaces: {skipped}")
+    return surfaces
+
+
 class MultiSurfaceSearchMixin:
     """Mixin providing multi-surface search orchestration."""
 
     @measure_execution_time
-    async def _multi_surface_search(  # noqa: PLR0915
+    async def _multi_surface_search(
         self,
         knowledge_base_id: str,
         query: str,
@@ -36,7 +67,7 @@ class MultiSurfaceSearchMixin:
         chunk_vector_weight: float | None = None,
         query_match_weight: float | None = None,
         synopsis_match_weight: float | None = None,
-        keyword_match_weight: float | None = None,
+        bm25_weight: float | None = None,
         chunk_summary_weight: float | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
@@ -52,7 +83,7 @@ class MultiSurfaceSearchMixin:
             chunk_vector_weight: Weight for chunk vector surface (None = use config default)
             query_match_weight: Weight for query match surface (None = use config default)
             synopsis_match_weight: Weight for synopsis match surface (None = use config default)
-            keyword_match_weight: Weight for keyword match surface (None = use config default)
+            bm25_weight: Weight for BM25 surface (None = use config default)
             chunk_summary_weight: Weight for chunk summary surface (None = use config default)
 
         Returns:
@@ -73,11 +104,6 @@ class MultiSurfaceSearchMixin:
                 f"Multi-surface search: query={_redact(query)} kb_id={knowledge_base_id} "
                 f"limit={limit} threshold={threshold}"
             )
-
-            # Preprocess query to extract keyword terms
-            preprocessed = self.preprocess_query(query)
-            keyword_terms = preprocessed["keyword_terms"]
-            logger.debug(f"Multi-surface keyword_terms extracted: {keyword_terms}")
 
             # Get dependencies
             from ...core.database import get_async_session_local
@@ -103,11 +129,7 @@ class MultiSurfaceSearchMixin:
                     if synopsis_match_weight is not None
                     else settings.multi_surface_synopsis_match_weight
                 ),
-                "keyword_match": (
-                    keyword_match_weight
-                    if keyword_match_weight is not None
-                    else settings.multi_surface_keyword_match_weight
-                ),
+                "bm25": (bm25_weight if bm25_weight is not None else settings.multi_surface_bm25_weight),
                 "chunk_summary": (
                     chunk_summary_weight
                     if chunk_summary_weight is not None
@@ -116,23 +138,9 @@ class MultiSurfaceSearchMixin:
             }
             logger.info(f"Multi-surface weights: {weights}")
 
-            # Create surfaces (5 active)
             from ..retrieval import MultiSurfaceSearchService, ScoreFusionService
-            from ..retrieval.surfaces import (
-                ChunkSummaryVectorSurface,
-                ChunkVectorSurface,
-                KeywordMatchSurface,
-                QueryMatchSurface,
-                SynopsisMatchSurface,
-            )
 
-            surfaces = [
-                ChunkVectorSurface(vector_store),
-                ChunkSummaryVectorSurface(vector_store),
-                QueryMatchSurface(vector_store),
-                SynopsisMatchSurface(vector_store),
-                KeywordMatchSurface(),
-            ]
+            surfaces = _build_surfaces(vector_store, weights, settings.execute_zero_weight_surfaces)
 
             # Create fusion service with configured weights
             fusion_service = ScoreFusionService(weights=weights)
@@ -151,7 +159,6 @@ class MultiSurfaceSearchMixin:
             fused_results = await search_service.search(
                 query=query,
                 kb_id=kb_uuid,
-                keyword_terms=keyword_terms,
                 limit=limit,
                 threshold=threshold,
                 session_factory=get_async_session_local(),
@@ -178,9 +185,6 @@ class MultiSurfaceSearchMixin:
                     for meta in result.surface_metadata.values():
                         if "matched_query" in meta:
                             content = meta["matched_query"]
-                            break
-                        if "matched_terms" in meta:
-                            content = f"Matched keywords: {', '.join(meta['matched_terms'])}"
                             break
 
                 query_result = QueryResult(

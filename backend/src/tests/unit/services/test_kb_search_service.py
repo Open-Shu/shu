@@ -141,7 +141,7 @@ class TestSearchChunks:
     @pytest.mark.asyncio
     async def test_invalid_operator_for_jsonb_field(self, service):
         """Should return error dict when using text operator on JSONB array field."""
-        result = await service.search_chunks(["kb1"], "keywords", "eq", "val")
+        result = await service.search_chunks(["kb1"], "topics", "eq", "val")
         assert result["status"] == "error"
         assert result["error"]["code"] == "invalid_operator"
 
@@ -159,7 +159,6 @@ class TestSearchChunks:
         mock_chunk.knowledge_base_id = "kb-1"
         mock_chunk.chunk_index = 0
         mock_chunk.summary = "A summary"
-        mock_chunk.keywords = ["python"]
         mock_chunk.topics = ["programming"]
         mock_chunk.char_count = 500
         mock_chunk.word_count = 80
@@ -188,7 +187,6 @@ class TestSearchChunks:
         assert chunk_result["document_id"] == "doc-1"
         assert chunk_result["knowledge_base_name"] == "My KB"
         assert chunk_result["summary"] == "A summary"
-        assert chunk_result["keywords"] == ["python"]
         # Excludes content and embedding per spec
         assert "content" not in chunk_result
         assert "embedding" not in chunk_result
@@ -536,29 +534,6 @@ class TestSearchChunksOperatorCombinations:
         result = await service.search_chunks(["kb-1"], "summary", "icontains", "intro")
         assert result.get("status") != "error"
 
-    # -- jsonb_array field: keywords --
-
-    @pytest.mark.asyncio
-    async def test_keywords_contains(self, service, mock_db):
-        """keywords/contains should succeed."""
-        _configure_empty_db(mock_db)
-        result = await service.search_chunks(["kb-1"], "keywords", "contains", ["python"])
-        assert result.get("status") != "error"
-
-    @pytest.mark.asyncio
-    async def test_keywords_has_key(self, service, mock_db):
-        """keywords/has_key should succeed."""
-        _configure_empty_db(mock_db)
-        result = await service.search_chunks(["kb-1"], "keywords", "has_key", "python")
-        assert result.get("status") != "error"
-
-    @pytest.mark.asyncio
-    async def test_keywords_has_any(self, service, mock_db):
-        """keywords/has_any should succeed."""
-        _configure_empty_db(mock_db)
-        result = await service.search_chunks(["kb-1"], "keywords", "has_any", ["python", "sql"])
-        assert result.get("status") != "error"
-
     # -- jsonb_array field: topics --
 
     @pytest.mark.asyncio
@@ -709,7 +684,6 @@ class TestPagination:
         chunk.knowledge_base_id = "kb-1"
         chunk.chunk_index = idx
         chunk.summary = None
-        chunk.keywords = None
         chunk.topics = None
         chunk.char_count = 100
         chunk.word_count = 10

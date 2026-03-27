@@ -188,6 +188,11 @@ class IntegrationTestRunner:
         await self.db.commit()
         await self.db.refresh(self.admin_user)
 
+        # Invalidate policy cache so it picks up the new admin user
+        from shu.services.policy_engine import POLICY_CACHE
+
+        POLICY_CACHE.invalidate()
+
         # Generate JWT token
         jwt_manager = JWTManager()
         token_data = {

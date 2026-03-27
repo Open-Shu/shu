@@ -634,6 +634,79 @@ async def get_document_extraction_details(
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
+@router.get(
+    "/{kb_id}/documents/{document_id}/chunks",
+    summary="Get document chunks",
+    description="Get all chunks for a document with full content. Supports pagination.",
+)
+async def get_document_chunks(
+    kb_id: str,
+    document_id: str,
+    limit: int = Query(20, ge=1, le=100, description="Number of chunks to return"),
+    offset: int = Query(0, ge=0, description="Number of chunks to skip"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get chunks for a document with full content.
+
+    Returns paginated chunks ordered by chunk_index, including full content,
+    summary, and character offsets.
+
+    Args:
+        kb_id: Knowledge base ID
+        document_id: Document ID
+        limit: Maximum number of chunks to return (default 20, max 100)
+        offset: Number of chunks to skip for pagination
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Paginated list of chunks with full content
+
+    """
+    try:
+        # Verify KB access and document ownership
+        kb_service = KnowledgeBaseService(db)
+        await kb_service.get_knowledge_base(kb_id, str(current_user.id))
+
+        doc_service = DocumentService(db)
+        document = await doc_service.get_document(document_id)
+        if str(document.knowledge_base_id) != str(kb_id):
+            return ShuResponse.error(
+                message="Document does not belong to this knowledge base",
+                code="DOCUMENT_KB_MISMATCH",
+                status_code=404,
+            )
+
+        # Get paginated chunks (server-side limit/offset)
+        chunks, total = await doc_service.get_document_chunks_paginated(document_id, limit=limit, offset=offset)
+
+        items = [
+            {
+                "id": chunk.id,
+                "chunk_index": chunk.chunk_index,
+                "content": chunk.content,
+                "summary": getattr(chunk, "summary", None),
+                "char_count": chunk.char_count,
+                "word_count": chunk.word_count,
+                "token_count": chunk.token_count,
+                "start_char": chunk.start_char,
+                "end_char": chunk.end_char,
+                "has_embedding": chunk.has_embedding,
+                "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
+            }
+            for chunk in chunks
+        ]
+
+        return ShuResponse.success({"items": items, "total": total, "limit": limit, "offset": offset})
+
+    except ShuException as e:
+        return ShuResponse.error(message=str(e), code="DOCUMENT_CHUNKS_ERROR", status_code=e.status_code)
+    except Exception as e:
+        logger.error(f"Error getting document chunks: {e}")
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
 @router.get("/{kb_id}/documents")
 async def list_documents(
     kb_id: str,

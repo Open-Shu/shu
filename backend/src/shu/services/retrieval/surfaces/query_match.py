@@ -53,7 +53,6 @@ class QueryMatchSurface(RetrievalSurface):
         self,
         query_text: str,
         query_vector: list[float],
-        keyword_terms: list[str],
         *,
         kb_id: UUID,
         limit: int = 50,
@@ -65,7 +64,6 @@ class QueryMatchSurface(RetrievalSurface):
         Args:
             query_text: Original query text (unused by this surface).
             query_vector: Pre-computed embedding vector.
-            keyword_terms: Keyword terms (unused by this surface).
             kb_id: Knowledge base ID to scope the search.
             limit: Maximum number of documents to return.
             threshold: Minimum similarity score (0.0-1.0).
@@ -81,7 +79,7 @@ class QueryMatchSurface(RetrievalSurface):
         # A fixed multiplier can underfill when one document dominates the top-k slots.
         page_size = limit * 3
         max_pages = 5  # guard against looping on very small corpora
-        doc_best: dict[str, tuple[float, str]] = {}  # document_id -> (best_score, query_text)
+        doc_best: dict[str, tuple[float, str, str | None]] = {}  # doc_id -> (score, query_text, source_chunk_id)
 
         for page in range(max_pages):
             offset = page * page_size
@@ -101,16 +99,19 @@ class QueryMatchSurface(RetrievalSurface):
             score_by_query_id = {r.id: r.score for r in page_results}
             query_ids = [r.id for r in page_results]
 
-            stmt = select(DocumentQuery.id, DocumentQuery.document_id, DocumentQuery.query_text).where(
-                DocumentQuery.id.in_(query_ids)
-            )
+            stmt = select(
+                DocumentQuery.id,
+                DocumentQuery.document_id,
+                DocumentQuery.query_text,
+                DocumentQuery.source_chunk_id,
+            ).where(DocumentQuery.id.in_(query_ids))
             db_result = await db.execute(stmt)
             query_records = db_result.fetchall()
 
-            for query_id, document_id, query_text_val in query_records:
+            for query_id, document_id, query_text_val, source_chunk_id in query_records:
                 score = score_by_query_id.get(str(query_id), 0.0)
                 if document_id not in doc_best or score > doc_best[document_id][0]:
-                    doc_best[document_id] = (score, query_text_val)
+                    doc_best[document_id] = (score, query_text_val, source_chunk_id)
 
             if len(doc_best) >= limit or len(page_results) < page_size:
                 break
@@ -126,15 +127,19 @@ class QueryMatchSurface(RetrievalSurface):
         # Step 4: Build hits sorted by score, limited to requested count
         sorted_docs = sorted(doc_best.items(), key=lambda x: x[1][0], reverse=True)[:limit]
 
-        hits = [
-            SurfaceHit(
-                id=UUID(doc_id),
-                id_type="document",
-                score=score,
-                metadata={"matched_query": matched_query},
+        hits = []
+        for doc_id, (score, matched_query, source_chunk_id) in sorted_docs:
+            meta: dict[str, str] = {"matched_query": matched_query}
+            if source_chunk_id:
+                meta["source_chunk_id"] = str(source_chunk_id)
+            hits.append(
+                SurfaceHit(
+                    id=UUID(doc_id),
+                    id_type="document",
+                    score=score,
+                    metadata=meta,
+                )
             )
-            for doc_id, (score, matched_query) in sorted_docs
-        ]
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
