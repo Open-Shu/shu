@@ -32,8 +32,8 @@ async def test_beir_loader(client, db, auth_headers):
     loader = BeirLoader(TEST_SUBSET_DIR, name="test_subset")
     dataset = loader.load()
 
-    assert dataset.corpus_size == 50, f"Expected 10 corpus entries, got {dataset.corpus_size}"
-    assert dataset.query_count == 10, f"Expected 5 queries, got {dataset.query_count}"
+    assert dataset.corpus_size == 50, f"Expected 50 corpus entries, got {dataset.corpus_size}"
+    assert dataset.query_count == 10, f"Expected 10 queries, got {dataset.query_count}"
     assert dataset.total_judgments > 0, "Expected at least 1 relevance judgment"
 
     # Verify corpus entries have required fields
@@ -99,7 +99,7 @@ async def test_corpus_ingestion_and_id_mapping(client, db, auth_headers):
 
     # Build ID map
     id_map = await ingestor.build_id_map()
-    assert len(id_map) == 50, f"Expected 10 ID mappings, got {len(id_map)}"
+    assert len(id_map) == 50, f"Expected 50 ID mappings, got {len(id_map)}"
 
     # Verify BEIR IDs are in the map values
     beir_ids = set(id_map.values())
@@ -123,6 +123,7 @@ async def test_similarity_run_collection(client, db, auth_headers):
         json={"name": f"Sim Run Test KB {unique_id}", "description": "Test", "sync_enabled": True},
         headers=auth_headers,
     )
+    assert kb_resp.status_code == 201, f"KB creation failed: {kb_resp.status_code}"
     kb_id = extract_data(kb_resp)["id"]
 
     ingestor = CorpusIngestor(db, kb_id, user_id="test-benchmark")
@@ -135,7 +136,7 @@ async def test_similarity_run_collection(client, db, auth_headers):
     config = SearchConfig(limit=50, threshold=0.0)
     run_dict, stats = await collector.collect_similarity_run(dataset.queries, id_map, config)
 
-    assert stats.query_count == 10, f"Expected 5 queries, got {stats.query_count}"
+    assert stats.query_count == 10, f"Expected 10 queries, got {stats.query_count}"
     assert stats.total_results > 0, "Expected at least some results"
 
     # Verify run_dict structure
@@ -161,6 +162,7 @@ async def test_multi_surface_run_collection(client, db, auth_headers):
         json={"name": f"MS Run Test KB {unique_id}", "description": "Test", "sync_enabled": True},
         headers=auth_headers,
     )
+    assert kb_resp.status_code == 201, f"KB creation failed: {kb_resp.status_code}"
     kb_id = extract_data(kb_resp)["id"]
 
     ingestor = CorpusIngestor(db, kb_id, user_id="test-benchmark")
@@ -241,6 +243,7 @@ async def test_ablation_weight_override(client, db, auth_headers):
         json={"name": f"Ablation Test KB {unique_id}", "description": "Test", "sync_enabled": True},
         headers=auth_headers,
     )
+    assert kb_resp.status_code == 201, f"KB creation failed: {kb_resp.status_code}"
     kb_id = extract_data(kb_resp)["id"]
 
     ingestor = CorpusIngestor(db, kb_id, user_id="test-benchmark")
