@@ -104,17 +104,17 @@ class AblationRunner:
         # - fused scores for the full-system evaluation
         # - per-surface scores for solo-surface evaluation (no extra API calls)
         logger.info("Running full multi-surface search (all surfaces)...")
-        full_run_dict, full_surface_scores, _ = await self.collector.collect_multi_surface_run(
+        full_run_dict, full_surface_scores, _, full_all_surface_scores = await self.collector.collect_multi_surface_run(
             self.queries, self.id_map, self.search_config,
         )
         full_run = Run(full_run_dict, name="full_multi_surface")
         full_scores = evaluate(qrels, full_run, self.metrics, make_comparable=True)
         logger.info("Full run scores: %s", {k: f"{v:.4f}" for k, v in full_scores.items()})
 
-        # Solo surface evaluation — derived from surface_scores already returned
-        # by the full run. Each surface's score becomes the document ranking for
-        # that surface in isolation. No additional API calls needed.
-        solo_surface_scores = self._evaluate_solo_surfaces(qrels, full_surface_scores)
+        # Solo surface evaluation — use untruncated surface scores (all documents
+        # scored by any surface, not just fused top-k) for unbiased evaluation.
+        eval_scores = full_all_surface_scores if full_all_surface_scores else full_surface_scores
+        solo_surface_scores = self._evaluate_solo_surfaces(qrels, eval_scores)
 
         # Ablation: disable each surface one at a time (requires API calls
         # because the fusion changes which documents appear in results)
@@ -137,8 +137,8 @@ class AblationRunner:
             impact = ((ndcg_ablated - ndcg_full) / ndcg_full * 100) if ndcg_full > 0 else 0.0
             logger.info("  without %s: NDCG@10 = %.4f (%+.1f%%)", surface, ndcg_ablated, impact)
 
-        # Contribution matrix from surface_scores
-        contribution_matrix = self._build_contribution_matrix(full_surface_scores)
+        # Contribution matrix from untruncated surface_scores
+        contribution_matrix = self._build_contribution_matrix(eval_scores)
 
         # Identify low-contribution surfaces
         low_contribution = self._find_low_contribution_surfaces(contribution_matrix)
@@ -165,7 +165,7 @@ class AblationRunner:
             threshold=self.search_config.threshold,
             weight_overrides={weight_param: 0.0},
         )
-        run_dict, _, _ = await self.collector.collect_multi_surface_run(
+        run_dict, _, _, _ = await self.collector.collect_multi_surface_run(
             self.queries, self.id_map, config,
         )
         return run_dict

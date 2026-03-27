@@ -173,11 +173,24 @@ async def run(args: argparse.Namespace) -> None:
 
             # Load dataset for queries and qrels
             loader = BeirLoader(dataset_dir, name=dataset_name)
-            dataset = loader.load()
+            dataset = loader.load(qrels_split=args.qrels_split)
 
             # Build ID map
             ingestor = CorpusIngestor(runner.db, args.reuse_kb, user_id="benchmark")
-            id_map = await ingestor.build_id_map()
+            profiled_only = args.target_status == "profile_processed"
+            id_map = await ingestor.build_id_map(profiled_only=profiled_only)
+
+            # Filter to same population as main benchmark: queries with qrels
+            # against profiled documents
+            profiled_beir_ids = set(id_map.values())
+            filtered_qrels = {
+                qid: {did: rel for did, rel in docs.items() if did in profiled_beir_ids}
+                for qid, docs in dataset.qrels.items()
+            }
+            filtered_qrels = {qid: docs for qid, docs in filtered_qrels.items() if docs}
+            filtered_queries = {
+                qid: q for qid, q in dataset.queries.items() if qid in filtered_qrels
+            }
 
             # Run ablation
             collector = ResultCollector(runner.client, args.reuse_kb, runner.auth_headers)
@@ -185,8 +198,8 @@ async def run(args: argparse.Namespace) -> None:
             ablation = AblationRunner(
                 collector=collector,
                 id_map=id_map,
-                queries=dataset.queries,
-                qrels_dict=dataset.qrels,
+                queries=filtered_queries,
+                qrels_dict=filtered_qrels,
                 metrics=config.metrics,
                 search_config=search_cfg,
             )
@@ -202,7 +215,9 @@ async def run(args: argparse.Namespace) -> None:
         benchmark = BenchmarkRunner(runner.client, runner.db, runner.auth_headers, config)
         results = await benchmark.run()
 
-        # Ablation
+        # Ablation — uses the same filtered query set as the main benchmark
+        # (only queries with qrels against profiled documents) to ensure
+        # ablation results are directly comparable to headline metrics.
         ablation_results = None
         if not args.skip_ablation:
             collector = ResultCollector(runner.client, results.kb_id, runner.auth_headers)
@@ -210,10 +225,19 @@ async def run(args: argparse.Namespace) -> None:
             id_map = await ingestor.build_id_map()
             search_cfg = SearchConfig(limit=args.limit, threshold=args.threshold)
 
+            # Reconstruct the filtered query set from qrels_dict (same population
+            # as the main benchmark used — only queries with ground truth against
+            # profiled documents).
+            loader = BeirLoader(dataset_dir, name=dataset_name)
+            all_queries = loader.load().queries
+            filtered_queries = {
+                qid: q for qid, q in all_queries.items() if qid in results.qrels_dict
+            }
+
             ablation = AblationRunner(
                 collector=collector,
                 id_map=id_map,
-                queries=BeirLoader(dataset_dir, name=dataset_name).load().queries,
+                queries=filtered_queries,
                 qrels_dict=results.qrels_dict,
                 metrics=config.metrics,
                 search_config=search_cfg,

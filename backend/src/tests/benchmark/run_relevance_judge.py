@@ -1,9 +1,11 @@
 """CLI entry point for cross-topic relevance judgment benchmark.
 
-Three-phase process:
+Two-phase process:
     Phase 1 (collect): Run queries through both search strategies, collect candidates
-    Phase 2 (judge):   Read candidates, judge relevance, produce qrels
-    Phase 3 (summary): Show comparison summary from completed judgments
+    Phase 2 (summary): Show comparison summary from completed judgments
+
+Relevance judging itself is performed externally (e.g., by Claude reading
+full documents) and results saved to judgments.jsonl.
 
 Usage:
     # Phase 1: Collect candidates (requires running Shu server)
@@ -13,15 +15,11 @@ Usage:
         --limit 20 \
         --threshold 0.3
 
-    # Phase 2: Judge relevance (done by LLM reading candidates)
-    python -m tests.benchmark.run_relevance_judge judge \
-        --dataset nfcorpus
-
-    # Phase 3: Show comparison summary
+    # Phase 2: Show comparison summary (after external judging)
     python -m tests.benchmark.run_relevance_judge summary \
         --dataset nfcorpus
 
-    # Phase 4: Run benchmark with custom qrels
+    # Then: Run benchmark with custom qrels
     python -m tests.benchmark.run_benchmark --dataset nfcorpus \
         --reuse-kb <kb-id> --skip-ablation
 """
@@ -30,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 from pathlib import Path
 
@@ -56,15 +53,6 @@ def parse_args() -> argparse.Namespace:
     collect_parser.add_argument("--limit", type=int, default=20, help="Top-k results per strategy (default: 20)")
     collect_parser.add_argument("--threshold", type=float, default=0.0, help="Minimum score threshold (default: 0.0)")
     collect_parser.add_argument("--verbose", action="store_true")
-
-    # Phase 2: judge
-    judge_parser = subparsers.add_parser(
-        "judge",
-        help="Prepare candidate batches for LLM relevance judgment",
-    )
-    judge_parser.add_argument("--dataset", required=True, help="Dataset name")
-    judge_parser.add_argument("--batch-size", type=int, default=10, help="Candidates per batch (default: 10)")
-    judge_parser.add_argument("--verbose", action="store_true")
 
     # Summary: show comparison after judgments are complete
     summary_parser = subparsers.add_parser(
@@ -150,34 +138,6 @@ async def run_collect(args: argparse.Namespace) -> None:
         await runner.teardown()
 
 
-async def run_judge(args: argparse.Namespace) -> None:
-    """Phase 2: Prepare batches for LLM judgment."""
-    from .relevance_judge import judge_batch, load_candidates
-
-    dataset_dir = resolve_dataset_dir(args.dataset)
-    candidates_path = dataset_dir / "relevance_judge" / "candidates.jsonl"
-
-    if not candidates_path.exists():
-        raise FileNotFoundError(
-            f"No candidates found at {candidates_path}. Run 'collect' first."
-        )
-
-    candidates = load_candidates(candidates_path)
-    batches = judge_batch(candidates, batch_size=args.batch_size)
-
-    # Save batches for LLM processing
-    output_dir = dataset_dir / "relevance_judge"
-    batches_path = output_dir / "batches.jsonl"
-    with open(batches_path, "w", encoding="utf-8") as f:
-        for batch in batches:
-            f.write(json.dumps(batch) + "\n")
-
-    print(f"\nPrepared {len(batches)} batches of {args.batch_size} candidates each")
-    print(f"Total candidates: {len(candidates)}")
-    print(f"Batches saved to: {batches_path}")
-    print("\nNext: Judge each batch and save results to relevance_judge/judgments.jsonl")
-
-
 async def run_summary(args: argparse.Namespace) -> None:
     """Show comparison summary from completed judgments."""
     from .relevance_judge import comparison_summary, load_candidates, load_judgments
@@ -213,8 +173,6 @@ def main() -> None:
     )
     if args.command == "collect":
         asyncio.run(run_collect(args))
-    elif args.command == "judge":
-        asyncio.run(run_judge(args))
     elif args.command == "summary":
         asyncio.run(run_summary(args))
 
