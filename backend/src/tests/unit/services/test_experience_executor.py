@@ -309,6 +309,7 @@ class TestPluginStepExecution:
         step.plugin_name = "gmail"
         step.plugin_op = "list"
         step.params_template = {}
+        step.auth_override = None
 
         result = await executor._execute_plugin_step(step, {}, "user-123")
 
@@ -329,9 +330,77 @@ class TestPluginStepExecution:
         step.plugin_name = "gmail"
         step.plugin_op = "list"
         step.params_template = {}
+        step.auth_override = None
 
         with pytest.raises(ValueError, match="Something went wrong"):
             await executor._execute_plugin_step(step, {}, "user-123")
+
+    @pytest.mark.asyncio
+    @patch("shu.services.experience_executor.execute_plugin")
+    async def test_injects_auth_overlay_into_params(self, mock_execute_plugin, executor):
+        """auth overlay from domain_delegate is injected into __host.auth in params passed to execute_plugin."""
+        mock_execute_plugin.return_value = {
+            "status": "success",
+            "data": {"messages": [{"id": 1}]},
+        }
+
+        context = {
+            "user": {"id": "user-123", "email": "alice@example.com"},
+            "steps": {},
+        }
+
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.plugin_name = "gmail"
+        step.plugin_op = "list"
+        step.params_template = {"max_results": 10}
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "running_user",
+        }
+
+        await executor._execute_plugin_step(step, context, "user-123")
+
+        mock_execute_plugin.assert_called_once()
+        call_args = mock_execute_plugin.call_args
+        params_passed = call_args[0][3]  # 4th positional arg is params
+
+        assert "__host" in params_passed
+        assert params_passed["__host"]["auth"] == {
+            "google": {"mode": "domain_delegate", "subject": "alice@example.com"},
+        }
+        assert params_passed["max_results"] == 10
+
+    @pytest.mark.asyncio
+    @patch("shu.services.experience_executor.execute_plugin")
+    async def test_no_auth_override_leaves_params_unchanged(self, mock_execute_plugin, executor):
+        """Without auth_override, params do not contain __host.auth."""
+        mock_execute_plugin.return_value = {
+            "status": "success",
+            "data": {"items": []},
+        }
+
+        context = {
+            "user": {"id": "user-123", "email": "alice@example.com"},
+            "steps": {},
+        }
+
+        step = MagicMock()
+        step.step_key = "simple_step"
+        step.plugin_name = "some_plugin"
+        step.plugin_op = "fetch"
+        step.params_template = {"query": "test"}
+        step.auth_override = None
+
+        await executor._execute_plugin_step(step, context, "user-123")
+
+        mock_execute_plugin.assert_called_once()
+        call_args = mock_execute_plugin.call_args
+        params_passed = call_args[0][3]
+
+        assert params_passed.get("__host", {}).get("auth") is None
+        assert params_passed["query"] == "test"
 
 
 class TestKBStepExecution:
@@ -1020,3 +1089,142 @@ class TestModelConfigurationOptimization:
             # Verify that the LLM service was used correctly
             mock_llm_service.get_client.assert_called_once_with("provider-123")
             mock_client.chat_completion.assert_called_once()
+
+
+class TestBuildAuthOverlay:
+    """Tests for _build_auth_overlay method."""
+
+    @pytest.fixture
+    def executor(self):
+        db = AsyncMock()
+        config_manager = MagicMock()
+        return ExperienceExecutor(db, config_manager)
+
+    @pytest.fixture
+    def context_with_email(self):
+        return {
+            "user": {"id": "user-123", "email": "alice@example.com"},
+            "steps": {},
+        }
+
+    @pytest.fixture
+    def context_without_email(self):
+        return {
+            "user": {"id": "user-123"},
+            "steps": {},
+        }
+
+    def test_running_user_resolves_email_from_context(self, executor, context_with_email):
+        """running_user subject_source resolves user email from context."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "running_user",
+        }
+
+        result = executor._build_auth_overlay(step, context_with_email)
+
+        assert result == {
+            "auth": {
+                "google": {
+                    "mode": "domain_delegate",
+                    "subject": "alice@example.com",
+                },
+            },
+        }
+
+    def test_explicit_subject_uses_provided_email(self, executor, context_with_email):
+        """explicit subject_source uses the subject value from auth_override."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "explicit",
+            "subject": "admin@corp.com",
+        }
+
+        result = executor._build_auth_overlay(step, context_with_email)
+
+        assert result == {
+            "auth": {
+                "google": {
+                    "mode": "domain_delegate",
+                    "subject": "admin@corp.com",
+                },
+            },
+        }
+
+    def test_none_auth_override_returns_none(self, executor, context_with_email):
+        """No auth_override on the step returns None (no overlay)."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = None
+
+        result = executor._build_auth_overlay(step, context_with_email)
+
+        assert result is None
+
+    def test_running_user_without_email_raises(self, executor, context_without_email):
+        """running_user with no email in context raises ValueError."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "running_user",
+        }
+
+        with pytest.raises(ValueError, match="running user has no email"):
+            executor._build_auth_overlay(step, context_without_email)
+
+    def test_running_user_with_empty_email_raises(self, executor):
+        """running_user with empty string email in context raises ValueError."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "running_user",
+        }
+        context = {"user": {"id": "user-123", "email": ""}, "steps": {}}
+
+        with pytest.raises(ValueError, match="running user has no email"):
+            executor._build_auth_overlay(step, context)
+
+    def test_explicit_subject_renders_jinja_template(self, executor, context_with_email):
+        """explicit subject with Jinja2 placeholder resolves from context."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "explicit",
+            "subject": "{{ user.email }}",
+        }
+
+        result = executor._build_auth_overlay(step, context_with_email)
+
+        assert result == {
+            "auth": {
+                "google": {
+                    "mode": "domain_delegate",
+                    "subject": "alice@example.com",
+                },
+            },
+        }
+
+    def test_unsupported_subject_source_raises(self, executor, context_with_email):
+        """Unsupported subject_source raises ValueError."""
+        step = MagicMock()
+        step.step_key = "gmail_step"
+        step.auth_override = {
+            "provider": "google",
+            "mode": "domain_delegate",
+            "subject_source": "unknown_source",
+        }
+
+        with pytest.raises(ValueError, match="unsupported auth_override subject_source"):
+            executor._build_auth_overlay(step, context_with_email)

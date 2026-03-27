@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -14,7 +14,6 @@ import {
 } from '@mui/material';
 import IdentityGate from './IdentityGate';
 import { hostAuthAPI, extractDataFromResponse, formatError } from '../services/api';
-import { useAuth } from '../hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import useOAuthAuthorize from '../hooks/useOAuthAuthorize';
 
@@ -38,7 +37,6 @@ export default function ProviderAuthPanel({
   initialOverlay = null,
   pluginName = null,
 }) {
-  const { user } = useAuth();
   const opKey = String(op || '').toLowerCase();
   const pluginDef = plugin;
   const opAuthSpec = useMemo(() => {
@@ -108,10 +106,9 @@ export default function ProviderAuthPanel({
       if (typeof prov.mode === 'string' && prov.mode) {
         setSelectedMode(prov.mode);
       }
-      if (typeof prov.subject === 'string' && prov.subject) {
+      if (typeof prov.subject === 'string') {
         setProbeSubject(prov.subject);
-      }
-      if (typeof prov.impersonate_email === 'string' && prov.impersonate_email) {
+      } else if (typeof prov.impersonate_email === 'string') {
         setProbeSubject(prov.impersonate_email);
       }
     } catch (_) {
@@ -144,7 +141,7 @@ export default function ProviderAuthPanel({
   const [identitiesOk, setIdentitiesOk] = useState(true);
 
   // Probe (service account / delegation)
-  const [probeSubject, setProbeSubject] = useState(user?.email || '');
+  const [probeSubject, setProbeSubject] = useState('');
   // Allowed modes from manifest (op_auth.allowed_modes). If absent, treat opAuthSpec.mode as the only allowed.
   const allowedModes = useMemo(() => {
     const raw = Array.isArray(opAuthSpec?.allowed_modes) ? opAuthSpec.allowed_modes : null;
@@ -203,7 +200,7 @@ export default function ProviderAuthPanel({
       if (m === 'user') {
         ok = !!identitiesOk;
       } else if (m === 'domain_delegate') {
-        ok = !!String(probeSubject || '').trim();
+        ok = true; // empty subject auto-impersonates the running user
       } else if (m === 'service_account') {
         ok = !!(googleStatus && googleStatus.service_account_configured);
       }
@@ -250,10 +247,17 @@ export default function ProviderAuthPanel({
     }
   };
 
-  // Emit selected auth overlay to parent so execution/feed can honor it
+  // Emit selected auth overlay to parent so execution/feed can honor it.
+  // Skip the first emission when hydrating from a stored overlay — on the initial
+  // render the state hasn't been hydrated yet, so the emitted values would be wrong.
+  const skipFirstEmitRef = useRef(!!initialOverlay);
   useEffect(() => {
     try {
       if (typeof onAuthOverlayChange !== 'function') {
+        return;
+      }
+      if (skipFirstEmitRef.current) {
+        skipFirstEmitRef.current = false;
         return;
       }
       const overlay = {};
@@ -304,6 +308,14 @@ export default function ProviderAuthPanel({
             <Alert severity="warning" sx={{ mt: 1 }}>
               Service account is not configured on the host. Set GOOGLE_SERVICE_ACCOUNT_JSON or
               GOOGLE_SERVICE_ACCOUNT_FILE.
+            </Alert>
+          )}
+          {effMode === 'domain_delegate' && (
+            <Alert severity="info" sx={{ mt: 1 }}>
+              <strong>User OAuth</strong> requires each user to connect their own account.{' '}
+              <strong>Domain-wide Delegation</strong> uses a service account to act on behalf of users &mdash; leave the
+              email empty to automatically impersonate the running user, or set a specific email to always impersonate
+              that account.
             </Alert>
           )}
         </Box>

@@ -443,6 +443,79 @@ class TestStepValidation:
         # Should not raise
         await service._validate_steps(steps)
 
+    @pytest.mark.asyncio
+    async def test_validate_steps_auth_override_disallowed_mode(self, service):
+        """auth_override with a mode not in allowed_modes should raise."""
+        from shu.plugins.loader import PluginRecord
+
+        record = PluginRecord(
+            name="shu_gmail", version="1.0", entry="pkg:Cls",
+            op_auth={
+                "digest": {
+                    "provider": "google",
+                    "mode": "user",
+                    "allowed_modes": ["user"],
+                    "scopes": [],
+                },
+            },
+        )
+        service._plugin_loader = MagicMock()
+        service._plugin_loader.discover.return_value = {"shu_gmail": record}
+
+        steps = [
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="shu_gmail",
+                plugin_op="digest",
+                auth_override={
+                    "provider": "google",
+                    "mode": "domain_delegate",
+                    "subject_source": "running_user",
+                },
+            ),
+        ]
+        with pytest.raises(ValidationError) as exc_info:
+            await service._validate_steps(steps)
+        assert "not allowed" in str(exc_info.value.message)
+
+    @pytest.mark.asyncio
+    async def test_validate_steps_auth_override_allowed_mode(self, service):
+        """auth_override with a mode in allowed_modes should pass."""
+        from shu.plugins.loader import PluginRecord
+
+        record = PluginRecord(
+            name="shu_gmail", version="1.0", entry="pkg:Cls",
+            op_auth={
+                "digest": {
+                    "provider": "google",
+                    "mode": "user",
+                    "allowed_modes": ["user", "domain_delegate"],
+                    "scopes": [],
+                },
+            },
+        )
+        service._plugin_loader = MagicMock()
+        service._plugin_loader.discover.return_value = {"shu_gmail": record}
+
+        steps = [
+            ExperienceStepCreate(
+                step_key="emails",
+                step_type=StepType.PLUGIN,
+                order=0,
+                plugin_name="shu_gmail",
+                plugin_op="digest",
+                auth_override={
+                    "provider": "google",
+                    "mode": "domain_delegate",
+                    "subject_source": "running_user",
+                },
+            ),
+        ]
+        # Should not raise
+        await service._validate_steps(steps)
+
 
 class TestCreateExperience:
     """Happy path tests for create_experience."""
@@ -1116,3 +1189,50 @@ class TestGetRunSharedAccess:
         assert result is not None
         assert result.id == "run-shared"
         assert result.user_id is None
+
+
+def _make_mock_step(
+    step_type="plugin",
+    plugin_name="gmail",
+    plugin_op="digest",
+    auth_override=None,
+):
+    """Create a mock ExperienceStep with the given attributes."""
+    step = MagicMock()
+    step.step_type = step_type
+    step.plugin_name = plugin_name
+    step.plugin_op = plugin_op
+    step.auth_override = auth_override
+    return step
+
+
+def _make_mock_plugin_record(op_auth=None):
+    """Create a mock plugin record with op_auth mapping."""
+    record = MagicMock()
+    record.op_auth = op_auth
+    return record
+
+
+class TestCheckCanRunDwd:
+    """Tests for _check_can_run with domain-wide delegation (DWD) auth paths.
+
+    DWD steps are treated as non-auth steps from the can-run perspective because
+    DWD is an admin-configured infrastructure concern, not a user prerequisite.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dwd_step_always_can_run(self, service):
+        """A step with domain_delegate override is always runnable (no user auth required)."""
+        step = _make_mock_step(
+            auth_override={"mode": "domain_delegate", "provider": "google"},
+        )
+        plugin_records = {
+            "gmail": _make_mock_plugin_record(
+                op_auth={"digest": {"provider": "google", "scopes": ["gmail.readonly"], "mode": "user"}},
+            ),
+        }
+
+        can_run, missing = await service._check_can_run([step], "user-1", plugin_records)
+
+        assert can_run is True
+        assert missing == []
