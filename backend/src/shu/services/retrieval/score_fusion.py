@@ -30,7 +30,7 @@ DEFAULT_SURFACE_WEIGHTS: dict[str, float] = {
     "chunk_summary": 0.25,
     "query_match": 0.20,
     "synopsis_match": 0.15,
-    "bm25": 0.15,
+    "bm25": 0.0,
 }
 
 # Maximum snippet length for contributing chunks
@@ -139,7 +139,7 @@ class ScoreFusionService:
         limit: int = 10,
         threshold: float = 0.0,
         db: AsyncSession,
-    ) -> list[FusedResult]:
+    ) -> tuple[list[FusedResult], dict[str, dict[str, float]]]:
         """Fuse results from multiple surfaces into ranked document results.
 
         Args:
@@ -152,13 +152,16 @@ class ScoreFusionService:
             db: Async database session.
 
         Returns:
-            List of FusedResult sorted by final_score descending.
+            Tuple of (fused_results, all_surface_scores) where fused_results
+            is sorted by final_score descending and truncated to limit, and
+            all_surface_scores is {doc_id_str: {surface: score}} for ALL
+            scored documents before truncation.
 
         """
         # TODO: Use query_type to select weight overrides when implemented
         _ = query_type  # Unused for now
         if not surface_results:
-            return []
+            return [], {}
 
         # Step 1: Collect all chunk IDs that need document_id lookup
         chunk_ids_to_resolve: set[UUID] = set()
@@ -236,6 +239,13 @@ class ScoreFusionService:
             final_score = self._fuse_fn(surface_scores, self._weights)
             doc_scores[doc_id] = (final_score, surface_scores, surface_metadata)
 
+        # Capture all surface scores before truncation — used by benchmarks
+        # for unbiased per-surface evaluation. Zero additional cost since
+        # doc_scores is already computed.
+        all_surface_scores: dict[str, dict[str, float]] = {
+            str(doc_id): surface_scores for doc_id, (_, surface_scores, _) in doc_scores.items()
+        }
+
         # Step 5: Filter by threshold and sort
         filtered_docs = [
             (doc_id, score, surface_scores, surface_metadata)
@@ -246,7 +256,7 @@ class ScoreFusionService:
         top_docs = filtered_docs[:limit]
 
         if not top_docs:
-            return []
+            return [], all_surface_scores
 
         # Step 6: Load document metadata and chunk details
         doc_ids = [d[0] for d in top_docs]
@@ -312,7 +322,7 @@ class ScoreFusionService:
                 )
             )
 
-        return results
+        return results, all_surface_scores
 
     async def _resolve_chunk_documents(self, chunk_ids: list[UUID], db: AsyncSession) -> dict[UUID, UUID]:
         """Look up document_id for each chunk_id.

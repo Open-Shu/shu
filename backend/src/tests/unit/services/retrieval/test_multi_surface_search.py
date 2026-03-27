@@ -55,7 +55,7 @@ class TestMultiSurfaceSearchService:
 
         mock_fusion = fusion_service or MagicMock()
         if not fusion_service:
-            mock_fusion.fuse = AsyncMock(return_value=[])
+            mock_fusion.fuse = AsyncMock(return_value=([], {}))
 
         return MultiSurfaceSearchService(
             surfaces=surfaces or [],
@@ -101,22 +101,23 @@ class TestMultiSurfaceSearchService:
             hits=[SurfaceHit(id=doc_id, id_type="document", score=0.9)],
         )
         mock_fusion = MagicMock()
+        fused = [
+            FusedResult(
+                document_id=doc_id,
+                document_title="Test",
+                final_score=0.9,
+                surface_scores={"test_surface": 0.9},
+                contributing_chunks=[],
+            )
+        ]
         mock_fusion.fuse = AsyncMock(
-            return_value=[
-                FusedResult(
-                    document_id=doc_id,
-                    document_title="Test",
-                    final_score=0.9,
-                    surface_scores={"test_surface": 0.9},
-                    contributing_chunks=[],
-                )
-            ]
+            return_value=(fused, {str(doc_id): {"test_surface": 0.9}})
         )
         service = self._make_service(surfaces=[surface], fusion_service=mock_fusion)
         mock_session_factory = _make_mock_session_factory()
         kb_id = uuid4()
 
-        result = await service.search(
+        result, all_scores = await service.search(
             "test",
             kb_id,
             limit=5,
@@ -129,6 +130,7 @@ class TestMultiSurfaceSearchService:
         assert call_kwargs["limit"] == 5
         assert call_kwargs["threshold"] == 0.5
         assert len(result) == 1
+        assert str(doc_id) in all_scores
 
     @pytest.mark.asyncio
     async def test_search_handles_surface_exceptions(self):
@@ -139,7 +141,7 @@ class TestMultiSurfaceSearchService:
         bad_surface.search = AsyncMock(side_effect=Exception("Surface error"))
 
         mock_fusion = MagicMock()
-        mock_fusion.fuse = AsyncMock(return_value=[])
+        mock_fusion.fuse = AsyncMock(return_value=([], {}))
 
         service = self._make_service(
             surfaces=[good_surface, bad_surface],

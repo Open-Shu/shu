@@ -67,7 +67,7 @@ class MultiSurfaceSearchService:
         limit: int = 10,
         threshold: float = 0.0,
         session_factory: async_sessionmaker,
-    ) -> list[FusedResult]:
+    ) -> tuple[list[FusedResult], dict[str, dict[str, float]]]:
         """Execute multi-surface search and return fused results.
 
         Args:
@@ -79,7 +79,9 @@ class MultiSurfaceSearchService:
                 gets its own session to allow safe parallel execution.
 
         Returns:
-            List of FusedResult sorted by final_score descending.
+            Tuple of (fused_results, all_surface_scores) where fused_results
+            is sorted by final_score descending and all_surface_scores contains
+            per-surface scores for ALL scored documents (before top-k truncation).
 
         """
         start_time = time.perf_counter()
@@ -136,7 +138,7 @@ class MultiSurfaceSearchService:
 
         # Step 5: Fuse results (fusion gets its own session)
         async with session_factory() as db:
-            fused_results = await self._fusion_service.fuse(
+            fused_results, all_surface_scores = await self._fusion_service.fuse(
                 valid_results,
                 limit=limit,
                 threshold=threshold,
@@ -155,7 +157,7 @@ class MultiSurfaceSearchService:
             },
         )
 
-        return fused_results
+        return fused_results, all_surface_scores
 
     async def _execute_surface(
         self,
