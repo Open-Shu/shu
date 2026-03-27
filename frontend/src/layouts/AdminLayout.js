@@ -28,6 +28,7 @@ import {
   Policy as PolicyIcon,
   AdminPanelSettings as AdminIcon,
   Extension as ExtensionIcon,
+  Hub as HubIcon,
   Schedule as ScheduleIcon,
   Palette as BrandingIcon,
   Menu as MenuIcon,
@@ -72,6 +73,7 @@ const AdminLayout = ({ children }) => {
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
     { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
     { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
+    { text: 'MCP Servers', icon: <HubIcon />, path: '/admin/mcp' },
     {
       text: 'Experiences',
       icon: <ExperiencesIcon />,
