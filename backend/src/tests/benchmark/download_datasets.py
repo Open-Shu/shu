@@ -70,6 +70,7 @@ def download_dataset(name: str, target_dir: Path | None = None) -> Path:
     logger.info("Downloading %s: %s", name, dataset_info["description"])
     logger.info("URL: %s", url)
 
+    DATASETS_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = DATASETS_DIR / f"{name}.zip"
     try:
         _download_file(url, zip_path)

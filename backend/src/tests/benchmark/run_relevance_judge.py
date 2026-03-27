@@ -1,8 +1,9 @@
 """CLI entry point for cross-topic relevance judgment benchmark.
 
-Two-phase process:
+Three-phase process:
     Phase 1 (collect): Run queries through both search strategies, collect candidates
     Phase 2 (judge):   Read candidates, judge relevance, produce qrels
+    Phase 3 (summary): Show comparison summary from completed judgments
 
 Usage:
     # Phase 1: Collect candidates (requires running Shu server)
@@ -16,7 +17,11 @@ Usage:
     python -m tests.benchmark.run_relevance_judge judge \
         --dataset nfcorpus
 
-    # Phase 3: Run benchmark with custom qrels
+    # Phase 3: Show comparison summary
+    python -m tests.benchmark.run_relevance_judge summary \
+        --dataset nfcorpus
+
+    # Phase 4: Run benchmark with custom qrels
     python -m tests.benchmark.run_benchmark --dataset nfcorpus \
         --reuse-kb <kb-id> --skip-ablation
 """
@@ -180,8 +185,20 @@ async def run_summary(args: argparse.Namespace) -> None:
     dataset_dir = resolve_dataset_dir(args.dataset)
     judge_dir = dataset_dir / "relevance_judge"
 
-    candidates = load_candidates(judge_dir / "candidates.jsonl")
-    judgments = load_judgments(judge_dir / "judgments.jsonl")
+    candidates_path = judge_dir / "candidates.jsonl"
+    judgments_path = judge_dir / "judgments.jsonl"
+
+    if not candidates_path.exists():
+        raise FileNotFoundError(
+            f"No candidates found at {candidates_path}. Run 'collect' first."
+        )
+    if not judgments_path.exists():
+        raise FileNotFoundError(
+            f"No judgments found at {judgments_path}. Run 'judge' first."
+        )
+
+    candidates = load_candidates(candidates_path)
+    judgments = load_judgments(judgments_path)
 
     summary = comparison_summary(judgments, candidates)
     print(summary)

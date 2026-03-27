@@ -63,7 +63,7 @@ python -m tests.benchmark.run_benchmark --dataset nfcorpus --verbose
 
 ### Monitor Profiling Progress
 
-When ingesting a large corpus, profiling takes time. Monitor progress:
+When ingesting a large corpus, profiling takes time. Monitor progress (run from `shu/` project root):
 
 ```bash
 python scripts/.internal/monitor_profiling.py
@@ -99,6 +99,8 @@ watch -n 10 'psql -d shu -c "
 If profiling is interrupted (machine sleep, LM Studio crash), documents get stuck in `profiling` status:
 
 ```bash
+# Run from shu/ project root:
+
 # See what's stuck
 python backend/scripts/.internal/requeue_profiling.py <kb-id> --dry-run
 

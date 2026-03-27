@@ -530,6 +530,14 @@ class BenchmarkRunner:
                 make_comparable=True,
             )
             comparison_table = str(report)
+
+            # Extract structured stat test data from the Report object
+            if hasattr(report, "comparisons") and report.comparisons:
+                for run_pair, metric_results in report.comparisons.items():
+                    pair_key = " vs ".join(sorted(run_pair))
+                    stat_tests[pair_key] = {
+                        k: v for k, v in metric_results.items()
+                    }
         except Exception as e:
             logger.warning("Statistical comparison failed: %s", e)
             comparison_table = f"(comparison failed: {e})"
@@ -653,9 +661,8 @@ class BenchmarkRunner:
 
         # Detect relevance scale: binary (max=1) vs graded (max=2)
         # For head-to-head, compare docs at max relevance level
-        max_rel = max(
-            rel for doc_rels in qrels_dict.values() for rel in doc_rels.values()
-        ) if qrels_dict else 1
+        all_rels = [rel for doc_rels in qrels_dict.values() for rel in doc_rels.values()]
+        max_rel = max(all_rels) if all_rels else 1
         is_graded = max_rel >= 2  # True for NFCorpus (0/1/2), False for SciFact (0/1)
 
         threshold_results = []

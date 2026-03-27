@@ -133,7 +133,7 @@ All evaluations were performed by Claude Opus 4.6, reading the full document tex
 | Optimal Phytosterol Dose and Source | Tie | **BL** | BL stayed on phytosterol topic; MS drifted to phytic acid and lignans |
 | Is Caffeinated Tea Really Dehydrating? | Tie | **MS** | MS found comprehensive tea health review; BL had endothelial function and general hydration |
 
-**Of 10 supposed ties: 5 were actually MS wins, 1 was BL, 4 were ties.**
+**Of 10 supposed ties: 6 were actually MS wins, 1 was BL, 3 were ties.**
 
 ## Critical Finding: Multi-Surface is a Retrieval Superset
 
