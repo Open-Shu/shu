@@ -87,6 +87,7 @@ class BeirDataset:
             }
             # Remove queries with no remaining qrels
             filtered_qrels = {qid: docs for qid, docs in filtered_qrels.items() if docs}
+            filtered_queries = {qid: q for qid, q in filtered_queries.items() if qid in filtered_qrels}
 
         return BeirDataset(
             name=f"{self.name}_subset",
