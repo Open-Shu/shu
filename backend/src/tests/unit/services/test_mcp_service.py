@@ -12,10 +12,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shu.core.exceptions import ConflictError
+from shu.core.exceptions import ConflictError, NotFoundError
 from shu.models.mcp_server_connection import McpServerConnection
 from shu.plugins.mcp_client import McpError, McpToolInfo
-from shu.schemas.mcp_admin import McpConnectionCreate, McpConnectionUpdate, McpTimeoutsConfig
+from shu.schemas.mcp_admin import (
+    McpConnectionCreate,
+    McpConnectionUpdate,
+    McpIngestConfig,
+    McpIngestFieldMapping,
+    McpTimeoutsConfig,
+    McpToolConfigUpdate,
+    McpToolType,
+)
 from shu.services.mcp_service import McpService
 
 
@@ -400,6 +408,79 @@ class TestGeneratePluginRecord:
 
         assert record.chat_callable_ops is None
         assert record.allowed_feed_ops is None
+
+
+class TestUpdateToolConfig:
+    """Verify per-tool config updates: merge into existing, bootstrap from discovered, reject unknown."""
+
+    @pytest.mark.asyncio
+    async def test_updates_existing_tool_config(self):
+        """Updating a tool already in tool_configs replaces its entry."""
+        conn = _make_connection(
+            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            discovered_tools=[{"name": "search", "description": "Search"}],
+        )
+        db = _mock_db()
+        db.execute.return_value = _scalar_one_or_none(conn)
+
+        pbac_patch, cache_patch = _patch_pbac()
+        with pbac_patch, cache_patch:
+            service = McpService(db)
+            data = McpToolConfigUpdate(
+                type=McpToolType.INGEST,
+                enabled=True,
+                ingest=McpIngestConfig(
+                    field_mapping=McpIngestFieldMapping(
+                        title="title", content="body", source_id="id"
+                    ),
+                ),
+            )
+            result = await service.update_tool_config("conn-1", "search", data, "admin")
+
+        assert result.tool_configs["search"]["type"] == "ingest"
+        assert result.tool_configs["search"]["ingest"] is not None
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_bootstraps_config_for_discovered_but_unconfigured_tool(self):
+        """A tool present in discovered_tools but not yet in tool_configs gets created."""
+        conn = _make_connection(
+            tool_configs={"other": {"type": "chat_callable", "enabled": True}},
+            discovered_tools=[
+                {"name": "other", "description": "Other"},
+                {"name": "new_tool", "description": "New"},
+            ],
+        )
+        db = _mock_db()
+        db.execute.return_value = _scalar_one_or_none(conn)
+
+        pbac_patch, cache_patch = _patch_pbac()
+        with pbac_patch, cache_patch:
+            service = McpService(db)
+            data = McpToolConfigUpdate(type=McpToolType.CHAT_CALLABLE, enabled=False)
+            result = await service.update_tool_config("conn-1", "new_tool", data, "admin")
+
+        assert "new_tool" in result.tool_configs
+        assert result.tool_configs["new_tool"]["enabled"] is False
+        # Original tool untouched
+        assert result.tool_configs["other"] == {"type": "chat_callable", "enabled": True}
+
+    @pytest.mark.asyncio
+    async def test_raises_not_found_for_unknown_tool(self):
+        """A tool name not in tool_configs or discovered_tools raises NotFoundError."""
+        conn = _make_connection(
+            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            discovered_tools=[{"name": "search", "description": "Search"}],
+        )
+        db = _mock_db()
+        db.execute.return_value = _scalar_one_or_none(conn)
+
+        pbac_patch, cache_patch = _patch_pbac()
+        with pbac_patch, cache_patch:
+            service = McpService(db)
+            data = McpToolConfigUpdate(type=McpToolType.CHAT_CALLABLE, enabled=True)
+            with pytest.raises(NotFoundError, match="nonexistent"):
+                await service.update_tool_config("conn-1", "nonexistent", data, "admin")
 
 
 class TestListConnections:

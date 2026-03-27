@@ -19,7 +19,12 @@ from shu.models.mcp_server_connection import McpServerConnection
 from shu.models.plugin_feed import PluginFeed
 from shu.plugins.loader import PluginRecord
 from shu.plugins.mcp_client import McpClient, McpError
-from shu.schemas.mcp_admin import McpConnectionCreate, McpConnectionUpdate, McpSyncResult
+from shu.schemas.mcp_admin import (
+    McpConnectionCreate,
+    McpConnectionUpdate,
+    McpSyncResult,
+    McpToolConfigUpdate,
+)
 from shu.services.plugin_secrets import delete_secret, get_secret, list_secret_keys, set_secret
 from shu.services.policy_engine import POLICY_CACHE, enforce_pbac
 
@@ -182,6 +187,37 @@ class McpService:
             removed=result.removed,
         )
         return result
+
+    async def update_tool_config(
+        self,
+        connection_id: str,
+        tool_name: str,
+        data: McpToolConfigUpdate,
+        user_id: str,
+    ) -> McpServerConnection:
+        """Update the configuration for a single tool on a connection."""
+        connection = await self._get_connection_or_404(connection_id, user_id, "plugin.update")
+
+        configs = dict(connection.tool_configs or {})
+        if tool_name not in configs:
+            discovered_names = [t.get("name") for t in (connection.discovered_tools or [])]
+            if tool_name not in discovered_names:
+                raise NotFoundError(f"Tool '{tool_name}' not found on connection '{connection.name}'")
+            configs[tool_name] = {"type": "chat_callable", "enabled": True}
+
+        configs[tool_name] = data.model_dump(exclude_none=False)
+        connection.tool_configs = configs
+
+        await self.db.commit()
+        await self.db.refresh(connection)
+
+        logger.info(
+            "mcp.tool_config_updated",
+            connection_id=connection_id,
+            tool_name=tool_name,
+            tool_type=data.type.value,
+        )
+        return connection
 
     def _merge_discovered_tools(
         self,
