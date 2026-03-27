@@ -1,0 +1,425 @@
+"""Unit tests for McpClient.
+
+Covers JSON-RPC serialization, response parsing (direct JSON and SSE),
+error mapping, retry behavior, size limits, and high-level methods
+(connect, list_tools, call_tool, health_check).
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+from shu.plugins.mcp_client import (
+    McpClient,
+    McpConnectionError,
+    McpProtocolError,
+    McpResponseTooLarge,
+    McpTimeoutError,
+    McpToolInfo,
+    McpToolResult,
+)
+
+SERVER_URL = "http://mcp.test/rpc"
+
+
+def _mock_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        mcp_connect_timeout_ms=5000,
+        mcp_call_timeout_ms=30000,
+        mcp_read_timeout_ms=30000,
+        mcp_response_size_limit_bytes=10 * 1024 * 1024,
+        mcp_max_retries=3,
+        mcp_retry_base_delay_ms=1000,
+    )
+
+
+def _make_response(
+    data: dict, content_type: str = "application/json", status: int = 200
+) -> httpx.Response:
+    content = json.dumps(data).encode()
+    return httpx.Response(status, content=content, headers={"content-type": content_type})
+
+
+def _make_sse_response(body: str) -> httpx.Response:
+    return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+
+
+def _jsonrpc_result(result: dict, request_id: int = 1) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _jsonrpc_error(code: int, message: str, request_id: int = 1) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+@pytest.fixture
+def client() -> McpClient:
+    with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+        return McpClient(url=SERVER_URL, max_retries=0)
+
+
+@pytest.fixture
+def retry_client() -> McpClient:
+    with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+        return McpClient(url=SERVER_URL, max_retries=2, retry_base_delay_ms=10)
+
+
+@pytest.fixture
+def _mock_logger() -> MagicMock:
+    """Patch the module-level logger so structlog-style kwargs don't raise."""
+    with patch("shu.plugins.mcp_client.logger") as mock:
+        yield mock
+
+
+@pytest.mark.asyncio
+async def test_send_jsonrpc_serialization(client: McpClient) -> None:
+    """Verify the POST payload has correct jsonrpc version, method, params, and incrementing id."""
+    mock_post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result({"ok": True}, request_id=1))
+    )
+    client._client.post = mock_post
+
+    await client._send_jsonrpc("tools/list", {"cursor": "abc"})
+
+    mock_post.assert_called_once()
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["method"] == "tools/list"
+    assert payload["params"] == {"cursor": "abc"}
+    assert payload["id"] == 1
+
+    mock_post.reset_mock()
+    mock_post.return_value = _make_response(_jsonrpc_result({"ok": True}, request_id=2))
+    await client._send_jsonrpc("tools/call")
+
+    second_payload = mock_post.call_args.kwargs["json"]
+    assert second_payload["id"] == 2
+    assert "params" not in second_payload
+
+
+@pytest.mark.asyncio
+async def test_direct_json_parsing(client: McpClient) -> None:
+    """Mock response with content-type application/json and a valid JSON-RPC result."""
+    expected = {"tools": [{"name": "echo"}]}
+    client._client.post = AsyncMock(return_value=_make_response(_jsonrpc_result(expected)))
+
+    result = await client._send_jsonrpc("tools/list")
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_sse_parsing_multi_event(client: McpClient) -> None:
+    """Mock response with content-type text/event-stream and multi-event SSE body."""
+    sse_body = (
+        "event: message\n"
+        'data: {"jsonrpc":"2.0","id":1,"result":{"partial":true}}\n'
+        "\n"
+        "event: message\n"
+        'data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"final"}]}}\n'
+        "\n"
+    )
+    client._client.post = AsyncMock(return_value=_make_sse_response(sse_body))
+
+    result = await client._send_jsonrpc("tools/list")
+    assert result == {"tools": [{"name": "final"}]}
+
+
+@pytest.mark.asyncio
+async def test_sse_parsing_no_event_type(client: McpClient) -> None:
+    """SSE events without explicit event type should still be parsed."""
+    sse_body = 'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n'
+    client._client.post = AsyncMock(return_value=_make_sse_response(sse_body))
+
+    result = await client._send_jsonrpc("test/method")
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_sse_no_valid_result(client: McpClient) -> None:
+    """SSE stream with no valid JSON-RPC result raises McpProtocolError."""
+    sse_body = "event: ping\ndata: keep-alive\n\n"
+    client._client.post = AsyncMock(return_value=_make_sse_response(sse_body))
+
+    with pytest.raises(McpProtocolError, match="No valid JSON-RPC result"):
+        await client._send_jsonrpc("test/method")
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_error_response(client: McpClient) -> None:
+    """Response with JSON-RPC error raises McpProtocolError with code."""
+    client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_error(-32600, "Invalid Request"))
+    )
+
+    with pytest.raises(McpProtocolError, match="Invalid Request") as exc_info:
+        await client._send_jsonrpc("test/method")
+    assert exc_info.value.code == -32600
+    assert exc_info.value.server_url == SERVER_URL
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_response(client: McpClient) -> None:
+    """Non-JSON response body raises McpProtocolError."""
+    response = httpx.Response(
+        200, content=b"not json", headers={"content-type": "application/json"}
+    )
+    client._client.post = AsyncMock(return_value=response)
+
+    with pytest.raises(McpProtocolError, match="Invalid JSON"):
+        await client._send_jsonrpc("test/method")
+
+
+@pytest.mark.asyncio
+async def test_connection_error_maps_to_mcp_connection_error(client: McpClient) -> None:
+    """httpx.ConnectError is converted to McpConnectionError."""
+    client._client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+    with pytest.raises(McpConnectionError, match="refused"):
+        await client._send_jsonrpc("test/method")
+
+
+@pytest.mark.asyncio
+async def test_timeout_error_maps_to_mcp_timeout_error(client: McpClient) -> None:
+    """httpx.ReadTimeout is converted to McpTimeoutError."""
+    client._client.post = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+
+    with pytest.raises(McpTimeoutError, match="timed out"):
+        await client._send_jsonrpc("test/method")
+
+
+@pytest.mark.asyncio
+async def test_response_size_cap_json(client: McpClient) -> None:
+    """Response larger than limit raises McpResponseTooLarge."""
+    with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+        small_client = McpClient(url=SERVER_URL, max_retries=0, response_size_limit=50)
+
+    big_result = {"data": "x" * 200}
+    small_client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result(big_result))
+    )
+
+    with pytest.raises(McpResponseTooLarge) as exc_info:
+        await small_client._send_jsonrpc("test/method")
+    assert exc_info.value.limit_bytes == 50
+
+
+@pytest.mark.asyncio
+async def test_response_size_cap_sse(client: McpClient) -> None:
+    """SSE response exceeding size limit raises McpResponseTooLarge."""
+    with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+        small_client = McpClient(url=SERVER_URL, max_retries=0, response_size_limit=30)
+
+    sse_body = (
+        "event: message\n"
+        'data: {"jsonrpc":"2.0","id":1,"result":{"big":"' + "x" * 200 + '"}}\n\n'
+    )
+    small_client._client.post = AsyncMock(return_value=_make_sse_response(sse_body))
+
+    with pytest.raises(McpResponseTooLarge):
+        await small_client._send_jsonrpc("test/method")
+
+
+@pytest.mark.asyncio
+async def test_retry_succeeds_after_transient_failure(retry_client: McpClient, _mock_logger: MagicMock) -> None:
+    """First call raises ConnectError, second succeeds."""
+    success = _make_response(_jsonrpc_result({"ok": True}))
+    retry_client._client.post = AsyncMock(
+        side_effect=[httpx.ConnectError("refused"), success]
+    )
+
+    with patch("shu.plugins.mcp_client.asyncio.sleep", new_callable=AsyncMock):
+        result = await retry_client._send_jsonrpc("test/method")
+
+    assert result == {"ok": True}
+    assert retry_client._client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_exhausted_raises(retry_client: McpClient, _mock_logger: MagicMock) -> None:
+    """All attempts raise ConnectError, final McpConnectionError propagates."""
+    retry_client._client.post = AsyncMock(
+        side_effect=httpx.ConnectError("refused")
+    )
+
+    with patch("shu.plugins.mcp_client.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(McpConnectionError, match="refused"):
+            await retry_client._send_jsonrpc("test/method")
+
+    assert retry_client._client.post.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_timeout_exhausted(retry_client: McpClient, _mock_logger: MagicMock) -> None:
+    """All attempts raise TimeoutException, final McpTimeoutError propagates."""
+    retry_client._client.post = AsyncMock(
+        side_effect=httpx.ReadTimeout("timed out")
+    )
+
+    with patch("shu.plugins.mcp_client.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(McpTimeoutError, match="timed out"):
+            await retry_client._send_jsonrpc("test/method")
+
+
+@pytest.mark.asyncio
+async def test_connect_success(client: McpClient) -> None:
+    """connect() returns result and sends initialized notification."""
+    init_result = {
+        "protocolVersion": "2025-03-26",
+        "serverInfo": {"name": "test-server"},
+        "capabilities": {},
+    }
+    notification_response = httpx.Response(200, content=b"", headers={})
+
+    client._client.post = AsyncMock(
+        side_effect=[
+            _make_response(_jsonrpc_result(init_result)),
+            notification_response,
+        ]
+    )
+
+    result = await client.connect()
+    assert result["protocolVersion"] == "2025-03-26"
+    assert result["serverInfo"]["name"] == "test-server"
+    assert client._client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_connect_unsupported_version(client: McpClient) -> None:
+    """connect() raises McpProtocolError on unsupported protocol version."""
+    init_result = {"protocolVersion": "1999-01-01", "capabilities": {}}
+    client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result(init_result))
+    )
+
+    with pytest.raises(McpProtocolError, match="Unsupported MCP protocol version"):
+        await client.connect()
+
+
+@pytest.mark.asyncio
+async def test_connect_alternate_supported_version(client: McpClient) -> None:
+    """connect() accepts the older supported protocol version."""
+    init_result = {"protocolVersion": "2024-11-05", "capabilities": {}}
+    notification_response = httpx.Response(200, content=b"", headers={})
+    client._client.post = AsyncMock(
+        side_effect=[
+            _make_response(_jsonrpc_result(init_result)),
+            notification_response,
+        ]
+    )
+
+    result = await client.connect()
+    assert result["protocolVersion"] == "2024-11-05"
+
+
+@pytest.mark.asyncio
+async def test_list_tools_parsing(client: McpClient) -> None:
+    """list_tools() parses tool array into McpToolInfo list."""
+    client._connected = True
+    tools_result = {
+        "tools": [
+            {"name": "echo", "description": "Echo input", "inputSchema": {"type": "object"}},
+            {"name": "noop"},
+            {"invalid": "no name field"},
+            "not a dict",
+        ]
+    }
+    client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result(tools_result))
+    )
+
+    tools = await client.list_tools()
+    assert len(tools) == 2
+    assert tools[0] == McpToolInfo(name="echo", description="Echo input", input_schema={"type": "object"})
+    assert tools[1] == McpToolInfo(name="noop", description=None, input_schema=None)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_success(client: McpClient) -> None:
+    """call_tool() returns McpToolResult with content."""
+    client._connected = True
+    tool_result = {
+        "content": [{"type": "text", "text": "hello"}],
+        "isError": False,
+    }
+    client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result(tool_result))
+    )
+
+    result = await client.call_tool("echo", {"message": "hello"})
+    assert isinstance(result, McpToolResult)
+    assert result.content == [{"type": "text", "text": "hello"}]
+    assert result.is_error is False
+
+    payload = client._client.post.call_args.kwargs["json"]
+    assert payload["params"] == {"name": "echo", "arguments": {"message": "hello"}}
+
+
+@pytest.mark.asyncio
+async def test_call_tool_error_response(client: McpClient) -> None:
+    """call_tool() with isError=true returns McpToolResult with is_error set."""
+    client._connected = True
+    tool_result = {
+        "content": [{"type": "text", "text": "something went wrong"}],
+        "isError": True,
+    }
+    client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result(tool_result))
+    )
+
+    result = await client.call_tool("failing_tool")
+    assert result.is_error is True
+    assert result.content == [{"type": "text", "text": "something went wrong"}]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_no_arguments(client: McpClient) -> None:
+    """call_tool() without arguments sends empty arguments dict."""
+    client._connected = True
+    tool_result = {"content": [], "isError": False}
+    client._client.post = AsyncMock(
+        return_value=_make_response(_jsonrpc_result(tool_result))
+    )
+
+    await client.call_tool("noop")
+    payload = client._client.post.call_args.kwargs["json"]
+    assert payload["params"] == {"name": "noop", "arguments": {}}
+
+
+@pytest.mark.asyncio
+async def test_health_check_success(client: McpClient) -> None:
+    """health_check() returns True on successful connect."""
+    init_result = {"protocolVersion": "2025-03-26", "capabilities": {}}
+    notification_response = httpx.Response(200, content=b"", headers={})
+    client._client.post = AsyncMock(
+        side_effect=[
+            _make_response(_jsonrpc_result(init_result)),
+            notification_response,
+        ]
+    )
+
+    assert await client.health_check() is True
+
+
+@pytest.mark.asyncio
+async def test_health_check_failure(client: McpClient) -> None:
+    """health_check() returns False on connection error."""
+    client._client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+    assert await client.health_check() is False
+
+
+@pytest.mark.asyncio
+async def test_non_dict_json_response(client: McpClient) -> None:
+    """Response body that is valid JSON but not a dict raises McpProtocolError."""
+    response = httpx.Response(
+        200, content=b"[1,2,3]", headers={"content-type": "application/json"}
+    )
+    client._client.post = AsyncMock(return_value=response)
+
+    with pytest.raises(McpProtocolError, match="not a JSON object"):
+        await client._send_jsonrpc("test/method")

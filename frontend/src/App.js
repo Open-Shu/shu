@@ -18,6 +18,7 @@ import UserGroups from './components/UserGroups';
 import LLMProviders from './components/LLMProviders';
 import ModelConfigurations from './components/ModelConfigurations';
 import Prompts from './pages/Prompts';
+import McpAdmin from './components/McpAdmin';
 import PluginsAdmin from './components/PluginsAdmin';
 import PluginsAdminFeeds from './components/PluginsAdminFeeds';
 import ExperiencesAdmin from './components/ExperiencesAdmin';
@@ -302,6 +303,14 @@ const AuthenticatedApp = () => {
             element={
               <RoleBasedRoute adminOnly>
                 <PluginsAdmin />
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/mcp"
+            element={
+              <RoleBasedRoute adminOnly>
+                <McpAdmin />
               </RoleBasedRoute>
             }
           />

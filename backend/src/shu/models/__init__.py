@@ -34,6 +34,7 @@ from .document import (
 from .experience import Experience, ExperienceRun, ExperienceStep
 from .knowledge_base import KnowledgeBase
 from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message
+from .mcp_server_connection import McpServerConnection
 from .model_configuration import ModelConfiguration
 from .model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from .plugin_execution import PluginExecution
@@ -84,6 +85,7 @@ __all__ = [
     "LLMModel",
     "LLMProvider",
     "LLMUsage",
+    "McpServerConnection",
     "Message",
     "ModelConfiguration",
     "ModelConfigurationKBPrompt",

@@ -362,18 +362,24 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Failed to start inline workers: {e}")
 
-    # Plugins v1: optional auto-sync from plugins to DB registry
+    # Plugins v1: always load the manifest (read-only: filesystem scan + MCP
+    # connections from DB) so plugins are available immediately after startup.
+    # plugins_auto_sync gates the DB *write* path (create/update/purge
+    # PluginDefinition rows) which may not be desired in all environments.
     try:
-        if getattr(settings, "plugins_auto_sync", False):
-            from .core.database import get_async_session_local
-            from .plugins.registry import REGISTRY
+        from .core.database import get_async_session_local
+        from .plugins.registry import REGISTRY
 
-            session_maker = get_async_session_local()
-            async with session_maker() as session:
+        session_maker = get_async_session_local()
+        async with session_maker() as session:
+            if getattr(settings, "plugins_auto_sync", False):
                 stats = await REGISTRY.sync(session)
-            logger.info("Plugins auto-sync completed", extra={"stats": stats})
+                logger.info("Plugins auto-sync completed", extra={"stats": stats})
+            else:
+                await REGISTRY.full_refresh(session)
+                logger.info("Plugins manifest loaded", extra={"count": len(REGISTRY._manifest)})
     except Exception as e:
-        logger.warning(f"Plugins auto-sync failed: {e}")
+        logger.warning(f"Plugins startup failed: {e}")
 
     await _initialize_policy_cache()
 
