@@ -106,7 +106,7 @@ class McpClient:
         self._response_size_limit = (
             response_size_limit if response_size_limit is not None else settings.mcp_response_size_limit_bytes
         )
-        self._max_retries = max_retries if max_retries is not None else settings.mcp_max_retries
+        self._max_retries = max(0, max_retries if max_retries is not None else settings.mcp_max_retries)
         self._retry_base_delay_ms = (
             retry_base_delay_ms if retry_base_delay_ms is not None else settings.mcp_retry_base_delay_ms
         )
