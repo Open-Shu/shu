@@ -36,10 +36,12 @@ class PluginRegistry:
 
         try:
             service = McpService(session)
-            for record in await service.generate_all_plugin_records():
-                self._manifest[record.name] = record
+            records = await service.generate_all_plugin_records()
         except Exception:
             logger.warning("Failed to refresh MCP plugin records")
+            return
+        for record in records:
+            self._manifest[record.name] = record
 
     def get_manifest(self, refresh_if_empty: bool = True) -> dict[str, PluginRecord]:
         """Return current manifest; optionally refresh if empty.

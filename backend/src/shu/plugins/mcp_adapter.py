@@ -293,9 +293,8 @@ class McpPluginAdapter:
             last_cursor = str(next_cursor)
             call_params[cursor_param] = last_cursor
 
-        if cursor_field and cursor_param and last_cursor:
-            if not await self._save_cursor(host, kb_id, last_cursor):
-                warnings.append("Cursor save failed; next run may re-process items")
+        if cursor_field and cursor_param and last_cursor and not await self._save_cursor(host, kb_id, last_cursor):
+            warnings.append("Cursor save failed; next run may re-process items")
 
         logger.info(
             "mcp.ingest_complete [%s/%s] ingested=%d skipped=%d errors=%d total=%d",

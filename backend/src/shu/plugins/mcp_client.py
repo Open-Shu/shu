@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
-
-import urllib.parse
 
 import httpx
 
@@ -259,7 +258,6 @@ class McpClient:
         Reads event: message lines and extracts the last complete JSON-RPC
         response from the data fields.
         """
-
         event_type: str | None = None
         data_lines: list[str] = []
         last_result: dict[str, Any] | None = None

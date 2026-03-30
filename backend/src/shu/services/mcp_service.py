@@ -182,7 +182,7 @@ class McpService:
                 connection.consecutive_failures,
                 exc,
             )
-            return McpSyncResult(tools_discovered=0, errors=[str(exc)])
+            return McpSyncResult(tools=[], errors=[str(exc)])
         finally:
             await client.close()
 

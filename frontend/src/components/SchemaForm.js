@@ -64,6 +64,10 @@ export function buildDefaultValues(schema) {
   const props = schema.properties || {};
   const out = {};
   for (const [key, def] of Object.entries(props)) {
+    const sw = def?.['x-ui']?.show_when || def?.x_ui?.show_when;
+    if (sw) {
+      continue;
+    }
     out[key] = buildDefaultForDef(def);
   }
   return out;
