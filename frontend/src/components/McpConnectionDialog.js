@@ -164,10 +164,14 @@ export default function McpConnectionDialog({ open, onClose, connection = null }
     }
     if (Object.keys(timeouts).length > 0) {
       payload.timeouts = timeouts;
+    } else if (isEdit) {
+      payload.timeouts = null;
     }
 
     if (responseSizeLimit) {
       payload.response_size_limit_bytes = parseInt(responseSizeLimit, 10);
+    } else if (isEdit) {
+      payload.response_size_limit_bytes = null;
     }
 
     payload.enabled = enabled;
@@ -196,7 +200,7 @@ export default function McpConnectionDialog({ open, onClose, connection = null }
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={isSaving ? undefined : onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{isEdit ? 'Edit MCP Connection' : 'Add MCP Connection'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -209,8 +213,13 @@ export default function McpConnectionDialog({ open, onClose, connection = null }
             fullWidth
             required
             autoFocus={!isEdit}
+            disabled={isEdit}
             placeholder="e.g. confluence-wiki"
-            helperText="Unique display name for this connection"
+            helperText={
+              isEdit
+                ? 'Connection names cannot be changed after creation'
+                : 'Unique display name for this connection. Cannot be changed later.'
+            }
           />
 
           <TextField

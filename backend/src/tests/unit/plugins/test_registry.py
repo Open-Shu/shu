@@ -141,18 +141,19 @@ class TestSyncMcpDefinitions:
         scalars_first.first.return_value = None
         exec_result_none = MagicMock()
         exec_result_none.scalars.return_value = scalars_first
-        # Second execute: McpServerConnection query → None (no connection row)
-        conn_scalars = MagicMock()
-        conn_scalars.return_value = None
+        # Second execute: get_connection_schema → McpServerConnection query → None
         exec_result_conn = MagicMock()
         exec_result_conn.scalar_one_or_none.return_value = None
-        # Third execute: purge query returns empty
+        # Third execute: is_connection_enabled → McpServerConnection.enabled → None (not found)
+        exec_result_enabled = MagicMock()
+        exec_result_enabled.scalar.return_value = None
+        # Fourth execute: purge query returns empty
         scalars_all = MagicMock()
         scalars_all.all.return_value = []
         exec_result_all = MagicMock()
         exec_result_all.scalars.return_value = scalars_all
 
-        session.execute = AsyncMock(side_effect=[exec_result_none, exec_result_conn, exec_result_all])
+        session.execute = AsyncMock(side_effect=[exec_result_none, exec_result_conn, exec_result_enabled, exec_result_all])
         session.add = MagicMock()
 
         with patch.object(registry, "refresh"), \

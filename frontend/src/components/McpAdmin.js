@@ -143,7 +143,10 @@ const McpAdmin = () => {
       qc.invalidateQueries(['mcp', 'connections']);
       setSyncingId(null);
     },
-    onError: () => setSyncingId(null),
+    onError: (err) => {
+      setSyncingId(null);
+      window.alert(`Sync failed: ${formatError(err)}`);
+    },
   });
 
   const handleSync = (id) => {

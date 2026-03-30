@@ -20,13 +20,6 @@ def _validate_mcp_url(v: str) -> str:
     raise ValueError("URL must start with http:// or https://")
 
 
-class McpToolType(str, Enum):
-    """Tool type classification."""
-
-    CHAT_CALLABLE = "chat_callable"
-    INGEST = "ingest"
-
-
 class McpIngestMethod(str, Enum):
     """Ingest method for MCP tools."""
 
@@ -76,23 +69,26 @@ class McpIngestConfig(BaseModel):
 class McpToolConfigUpdate(BaseModel):
     """Schema for updating a single tool's configuration."""
 
-    type: McpToolType = Field(..., description="Tool type classification")
+    chat_callable: bool = Field(default=True, description="Tool is callable from chat")
+    feed_eligible: bool = Field(default=False, description="Tool is available as a feed source")
     enabled: bool = Field(default=True, description="Whether the tool is enabled")
-    ingest: McpIngestConfig | None = Field(None, description="Ingest configuration (required when type is ingest)")
+    ingest: McpIngestConfig | None = Field(
+        None, description="Ingest configuration (required when feed_eligible is True)"
+    )
 
     @field_validator("ingest")
     @classmethod
     def validate_ingest_config(cls, v: McpIngestConfig | None, info) -> McpIngestConfig | None:
-        """Require ingest config when type is ingest."""
-        if info.data.get("type") == McpToolType.INGEST and v is None:
-            raise ValueError("ingest configuration is required when type is 'ingest'")
+        """Require ingest config when feed_eligible is True."""
+        if info.data.get("feed_eligible") and v is None:
+            raise ValueError("ingest configuration is required when feed_eligible is True")
         return v
 
 
 class McpConnectionCreate(BaseModel):
     """Schema for creating an MCP server connection."""
 
-    name: str = Field(..., min_length=1, max_length=120, description="Display name for the connection")
+    name: str = Field(..., min_length=1, max_length=96, description="Display name for the connection")
     url: str = Field(..., min_length=1, max_length=500, description="MCP server Streamable HTTP endpoint URL")
     headers: dict[str, str] | None = Field(None, description="Auth headers (values will be encrypted at rest)")
     timeouts: McpTimeoutsConfig | None = Field(None, description="Timeout overrides")
@@ -111,7 +107,6 @@ class McpConnectionCreate(BaseModel):
 class McpConnectionUpdate(BaseModel):
     """Schema for updating an MCP server connection."""
 
-    name: str | None = Field(None, min_length=1, max_length=120, description="Display name")
     url: str | None = Field(None, min_length=1, max_length=500, description="MCP server endpoint URL")
     headers: dict[str, str] | None = Field(None, description="Auth headers (values will be encrypted at rest)")
     timeouts: McpTimeoutsConfig | None = Field(None, description="Timeout overrides")
@@ -140,7 +135,8 @@ class McpDiscoveredTool(BaseModel):
 class McpToolConfigResponse(BaseModel):
     """Schema for a tool's admin configuration."""
 
-    type: McpToolType = Field(..., description="Tool type classification")
+    chat_callable: bool = Field(default=True, description="Tool is callable from chat")
+    feed_eligible: bool = Field(default=False, description="Tool is available as a feed source")
     enabled: bool = Field(default=True, description="Whether the tool is enabled")
     ingest: McpIngestConfig | None = Field(None, description="Ingest configuration")
 

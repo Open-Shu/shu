@@ -126,11 +126,11 @@ class TestGetSchema:
     """Schema generation from discovered tools and admin tool_configs."""
 
     def test_multiple_tools_produces_op_enum_and_conditional_properties(self) -> None:
-        """Two enabled tools produce a sorted op enum and allOf conditional schemas."""
+        """Two enabled tools produce a sorted op enum and show_when properties."""
         adapter, _ = _make_adapter(
             tool_configs={
-                "search": {"enabled": True, "type": "chat_callable"},
-                "fetch": {"enabled": True, "type": "ingest"},
+                "search": {"enabled": True, "chat_callable": True, "feed_eligible": False},
+                "fetch": {"enabled": True, "chat_callable": False, "feed_eligible": True},
             },
             discovered_tools=[
                 {
@@ -155,11 +155,11 @@ class TestGetSchema:
         schema = adapter.get_schema()
         assert schema is not None
         assert schema["properties"]["op"]["enum"] == ["fetch", "search"]
-        assert len(schema["allOf"]) == 2
-
-        conditions = {c["if"]["properties"]["op"]["const"]: c for c in schema["allOf"]}
-        assert "query" in conditions["search"]["then"]["properties"]
-        assert "url" in conditions["fetch"]["then"]["properties"]
+        assert "allOf" not in schema
+        assert "query" in schema["properties"]
+        assert schema["properties"]["query"]["x-ui"]["show_when"] == {"field": "op", "in": ["search"]}
+        assert "url" in schema["properties"]
+        assert schema["properties"]["url"]["x-ui"]["show_when"] == {"field": "op", "in": ["fetch"]}
 
     def test_disabled_tools_filtered_from_schema(self) -> None:
         """Only enabled tools appear in the op enum."""
@@ -191,7 +191,7 @@ class TestChatCallable:
     async def test_success_returns_plugin_result_ok(self) -> None:
         """Successful tool call wraps content in PluginResult.ok and forwards params sans 'op'."""
         adapter, client = _make_adapter(
-            tool_configs={"search": {"enabled": True, "type": "chat_callable"}},
+            tool_configs={"search": {"enabled": True, "chat_callable": True, "feed_eligible": False}},
         )
         client.call_tool.return_value = McpToolResult(
             content=[{"type": "text", "text": "hello"}], is_error=False
@@ -207,7 +207,7 @@ class TestChatCallable:
     async def test_timeout_returns_plugin_result_err(self) -> None:
         """McpTimeoutError maps to PluginResult.err with code mcp_timeout."""
         adapter, client = _make_adapter(
-            tool_configs={"search": {"enabled": True, "type": "chat_callable"}},
+            tool_configs={"search": {"enabled": True, "chat_callable": True, "feed_eligible": False}},
         )
         client.call_tool.side_effect = McpTimeoutError("timed out")
 
@@ -221,7 +221,7 @@ class TestChatCallable:
     async def test_is_error_true_returns_plugin_result_err(self) -> None:
         """Tool-level error (isError=true) maps to mcp_server_error with text content."""
         adapter, client = _make_adapter(
-            tool_configs={"search": {"enabled": True, "type": "chat_callable"}},
+            tool_configs={"search": {"enabled": True, "chat_callable": True, "feed_eligible": False}},
         )
         client.call_tool.return_value = McpToolResult(
             content=[{"type": "text", "text": "something broke"}], is_error=True
@@ -241,7 +241,7 @@ class TestIngest:
         """Build a standard ingest tool_config with optional overrides."""
         base = {
             "enabled": True,
-            "type": "ingest",
+            "chat_callable": False, "feed_eligible": True,
             "ingest": {
                 "collection_field": "items",
                 "method": "text",
@@ -270,7 +270,7 @@ class TestIngest:
         })
         host = FakeHost()
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert result.data["ingested_count"] == 3
@@ -292,7 +292,7 @@ class TestIngest:
         })
         host = FakeHost()
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert result.data["ingested_count"] == 2
@@ -311,7 +311,7 @@ class TestIngest:
         })
         host = FakeHost()
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert result.data["ingested_count"] == 1
@@ -328,7 +328,7 @@ class TestIngest:
         })
         host = FakeHost()
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert result.data["ingested_count"] == 1
@@ -364,7 +364,7 @@ class TestIngest:
         kb.ingest_text = failing_ingest  # type: ignore[assignment]
         host = FakeHost(kb=kb)
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert result.data["error_count"] == 1
@@ -408,7 +408,7 @@ class TestIngestPagination:
         """Build an ingest config with cursor_field and cursor_param set."""
         return {
             "enabled": True,
-            "type": "ingest",
+            "chat_callable": False, "feed_eligible": True,
             "ingest": {
                 "collection_field": "items",
                 "method": "text",
@@ -430,7 +430,7 @@ class TestIngestPagination:
         ]
         host = FakeHost()
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert result.data["ingested_count"] == 2
@@ -450,7 +450,7 @@ class TestIngestPagination:
         ]
         host = FakeHost()
 
-        await adapter.execute({"op": "fetch"}, _ctx(), host)
+        await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         # First call has no cursor argument
         first_call_args = client.call_tool.call_args_list[0]
@@ -470,7 +470,7 @@ class TestIngestPagination:
         })
         host = FakeHost(cursor=FakeCursor(initial="saved-cursor"))
 
-        await adapter.execute({"op": "fetch"}, _ctx(), host)
+        await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         call_args = client.call_tool.call_args_list[0]
         assert call_args[0][1]["cursor"] == "saved-cursor"
@@ -488,7 +488,7 @@ class TestIngestPagination:
         })
         host = FakeHost()
 
-        result = await adapter.execute({"op": "fetch"}, _ctx(), host)
+        result = await adapter.execute({"op": "fetch", "__schedule_id": "sched-1"}, _ctx(), host)
 
         assert result.status == "success"
         assert client.call_tool.await_count == 1

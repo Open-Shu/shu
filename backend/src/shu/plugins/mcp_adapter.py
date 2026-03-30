@@ -8,7 +8,7 @@ from typing import Any
 
 from shu.core.logging import get_logger
 from shu.models.mcp_server_connection import McpServerConnection
-from shu.plugins.base import ExecuteContext, Plugin, PluginResult
+from shu.plugins.base import ExecuteContext, PluginResult
 from shu.plugins.mcp_client import (
     McpClient,
     McpConnectionError,
@@ -47,11 +47,13 @@ class McpPluginAdapter:
         tools = self._connection.discovered_tools or []
         return {t["name"]: t for t in tools if isinstance(t, dict) and "name" in t}
 
+    # TODO: We should get rid of all instances that call these plugin functions. They are too generic to be applied correctly.
     def get_schema(self) -> dict[str, Any] | None:
         """Build a combined JSON Schema with op enum from enabled tools.
 
-        Each tool's inputSchema properties are merged as conditional
-        (using allOf/if/then) so the UI can show per-op fields.
+        Tool-specific properties are flattened into the top-level properties
+        with x-ui.show_when rules so SchemaForm can conditionally show them
+        based on the selected op.
         """
         enabled = self._enabled_tools()
         if not enabled:
@@ -61,52 +63,58 @@ class McpPluginAdapter:
         op_names = sorted(enabled.keys())
         op_labels = {}
         op_help = {}
-        all_of: list[dict[str, Any]] = []
+        merged_properties: dict[str, Any] = {}
+        prop_ops: dict[str, list[str]] = {}
 
         for tool_name in op_names:
             tool_info = discovered.get(tool_name, {})
             cfg = enabled[tool_name]
-            tool_type = cfg.get("type", "chat_callable")
+            flags = []
+            if cfg.get("chat_callable", True):
+                flags.append("chat")
+            if cfg.get("feed_eligible", False):
+                flags.append("feed")
             description = tool_info.get("description", tool_name)
-            op_labels[tool_name] = f"{description} ({tool_type})"
+            op_labels[tool_name] = f"{description} ({'+'.join(flags) or 'none'})"
             op_help[tool_name] = description
 
             input_schema = tool_info.get("inputSchema")
             if input_schema and isinstance(input_schema, dict):
-                tool_properties = input_schema.get("properties", {})
-                tool_required = input_schema.get("required", [])
-                if tool_properties:
-                    all_of.append({
-                        "if": {"properties": {"op": {"const": tool_name}}},
-                        "then": {
-                            "properties": tool_properties,
-                            "required": tool_required,
-                        },
-                    })
+                for prop_name, prop_def in input_schema.get("properties", {}).items():
+                    if prop_name not in merged_properties:
+                        merged_properties[prop_name] = dict(prop_def)
+                        prop_ops[prop_name] = [tool_name]
+                    elif merged_properties[prop_name].get("enum") == prop_def.get("enum"):
+                        prop_ops[prop_name].append(tool_name)
 
-        schema: dict[str, Any] = {
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "properties": {
-                "op": {
-                    "type": "string",
-                    "enum": op_names,
-                    "description": "MCP tool to invoke",
-                    "x-ui": {
-                        "help": f"Select a tool from {self._connection.name}",  # nosec B608
-                        "enum_labels": op_labels,
-                        "enum_help": op_help,
-                    },
+        for prop_name, ops in prop_ops.items():
+            if set(ops) != set(op_names):
+                merged_properties[prop_name]["x-ui"] = {
+                    **(merged_properties[prop_name].get("x-ui") or {}),
+                    "show_when": {"field": "op", "in": ops},
+                }
+
+        properties: dict[str, Any] = {
+            "op": {
+                "type": "string",
+                "enum": op_names,
+                "description": "MCP tool to invoke",
+                "x-ui": {
+                    "help": f"Select a tool from {self._connection.name}",  # noqa: S608  # nosec B608
+                    "enum_labels": op_labels,
+                    "enum_help": op_help,
                 },
             },
+            **merged_properties,
+        }
+
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": properties,
             "required": ["op"],
             "additionalProperties": True,
         }
-
-        if all_of:
-            schema["allOf"] = all_of
-
-        return schema
 
     def get_schema_for_op(self, op: str) -> dict[str, Any] | None:
         """Return a flat per-op schema matching the native plugin format.
@@ -151,22 +159,28 @@ class McpPluginAdapter:
             return PluginResult.err(f"Unknown or disabled tool: {op}", code="unknown_op")
 
         tool_config = enabled[op]
-        tool_type = tool_config.get("type", "chat_callable")
+        is_feed_run = "__schedule_id" in params
+        is_feed_eligible = tool_config.get("feed_eligible", False)
+        is_chat_callable = tool_config.get("chat_callable", True)
+        has_ingest_config = bool(tool_config.get("ingest"))
 
-        if tool_type == "chat_callable":
-            return await self._execute_chat_callable(op, params)
-
-        if tool_type == "ingest":
+        if is_feed_run and is_feed_eligible and has_ingest_config:
             return await self._execute_ingest(op, params, tool_config, host)
 
-        return PluginResult.err(f"Unknown tool type: {tool_type}", code="unknown_tool_type")
+        if not is_chat_callable:
+            return PluginResult.err(
+                f"Tool '{op}' is not callable from chat", code="not_chat_callable",
+            )
+
+        return await self._execute_chat_callable(op, params)
 
     async def _call_tool(self, op: str, params: dict[str, Any]) -> McpToolResult | PluginResult:
         """Call an MCP tool, mapping errors to PluginResult.
 
         Returns McpToolResult on success, or PluginResult on error.
         """
-        arguments = {k: v for k, v in params.items() if k != "op"}
+        _internal_keys = {"op", "kb_id", "reset_cursor", "debug", "__schedule_id"}
+        arguments = {k: v for k, v in params.items() if k not in _internal_keys and not k.startswith("__")}
         start = time.monotonic()
 
         try:
@@ -221,11 +235,12 @@ class McpPluginAdapter:
         if not ingest_cfg:
             return PluginResult.err("Missing ingest configuration for tool", code="missing_ingest_config")
 
-        kb_ids = getattr(host.kb, "_knowledge_base_ids", []) if host and hasattr(host, "kb") else []
-        if not kb_ids:
+        kb_id = params.get("kb_id")
+        if not kb_id:
+            kb_ids = getattr(host.kb, "_knowledge_base_ids", []) if host and hasattr(host, "kb") else []
+            kb_id = kb_ids[0] if kb_ids else None
+        if not kb_id:
             return PluginResult.err("No knowledge base bound for ingest", code="no_knowledge_base")
-
-        kb_id = kb_ids[0]
         field_mapping = ingest_cfg.get("field_mapping", {})
         collection_field = ingest_cfg.get("collection_field")
         method = ingest_cfg.get("method", "text")
@@ -233,8 +248,9 @@ class McpPluginAdapter:
         cursor_field = ingest_cfg.get("cursor_field")
         cursor_param = ingest_cfg.get("cursor_param")
 
+        reset_cursor = params.get("reset_cursor", False)
         call_params = dict(params)
-        if cursor_field and cursor_param:
+        if cursor_field and cursor_param and not reset_cursor:
             saved_cursor = await self._load_cursor(host, kb_id)
             if saved_cursor:
                 call_params[cursor_param] = saved_cursor
@@ -249,13 +265,15 @@ class McpPluginAdapter:
         while True:
             outcome = await self._call_tool(op, call_params)
             if isinstance(outcome, PluginResult):
+                if cursor_field and cursor_param and last_cursor:
+                    await self._save_cursor(host, kb_id, last_cursor)
                 return outcome
 
             response_data = self._assemble_response_data(outcome)
             items = self._extract_items(response_data, collection_field)
             total_items += len(items)
 
-            for idx, item in enumerate(items):
+            for item in items:
                 counts = await self._ingest_item(
                     item, field_mapping, method, static_attributes, kb_id, host,
                     idx=(ingested_count + skipped_count + error_count),
@@ -276,7 +294,8 @@ class McpPluginAdapter:
             call_params[cursor_param] = last_cursor
 
         if cursor_field and cursor_param and last_cursor:
-            await self._save_cursor(host, kb_id, last_cursor)
+            if not await self._save_cursor(host, kb_id, last_cursor):
+                warnings.append("Cursor save failed; next run may re-process items")
 
         logger.info(
             "mcp.ingest_complete [%s/%s] ingested=%d skipped=%d errors=%d total=%d",
@@ -347,14 +366,16 @@ class McpPluginAdapter:
         except Exception:
             return None
 
-    async def _save_cursor(self, host: Any, kb_id: str, cursor: str) -> None:
-        """Persist the cursor via host.cursor for the next feed run."""
+    async def _save_cursor(self, host: Any, kb_id: str, cursor: str) -> bool:
+        """Persist the cursor via host.cursor for the next feed run. Returns True on success."""
         if not hasattr(host, "cursor"):
-            return
+            return False
         try:
             await host.cursor.set(kb_id, cursor)
+            return True
         except Exception:
             logger.warning("mcp.cursor_save_failed [%s] kb=%s", self.name, kb_id)
+            return False
 
     def _assemble_response_data(self, result: McpToolResult) -> dict[str, Any]:
         """Assemble MCP tool result content into a single data dict.

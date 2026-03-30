@@ -60,6 +60,7 @@ def _make_plugin(schema: dict) -> MagicMock:
     """Return a minimal plugin stub whose get_schema() returns *schema*."""
     plugin = MagicMock()
     plugin.get_schema.return_value = schema
+    plugin.get_schema_for_op = None
     return plugin
 
 

@@ -48,7 +48,6 @@ class PluginsSchedulerService:
         Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j, "queue_enqueued": p}
         """
         from ..core.queue_backend import get_queue_backend
-        from ..core.workload_routing import WorkloadType, enqueue_job
 
         now = datetime.now(UTC)
         # Claim due schedules with row-level locks to avoid duplicates across workers
@@ -71,6 +70,8 @@ class PluginsSchedulerService:
         skipped_no_owner = 0
         skipped_missing_plugin = 0
         skipped_already_enqueued = 0
+        skipped_degraded = 0
+        degraded_mcp = await self._get_degraded_mcp_connections(due_scheds)
 
         # Get queue backend for job enqueueing
         try:
@@ -81,6 +82,13 @@ class PluginsSchedulerService:
             queue_backend = None
 
         for s in due_scheds:
+            # Skip degraded MCP connections — advance next_run_at to avoid re-selecting every tick
+            if s.plugin_name in degraded_mcp:
+                logger.warning("Skipping feed '%s': MCP connection is degraded", s.plugin_name)
+                s.schedule_next()
+                skipped_degraded += 1
+                continue
+
             # Skip if plugin no longer exists or is disabled
             plugin = await REGISTRY.resolve(s.plugin_name, self.db)
             if not plugin:
@@ -114,53 +122,9 @@ class PluginsSchedulerService:
                 # Best-effort idempotency guard; fall through to enqueue
                 pass
 
-            # Create PluginExecution record for tracking and idempotency
-            exec_rec = PluginExecution(
-                schedule_id=s.id,
-                plugin_name=s.plugin_name,
-                user_id=runner_user_id,
-                agent_key=s.agent_key,
-                params=s.params or {},
-                status=PluginExecutionStatus.PENDING,
-            )
-            self.db.add(exec_rec)
-            await self.db.flush()  # Flush to get exec_rec.id
-
-            # Enqueue job to QueueBackend with INGESTION WorkloadType
-            if queue_backend:
-                try:
-                    job = await enqueue_job(
-                        queue_backend,
-                        WorkloadType.INGESTION,
-                        payload={
-                            "action": "plugin_feed_execution",
-                            "execution_id": str(exec_rec.id),
-                            "schedule_id": str(s.id),
-                            "plugin_name": s.plugin_name,
-                            "user_id": runner_user_id,
-                            "agent_key": s.agent_key,
-                            "params": s.params or {},
-                        },
-                        max_attempts=3,
-                        visibility_timeout=3600,  # 1 hour for plugin execution
-                    )
-                    queue_enqueued += 1
-                    logger.debug(
-                        "Scheduler job enqueued to queue",
-                        extra={
-                            "execution_id": exec_rec.id,
-                            "schedule_id": s.id,
-                            "job_id": job.id,
-                        },
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to enqueue job to queue: {e}", extra={"execution_id": exec_rec.id, "schedule_id": s.id}
-                    )
-                    # Continue - the PluginExecution record is created with PENDING status,
-                    # and will be picked up by _claim_pending() on the next scheduler cycle.
-
-            # Advance schedule to next time; safe under lock
+            queued = await self._create_and_enqueue_execution(s, runner_user_id, queue_backend)
+            if queued:
+                queue_enqueued += 1
             s.schedule_next()
             enqueued += 1
 
@@ -172,7 +136,64 @@ class PluginsSchedulerService:
             "skipped_no_owner": skipped_no_owner,
             "skipped_missing_plugin": skipped_missing_plugin,
             "skipped_already_enqueued": skipped_already_enqueued,
+            "skipped_degraded": skipped_degraded,
         }
+
+    async def _get_degraded_mcp_connections(self, due_scheds: list) -> set[str]:
+        """Batch-check MCP connection health and return degraded plugin names."""
+        from ..models.mcp_server_connection import McpServerConnection
+
+        mcp_names = {s.plugin_name.removeprefix("mcp:") for s in due_scheds if s.plugin_name.startswith("mcp:")}
+        if not mcp_names:
+            return set()
+        q = select(McpServerConnection.name, McpServerConnection.consecutive_failures).where(
+            McpServerConnection.name.in_(mcp_names)
+        )
+        return {f"mcp:{name}" for name, failures in (await self.db.execute(q)).all() if (failures or 0) >= 5}
+
+    async def _create_and_enqueue_execution(self, schedule, user_id: str, queue_backend) -> bool:
+        """Create a PluginExecution record and enqueue a job. Returns True if queued."""
+        from ..core.workload_routing import WorkloadType, enqueue_job
+
+        exec_rec = PluginExecution(
+            schedule_id=schedule.id,
+            plugin_name=schedule.plugin_name,
+            user_id=user_id,
+            agent_key=schedule.agent_key,
+            params=schedule.params or {},
+            status=PluginExecutionStatus.PENDING,
+        )
+        self.db.add(exec_rec)
+        await self.db.flush()
+
+        if not queue_backend:
+            return False
+        try:
+            job = await enqueue_job(
+                queue_backend,
+                WorkloadType.INGESTION,
+                payload={
+                    "action": "plugin_feed_execution",
+                    "execution_id": str(exec_rec.id),
+                    "schedule_id": str(schedule.id),
+                    "plugin_name": schedule.plugin_name,
+                    "user_id": user_id,
+                    "agent_key": schedule.agent_key,
+                    "params": schedule.params or {},
+                },
+                max_attempts=3,
+                visibility_timeout=3600,
+            )
+            logger.debug(
+                "Scheduler job enqueued to queue",
+                extra={"execution_id": exec_rec.id, "schedule_id": schedule.id, "job_id": job.id},
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to enqueue job to queue: {e}", extra={"execution_id": exec_rec.id, "schedule_id": schedule.id}
+            )
+            return False
 
     async def _claim_pending(
         self, *, limit: int, schedule_id: str | None = None, execution_id: str | None = None

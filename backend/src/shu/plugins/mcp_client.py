@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import urllib.parse
+
 import httpx
 
 from shu.core.config import get_settings_instance
@@ -91,6 +93,17 @@ class McpClient:
         settings = get_settings_instance()
         self._url = url
         self._headers = headers or {}
+
+        allowlist = getattr(settings, "http_egress_allowlist", None)
+        if allowlist:
+            hostname = (urllib.parse.urlparse(url).hostname or "").lower()
+            allowed = any(
+                hostname == pat.lower().strip() or (pat.startswith(".") and hostname.endswith(pat.lower().strip()))
+                for pat in allowlist
+                if pat
+            )
+            if not allowed:
+                raise McpConnectionError(f"MCP server URL not allowed by egress policy: {url}", server_url=url)
         self._response_size_limit = (
             response_size_limit if response_size_limit is not None else settings.mcp_response_size_limit_bytes
         )
@@ -101,6 +114,7 @@ class McpClient:
         self._request_id = 0
         self._session_id: str | None = None
         self._connected = False
+        self._server_info: dict[str, Any] = {}
 
         timeouts = timeouts or {}
         connect_s = timeouts.get("connect_ms", settings.mcp_connect_timeout_ms) / 1000.0
@@ -115,29 +129,54 @@ class McpClient:
                 "Accept": "application/json, text/event-stream",
                 **self._headers,
             },
-            follow_redirects=True,
+            follow_redirects=False,
         )
 
     def _next_request_id(self) -> int:
         self._request_id += 1
         return self._request_id
 
-    async def _post(self, payload: dict[str, Any]) -> httpx.Response:
-        """POST JSON to the MCP server with retry on transient failures.
+    async def _post_and_read(self, payload: dict[str, Any]) -> tuple[int, dict[str, str], str]:
+        """POST JSON to the MCP server, stream the response, and enforce size limits.
 
+        Returns (status_code, headers_dict, body_text).
         Retries on connection errors and timeouts with exponential backoff.
         Captures and sends the Mcp-Session-Id header per the Streamable HTTP spec.
         """
         last_exc: McpError | None = None
         method = payload.get("method", "unknown")
-        headers = {"Mcp-Session-Id": self._session_id} if self._session_id else None
+        extra_headers = {"Mcp-Session-Id": self._session_id} if self._session_id else {}
         for attempt in range(1 + self._max_retries):
             try:
-                response = await self._client.post(self._url, json=payload, headers=headers)
-                session_id = response.headers.get("mcp-session-id")
-                if session_id:
-                    self._session_id = session_id
-                return response
+                async with self._client.stream(
+                    "POST", self._url, json=payload, headers=extra_headers,
+                ) as response:
+                    session_id = response.headers.get("mcp-session-id")
+                    if session_id:
+                        self._session_id = session_id
+                    declared = response.headers.get("content-length")
+                    if declared and declared.isdigit() and int(declared) > self._response_size_limit:
+                        raise McpResponseTooLarge(
+                            f"Response Content-Length {declared} exceeds limit of {self._response_size_limit} bytes",
+                            server_url=self._url,
+                            limit_bytes=self._response_size_limit,
+                        )
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > self._response_size_limit:
+                            raise McpResponseTooLarge(
+                                f"Response size exceeds limit of {self._response_size_limit} bytes",
+                                server_url=self._url,
+                                limit_bytes=self._response_size_limit,
+                            )
+                        chunks.append(chunk)
+                    body = b"".join(chunks).decode("utf-8", errors="replace")
+                    headers_dict = dict(response.headers)
+                    return response.status_code, headers_dict, body
+            except McpResponseTooLarge:
+                raise
             except httpx.ConnectError as exc:
                 last_exc = McpConnectionError(
                     f"Failed to connect to MCP server: {exc}", server_url=self._url
@@ -146,6 +185,11 @@ class McpClient:
             except httpx.TimeoutException as exc:
                 last_exc = McpTimeoutError(
                     f"MCP request timed out: {exc}", server_url=self._url
+                )
+                last_exc.__cause__ = exc
+            except httpx.HTTPError as exc:
+                last_exc = McpConnectionError(
+                    f"MCP transport error: {exc}", server_url=self._url
                 )
                 last_exc.__cause__ = exc
             if attempt < self._max_retries:
@@ -173,25 +217,15 @@ class McpClient:
             payload["params"] = params
 
         logger.debug("mcp.jsonrpc.send [%s] %s id=%s payload=%s", self._url, method, request_id, json.dumps(payload)[:500])
-        response = await self._post(payload)
-        logger.debug("mcp.jsonrpc.recv [%s] %s status=%d body=%s", self._url, method, response.status_code, response.text[:500])
+        status_code, headers, body = await self._post_and_read(payload)
+        logger.debug("mcp.jsonrpc.recv [%s] %s status=%d body=%s", self._url, method, status_code, body[:500])
 
-        content_type = response.headers.get("content-type", "")
+        content_type = headers.get("content-type", "")
 
         if "text/event-stream" in content_type:
-            return self._parse_sse_response(response.text, request_id)
+            return self._parse_sse_response(body, request_id)
 
-        self._check_response_size(len(response.content))
-        return self._parse_json_response(response, request_id)
-
-    def _check_response_size(self, size: int) -> None:
-        """Raise McpResponseTooLarge if size exceeds the configured limit."""
-        if size > self._response_size_limit:
-            raise McpResponseTooLarge(
-                f"Response size {size} bytes exceeds limit of {self._response_size_limit} bytes",
-                server_url=self._url,
-                limit_bytes=self._response_size_limit,
-            )
+        return self._parse_json_response_from_text(body, status_code, request_id)
 
     def _extract_jsonrpc_result(self, data: dict[str, Any]) -> dict[str, Any]:
         """Validate a parsed JSON-RPC envelope and return the result.
@@ -205,10 +239,10 @@ class McpClient:
             raise McpProtocolError(f"JSON-RPC error: {message}", server_url=self._url, code=code)
         return data.get("result", {})
 
-    def _parse_json_response(self, response: httpx.Response, request_id: int) -> dict[str, Any]:
-        """Parse a direct JSON-RPC response."""
+    def _parse_json_response_from_text(self, body: str, status_code: int, request_id: int) -> dict[str, Any]:
+        """Parse a direct JSON-RPC response from body text."""
         try:
-            data = response.json()
+            data = json.loads(body)
         except (json.JSONDecodeError, ValueError) as exc:
             raise McpProtocolError(
                 f"Invalid JSON in MCP response: {exc}", server_url=self._url
@@ -225,7 +259,6 @@ class McpClient:
         Reads event: message lines and extracts the last complete JSON-RPC
         response from the data fields.
         """
-        self._check_response_size(len(body.encode("utf-8")))
 
         event_type: str | None = None
         data_lines: list[str] = []
@@ -307,7 +340,7 @@ class McpClient:
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
-        await self._post(payload)
+        await self._post_and_read(payload)
 
     async def _ensure_connected(self) -> None:
         """Perform the initialize handshake if not already connected."""

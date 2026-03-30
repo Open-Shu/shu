@@ -165,7 +165,8 @@ class PluginRegistry:
         from ..services.mcp_service import McpService
 
         connection_name = name.removeprefix("mcp:")
-        schema = await McpService(session).get_connection_schema(connection_name)
+        svc = McpService(session)
+        schema = await svc.get_connection_schema(connection_name)
 
         if row:
             if schema and row.input_schema != schema:
@@ -174,11 +175,12 @@ class PluginRegistry:
                 return 0, 1
             return 0, 0
 
+        connection_enabled = await svc.is_connection_enabled(connection_name)
         version = getattr(record, "version", "1.0")[:50]
         row = PluginDefinition(
-            name=name[:100],
+            name=name,
             version=version,
-            enabled=False,
+            enabled=connection_enabled,
             input_schema=schema,
         )
         session.add(row)
@@ -205,7 +207,7 @@ class PluginRegistry:
             return self._cache[name]
 
         if not self._manifest:
-            self.refresh()
+            await self.full_refresh(session)
         record = self._manifest.get(name)
         if not record:
             logger.warning("Plugin '%s' not found in plugin manifest(s)", name)
@@ -231,7 +233,12 @@ class PluginRegistry:
         from ..services.mcp_service import McpService
 
         try:
-            return await McpService(session).resolve_adapter(name.removeprefix("mcp:"))
+            adapter = await McpService(session).resolve_adapter(name.removeprefix("mcp:"))
+            if adapter is not None:
+                record = self._manifest.get(name)
+                if record:
+                    adapter._capabilities = list(record.capabilities or [])
+            return adapter
         except Exception:
             logger.warning("Failed to resolve MCP plugin '%s'", name)
             return None

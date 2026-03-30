@@ -82,34 +82,28 @@ class McpService:
         Re-encrypts headers if changed.
         """
         connection = await self._get_connection_or_404(connection_id, user_id, "plugin.update")
-        old_name = connection.name
+        provided = data.model_fields_set
 
-        if data.name is not None and data.name != connection.name:
-            await self._check_name_unique(data.name, exclude_id=connection_id)
-            connection.name = data.name
-
-        if data.url is not None:
+        if "url" in provided and data.url is not None:
             connection.url = data.url
 
-        if data.timeouts is not None:
-            connection.timeouts = data.timeouts.model_dump()
+        if "timeouts" in provided:
+            connection.timeouts = data.timeouts.model_dump() if data.timeouts else None
 
-        if data.response_size_limit_bytes is not None:
+        if "response_size_limit_bytes" in provided:
             connection.response_size_limit_bytes = data.response_size_limit_bytes
 
-        if data.enabled is not None:
+        if "enabled" in provided and data.enabled is not None:
             connection.enabled = data.enabled
             await self._sync_plugin_enabled(f"mcp:{connection.name}", data.enabled)
 
         await self.db.commit()
         await self.db.refresh(connection)
 
-        if connection.name != old_name:
-            await self._migrate_headers(old_name, connection.name, user_id)
-
         if data.headers is not None:
             await self._store_headers(connection.name, data.headers, user_id)
 
+        await self._invalidate_registry(connection.name)
         logger.info("mcp.connection_updated [%s] %s", connection.name, connection.url)
         return connection
 
@@ -129,11 +123,21 @@ class McpService:
                 details={"feed_ids": feed_ids},
             )
 
-        await self._purge_headers(connection.name)
+        connection_name = connection.name
+        connection_url = connection.url
+
+        await self._purge_headers(connection_name)
+
+        res = await self.db.execute(select(PluginDefinition).where(PluginDefinition.name == plugin_name))
+        defn = res.scalars().first()
+        if defn:
+            await self.db.delete(defn)
+
         await self.db.delete(connection)
         await self.db.commit()
 
-        logger.info("mcp.connection_deleted [%s] %s", connection.name, connection.url)
+        await self._invalidate_registry(connection_name)
+        logger.info("mcp.connection_deleted [%s] %s", connection_name, connection_url)
 
     async def list_connections(self, user_id: str) -> list[McpServerConnection]:
         """Return MCP server connections the user has read access to."""
@@ -190,6 +194,7 @@ class McpService:
         await self.db.commit()
         await self.db.refresh(connection)
 
+        await self._invalidate_registry(connection.name)
         logger.info(
             "mcp.sync_complete [%s] %dms tools=%d added=%s removed=%s",
             connection.name,
@@ -215,7 +220,7 @@ class McpService:
             discovered_names = [t.get("name") for t in (connection.discovered_tools or [])]
             if tool_name not in discovered_names:
                 raise NotFoundError(f"Tool '{tool_name}' not found on connection '{connection.name}'")
-            configs[tool_name] = {"type": "chat_callable", "enabled": True}
+            configs[tool_name] = {"chat_callable": True, "feed_eligible": False, "enabled": True}
 
         configs[tool_name] = data.model_dump(exclude_none=False)
         connection.tool_configs = configs
@@ -223,7 +228,14 @@ class McpService:
         await self.db.commit()
         await self.db.refresh(connection)
 
-        logger.info("mcp.tool_config_updated [%s] tool=%s type=%s", connection.name, tool_name, data.type.value)
+        await self._invalidate_registry(connection.name)
+        logger.info(
+            "mcp.tool_config_updated [%s] tool=%s chat=%s feed=%s",
+            connection.name,
+            tool_name,
+            data.chat_callable,
+            data.feed_eligible,
+        )
         return connection
 
     def _merge_discovered_tools(
@@ -250,7 +262,7 @@ class McpService:
             if tool.name in existing_configs:
                 merged_configs[tool.name] = existing_configs[tool.name]
             else:
-                merged_configs[tool.name] = {"type": "chat_callable", "enabled": True}
+                merged_configs[tool.name] = {"chat_callable": True, "feed_eligible": False, "enabled": True}
                 added.append(tool.name)
 
         removed = [name for name in existing_configs if name not in new_names]
@@ -317,10 +329,9 @@ class McpService:
         for name, cfg in configs.items():
             if not cfg.get("enabled", True):
                 continue
-            tool_type = cfg.get("type", "chat_callable")
-            if tool_type == "chat_callable":
+            if cfg.get("chat_callable", True):
                 chat_ops.append(name)
-            elif tool_type == "ingest":
+            if cfg.get("feed_eligible", False):
                 feed_ops.append(name)
 
         server_info = connection.server_info or {}
@@ -392,6 +403,13 @@ class McpService:
         )
         return connection
 
+    async def _invalidate_registry(self, connection_name: str) -> None:
+        """Evict cached adapter and sync the plugin registry after a mutation."""
+        from ..plugins.registry import REGISTRY
+
+        REGISTRY._cache.pop(f"mcp:{connection_name}", None)
+        await REGISTRY.sync(self.db)
+
     async def _check_name_unique(self, name: str, exclude_id: str | None = None) -> None:
         """Raise ConflictError if the name is already taken."""
         stmt = select(McpServerConnection.id).where(McpServerConnection.name == name)
@@ -432,12 +450,3 @@ class McpService:
         plugin_name, header_keys = await self._get_header_keys(connection_name)
         for key in header_keys:
             await delete_secret(plugin_name, key, user_id=None, scope="system")
-
-    async def _migrate_headers(self, old_name: str, new_name: str, user_id: str) -> None:
-        """Move auth header secrets from old plugin name to new on rename."""
-        old_plugin, header_keys = await self._get_header_keys(old_name)
-        for key in header_keys:
-            value = await get_secret(old_plugin, key, user_id=None, scope="system")
-            if value is not None:
-                await set_secret(f"mcp:{new_name}", key, value=value, user_id=user_id, scope="system")
-            await delete_secret(old_plugin, key, user_id=None, scope="system")

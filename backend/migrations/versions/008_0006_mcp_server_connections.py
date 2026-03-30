@@ -18,10 +18,10 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "mcp_server_connections",
-        sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False),
-        sa.Column("name", sa.String(120), nullable=False),
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now(), onupdate=sa.func.now()),
+        sa.Column("name", sa.String(96), nullable=False),  # plugin name limit + "mcp:" prefix
         sa.Column("url", sa.String(500), nullable=False),
         sa.Column("tool_configs", sa.JSON(), nullable=True),
         sa.Column("discovered_tools", sa.JSON(), nullable=True),

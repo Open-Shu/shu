@@ -22,7 +22,6 @@ from shu.schemas.mcp_admin import (
     McpIngestFieldMapping,
     McpTimeoutsConfig,
     McpToolConfigUpdate,
-    McpToolType,
 )
 from shu.services.mcp_service import McpService
 
@@ -163,7 +162,7 @@ class TestUpdateConnection:
         mock_set.assert_awaited_once_with(
             "mcp:test-server", "header:X-Key", value="val", user_id="admin", scope="system"
         )
-        db.commit.assert_awaited_once()
+        db.commit.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_partial_update_preserves_unchanged_fields(self):
@@ -184,28 +183,10 @@ class TestUpdateConnection:
         mock_set.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_rename_with_new_headers_stores_under_new_name(self):
-        """Rename + header update stores new headers under the new name, not the old one."""
-        conn = _make_connection(name="old-name")
-        db = _mock_db()
-        # First execute: load connection; second: uniqueness check for new name
-        db.execute = AsyncMock(side_effect=[_scalar_one_or_none(conn), _scalar_one_or_none(None)])
-
-        pbac_patch, cache_patch = _patch_pbac()
-        set_patch, get_patch, list_patch, del_patch = _patch_secrets()
-        with pbac_patch, cache_patch, set_patch as mock_set, get_patch, list_patch as mock_list, del_patch as mock_del:
-            # list_secret_keys returns old header keys for migrate, then none for store's clear step
-            mock_list.side_effect = [["header:OldKey"], []]
-            service = McpService(db)
-            data = McpConnectionUpdate(name="new-name", headers={"NewKey": "new-val"})
-            await service.update_connection("conn-1", data, user_id="admin")
-
-        # The final set_secret should be under the new name with the new header
-        set_calls = [c for c in mock_set.call_args_list if c[0][1].startswith("header:")]
-        last_set = set_calls[-1]
-        assert last_set[0][0] == "mcp:new-name"
-        assert last_set[0][1] == "header:NewKey"
-        assert last_set[1]["value"] == "new-val"
+    async def test_name_field_not_accepted_on_update(self):
+        """Connection names are immutable — McpConnectionUpdate has no name field."""
+        schema = McpConnectionUpdate(url="https://example.com/mcp")
+        assert not hasattr(schema, "name")
 
 
 class TestDeleteConnection:
@@ -242,7 +223,18 @@ class TestDeleteConnection:
         get_conn_result = _scalar_one_or_none(conn)
         feed_result = MagicMock()
         feed_result.all.return_value = []
-        db.execute = AsyncMock(side_effect=[get_conn_result, feed_result])
+        defn_result = _scalar_one_or_none(None)
+        expected = [get_conn_result, feed_result, defn_result]
+        default = _scalar_one_or_none(None)
+        call_count = 0
+
+        async def _execute_side_effect(*args, **kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            return expected[idx] if idx < len(expected) else default
+
+        db.execute = AsyncMock(side_effect=_execute_side_effect)
 
         pbac_patch, cache_patch = _patch_pbac()
         set_patch, get_patch, list_patch, del_patch = _patch_secrets()
@@ -250,8 +242,8 @@ class TestDeleteConnection:
             service = McpService(db)
             await service.delete_connection("conn-1", user_id="admin")
 
-        db.delete.assert_awaited_once_with(conn)
-        db.commit.assert_awaited_once()
+        db.delete.assert_any_await(conn)
+        db.commit.assert_awaited()
 
 
 class TestSyncConnection:
@@ -274,7 +266,8 @@ class TestSyncConnection:
         """New tools default to chat_callable; existing tools keep their admin config (e.g. field_mapping)."""
         existing_configs = {
             "existing_tool": {
-                "type": "ingest",
+                "chat_callable": False,
+                "feed_eligible": True,
                 "enabled": True,
                 "ingest": {"field_mapping": {"title": "t", "content": "c"}},
             },
@@ -299,14 +292,14 @@ class TestSyncConnection:
 
         # Admin config for existing tool is preserved, not overwritten
         assert conn.tool_configs["existing_tool"] == existing_configs["existing_tool"]
-        assert conn.tool_configs["new_tool"] == {"type": "chat_callable", "enabled": True}
+        assert conn.tool_configs["new_tool"] == {"chat_callable": True, "feed_eligible": False, "enabled": True}
 
     @pytest.mark.asyncio
     async def test_removes_tools_no_longer_on_server(self):
         """Tools present in tool_configs but absent from the server are reported as removed."""
         existing_configs = {
-            "keep_tool": {"type": "chat_callable", "enabled": True},
-            "stale_tool": {"type": "chat_callable", "enabled": True},
+            "keep_tool": {"chat_callable": True, "feed_eligible": False, "enabled": True},
+            "stale_tool": {"chat_callable": True, "feed_eligible": False, "enabled": True},
         }
         conn = _make_connection(tool_configs=existing_configs)
 
@@ -369,10 +362,10 @@ class TestGeneratePluginRecord:
             name="my-mcp",
             server_info={"name": "remote", "version": "2.1"},
             tool_configs={
-                "search": {"type": "chat_callable", "enabled": True},
-                "fetch_docs": {"type": "ingest", "enabled": True},
-                "disabled_tool": {"type": "chat_callable", "enabled": False},
-                "another_ingest": {"type": "ingest", "enabled": True},
+                "search": {"chat_callable": True, "feed_eligible": False, "enabled": True},
+                "fetch_docs": {"chat_callable": False, "feed_eligible": True, "enabled": True},
+                "disabled_tool": {"chat_callable": True, "feed_eligible": False, "enabled": False},
+                "another_ingest": {"chat_callable": False, "feed_eligible": True, "enabled": True},
             },
         )
 
@@ -389,7 +382,7 @@ class TestGeneratePluginRecord:
         """All tools disabled produces None for all op lists."""
         conn = _make_connection(
             name="empty",
-            tool_configs={"only": {"type": "chat_callable", "enabled": False}},
+            tool_configs={"only": {"chat_callable": True, "feed_eligible": False, "enabled": False}},
         )
 
         service = McpService(AsyncMock())
@@ -417,7 +410,7 @@ class TestUpdateToolConfig:
     async def test_updates_existing_tool_config(self):
         """Updating a tool already in tool_configs replaces its entry."""
         conn = _make_connection(
-            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            tool_configs={"search": {"chat_callable": True, "feed_eligible": False, "enabled": True}},
             discovered_tools=[{"name": "search", "description": "Search"}],
         )
         db = _mock_db()
@@ -427,7 +420,8 @@ class TestUpdateToolConfig:
         with pbac_patch, cache_patch:
             service = McpService(db)
             data = McpToolConfigUpdate(
-                type=McpToolType.INGEST,
+                chat_callable=True,
+                feed_eligible=True,
                 enabled=True,
                 ingest=McpIngestConfig(
                     field_mapping=McpIngestFieldMapping(
@@ -437,15 +431,15 @@ class TestUpdateToolConfig:
             )
             result = await service.update_tool_config("conn-1", "search", data, "admin")
 
-        assert result.tool_configs["search"]["type"] == "ingest"
+        assert result.tool_configs["search"]["feed_eligible"] is True
         assert result.tool_configs["search"]["ingest"] is not None
-        db.commit.assert_awaited_once()
+        db.commit.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_bootstraps_config_for_discovered_but_unconfigured_tool(self):
         """A tool present in discovered_tools but not yet in tool_configs gets created."""
         conn = _make_connection(
-            tool_configs={"other": {"type": "chat_callable", "enabled": True}},
+            tool_configs={"other": {"chat_callable": True, "feed_eligible": False, "enabled": True}},
             discovered_tools=[
                 {"name": "other", "description": "Other"},
                 {"name": "new_tool", "description": "New"},
@@ -457,19 +451,19 @@ class TestUpdateToolConfig:
         pbac_patch, cache_patch = _patch_pbac()
         with pbac_patch, cache_patch:
             service = McpService(db)
-            data = McpToolConfigUpdate(type=McpToolType.CHAT_CALLABLE, enabled=False)
+            data = McpToolConfigUpdate(chat_callable=True, feed_eligible=False, enabled=False)
             result = await service.update_tool_config("conn-1", "new_tool", data, "admin")
 
         assert "new_tool" in result.tool_configs
         assert result.tool_configs["new_tool"]["enabled"] is False
         # Original tool untouched
-        assert result.tool_configs["other"] == {"type": "chat_callable", "enabled": True}
+        assert result.tool_configs["other"] == {"chat_callable": True, "feed_eligible": False, "enabled": True}
 
     @pytest.mark.asyncio
     async def test_raises_not_found_for_unknown_tool(self):
         """A tool name not in tool_configs or discovered_tools raises NotFoundError."""
         conn = _make_connection(
-            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            tool_configs={"search": {"chat_callable": True, "feed_eligible": False, "enabled": True}},
             discovered_tools=[{"name": "search", "description": "Search"}],
         )
         db = _mock_db()
@@ -478,7 +472,7 @@ class TestUpdateToolConfig:
         pbac_patch, cache_patch = _patch_pbac()
         with pbac_patch, cache_patch:
             service = McpService(db)
-            data = McpToolConfigUpdate(type=McpToolType.CHAT_CALLABLE, enabled=True)
+            data = McpToolConfigUpdate(chat_callable=True, enabled=True)
             with pytest.raises(NotFoundError, match="nonexistent"):
                 await service.update_tool_config("conn-1", "nonexistent", data, "admin")
 
@@ -492,12 +486,12 @@ class TestGenerateAllPluginRecords:
         conn_a = _make_connection(
             name="alpha",
             server_info={"version": "1.0"},
-            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            tool_configs={"search": {"chat_callable": True, "feed_eligible": False, "enabled": True}},
         )
         conn_b = _make_connection(
             name="beta",
             server_info={"version": "2.0"},
-            tool_configs={"ingest_docs": {"type": "ingest", "enabled": True}},
+            tool_configs={"ingest_docs": {"chat_callable": False, "feed_eligible": True, "enabled": True}},
         )
 
         db = _mock_db()
@@ -655,7 +649,7 @@ class TestGetConnectionSchema:
         """A connection with discovered tools returns a valid schema."""
         conn = _make_connection(
             name="wiki",
-            tool_configs={"search": {"type": "chat_callable", "enabled": True}},
+            tool_configs={"search": {"chat_callable": True, "feed_eligible": False, "enabled": True}},
             discovered_tools=[
                 {
                     "name": "search",
@@ -678,4 +672,4 @@ class TestGetConnectionSchema:
         assert schema["type"] == "object"
         assert "op" in schema["properties"]
         assert "search" in schema["properties"]["op"]["enum"]
-        assert schema["allOf"][0]["then"]["properties"]["q"] == {"type": "string"}
+        assert schema["properties"]["q"]["type"] == "string"

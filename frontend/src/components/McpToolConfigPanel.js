@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Box,
@@ -7,11 +7,7 @@ import {
   CardContent,
   Chip,
   Collapse,
-  FormControl,
   IconButton,
-  InputLabel,
-  MenuItem,
-  Select,
   Stack,
   Switch,
   Tooltip,
@@ -25,9 +21,23 @@ import { extractDataFromResponse, formatError } from '../services/api';
 import { mcpAPI } from '../services/mcpApi';
 import McpIngestConfigForm from './McpIngestConfigForm';
 
+const chipLabel = (chatCallable, feedEligible) => {
+  if (chatCallable && feedEligible) {
+    return 'chat+feed';
+  }
+  if (feedEligible) {
+    return 'feed';
+  }
+  if (chatCallable) {
+    return 'chat';
+  }
+  return 'disabled';
+};
+
 const ToolRow = ({ connectionId, toolName, description, config }) => {
   const qc = useQueryClient();
-  const [type, setType] = useState(config?.type || 'chat_callable');
+  const [chatCallable, setChatCallable] = useState(config?.chat_callable ?? true);
+  const [feedEligible, setFeedEligible] = useState(config?.feed_eligible ?? false);
   const [enabled, setEnabled] = useState(config?.enabled ?? true);
   const [ingestConfig, setIngestConfig] = useState(config?.ingest || null);
   const [dirty, setDirty] = useState(false);
@@ -42,10 +52,10 @@ const ToolRow = ({ connectionId, toolName, description, config }) => {
     }
   );
 
-  const handleTypeChange = (newType) => {
-    setType(newType);
+  const handleFeedEligibleChange = (checked) => {
+    setFeedEligible(checked);
     setDirty(true);
-    if (newType === 'ingest' && !ingestConfig) {
+    if (checked && !ingestConfig) {
       setIngestConfig({
         method: 'text',
         field_mapping: { title: '', content: '', source_id: '' },
@@ -64,8 +74,8 @@ const ToolRow = ({ connectionId, toolName, description, config }) => {
   };
 
   const handleSave = () => {
-    const payload = { type, enabled };
-    if (type === 'ingest' && ingestConfig) {
+    const payload = { chat_callable: chatCallable, feed_eligible: feedEligible, enabled };
+    if (feedEligible && ingestConfig) {
       payload.ingest = ingestConfig;
     }
     saveMut.mutate(payload);
@@ -80,7 +90,12 @@ const ToolRow = ({ connectionId, toolName, description, config }) => {
               <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                 {toolName}
               </Typography>
-              <Chip label={type} size="small" color={type === 'ingest' ? 'secondary' : 'primary'} variant="outlined" />
+              <Chip
+                label={chipLabel(chatCallable, feedEligible)}
+                size="small"
+                color={feedEligible ? 'secondary' : 'primary'}
+                variant="outlined"
+              />
             </Stack>
             {description && (
               <Typography variant="caption" color="text.secondary">
@@ -89,14 +104,36 @@ const ToolRow = ({ connectionId, toolName, description, config }) => {
             )}
           </Box>
 
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <FormControl size="small" sx={{ minWidth: 130 }}>
-              <InputLabel>Type</InputLabel>
-              <Select value={type} label="Type" onChange={(e) => handleTypeChange(e.target.value)}>
-                <MenuItem value="chat_callable">Chat Callable</MenuItem>
-                <MenuItem value="ingest">Ingest</MenuItem>
-              </Select>
-            </FormControl>
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <Tooltip title="Available in chat">
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Typography variant="caption" color="text.secondary">
+                  Chat
+                </Typography>
+                <Switch
+                  checked={chatCallable}
+                  onChange={(e) => {
+                    setChatCallable(e.target.checked);
+                    setDirty(true);
+                  }}
+                  size="small"
+                  aria-label={`Toggle ${toolName} chat callable`}
+                />
+              </Stack>
+            </Tooltip>
+            <Tooltip title="Available as feed source">
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Typography variant="caption" color="text.secondary">
+                  Feed
+                </Typography>
+                <Switch
+                  checked={feedEligible}
+                  onChange={(e) => handleFeedEligibleChange(e.target.checked)}
+                  size="small"
+                  aria-label={`Toggle ${toolName} feed eligible`}
+                />
+              </Stack>
+            </Tooltip>
             <Tooltip title={enabled ? 'Disable tool' : 'Enable tool'}>
               <Switch
                 checked={enabled}
@@ -121,7 +158,7 @@ const ToolRow = ({ connectionId, toolName, description, config }) => {
           </Stack>
         </Stack>
 
-        {type === 'ingest' && (
+        {feedEligible && (
           <Box sx={{ mt: 1.5 }}>
             <McpIngestConfigForm config={ingestConfig} onChange={handleIngestChange} />
           </Box>

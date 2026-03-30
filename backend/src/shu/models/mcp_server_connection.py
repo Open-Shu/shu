@@ -11,7 +11,7 @@ from .base import BaseModel
 class McpServerConnection(BaseModel):
     __tablename__ = "mcp_server_connections"
 
-    name = Column(String(120), nullable=False, unique=True)
+    name = Column(String(96), nullable=False, unique=True)
     url = Column(String(500), nullable=False)
     tool_configs = Column(JSON, nullable=True)
     discovered_tools = Column(JSON, nullable=True)

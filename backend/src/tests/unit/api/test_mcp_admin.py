@@ -24,7 +24,6 @@ from shu.schemas.mcp_admin import (
     McpConnectionUpdate,
     McpSyncResult,
     McpToolConfigUpdate,
-    McpToolType,
 )
 
 
@@ -248,7 +247,7 @@ class TestUpdateToolConfig:
         """Successful tool config update delegates to service and returns 200 with full connection."""
         db = AsyncMock()
         user = _mock_user()
-        body = McpToolConfigUpdate(type=McpToolType.CHAT_CALLABLE, enabled=True)
+        body = McpToolConfigUpdate(chat_callable=True, enabled=True)
         conn = _mock_connection()
 
         with patch("shu.api.mcp_admin.McpService") as svc_cls:
@@ -272,7 +271,7 @@ class TestUpdateToolConfig:
         """Unknown tool name is caught and returned as a 404 error response."""
         db = AsyncMock()
         user = _mock_user()
-        body = McpToolConfigUpdate(type=McpToolType.CHAT_CALLABLE, enabled=True)
+        body = McpToolConfigUpdate(chat_callable=True, enabled=True)
 
         with patch("shu.api.mcp_admin.McpService") as svc_cls:
             svc_cls.return_value.update_tool_config = AsyncMock(
