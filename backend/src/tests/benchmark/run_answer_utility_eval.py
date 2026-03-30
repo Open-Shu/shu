@@ -476,7 +476,13 @@ def read_verdicts_from_disk(corpus_dir: Path, model_filter: str | None = None) -
         query_id = parts[0]
         model_from_filename = parts[1] if len(parts) > 1 else ""
 
-        verdict = parse_verdict(query_id, text)
+        # Extract ms_is_set_a from de-blinded footer
+        ms_is_set_a = False
+        deblind_match = re.search(r"Set A = (Multi-Surface|Baseline)", text)
+        if deblind_match:
+            ms_is_set_a = deblind_match.group(1) == "Multi-Surface"
+
+        verdict = parse_verdict(query_id, text, ms_is_set_a)
         # Override judge_model with filename-derived model (more reliable than LLM self-ID)
         if model_from_filename:
             verdict.judge_model = model_from_filename
