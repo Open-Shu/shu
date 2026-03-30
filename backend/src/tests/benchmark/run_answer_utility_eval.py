@@ -129,6 +129,13 @@ def _deblind(value: str, ms_is_set_a: bool) -> str:
     return v
 
 
+def _deblind_text(text: str, ms_is_set_a: bool) -> str:
+    """Replace all Set A/Set B references in free text with strategy names."""
+    set_a_name = "Multi-Surface" if ms_is_set_a else "Baseline"
+    set_b_name = "Baseline" if ms_is_set_a else "Multi-Surface"
+    return text.replace("Set A", set_a_name).replace("Set B", set_b_name)
+
+
 def parse_verdict(query_id: str, response_text: str, ms_is_set_a: bool = False) -> Verdict:
     """Parse a full LLM response into a Verdict, de-blinding Set A/B labels."""
     fields = parse_verdict_block(response_text)
@@ -145,7 +152,7 @@ def parse_verdict(query_id: str, response_text: str, ms_is_set_a: bool = False) 
         answer_utility=_deblind(fields.get("answer_utility", ""), ms_is_set_a),
         overall=_deblind(fields.get("overall", ""), ms_is_set_a),
         confidence=fields.get("confidence", ""),
-        notes=fields.get("notes", ""),
+        notes=_deblind_text(fields.get("notes", ""), ms_is_set_a),
         full_response=response_text,
     )
 
@@ -349,7 +356,9 @@ async def collect_results_for_query(
         "rag_rewrite_mode": "raw_query",
     }
     bl_resp = await client.post(f"/api/v1/query/{kb_id}/search", json=bl_payload, headers=auth_headers)
-    bl_data = bl_resp.json().get("data", {})
+    if bl_resp.status_code != 200:
+        logger.error("Baseline search failed (%d): %s", bl_resp.status_code, query_text[:80])
+    bl_data = bl_resp.json().get("data", {}) if bl_resp.status_code == 200 else {}
     baseline_results = bl_data.get("results", [])
 
     # Multi-surface search
@@ -366,7 +375,9 @@ async def collect_results_for_query(
         ms_payload["fusion_formula"] = fusion_formula
 
     ms_resp = await client.post(f"/api/v1/query/{kb_id}/search", json=ms_payload, headers=auth_headers)
-    ms_data = ms_resp.json().get("data", {})
+    if ms_resp.status_code != 200:
+        logger.error("Multi-surface search failed (%d): %s", ms_resp.status_code, query_text[:80])
+    ms_data = ms_resp.json().get("data", {}) if ms_resp.status_code == 200 else {}
     formatted_results = ms_data.get("formatted_results", [])
 
     return baseline_results, formatted_results
@@ -431,16 +442,16 @@ def format_aggregate_report(report: AggregateReport, corpus: str, model_filter: 
         "",
         "## Per-Query Detail",
         "",
-        "| Query | Relevance | Utility | Overall | Confidence | Notes |",
-        "|-------|-----------|---------|---------|------------|-------|",
+        "| Query | Model | Relevance | Utility | Overall | Confidence | Notes |",
+        "|-------|-------|-----------|---------|---------|------------|-------|",
     ])
 
     for v in report.verdicts:
         if v.error:
-            lines.append(f"| {v.query_id} | ERROR | — | — | — | {v.error} |")
+            lines.append(f"| {v.query_id} | — | ERROR | — | — | — | {v.error} |")
         else:
             lines.append(
-                f"| {v.query_id} | {v.retrieval_relevance} | {v.answer_utility} "
+                f"| {v.query_id} | {v.judge_model} | {v.retrieval_relevance} | {v.answer_utility} "
                 f"| {v.overall} | {v.confidence} | {v.notes} |"
             )
 
@@ -459,11 +470,16 @@ def read_verdicts_from_disk(corpus_dir: Path, model_filter: str | None = None) -
             continue
 
         text = md_file.read_text()
-        # Extract query_id from filename: q{id}_{model}.md
+        # Extract query_id and model from filename: q{id}_{model}.md
         stem = md_file.stem
-        query_id = stem.split("_")[0] if "_" in stem else stem
+        parts = stem.split("_", 1)
+        query_id = parts[0]
+        model_from_filename = parts[1] if len(parts) > 1 else ""
 
         verdict = parse_verdict(query_id, text)
+        # Override judge_model with filename-derived model (more reliable than LLM self-ID)
+        if model_from_filename:
+            verdict.judge_model = model_from_filename
         verdicts.append(verdict)
     return verdicts
 
@@ -479,10 +495,24 @@ async def run_evaluation(args: argparse.Namespace) -> None:
     dataset_dir = _resolve_dataset_dir(args.dataset)
     corpus_name = dataset_dir.name
 
-    # Load queries only (skip corpus/qrels — not needed for answer utility eval)
+    # Load queries
     loader = BeirLoader(dataset_dir)
     queries = loader._load_queries()
-    logger.info("Loaded %d queries from %s", len(queries), corpus_name)
+    if args.qrels_only:
+        qrels = loader._load_qrels("test")
+        before = len(queries)
+        queries = {qid: q for qid, q in queries.items() if qid in qrels}
+        logger.info("Filtered to %d queries with qrels (from %d total)", len(queries), before)
+    if args.queries:
+        target_ids = {qid.strip() for qid in args.queries.split(",")}
+        queries = {qid: q for qid, q in queries.items() if qid in target_ids}
+        missing = target_ids - set(queries.keys())
+        if missing:
+            logger.warning("Query IDs not found in dataset: %s", ", ".join(sorted(missing)))
+    if args.max_queries:
+        query_items = list(queries.items())[:args.max_queries]
+        queries = dict(query_items)
+    logger.info("Evaluating %d queries from %s", len(queries), corpus_name)
 
     # Parse weight overrides
     weight_overrides: dict[str, float] = {}
@@ -508,6 +538,8 @@ async def run_evaluation(args: argparse.Namespace) -> None:
 
     # Set up output directory
     output_dir = CASE_STUDY_DIR / corpus_name
+    if args.run_name:
+        output_dir = output_dir / args.run_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Set up test infrastructure
@@ -515,75 +547,89 @@ async def run_evaluation(args: argparse.Namespace) -> None:
     await runner.setup()
 
     try:
+        # Look up actual model name from model config (don't trust LLM self-identification)
+        mc_resp = await runner.client.get(
+            f"/api/v1/model-configurations/{args.model_config}",
+            headers=runner.auth_headers,
+        )
+        mc_data = mc_resp.json().get("data", {})
+        actual_model_name = mc_data.get("model_name", "unknown")
+        # Sanitize for filename
+        actual_model_name = re.sub(r"[^a-zA-Z0-9._-]", "-", actual_model_name).strip("-")
+        logger.info("Judge model: %s", actual_model_name)
+
         total = len(queries)
-        verdicts: list[Verdict] = []
+        completed = 0
+        sem = asyncio.Semaphore(args.concurrency)
 
-        for idx, (query_id, query) in enumerate(queries.items()):
+        async def eval_query(query_id: str, query) -> Verdict:
+            nonlocal completed
             query_text = query.text if hasattr(query, "text") else str(query)
-            logger.info("[%d/%d] Evaluating: %s", idx + 1, total, query_text[:80])
 
-            # Collect results
-            baseline, formatted = await collect_results_for_query(
-                query_text=query_text,
-                kb_id=args.reuse_kb,
-                client=runner.client,
-                auth_headers=runner.auth_headers,
-                search_limit=args.limit,
-                threshold=args.threshold,
-                weight_overrides=weight_payload or None,
-                fusion_formula=args.fusion_formula,
-            )
-
-            if not baseline and not formatted:
-                logger.warning("No results for query %s, skipping", query_id)
-                verdicts.append(Verdict(query_id=query_id, error="No results from either strategy"))
-                continue
-
-            # Format blinded comparison prompt (randomized A/B assignment)
-            prompt, ms_is_set_a = format_comparison_prompt(
-                query_id=query_id,
-                query_text=query_text,
-                baseline_results=baseline,
-                formatted_results=formatted,
-                top_n=args.limit,
-            )
-
-            # Call LLM judge
-            try:
-                response_text = await call_judge(
-                    prompt=prompt,
-                    model_config_id=args.model_config,
+            async with sem:
+                # Collect results
+                baseline, formatted = await collect_results_for_query(
+                    query_text=query_text,
+                    kb_id=args.reuse_kb,
                     client=runner.client,
                     auth_headers=runner.auth_headers,
+                    search_limit=args.limit,
+                    threshold=args.threshold,
+                    weight_overrides=weight_payload or None,
+                    fusion_formula=args.fusion_formula,
                 )
-            except Exception as e:
-                logger.error("Judge call failed for %s: %s", query_id, e)
-                verdicts.append(Verdict(query_id=query_id, error=str(e)))
-                continue
 
-            # Parse verdict and de-blind Set A/B → strategy names
-            verdict = parse_verdict(query_id, response_text, ms_is_set_a)
-            verdicts.append(verdict)
+                if not baseline and not formatted:
+                    logger.warning("No results for query %s, skipping", query_id)
+                    return Verdict(query_id=query_id, error="No results above threshold from either strategy")
 
-            # Determine model name for filename
-            model_name = verdict.judge_model or "unknown"
-            # Sanitize for filename
-            model_name = re.sub(r"[^a-zA-Z0-9._-]", "-", model_name).strip("-")
+                # Format blinded comparison prompt (randomized A/B assignment)
+                prompt, ms_is_set_a = format_comparison_prompt(
+                    query_id=query_id,
+                    query_text=query_text,
+                    baseline_results=baseline,
+                    formatted_results=formatted,
+                    top_n=args.limit,
+                )
 
-            # Write per-query result with de-blinded footer
-            set_a_label = "Multi-Surface" if ms_is_set_a else "Baseline"
-            set_b_label = "Baseline" if ms_is_set_a else "Multi-Surface"
-            footer = (
-                f"\n\n---\n"
-                f"_De-blinded: Set A = {set_a_label}, Set B = {set_b_label}_\n"
-                f"_Verdict: {verdict.overall} (confidence: {verdict.confidence})_\n"
-            )
-            output_file = output_dir / f"q{query_id}_{model_name}.md"
-            output_file.write_text(response_text + footer)
-            logger.info(
-                "[%d/%d] %s → %s (confidence: %s)",
-                idx + 1, total, query_id, verdict.overall, verdict.confidence,
-            )
+                # Call LLM judge
+                try:
+                    response_text = await call_judge(
+                        prompt=prompt,
+                        model_config_id=args.model_config,
+                        client=runner.client,
+                        auth_headers=runner.auth_headers,
+                    )
+                except Exception as e:
+                    logger.error("Judge call failed for %s: %s", query_id, e)
+                    return Verdict(query_id=query_id, error=str(e))
+
+                # Parse verdict and de-blind Set A/B → strategy names
+                verdict = parse_verdict(query_id, response_text, ms_is_set_a)
+                # Override judge_model with actual model name (LLMs misidentify themselves)
+                verdict.judge_model = actual_model_name
+
+                # Write per-query result with de-blinded footer
+                set_a_label = "Multi-Surface" if ms_is_set_a else "Baseline"
+                set_b_label = "Baseline" if ms_is_set_a else "Multi-Surface"
+                footer = (
+                    f"\n\n---\n"
+                    f"_De-blinded: Set A = {set_a_label}, Set B = {set_b_label}_\n"
+                    f"_Verdict: {verdict.overall} (confidence: {verdict.confidence})_\n"
+                )
+                output_file = output_dir / f"q{query_id}_{actual_model_name}.md"
+                output_file.write_text(response_text + footer)
+
+                completed += 1
+                logger.info(
+                    "[%d/%d] %s → %s (confidence: %s)",
+                    completed, total, query_id, verdict.overall, verdict.confidence,
+                )
+                return verdict
+
+        verdicts = await asyncio.gather(
+            *[eval_query(qid, q) for qid, q in queries.items()]
+        )
 
         # Aggregate and write report
         report = aggregate_verdicts(verdicts)
@@ -601,6 +647,8 @@ async def run_aggregate_only(args: argparse.Namespace) -> None:
     """Aggregate existing case study results without running new evaluations."""
     corpus_name = args.dataset
     corpus_dir = CASE_STUDY_DIR / corpus_name
+    if args.run_name:
+        corpus_dir = corpus_dir / args.run_name
 
     if not corpus_dir.is_dir():
         logger.error("No case study directory found at %s", corpus_dir)
@@ -643,12 +691,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reuse-kb", type=str, help="Knowledge base ID to search against")
     parser.add_argument("--model-config", type=str, help="Model configuration ID for the LLM judge")
     parser.add_argument("--limit", type=int, default=10, help="Number of results per strategy (default: 10)")
-    parser.add_argument("--threshold", type=float, default=0.0, help="Score threshold (default: 0.0)")
+    parser.add_argument("--threshold", type=float, default=0.3, help="Score threshold (default: 0.3)")
+    parser.add_argument("--queries", type=str, default=None, help="Comma-separated query IDs to evaluate (e.g. '822,1303,219')")
+    parser.add_argument("--qrels-only", action="store_true", help="Only evaluate queries that have qrels (for BEIR comparison)")
+    parser.add_argument("--run-name", type=str, default=None, help="Name for this run (creates subfolder under corpus, e.g. 'tuned-weights-v1')")
     parser.add_argument(
         "--weight", action="append", default=[], dest="weights", metavar="SURFACE=VALUE",
         help="Surface weight override (can repeat, e.g. --weight chunk_vector=0.40)",
     )
     parser.add_argument("--fusion-formula", type=str, default=None, help="Fusion formula override")
+    parser.add_argument("--max-queries", type=int, default=None, help="Max queries to evaluate (default: all)")
+    parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent LLM judge calls (default: 1)")
     parser.add_argument("--aggregate", action="store_true", help="Aggregate existing results only (no LLM calls)")
     parser.add_argument("--model", type=str, default=None, help="Filter aggregation by model name substring")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
