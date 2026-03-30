@@ -103,7 +103,6 @@ class ReportGenerator:
                 "threshold_analysis": results.threshold_analysis if results.threshold_analysis else {},
                 "fusion_impact": results.fusion_impact,
                 "contribution_matrix": results.contribution_matrix,
-                "weight_recommendations": results.weight_recommendations,
             },
             "timing": {
                 "ingestion_seconds": results.ingestion_time_s,
@@ -717,21 +716,6 @@ class ReportGenerator:
                     row += f" {pct:.1f}% |"
                 w.append(row)
 
-            w.append("")
-
-        # Weight recommendations
-        if results.weight_recommendations:
-            w.append("## Weight Recommendations")
-            w.append("")
-            w.append(
-                "Proportional weights based on fusion impact — surfaces whose "
-                "removal causes the largest NDCG@10 drop get higher weights."
-            )
-            w.append("")
-            w.append("| Surface | Recommended Weight |")
-            w.append("|---------|-------------------|")
-            for surface, weight in sorted(results.weight_recommendations.items(), key=lambda x: x[1], reverse=True):
-                w.append(f"| {surface} | {weight:.2f} |")
             w.append("")
 
         # Leaderboard comparison

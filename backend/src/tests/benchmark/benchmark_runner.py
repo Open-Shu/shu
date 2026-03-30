@@ -115,9 +115,6 @@ class BenchmarkResults:
     fusion_impact: dict[str, dict[str, float]] = field(default_factory=dict)
     # Contribution matrix: {query_type: {surface: avg_fraction_of_fused_score}}
     contribution_matrix: dict[str, dict[str, float]] = field(default_factory=dict)
-    # Weight recommendations: {surface: recommended_weight}
-    weight_recommendations: dict[str, float] = field(default_factory=dict)
-
     # Raw run data for reproducibility
     baseline_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
     multi_surface_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -350,11 +347,6 @@ class BenchmarkRunner:
             eval_surface_scores, dataset.queries, effective_weights,
         )
 
-        logger.info("Computing weight recommendations...")
-        weight_recommendations = self._compute_weight_recommendations(
-            full_fusion_scores, fusion_impact,
-        )
-
         return BenchmarkResults(
             dataset_name=dataset.name,
             corpus_size=dataset.corpus_size,
@@ -379,7 +371,6 @@ class BenchmarkRunner:
             threshold_analysis=threshold_analysis,
             fusion_impact=fusion_impact,
             contribution_matrix=contribution_matrix,
-            weight_recommendations=weight_recommendations,
             baseline_run_dict=baseline_run_dict,
             multi_surface_run_dict=ms_run_dict,
             multi_surface_surface_scores=ms_all_surface_scores if ms_all_surface_scores else ms_surface_scores,
@@ -1067,34 +1058,3 @@ class BenchmarkRunner:
                 matrix[qtype] = row
 
         return matrix
-
-    @staticmethod
-    def _compute_weight_recommendations(
-        full_scores: dict[str, float],
-        fusion_impact: dict[str, dict[str, float]],
-    ) -> dict[str, float]:
-        """Generate weight recommendations based on fusion impact.
-
-        Surfaces whose removal causes the largest NDCG@10 drop get
-        higher weights (proportional allocation).
-        """
-        ndcg_key = "ndcg@10"
-        full_ndcg = full_scores.get(ndcg_key, 0.0)
-
-        if full_ndcg <= 0:
-            surfaces = list(fusion_impact.keys())
-            return {s: round(1.0 / len(surfaces), 2) for s in surfaces} if surfaces else {}
-
-        # Impact = how much NDCG@10 drops when surface is removed
-        impacts: dict[str, float] = {}
-        for surface, scores in fusion_impact.items():
-            ablated_ndcg = scores.get(ndcg_key, 0.0)
-            drop = max(0.0, full_ndcg - ablated_ndcg)
-            impacts[surface] = drop
-
-        total_impact = sum(impacts.values())
-        if total_impact <= 0:
-            return {s: round(1.0 / len(impacts), 2) for s in impacts}
-
-        weights = {s: round(impacts[s] / total_impact, 2) for s in impacts}
-        return weights
