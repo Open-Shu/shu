@@ -148,7 +148,10 @@ class McpClient:
         for attempt in range(1 + self._max_retries):
             try:
                 async with self._client.stream(
-                    "POST", self._url, json=payload, headers=extra_headers,
+                    "POST",
+                    self._url,
+                    json=payload,
+                    headers=extra_headers,
                 ) as response:
                     session_id = response.headers.get("mcp-session-id")
                     if session_id:
@@ -177,25 +180,24 @@ class McpClient:
             except McpResponseTooLarge:
                 raise
             except httpx.ConnectError as exc:
-                last_exc = McpConnectionError(
-                    f"Failed to connect to MCP server: {exc}", server_url=self._url
-                )
+                last_exc = McpConnectionError(f"Failed to connect to MCP server: {exc}", server_url=self._url)
                 last_exc.__cause__ = exc
             except httpx.TimeoutException as exc:
-                last_exc = McpTimeoutError(
-                    f"MCP request timed out: {exc}", server_url=self._url
-                )
+                last_exc = McpTimeoutError(f"MCP request timed out: {exc}", server_url=self._url)
                 last_exc.__cause__ = exc
             except httpx.HTTPError as exc:
-                last_exc = McpConnectionError(
-                    f"MCP transport error: {exc}", server_url=self._url
-                )
+                last_exc = McpConnectionError(f"MCP transport error: {exc}", server_url=self._url)
                 last_exc.__cause__ = exc
             if attempt < self._max_retries:
-                delay_s = (self._retry_base_delay_ms / 1000.0) * (2 ** attempt)
+                delay_s = (self._retry_base_delay_ms / 1000.0) * (2**attempt)
                 logger.warning(
                     "mcp.retry [%s] %s attempt=%d/%d delay=%.1fs error=%s",
-                    self._url, method, attempt + 1, self._max_retries, delay_s, last_exc,
+                    self._url,
+                    method,
+                    attempt + 1,
+                    self._max_retries,
+                    delay_s,
+                    last_exc,
                 )
                 await asyncio.sleep(delay_s)
         raise last_exc  # type: ignore[misc]
@@ -215,7 +217,9 @@ class McpClient:
         if params is not None:
             payload["params"] = params
 
-        logger.debug("mcp.jsonrpc.send [%s] %s id=%s payload=%s", self._url, method, request_id, json.dumps(payload)[:500])
+        logger.debug(
+            "mcp.jsonrpc.send [%s] %s id=%s payload=%s", self._url, method, request_id, json.dumps(payload)[:500]
+        )
         status_code, headers, body = await self._post_and_read(payload)
         logger.debug("mcp.jsonrpc.recv [%s] %s status=%d body=%s", self._url, method, status_code, body[:500])
 
@@ -243,9 +247,7 @@ class McpClient:
         try:
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError) as exc:
-            raise McpProtocolError(
-                f"Invalid JSON in MCP response: {exc}", server_url=self._url
-            ) from exc
+            raise McpProtocolError(f"Invalid JSON in MCP response: {exc}", server_url=self._url) from exc
 
         if not isinstance(data, dict):
             raise McpProtocolError("MCP response is not a JSON object", server_url=self._url)
@@ -264,11 +266,11 @@ class McpClient:
 
         for line in body.split("\n"):
             if line.startswith("event:"):
-                event_type = line[len("event:"):].strip()
+                event_type = line[len("event:") :].strip()
                 continue
 
             if line.startswith("data:"):
-                data_lines.append(line[len("data:"):].strip())
+                data_lines.append(line[len("data:") :].strip())
                 continue
 
             if line.strip() == "" and data_lines:
@@ -285,9 +287,7 @@ class McpClient:
 
         return last_result
 
-    def _try_parse_sse_event(
-        self, data_lines: list[str], fallback: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _try_parse_sse_event(self, data_lines: list[str], fallback: dict[str, Any] | None) -> dict[str, Any] | None:
         """Try to parse assembled SSE data lines as a JSON-RPC response."""
         raw = "\n".join(data_lines)
         try:
@@ -296,7 +296,10 @@ class McpClient:
             return fallback
         if not isinstance(parsed, dict):
             return fallback
-        return self._extract_jsonrpc_result(parsed)
+        try:
+            return self._extract_jsonrpc_result(parsed)
+        except McpProtocolError:
+            return fallback
 
     async def connect(self) -> dict[str, Any]:
         """Perform the MCP initialize handshake.
@@ -306,11 +309,14 @@ class McpClient:
 
         Returns the server's capabilities and info from the initialize response.
         """
-        result = await self._send_jsonrpc("initialize", {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "shu", "version": "1.0"},
-        })
+        result = await self._send_jsonrpc(
+            "initialize",
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "shu", "version": "1.0"},
+            },
+        )
 
         server_version = result.get("protocolVersion", "")
         if server_version not in MCP_SUPPORTED_VERSIONS:
@@ -323,7 +329,9 @@ class McpClient:
         self._server_info = result.get("serverInfo", {})
         logger.info(
             "mcp.connected [%s] server=%s protocol=%s",
-            self._url, self._server_info.get("name"), server_version,
+            self._url,
+            self._server_info.get("name"),
+            server_version,
         )
 
         await self._send_notification("notifications/initialized")
@@ -358,11 +366,13 @@ class McpClient:
             if "__" in name:
                 logger.warning("mcp.tool_skipped [%s] name=%s reason=contains '__' delimiter", self._url, name)
                 continue
-            tools.append(McpToolInfo(
-                name=name,
-                description=t.get("description"),
-                input_schema=t.get("inputSchema"),
-            ))
+            tools.append(
+                McpToolInfo(
+                    name=name,
+                    description=t.get("description"),
+                    input_schema=t.get("inputSchema"),
+                )
+            )
         logger.info("mcp.tools_discovered [%s] count=%d", self._url, len(tools))
         return tools
 

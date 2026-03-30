@@ -169,7 +169,8 @@ class McpPluginAdapter:
 
         if not is_chat_callable:
             return PluginResult.err(
-                f"Tool '{op}' is not callable from chat", code="not_chat_callable",
+                f"Tool '{op}' is not callable from chat",
+                code="not_chat_callable",
             )
 
         return await self._execute_chat_callable(op, params)
@@ -275,9 +276,15 @@ class McpPluginAdapter:
 
             for item in items:
                 counts = await self._ingest_item(
-                    item, field_mapping, method, static_attributes, kb_id, host,
+                    item,
+                    field_mapping,
+                    method,
+                    static_attributes,
+                    kb_id,
+                    host,
                     idx=(ingested_count + skipped_count + error_count),
-                    op=op, warnings=warnings,
+                    op=op,
+                    warnings=warnings,
                 )
                 ingested_count += counts[0]
                 skipped_count += counts[1]
@@ -298,7 +305,12 @@ class McpPluginAdapter:
 
         logger.info(
             "mcp.ingest_complete [%s/%s] ingested=%d skipped=%d errors=%d total=%d",
-            self.name, op, ingested_count, skipped_count, error_count, total_items,
+            self.name,
+            op,
+            ingested_count,
+            skipped_count,
+            error_count,
+            total_items,
         )
 
         return PluginResult.ok(
@@ -334,7 +346,9 @@ class McpPluginAdapter:
             if method == "document":
                 await host.kb.ingest_document(
                     kb_id,
-                    file_bytes=mapped["content"].encode("utf-8") if isinstance(mapped["content"], str) else mapped["content"],
+                    file_bytes=mapped["content"].encode("utf-8")
+                    if isinstance(mapped["content"], str)
+                    else mapped["content"],
                     filename=mapped.get("filename", mapped["title"]),
                     mime_type=mapped.get("mime_type", "text/plain"),
                     source_id=mapped["source_id"],
@@ -439,12 +453,23 @@ class McpPluginAdapter:
         return "\n".join(texts)
 
     def _log_tool_call(
-        self, op: str, start: float, status: str, result_size: int,
-        code: str | None = None, error: str | None = None,
+        self,
+        op: str,
+        start: float,
+        status: str,
+        result_size: int,
+        code: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Log a structured tool call event."""
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
             "mcp.tool_call [%s/%s] %dms status=%s size=%d code=%s error=%s",
-            self.name, op, duration_ms, status, result_size, code, error,
+            self.name,
+            op,
+            duration_ms,
+            status,
+            result_size,
+            code,
+            error,
         )
