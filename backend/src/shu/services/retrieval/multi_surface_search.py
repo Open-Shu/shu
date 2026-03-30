@@ -71,6 +71,7 @@ class MultiSurfaceSearchService:
         *,
         limit: int = 10,
         threshold: float = 0.0,
+        max_chunks_per_document: int = 2,
         session_factory: async_sessionmaker,
     ) -> tuple[list[FusedResult], dict[str, dict[str, float]], list[FormattedDocument]]:
         """Execute multi-surface search and return fused results.
@@ -154,7 +155,10 @@ class MultiSurfaceSearchService:
             # Step 6: Format results into structured document context
             formatted_docs: list[FormattedDocument] = []
             if fused_results and self._vector_store:
-                formatted_docs = await format_results(fused_results, query_vector, self._vector_store, db)
+                formatted_docs = await format_results(
+                    fused_results, query_vector, self._vector_store, db,
+                    max_chunks_per_document=max_chunks_per_document,
+                )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(

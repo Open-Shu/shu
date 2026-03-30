@@ -11,6 +11,7 @@ from uuid import UUID
 
 from ...core.exceptions import ShuException
 from ...schemas.query import QueryResponse, QueryResult, QueryType
+from ...services.retrieval.result_formatter import dedupe_contributing_chunks
 from .base import measure_execution_time
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,10 @@ class MultiSurfaceSearchMixin:
                 timeout_ms=settings.multi_surface_timeout_ms,
             )
 
+            # Get max_chunks_per_document from RAG config (same limit baseline uses)
+            rag_config = knowledge_base.get_rag_config()
+            max_chunks_per_doc = rag_config.get("max_chunks_per_document", 2)
+
             # Execute search (pass session factory for safe parallel execution)
             kb_uuid = UUID(knowledge_base_id)
             fused_results, all_surface_scores, formatted_docs = await search_service.search(
@@ -166,6 +171,7 @@ class MultiSurfaceSearchMixin:
                 kb_id=kb_uuid,
                 limit=limit,
                 threshold=threshold,
+                max_chunks_per_document=max_chunks_per_doc,
                 session_factory=get_async_session_local(),
             )
 
@@ -228,19 +234,9 @@ class MultiSurfaceSearchMixin:
                     "final_score": r.final_score,
                     "surface_scores": r.surface_scores,
                     "surface_metadata": r.surface_metadata,
-                    "contributing_chunks": [
-                        {
-                            "chunk_id": str(c.chunk_id),
-                            "chunk_index": c.chunk_index,
-                            "surface": c.surface,
-                            "score": c.score,
-                            "snippet": c.snippet,
-                            "content": c.content,
-                            "summary": c.summary,
-                            "matched_query": c.matched_query,
-                        }
-                        for c in r.contributing_chunks
-                    ],
+                    "contributing_chunks": dedupe_contributing_chunks(
+                        r.contributing_chunks, max_chunks=max_chunks_per_doc
+                    )[0],
                 }
                 for r in fused_results
             ]

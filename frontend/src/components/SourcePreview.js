@@ -150,18 +150,37 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                         sx={{ fontWeight: 'bold', minWidth: 45 }}
                       />
                       <Chip
-                        label={chunk.surface || 'unknown'}
-                        size="small"
-                        variant="outlined"
-                        color={chunk.surface === 'chunk_vector' ? 'info' : 'secondary'}
-                      />
-                      <Chip
-                        label={typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A'}
+                        label={'Score: ' + (typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A')}
                         size="small"
                         variant="outlined"
                       />
+                      {(chunk.surfaces || [chunk.surface || 'unknown']).map((s) => {
+                        const surfaceScore = chunk.surface_scores?.[s];
+                        const scoreLabel =
+                          typeof surfaceScore === 'number' ? ` ${(surfaceScore * 100).toFixed(1)}%` : '';
+                        return (
+                          <Chip
+                            key={s}
+                            label={`${s}${scoreLabel}`}
+                            size="small"
+                            variant="outlined"
+                            color={s === 'chunk_vector' ? 'info' : s === 'query_match' ? 'success' : 'secondary'}
+                          />
+                        );
+                      })}
                       {onChunkClick && <VisibilityIcon fontSize="small" sx={{ ml: 'auto', color: 'action.active' }} />}
                     </Box>
+                    {chunk.matched_query && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        display="block"
+                        mt={0.5}
+                        sx={{ fontStyle: 'italic' }}
+                      >
+                        Matched query: &quot;{chunk.matched_query}&quot;
+                      </Typography>
+                    )}
                     <Typography variant="body2" sx={{ mt: 0.5 }}>
                       {chunk.snippet}
                     </Typography>

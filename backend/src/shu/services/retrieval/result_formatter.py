@@ -67,54 +67,66 @@ def _is_title_chunk(chunk) -> bool:
     return meta.get("chunk_type") == "title"
 
 
-def _dedupe_and_annotate(
+def dedupe_contributing_chunks(
     contributing_chunks: list,
-) -> tuple[list[FormattedChunk], str | None]:
-    """Deduplicate chunks by chunk_id, merge annotations from all surfaces.
+    *,
+    filter_title_chunks: bool = False,
+    max_chunks: int | None = None,
+) -> tuple[list[dict], str | None]:
+    """Deduplicate contributing chunks by chunk_id, merge annotations.
 
-    Keeps the highest score and collects all surface names, summaries,
-    and matched queries from duplicate entries. Extracts the title chunk's
-    summary for document-level display before filtering title chunks out.
+    Shared logic used by both the result formatter (for FormattedDocument)
+    and the multi_surface response serialization (for multi_surface_results).
+
+    Keeps the highest score and collects all surface names, per-surface scores,
+    summaries, and matched queries from duplicate entries.
+
+    Args:
+        contributing_chunks: Raw ContributingChunk objects from score fusion.
+        filter_title_chunks: If True, filter out title chunks and extract
+            title summary for document-level display.
+        max_chunks: If set, cap output to top N chunks by score.
 
     Returns:
-        Tuple of (formatted_chunks, title_summary).
+        Tuple of (deduplicated chunk dicts sorted by score, title_summary or None).
 
     """
-    seen: dict[str, FormattedChunk] = {}
+    seen: dict[str, dict] = {}
     title_summary: str | None = None
 
     for chunk in contributing_chunks:
-        if _is_title_chunk(chunk):
-            # Extract title chunk summary for document-level display
+        if filter_title_chunks and _is_title_chunk(chunk):
             if chunk.summary and not title_summary:
                 title_summary = chunk.summary
             continue
 
         key = str(chunk.chunk_id)
         if key not in seen:
-            # Only include summary when chunk_summary surface matched this chunk
-            summary = chunk.summary if chunk.surface == "chunk_summary" else None
-            seen[key] = FormattedChunk(
-                chunk_id=key,
-                chunk_index=chunk.chunk_index,
-                score=chunk.score,
-                content=chunk.content or chunk.snippet or "",
-                surfaces=[chunk.surface],
-                summary=summary,
-                matched_query=chunk.matched_query,
-            )
+            seen[key] = {
+                "chunk_id": key,
+                "chunk_index": chunk.chunk_index,
+                "surfaces": [chunk.surface],
+                "surface_scores": {chunk.surface: chunk.score},
+                "score": chunk.score,
+                "content": chunk.content or getattr(chunk, "snippet", "") or "",
+                "snippet": getattr(chunk, "snippet", "") or "",
+                "summary": chunk.summary if chunk.surface == "chunk_summary" else None,
+                "matched_query": chunk.matched_query,
+            }
         else:
             existing = seen[key]
-            existing.surfaces.append(chunk.surface)
-            existing.score = max(existing.score, chunk.score)
-            # Only merge summary from chunk_summary surface
-            if chunk.summary and chunk.surface == "chunk_summary" and not existing.summary:
-                existing.summary = chunk.summary
-            if chunk.matched_query and not existing.matched_query:
-                existing.matched_query = chunk.matched_query
+            existing["surfaces"].append(chunk.surface)
+            existing["surface_scores"][chunk.surface] = chunk.score
+            existing["score"] = max(existing["score"], chunk.score)
+            if chunk.summary and chunk.surface == "chunk_summary" and not existing["summary"]:
+                existing["summary"] = chunk.summary
+            if chunk.matched_query and not existing["matched_query"]:
+                existing["matched_query"] = chunk.matched_query
 
-    # Sort by score descending
-    return sorted(seen.values(), key=lambda c: c.score, reverse=True), title_summary
+    result = sorted(seen.values(), key=lambda c: c["score"], reverse=True)
+    if max_chunks is not None:
+        result = result[:max_chunks]
+    return result, title_summary
 
 
 async def _promote_best_chunk(
@@ -165,11 +177,15 @@ async def _promote_best_chunk(
     )
 
 
+DEFAULT_MAX_CHUNKS_PER_DOCUMENT = 3
+
+
 async def format_results(
     fused_results: list[FusedResult],
     query_vector: list[float],
     vector_store: VectorStore,
     db: AsyncSession,
+    max_chunks_per_document: int = DEFAULT_MAX_CHUNKS_PER_DOCUMENT,
 ) -> list[FormattedDocument]:
     """Transform fused results into structured document context.
 
@@ -178,6 +194,9 @@ async def format_results(
         query_vector: Original query embedding (for promotion searches).
         vector_store: Vector store for promotion chunk lookups.
         db: Database session.
+        max_chunks_per_document: Cap on chunks per document to prevent
+            information asymmetry with baseline. Chunks are already sorted
+            by score descending, so the top N are kept.
 
     Returns:
         List of FormattedDocument with deduplicated, annotated chunks.
@@ -187,7 +206,23 @@ async def format_results(
 
     for result in fused_results:
         # Deduplicate and annotate chunks, filtering out title chunks
-        chunks, title_summary = _dedupe_and_annotate(result.contributing_chunks)
+        chunk_dicts, title_summary = dedupe_contributing_chunks(
+            result.contributing_chunks,
+            filter_title_chunks=True,
+            max_chunks=max_chunks_per_document,
+        )
+        chunks = [
+            FormattedChunk(
+                chunk_id=c["chunk_id"],
+                chunk_index=c["chunk_index"],
+                score=c["score"],
+                content=c["content"],
+                surfaces=c["surfaces"],
+                summary=c["summary"],
+                matched_query=c["matched_query"],
+            )
+            for c in chunk_dicts
+        ]
 
         # Check if we need to promote: document has contributing chunks
         # but ALL of them were title chunks (so chunks list is empty after filtering)
