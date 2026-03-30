@@ -101,7 +101,6 @@ class ReportGenerator:
                     if k != "per_query"
                 } if results.head_to_head else {},
                 "threshold_analysis": results.threshold_analysis if results.threshold_analysis else {},
-                "fusion_impact": results.fusion_impact,
                 "contribution_matrix": results.contribution_matrix,
             },
             "timing": {
@@ -663,31 +662,6 @@ class ReportGenerator:
             fusion_delta = ndcg_delta
             w.append(f"| **Weighted fusion** | **{ms_ndcg:.4f}** | **{fusion_delta:+.1f}%** | Score fusion across active surfaces |")
             w.append(f"| Baseline | {baseline_ndcg:.4f} | — | Standard RAG |")
-            w.append("")
-
-        # Fusion impact analysis (local ablation)
-        if results.fusion_impact:
-            w.append("## Fusion Impact: Effect of Removing Each Surface")
-            w.append("")
-            w.append(
-                "Each row shows fused NDCG@10 when that surface is zeroed out, "
-                "computed locally from collected per-surface scores (no extra API calls)."
-            )
-            w.append("")
-            w.append("| Surface Removed | NDCG@10 | vs Full | Impact |")
-            w.append("|-----------------|---------|---------|--------|")
-
-            full_ndcg_for_impact = results.multi_surface_scores.get("ndcg@10", 0.0)
-            for surface, scores in sorted(
-                results.fusion_impact.items(),
-                key=lambda x: x[1].get("ndcg@10", 0.0),
-            ):
-                ablated_ndcg = scores.get("ndcg@10", 0.0)
-                delta = ((ablated_ndcg - full_ndcg_for_impact) / full_ndcg_for_impact * 100) if full_ndcg_for_impact > 0 else 0.0
-                # Larger drop = more important surface
-                impact_label = "critical" if delta < -5 else "significant" if delta < -2 else "moderate" if delta < -0.5 else "minimal"
-                w.append(f"| {surface} | {ablated_ndcg:.4f} | {delta:+.1f}% | {impact_label} |")
-
             w.append("")
 
         # Contribution matrix by query type
