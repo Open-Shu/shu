@@ -168,11 +168,12 @@ async def _promote_best_chunk(
         return None
 
     return FormattedChunk(
-        chunk_id=hit.id,
+        chunk_id=str(hit.id),
         chunk_index=row[0],
         score=hit.score,
         content=row[1] or "",
         surfaces=["promoted"],
+        summary=row[2] or None,
         promoted=True,
     )
 

@@ -92,7 +92,7 @@ class SynopsisMatchSurface(RetrievalSurface):
                 id=UUID(r.id),
                 id_type="document",
                 score=r.score,
-                metadata={"synopsis": synopsis_map.get(r.id, "")},
+                metadata={"synopsis": synopsis_map.get(r.id) or ""},
             )
             for r in results
         ]

@@ -94,8 +94,7 @@ class TestScoreFusionService:
 
         assert len(result) == 1
         assert result[0].document_id == doc_id
-        # weighted_average: (0.8*1.0 + 0.9*1.0) / (1.0 + 1.0) = 0.85
-        # But chunk surface has score 0.8, synopsis has 0.9, equal weights → 0.85
+        # weighted_average: (0.9*0.6 + 0.8*0.4) / (0.6 + 0.4) = 0.86
         assert abs(result[0].final_score - 0.86) < 0.02
 
     @pytest.mark.asyncio

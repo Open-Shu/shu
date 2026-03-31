@@ -3,6 +3,7 @@ import { Box, Typography, Paper, Chip, Divider, Card, CardContent, Collapse, Ico
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ChunkDetailModal from './ChunkDetailModal';
+import { getSurfaceColor } from '../utils/constants';
 
 function safeGet(obj, keys, fallback = '') {
   for (const k of keys) {
@@ -72,24 +73,13 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
         </Box>
         <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
           {Object.entries(result.surface_scores || {}).map(([surface, score]) => {
-            // Color coding for different surface types
-            let color = 'secondary';
-            if (surface === 'chunk_vector') {
-              color = 'info';
-            } else if (surface === 'query_match') {
-              color = 'success';
-            } else if (surface === 'bm25') {
-              color = 'warning';
-            } else if (surface === 'chunk_summary') {
-              color = 'default';
-            }
             return (
               <Chip
                 key={surface}
                 label={`${surface}: ${(score * 100).toFixed(1)}%`}
                 variant="outlined"
                 size="small"
-                color={color}
+                color={getSurfaceColor(surface)}
               />
             );
           })}
@@ -150,7 +140,9 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                         sx={{ fontWeight: 'bold', minWidth: 45 }}
                       />
                       <Chip
-                        label={'Score: ' + (typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A')}
+                        label={
+                          'Score: ' + (typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A')
+                        }
                         size="small"
                         variant="outlined"
                       />
@@ -164,7 +156,7 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                             label={`${s}${scoreLabel}`}
                             size="small"
                             variant="outlined"
-                            color={s === 'chunk_vector' ? 'info' : s === 'query_match' ? 'success' : 'secondary'}
+                            color={getSurfaceColor(s)}
                           />
                         );
                       })}

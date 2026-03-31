@@ -638,3 +638,13 @@ export const RAG_REWRITE_OPTIONS = [
   { value: 'distill_context', label: 'Distill Query (key facts only)' },
   { value: 'rewrite_enhanced', label: 'Rewrite & Enhance (LLM optimized)' },
 ];
+
+const SURFACE_COLORS = {
+  chunk_vector: 'info',
+  query_match: 'success',
+  bm25: 'warning',
+  chunk_summary: 'default',
+  synopsis_match: 'secondary',
+};
+
+export const getSurfaceColor = (surface) => SURFACE_COLORS[surface] || 'default';

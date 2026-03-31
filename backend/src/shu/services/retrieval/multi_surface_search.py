@@ -156,7 +156,10 @@ class MultiSurfaceSearchService:
             formatted_docs: list[FormattedDocument] = []
             if fused_results and self._vector_store:
                 formatted_docs = await format_results(
-                    fused_results, query_vector, self._vector_store, db,
+                    fused_results,
+                    query_vector,
+                    self._vector_store,
+                    db,
                     max_chunks_per_document=max_chunks_per_document,
                 )
 

@@ -17,7 +17,6 @@ from .score_fusion import ScoreFusionService
 
 __all__ = [
     "ContributingChunk",
-    "dedupe_contributing_chunks",
     "FormattedChunk",
     "FormattedDocument",
     "FusedResult",
@@ -26,5 +25,6 @@ __all__ = [
     "ScoreFusionService",
     "SurfaceHit",
     "SurfaceResult",
+    "dedupe_contributing_chunks",
     "format_results",
 ]

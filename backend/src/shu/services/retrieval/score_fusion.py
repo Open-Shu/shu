@@ -197,7 +197,7 @@ class ScoreFusionService:
                 doc_hits[doc_id][surface_name].append(hit)
 
         if not doc_hits:
-            return []
+            return [], {}
 
         # Step 4: Compute weighted scores per document
         doc_scores: dict[UUID, tuple[float, dict[str, float], dict[str, dict]]] = {}

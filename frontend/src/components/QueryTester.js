@@ -66,7 +66,7 @@ function QueryTester() {
   const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.15);
   const [bm25Weight, setBm25Weight] = useState(0.15);
   const [chunkSummaryWeight, setChunkSummaryWeight] = useState(0.25);
-  const [fusionFormula, setFusionFormula] = useState('max_sqrt_mean_max');
+  const [fusionFormula, setFusionFormula] = useState(null);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -87,60 +87,62 @@ function QueryTester() {
     },
   });
 
-  const queryMutation = useMutation(
-    (params) => {
-      const basePayload = {
-        query: params.query,
-        limit: params.limit,
-        rag_rewrite_mode: params.ragRewriteMode || 'raw_query',
+  const buildSearchPayload = (params) => {
+    const base = {
+      query: params.query,
+      limit: params.limit,
+      rag_rewrite_mode: params.ragRewriteMode || 'raw_query',
+    };
+
+    if (params.searchType === 'similarity') {
+      return {
+        ...base,
+        query_type: 'similarity',
+        similarity_threshold: params.threshold,
       };
+    }
 
-      if (params.searchType === 'similarity') {
-        return queryAPI.search(params.kbId, {
-          ...basePayload,
-          query_type: 'similarity',
-          similarity_threshold: params.threshold,
-        });
-      }
-
-      if (params.searchType === 'keyword') {
-        return queryAPI.search(params.kbId, {
-          ...basePayload,
-          query_type: 'keyword',
-          similarity_threshold: params.threshold,
-          title_weighting_enabled: params.titleWeightingEnabled,
-          title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
-        });
-      }
-
-      if (params.searchType === 'multi_surface') {
-        return queryAPI.search(params.kbId, {
-          ...basePayload,
-          query_type: 'multi_surface',
-          similarity_threshold: params.threshold,
-          chunk_vector_weight: params.chunkVectorWeight,
-          query_match_weight: params.queryMatchWeight,
-          synopsis_match_weight: params.synopsisMatchWeight,
-          bm25_weight: params.bm25Weight,
-          chunk_summary_weight: params.chunkSummaryWeight,
-          fusion_formula: params.fusionFormula,
-        });
-      }
-
-      return queryAPI.search(params.kbId, {
-        ...basePayload,
-        query_type: 'hybrid',
+    if (params.searchType === 'keyword') {
+      return {
+        ...base,
+        query_type: 'keyword',
         similarity_threshold: params.threshold,
         title_weighting_enabled: params.titleWeightingEnabled,
         title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
-      });
-    },
-    {
-      onError: (error) => {
-        log.error('Query error:', error);
-      },
+      };
     }
-  );
+
+    if (params.searchType === 'multi_surface') {
+      const payload = {
+        ...base,
+        query_type: 'multi_surface',
+        similarity_threshold: params.threshold,
+        chunk_vector_weight: params.chunkVectorWeight,
+        query_match_weight: params.queryMatchWeight,
+        synopsis_match_weight: params.synopsisMatchWeight,
+        bm25_weight: params.bm25Weight,
+        chunk_summary_weight: params.chunkSummaryWeight,
+      };
+      if (params.fusionFormula) {
+        payload.fusion_formula = params.fusionFormula;
+      }
+      return payload;
+    }
+
+    return {
+      ...base,
+      query_type: 'hybrid',
+      similarity_threshold: params.threshold,
+      title_weighting_enabled: params.titleWeightingEnabled,
+      title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
+    };
+  };
+
+  const queryMutation = useMutation((params) => queryAPI.search(params.kbId, buildSearchPayload(params)), {
+    onError: (error) => {
+      log.error('Query error:', error);
+    },
+  });
 
   const handleSearch = () => {
     if (!selectedKB || !queryText.trim()) {
@@ -166,47 +168,21 @@ function QueryTester() {
   };
 
   const formatQueryRequest = () => {
-    const baseRequest = {
+    return buildSearchPayload({
       query: queryText,
+      searchType,
       limit: parseInt(limit),
-      rag_rewrite_mode: ragRewriteMode,
-    };
-
-    if (searchType === 'similarity') {
-      return {
-        ...baseRequest,
-        query_type: 'similarity',
-        similarity_threshold: parseFloat(threshold),
-      };
-    } else if (searchType === 'keyword') {
-      return {
-        ...baseRequest,
-        query_type: 'keyword',
-        similarity_threshold: parseFloat(threshold),
-        title_weighting_enabled: titleWeightingEnabled,
-        title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
-      };
-    } else if (searchType === 'multi_surface') {
-      return {
-        ...baseRequest,
-        query_type: 'multi_surface',
-        similarity_threshold: parseFloat(threshold),
-        chunk_vector_weight: chunkVectorWeight,
-        query_match_weight: queryMatchWeight,
-        synopsis_match_weight: synopsisMatchWeight,
-        bm25_weight: bm25Weight,
-        chunk_summary_weight: chunkSummaryWeight,
-        fusion_formula: fusionFormula,
-      };
-    } else {
-      return {
-        ...baseRequest,
-        query_type: 'hybrid',
-        similarity_threshold: parseFloat(threshold),
-        title_weighting_enabled: titleWeightingEnabled,
-        title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
-      };
-    }
+      threshold: parseFloat(threshold),
+      ragRewriteMode,
+      titleWeightingEnabled,
+      titleWeightMultiplier,
+      chunkVectorWeight,
+      queryMatchWeight,
+      synopsisMatchWeight,
+      bm25Weight,
+      chunkSummaryWeight,
+      fusionFormula,
+    });
   };
 
   const handleExportForJudgment = async () => {
@@ -522,9 +498,10 @@ function QueryTester() {
                   </Divider>
 
                   <FormControl fullWidth size="small">
-                    <Select value={fusionFormula} onChange={(e) => setFusionFormula(e.target.value)}>
-                      <MenuItem value="max_sqrt_mean_max">Max × √(mean/max)</MenuItem>
+                    <Select value={fusionFormula || ''} onChange={(e) => setFusionFormula(e.target.value || null)}>
+                      <MenuItem value="">Server Default</MenuItem>
                       <MenuItem value="weighted_average">Weighted Average</MenuItem>
+                      <MenuItem value="max_sqrt_mean_max">Max × √(mean/max)</MenuItem>
                     </Select>
                   </FormControl>
                 </Box>

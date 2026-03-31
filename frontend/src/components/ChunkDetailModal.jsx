@@ -17,6 +17,7 @@ import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { useQuery } from 'react-query';
 import { extractDataFromResponse, knowledgeBaseAPI } from '../services/api';
+import { getSurfaceColor } from '../utils/constants';
 
 /**
  * Modal for viewing full chunk content with navigation between chunks.
@@ -106,24 +107,6 @@ export default function ChunkDetailModal({ open, onClose, knowledgeBaseId, docum
       if (newIndex >= loadedEnd && (total === null || newIndex < total - 1)) {
         setWindowAnchor(newIndex);
       }
-    }
-  };
-
-  // Get surface color for chip
-  const getSurfaceColor = (surface) => {
-    switch (surface) {
-      case 'chunk_vector':
-        return 'info';
-      case 'query_match':
-        return 'success';
-      case 'bm25':
-        return 'warning';
-      case 'chunk_summary':
-        return 'default';
-      case 'synopsis_match':
-        return 'secondary';
-      default:
-        return 'default';
     }
   };
 

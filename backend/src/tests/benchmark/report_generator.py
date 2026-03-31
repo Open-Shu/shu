@@ -823,7 +823,11 @@ class ReportGenerator:
         w.append(f"- **Evaluation library:** ranx (published in ECIR, validated against TREC Eval)")
         w.append(f"- **Embedding model:** {results.embedding_model}")
         w.append(f"- **Profiling model:** {results.profiling_model}")
-        w.append(f"- **Statistical test:** Paired t-test, significance threshold p < 0.05")
+        stat_name = {"student": "Paired t-test", "fisher": "Fisher's randomization test"}.get(
+            results.config.stat_test, results.config.stat_test
+        ) if results.config else "Paired t-test"
+        max_p = results.config.max_p if results.config else 0.05
+        w.append(f"- **Statistical test:** {stat_name}, significance threshold p < {max_p}")
 
         excluded = results.config.exclude_surfaces
         if excluded:
