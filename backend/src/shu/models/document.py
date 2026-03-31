@@ -7,11 +7,14 @@ document metadata, content, and vector embeddings.
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, ClassVar
+from uuid import uuid4
 
 from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
+
+from ..utils.embedding_codec import decode_embedding, encode_embedding
 
 try:
     from pgvector.sqlalchemy import Vector
@@ -206,6 +209,113 @@ class Document(BaseModel):
             }
         )
         return base_dict
+
+    def serialize_for_export(self, export_index: int, no_embeddings: bool) -> dict[str, Any]:
+        """Serialize to a JSONL-compatible dict for KB export archives."""
+        return {
+            "export_index": export_index,
+            "source_id": self.source_id,
+            "source_type": self.source_type,
+            "title": self.title,
+            "file_type": self.file_type,
+            "content": self.content,
+            "content_hash": self.content_hash,
+            "processing_status": self.processing_status,
+            "synopsis": self.synopsis,
+            "synopsis_embedding": None if no_embeddings else encode_embedding(self.synopsis_embedding),
+            "document_type": self.document_type,
+            "capability_manifest": self.capability_manifest,
+            "relational_context": self.relational_context,
+            "profiling_status": self.profiling_status,
+            "profiling_coverage_percent": self.profiling_coverage_percent,
+            "word_count": self.word_count,
+            "character_count": self.character_count,
+            "chunk_count": self.chunk_count,
+            "extraction_method": self.extraction_method,
+            "extraction_engine": self.extraction_engine,
+            "extraction_confidence": self.extraction_confidence,
+            "extraction_duration": self.extraction_duration,
+            "extraction_metadata": self.extraction_metadata,
+            "source_url": self.source_url,
+            "source_metadata": self.source_metadata,
+            "source_hash": self.source_hash,
+            "source_modified_at": (self.source_modified_at.isoformat() if self.source_modified_at else None),
+            "file_size": self.file_size,
+            "mime_type": self.mime_type,
+        }
+
+    @staticmethod
+    def build_import_record(row: dict[str, Any], new_id: str, kb_id: str, skip_embeddings: bool) -> dict[str, Any]:
+        """Build a document insert dict from a JSONL row in an import archive.
+
+        Args:
+            row: Parsed JSONL dict from the archive.
+            new_id: New UUID for this document.
+            kb_id: Target knowledge base ID.
+            skip_embeddings: Whether to discard embeddings.
+
+        Returns:
+            Dict suitable for bulk insert into the documents table.
+
+        """
+        now = datetime.now(UTC)
+        source_modified_at = row.get("source_modified_at")
+        if isinstance(source_modified_at, str):
+            try:
+                parsed = datetime.fromisoformat(source_modified_at)
+                source_modified_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            except (ValueError, TypeError):
+                source_modified_at = None
+
+        record: dict[str, Any] = {
+            "id": new_id,
+            "knowledge_base_id": kb_id,
+            "source_id": row.get("source_id", ""),
+            "source_type": row.get("source_type", "import"),
+            "title": row.get("title", ""),
+            "file_type": row.get("file_type", "unknown"),
+            "content": row.get("content", ""),
+            "content_hash": row.get("content_hash"),
+            "source_hash": row.get("source_hash"),
+            "source_url": row.get("source_url"),
+            "source_metadata": row.get("source_metadata"),
+            "source_modified_at": source_modified_at,
+            "file_size": row.get("file_size"),
+            "mime_type": row.get("mime_type"),
+            "word_count": row.get("word_count"),
+            "character_count": row.get("character_count"),
+            "chunk_count": row.get("chunk_count", 0),
+            "extraction_method": row.get("extraction_method"),
+            "extraction_engine": row.get("extraction_engine"),
+            "extraction_confidence": row.get("extraction_confidence"),
+            "extraction_duration": row.get("extraction_duration"),
+            "extraction_metadata": row.get("extraction_metadata"),
+            "synopsis": row.get("synopsis"),
+            "document_type": row.get("document_type"),
+            "capability_manifest": row.get("capability_manifest"),
+            "relational_context": row.get("relational_context"),
+            "profiling_status": row.get("profiling_status"),
+            "profiling_coverage_percent": row.get("profiling_coverage_percent"),
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        if skip_embeddings:
+            record["synopsis_embedding"] = None
+            record["processing_status"] = "pending"
+            record["processed_at"] = None
+        else:
+            record["synopsis_embedding"] = decode_embedding(row.get("synopsis_embedding"))
+            # Infer status from profiling artifacts if not explicitly set
+            if row.get("processing_status"):
+                record["processing_status"] = row["processing_status"]
+            elif row.get("synopsis") or row.get("capability_manifest"):
+                record["processing_status"] = "profile_processed"
+            else:
+                record["processing_status"] = "content_processed"
+            record["processed_at"] = now
+
+        return record
 
     def to_list_dict(self) -> dict[str, Any]:
         """Convert to lightweight dictionary for list views.
@@ -420,6 +530,59 @@ class DocumentChunk(BaseModel):
         # Don't include the actual embedding vector in the dict (too large)
         return base_dict
 
+    def serialize_for_export(self, export_index: int, no_embeddings: bool) -> dict[str, Any]:
+        """Serialize to a JSONL-compatible dict for KB export archives."""
+        return {
+            "export_index": export_index,
+            "chunk_index": self.chunk_index,
+            "content": self.content,
+            "embedding": None if no_embeddings else encode_embedding(self.embedding),
+            "summary": self.summary,
+            "summary_embedding": None if no_embeddings else encode_embedding(self.summary_embedding),
+            "topics": self.topics,
+            "char_count": self.char_count,
+            "word_count": self.word_count,
+            "start_char": self.start_char,
+            "end_char": self.end_char,
+            "embedding_model": self.embedding_model,
+            "token_count": self.token_count,
+            "chunk_metadata": self.chunk_metadata,
+        }
+
+    @staticmethod
+    def build_import_record(row: dict[str, Any], doc_id: str, kb_id: str, skip_embeddings: bool) -> dict[str, Any]:
+        """Build a chunk insert dict from a JSONL row in an import archive."""
+        now = datetime.now(UTC)
+        record: dict[str, Any] = {
+            "id": str(uuid4()),
+            "document_id": doc_id,
+            "knowledge_base_id": kb_id,
+            "chunk_index": row["chunk_index"],
+            "content": row.get("content", ""),
+            "summary": row.get("summary"),
+            "topics": row.get("topics"),
+            "char_count": row.get("char_count", 0),
+            "word_count": row.get("word_count"),
+            "token_count": row.get("token_count"),
+            "start_char": row.get("start_char"),
+            "end_char": row.get("end_char"),
+            "embedding_model": row.get("embedding_model"),
+            "chunk_metadata": row.get("chunk_metadata"),
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        if skip_embeddings:
+            record["embedding"] = None
+            record["summary_embedding"] = None
+            record["embedding_created_at"] = None
+        else:
+            record["embedding"] = decode_embedding(row.get("embedding"))
+            record["summary_embedding"] = decode_embedding(row.get("summary_embedding"))
+            record["embedding_created_at"] = now
+
+        return record
+
     @property
     def has_embedding(self) -> bool:
         """Check if chunk has an embedding."""
@@ -548,6 +711,34 @@ class DocumentQuery(BaseModel):
             }
         )
         return base_dict
+
+    def serialize_for_export(self, export_index: int, no_embeddings: bool) -> dict[str, Any]:
+        """Serialize to a JSONL-compatible dict for KB export archives."""
+        return {
+            "export_index": export_index,
+            "query_text": self.query_text,
+            "query_embedding": None if no_embeddings else encode_embedding(self.query_embedding),
+        }
+
+    @staticmethod
+    def build_import_record(row: dict[str, Any], doc_id: str, kb_id: str, skip_embeddings: bool) -> dict[str, Any]:
+        """Build a query insert dict from a JSONL row in an import archive."""
+        now = datetime.now(UTC)
+        record: dict[str, Any] = {
+            "id": str(uuid4()),
+            "document_id": doc_id,
+            "knowledge_base_id": kb_id,
+            "query_text": row["query_text"],
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        if skip_embeddings:
+            record["query_embedding"] = None
+        else:
+            record["query_embedding"] = decode_embedding(row.get("query_embedding"))
+
+        return record
 
     @property
     def has_embedding(self) -> bool:

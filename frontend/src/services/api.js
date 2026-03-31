@@ -313,6 +313,23 @@ export const knowledgeBaseAPI = {
   getRAGTemplates: () => api.get('/knowledge-bases/rag-config/templates'),
   // Re-embedding endpoints
   triggerReEmbed: (id) => api.post(`/knowledge-bases/${id}/re-embed`),
+  // Import/Export
+  exportKB: (id, params) => api.get(`/knowledge-bases/${id}/export`, { responseType: 'blob', params }),
+  validateImport: (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post('/knowledge-bases/import/validate', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  importKB: (file, skipEmbeddings) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('skip_embeddings', skipEmbeddings);
+    return api.post('/knowledge-bases/import', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 };
 
 // Query endpoints

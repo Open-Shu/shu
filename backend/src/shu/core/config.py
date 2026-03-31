@@ -246,6 +246,13 @@ class Settings(BaseSettings):
 
     # KB document upload (types supported by text extractor - no standalone image OCR)
     kb_upload_max_size: int = Field(50 * 1024 * 1024, alias="SHU_KB_UPLOAD_MAX_SIZE")  # 50MB
+
+    # KB import/export
+    kb_export_batch_size: int = Field(500, alias="SHU_KB_EXPORT_BATCH_SIZE")
+    kb_import_max_archive_size: int = Field(500 * 1024 * 1024, alias="SHU_KB_IMPORT_MAX_ARCHIVE_SIZE")  # 500MB
+    kb_import_max_decompressed_size: int = Field(
+        2 * 1024 * 1024 * 1024, alias="SHU_KB_IMPORT_MAX_DECOMPRESSED_SIZE"
+    )  # 2GB per file
     kb_upload_allowed_types: list[str] = Field(
         default_factory=lambda: list(DEFAULT_KB_FILE_TYPES),
         alias="SHU_KB_UPLOAD_ALLOWED_TYPES",
