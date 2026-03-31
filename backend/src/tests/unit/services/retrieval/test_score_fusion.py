@@ -22,9 +22,10 @@ class TestScoreFusionService:
         service = self._make_service()
         mock_db = AsyncMock()
 
-        result = await service.fuse([], db=mock_db)
+        result, all_scores = await service.fuse([], db=mock_db)
 
         assert result == []
+        assert all_scores == {}
 
     @pytest.mark.asyncio
     async def test_fuse_single_surface_document_hits(self):
@@ -46,7 +47,7 @@ class TestScoreFusionService:
             service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "pdf", None, None, None)}
         ):
             with patch.object(service, "_load_chunk_details", return_value={}):
-                result = await service.fuse([surface_result], db=mock_db)
+                result, all_scores = await service.fuse([surface_result], db=mock_db)
 
         assert len(result) == 1
         assert result[0].document_id == doc_id
@@ -87,7 +88,7 @@ class TestScoreFusionService:
                     "_load_chunk_details",
                     return_value={chunk_id: (0, "Chunk content...", None, None, None)},
                 ):
-                    result = await service.fuse(
+                    result, all_scores = await service.fuse(
                         [chunk_surface, synopsis_surface], db=mock_db
                     )
 
@@ -113,7 +114,7 @@ class TestScoreFusionService:
             service, "_load_document_metadata", return_value={doc_id: ("Low Score Doc", "txt", None, None, None)}
         ):
             with patch.object(service, "_load_chunk_details", return_value={}):
-                result = await service.fuse(
+                result, all_scores = await service.fuse(
                     [surface_result], threshold=0.5, db=mock_db
                 )
 
@@ -140,11 +141,12 @@ class TestScoreFusionService:
         metadata = {did: (f"Doc {i}", "txt", None, None, None) for i, did in enumerate(doc_ids)}
         with patch.object(service, "_load_document_metadata", return_value=metadata):
             with patch.object(service, "_load_chunk_details", return_value={}):
-                result = await service.fuse(
+                result, all_scores = await service.fuse(
                     [surface_result], limit=3, db=mock_db
                 )
 
         assert len(result) == 3
+        assert len(all_scores) == 5  # all 5 docs scored before truncation
         # Results should be sorted by score descending
         assert result[0].final_score > result[1].final_score > result[2].final_score
 
@@ -183,7 +185,7 @@ class TestScoreFusionService:
                         chunk2_id: (1, "Second chunk content...", None, 100, 200),
                     },
                 ):
-                    result = await service.fuse([surface_result], db=mock_db)
+                    result, all_scores = await service.fuse([surface_result], db=mock_db)
 
         assert len(result) == 1
         assert len(result[0].contributing_chunks) == 2

@@ -146,10 +146,10 @@ export default function ChunkDetailModal({ open, onClose, knowledgeBaseId, docum
       </DialogTitle>
 
       <DialogContent dividers>
-        {/* Metadata chips */}
-        {initialChunk && (
+        {/* Metadata chips — surface/score only shown for the initially clicked chunk */}
+        {(initialChunk || currentChunk) && (
           <Box display="flex" gap={1} flexWrap="wrap" mb={2}>
-            {isInitialIndex && initialChunk.surface && (
+            {isInitialIndex && initialChunk?.surface && (
               <Chip
                 label={`Surface: ${initialChunk.surface}`}
                 size="small"
@@ -157,7 +157,7 @@ export default function ChunkDetailModal({ open, onClose, knowledgeBaseId, docum
                 variant="outlined"
               />
             )}
-            {isInitialIndex && typeof initialChunk.score === 'number' && (
+            {isInitialIndex && typeof initialChunk?.score === 'number' && (
               <Chip
                 label={`Score: ${(initialChunk.score * 100).toFixed(1)}%`}
                 size="small"
