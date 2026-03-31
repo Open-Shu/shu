@@ -781,10 +781,19 @@ class ExperienceService:
     ) -> None:
         """Validate that a step's auth_override mode is allowed by the plugin manifest."""
         override_mode = step.auth_override.get("mode", "")
+        override_provider = step.auth_override.get("provider", "")
         record = plugin_records.get(step.plugin_name)
         if not record or not record.op_auth:
             return
         op_spec = record.op_auth.get(step.plugin_op.lower(), {})
+
+        manifest_provider = op_spec.get("provider", "")
+        if override_provider and manifest_provider and override_provider.lower() != manifest_provider.lower():
+            raise ValidationError(
+                f"Step '{step.step_key}': auth_override provider '{override_provider}' "
+                f"does not match the plugin op provider '{manifest_provider}'"
+            )
+
         allowed = op_spec.get("allowed_modes", [])
         if allowed and override_mode not in allowed:
             raise ValidationError(
@@ -1089,7 +1098,10 @@ class ExperienceService:
                 continue
 
             override = step.auth_override
-            if isinstance(override, dict) and (override.get("mode") or "").lower() == "domain_delegate":
+            if isinstance(override, dict) and (override.get("mode") or "").lower() in (
+                "domain_delegate",
+                "service_account",
+            ):
                 has_non_auth_step = True
                 continue
 

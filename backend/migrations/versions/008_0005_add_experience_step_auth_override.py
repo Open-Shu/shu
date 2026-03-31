@@ -1,4 +1,4 @@
-"""Migration 008_0004: Add auth_override column to experience_steps
+"""Migration 008_0005: Add auth_override column to experience_steps
 
 Adds a nullable JSON column ``auth_override`` to ``experience_steps`` so that
 individual steps can opt into Domain-Wide Delegation or other non-default auth
@@ -13,8 +13,8 @@ from alembic import op
 from migrations.helpers import add_column_if_not_exists, drop_column_if_exists
 
 # revision identifiers, used by Alembic.
-revision = "008_0004"
-down_revision = "008_0003"
+revision = "008_0005"
+down_revision = "008_0004"
 branch_labels = None
 depends_on = None
 

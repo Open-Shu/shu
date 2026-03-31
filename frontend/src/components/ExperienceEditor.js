@@ -144,11 +144,9 @@ export default function ExperienceEditor() {
     return handleFieldChange(setter, fieldName);
   };
 
-  const handleStepsChange = (newSteps, meta) => {
+  const handleStepsChange = (newSteps) => {
     setSteps(newSteps);
-    if (!meta?.fromAuthBridge) {
-      markDirty();
-    }
+    markDirty();
   };
 
   // Insert template variable at cursor position in inline prompt

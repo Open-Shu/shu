@@ -227,7 +227,11 @@ export default function ProviderAuthPanel({
       if (m === 'domain_delegate') {
         const subject = String(probeSubject || '').trim();
         if (!subject) {
-          setProbeError('Enter an impersonation email first.');
+          setProbeResult({
+            ready: true,
+            skipped: true,
+            message: 'Will impersonate the running user at execution time.',
+          });
           setProbeLoading(false);
           return;
         }
@@ -247,17 +251,16 @@ export default function ProviderAuthPanel({
     }
   };
 
-  // Emit selected auth overlay to parent so execution/feed can honor it.
-  // Skip the first emission when hydrating from a stored overlay — on the initial
-  // render the state hasn't been hydrated yet, so the emitted values would be wrong.
-  const skipFirstEmitRef = useRef(!!initialOverlay);
+  // Only emit overlay changes triggered by real user interaction (mode select,
+  // subject field).  Mount-time state cascades (googleStatus fetch, hydration,
+  // mode reconciliation) never set this ref, so they can't dirty the form.
+  const userInteractedRef = useRef(false);
   useEffect(() => {
     try {
       if (typeof onAuthOverlayChange !== 'function') {
         return;
       }
-      if (skipFirstEmitRef.current) {
-        skipFirstEmitRef.current = false;
+      if (!userInteractedRef.current) {
         return;
       }
       const overlay = {};
@@ -295,7 +298,10 @@ export default function ProviderAuthPanel({
               labelId="auth-mode-label"
               label="Auth Mode"
               value={effMode || ''}
-              onChange={(e) => setSelectedMode(e.target.value)}
+              onChange={(e) => {
+                userInteractedRef.current = true;
+                setSelectedMode(e.target.value);
+              }}
             >
               {availableModes.map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>
@@ -361,7 +367,10 @@ export default function ProviderAuthPanel({
               size="small"
               label="Impersonation Email"
               value={probeSubject}
-              onChange={(e) => setProbeSubject(e.target.value)}
+              onChange={(e) => {
+                userInteractedRef.current = true;
+                setProbeSubject(e.target.value);
+              }}
               placeholder="user@example.com"
               sx={{ minWidth: 360 }}
             />
@@ -369,7 +378,11 @@ export default function ProviderAuthPanel({
               {probeLoading ? 'Testing…' : 'Test Auth'}
             </Button>
             {probeResult ? (
-              probeResult.ready ? (
+              probeResult.skipped ? (
+                <Alert severity="info" sx={{ m: 0 }}>
+                  {probeResult.message}
+                </Alert>
+              ) : probeResult.ready ? (
                 <Alert severity="success" sx={{ m: 0 }}>
                   Authorized (status {probeResult.status}).
                 </Alert>
@@ -401,7 +414,11 @@ export default function ProviderAuthPanel({
               {probeLoading ? 'Testing…' : 'Test Auth'}
             </Button>
             {probeResult ? (
-              probeResult.ready ? (
+              probeResult.skipped ? (
+                <Alert severity="info" sx={{ m: 0 }}>
+                  {probeResult.message}
+                </Alert>
+              ) : probeResult.ready ? (
                 <Alert severity="success" sx={{ m: 0 }}>
                   Authorized (status {probeResult.status}).
                 </Alert>
