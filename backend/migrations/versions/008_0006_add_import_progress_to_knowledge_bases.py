@@ -7,6 +7,9 @@ Create Date: 2026-03-23
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import inspect
+
+from migrations.helpers import add_column_if_not_exists, drop_column_if_exists
 
 # revision identifiers, used by Alembic.
 revision = "008_0006"
@@ -16,8 +19,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("knowledge_bases", sa.Column("import_progress", sa.JSON(), nullable=True))
+    inspector = inspect(op.get_bind())
+    add_column_if_not_exists(
+        inspector, "knowledge_bases", sa.Column("import_progress", sa.JSON(), nullable=True)
+    )
 
 
 def downgrade() -> None:
-    op.drop_column("knowledge_bases", "import_progress")
+    inspector = inspect(op.get_bind())
+    drop_column_if_exists(inspector, "knowledge_bases", "import_progress")
