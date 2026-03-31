@@ -306,7 +306,13 @@ class Document(BaseModel):
             record["processed_at"] = None
         else:
             record["synopsis_embedding"] = decode_embedding(row.get("synopsis_embedding"))
-            record["processing_status"] = row.get("processing_status", "processed")
+            # Infer status from profiling artifacts if not explicitly set
+            if row.get("processing_status"):
+                record["processing_status"] = row["processing_status"]
+            elif row.get("synopsis") or row.get("capability_manifest"):
+                record["processing_status"] = "profile_processed"
+            else:
+                record["processing_status"] = "content_processed"
             record["processed_at"] = now
 
         return record
