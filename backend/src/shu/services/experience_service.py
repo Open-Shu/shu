@@ -731,6 +731,7 @@ class ExperienceService:
 
         """
         step_keys = set()
+        plugin_records = self._get_plugin_loader().discover()
 
         for i, step in enumerate(steps):
             # Check for duplicate step keys
@@ -744,6 +745,12 @@ class ExperienceService:
                     raise ValidationError(f"Step '{step.step_key}' requires plugin_name for plugin type")
                 if not step.plugin_op:
                     raise ValidationError(f"Step '{step.step_key}' requires plugin_op for plugin type")
+
+                if step.auth_override:
+                    self._validate_auth_override_against_manifest(
+                        step,
+                        plugin_records,
+                    )
             elif step.step_type == StepType.KNOWLEDGE_BASE:
                 if not step.knowledge_base_id:
                     raise ValidationError(f"Step '{step.step_key}' requires knowledge_base_id for knowledge_base type")
@@ -766,6 +773,33 @@ class ExperienceService:
             # Validate KB query template
             if step.kb_query_template:
                 self._validate_template_syntax(step.kb_query_template, f"step '{step.step_key}' kb_query_template")
+
+    def _validate_auth_override_against_manifest(
+        self,
+        step: ExperienceStepCreate,
+        plugin_records: dict,
+    ) -> None:
+        """Validate that a step's auth_override mode is allowed by the plugin manifest."""
+        override_mode = step.auth_override.get("mode", "")
+        override_provider = step.auth_override.get("provider", "")
+        record = plugin_records.get(step.plugin_name)
+        if not record or not record.op_auth:
+            return
+        op_spec = record.op_auth.get(step.plugin_op.lower(), {})
+
+        manifest_provider = op_spec.get("provider", "")
+        if override_provider and manifest_provider and override_provider.lower() != manifest_provider.lower():
+            raise ValidationError(
+                f"Step '{step.step_key}': auth_override provider '{override_provider}' "
+                f"does not match the plugin op provider '{manifest_provider}'"
+            )
+
+        allowed = op_spec.get("allowed_modes", [])
+        if allowed and override_mode not in allowed:
+            raise ValidationError(
+                f"Step '{step.step_key}': auth mode '{override_mode}' is not allowed "
+                f"for {step.plugin_name}.{step.plugin_op} (allowed: {allowed})"
+            )
 
     async def _create_step(self, experience_id: str, step_data: ExperienceStepCreate) -> ExperienceStep:
         """Create an ExperienceStep from step data.
@@ -794,6 +828,7 @@ class ExperienceService:
             knowledge_base_id=step_data.knowledge_base_id,
             kb_query_template=step_data.kb_query_template,
             params_template=step_data.params_template,
+            auth_override=step_data.auth_override,
             condition_template=step_data.condition_template,
             required_scopes=required_scopes,
         )
@@ -1002,12 +1037,7 @@ class ExperienceService:
         user_id: str,
         plugin_records: dict[str, Any],
     ) -> tuple[bool, list[str]]:
-        """Check whether a user can run an experience based on plugin subscriptions
-        and granted scopes on ProviderCredential.
-
-        Delegates per-step checks to ``check_plugin_user_auth`` which reads from
-        ProviderCredential — the same source used by the auth adapters and the
-        actual plugin execution path.
+        """Check whether a user can run an experience based on auth requirements.
 
         The experience is runnable (``can_run=True``) as long as at least one step
         can execute, since the executor uses graceful degradation for failed steps.
@@ -1018,33 +1048,15 @@ class ExperienceService:
             subscriptions or insufficient scopes.
 
         """
-        # Collect steps that require user-mode provider auth and track non-auth steps
-        auth_steps: list[tuple[str, str, list[str]]] = []  # (provider_key, plugin_name, required_scopes)
-        has_non_auth_step = False
-        for step in steps:
-            if step.step_type != StepType.PLUGIN.value or not step.plugin_name:
-                has_non_auth_step = True
-                continue
-            record = plugin_records.get(step.plugin_name)
-            if not record or not record.op_auth:
-                has_non_auth_step = True
-                continue
-            op_key = (step.plugin_op or "").lower()
-            op_spec = record.op_auth.get(op_key) or {}
-            provider = op_spec.get("provider")
-            mode = (op_spec.get("mode") or "").lower()
-            if provider and mode == "user":
-                scopes = op_spec.get("scopes") or []
-                auth_steps.append((str(provider).strip().lower(), step.plugin_name, scopes))
-            else:
-                has_non_auth_step = True
+        user_auth_steps, has_non_auth_step = self._classify_auth_steps(steps, plugin_records)
 
-        if not auth_steps:
+        if not user_auth_steps:
             return (True, [])
 
         any_step_can_run = has_non_auth_step
         missing: list[str] = []
-        for provider_key, plugin_name, required_scopes in auth_steps:
+
+        for provider_key, plugin_name, required_scopes in user_auth_steps:
             ok, error_code = await check_plugin_user_auth(
                 self.db,
                 plugin_name,
@@ -1060,6 +1072,54 @@ class ExperienceService:
                     missing.append(label)
 
         return (any_step_can_run, missing)
+
+    def _classify_auth_steps(
+        self,
+        steps: list[ExperienceStep],
+        plugin_records: dict[str, Any],
+    ) -> tuple[list[tuple[str, str, list[str]]], bool]:
+        """Classify experience steps by their auth requirements.
+
+        Steps using domain-wide delegation are treated as non-auth steps because
+        DWD is an admin-configured infrastructure concern, not a user prerequisite.
+
+        Returns:
+            Tuple of (user_auth_steps, has_non_auth_step) where:
+            - user_auth_steps: steps requiring user OAuth (provider_key, plugin_name, scopes)
+            - has_non_auth_step: whether any step requires no user auth
+
+        """
+        user_auth_steps: list[tuple[str, str, list[str]]] = []
+        has_non_auth_step = False
+
+        for step in steps:
+            if step.step_type != StepType.PLUGIN.value or not step.plugin_name:
+                has_non_auth_step = True
+                continue
+
+            override = step.auth_override
+            if isinstance(override, dict) and (override.get("mode") or "").lower() in (
+                "domain_delegate",
+                "service_account",
+            ):
+                has_non_auth_step = True
+                continue
+
+            record = plugin_records.get(step.plugin_name)
+            if not record or not record.op_auth:
+                has_non_auth_step = True
+                continue
+            op_key = (step.plugin_op or "").lower()
+            op_spec = record.op_auth.get(op_key) or {}
+            provider = op_spec.get("provider")
+            mode = (op_spec.get("mode") or "").lower()
+            if provider and mode == "user":
+                scopes = op_spec.get("scopes") or []
+                user_auth_steps.append((str(provider).strip().lower(), step.plugin_name, scopes))
+            else:
+                has_non_auth_step = True
+
+        return user_auth_steps, has_non_auth_step
 
     # =========================================================================
     # Export Functionality
@@ -1377,6 +1437,7 @@ class ExperienceService:
                 knowledge_base_id=step.knowledge_base_id,
                 kb_query_template=step.kb_query_template,
                 params_template=step.params_template,
+                auth_override=step.auth_override,
                 condition_template=step.condition_template,
                 required_scopes=step.required_scopes,
                 created_at=step.created_at,

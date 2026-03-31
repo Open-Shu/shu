@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { useQuery } from 'react-query';
 import {
   Alert,
@@ -30,6 +30,7 @@ import {
 import { pluginsAPI } from '../services/pluginsApi';
 import { knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
 import SchemaForm from './SchemaForm';
+import ProviderAuthPanel from './ProviderAuthPanel';
 
 const StepTypeChip = ({ type }) => {
   const isPlugin = type === 'plugin';
@@ -53,6 +54,134 @@ const StepTypeChip = ({ type }) => {
     </Box>
   );
 };
+
+/**
+ * Translate ProviderAuthPanel's overlay shape into the step's auth_override field.
+ * Returns a stable callback and a memoized initialOverlay for hydration.
+ */
+function useAuthOverrideBridge(step, onUpdate) {
+  const onUpdateRef = useRef(onUpdate);
+  onUpdateRef.current = onUpdate;
+
+  const currentOverrideRef = useRef(step.auth_override ?? null);
+  currentOverrideRef.current = step.auth_override ?? null;
+
+  const handleAuthOverlayChange = useCallback((overlay) => {
+    const authEntries = overlay?.auth ? Object.entries(overlay.auth) : [];
+    let newOverride = null;
+
+    if (authEntries.length > 0) {
+      const [provider, config] = authEntries[0];
+      const mode = config?.mode;
+
+      if (mode && mode !== 'user') {
+        const subject = (config?.subject || config?.impersonate_email || '').trim() || null;
+        newOverride = {
+          provider,
+          mode,
+          subject_source: subject ? 'explicit' : 'running_user',
+          subject,
+        };
+      }
+    }
+
+    if (JSON.stringify(newOverride) === JSON.stringify(currentOverrideRef.current)) {
+      return;
+    }
+
+    onUpdateRef.current({ auth_override: newOverride }, { fromAuthBridge: true });
+  }, []);
+
+  const initialOverlay = useMemo(() => {
+    const override = step.auth_override;
+    if (!override || !override.provider || override.mode === 'user') {
+      return null;
+    }
+    const payload = { mode: override.mode };
+    if (override.subject) {
+      payload.subject = override.subject;
+    }
+    return {
+      auth: {
+        [override.provider]: payload,
+      },
+    };
+  }, [step.auth_override]);
+
+  return { handleAuthOverlayChange, initialOverlay };
+}
+
+const PluginStepConfig = ({
+  step,
+  plugins,
+  selectedPlugin,
+  availableOps,
+  onUpdate,
+  handleFieldChange,
+  handleAuthOverlayChange,
+  authOverlayForPanel,
+}) => (
+  <>
+    <FormControl fullWidth size="small">
+      <InputLabel>Plugin</InputLabel>
+      <Select value={step.plugin_name || ''} label="Plugin" onChange={handleFieldChange('plugin_name')}>
+        {plugins.map((p) => (
+          <MenuItem key={p.name} value={p.name}>
+            {p.display_name || p.name}
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+
+    {step.plugin_name && (
+      <FormControl fullWidth size="small">
+        <InputLabel>Operation</InputLabel>
+        <Select value={step.plugin_op || ''} label="Operation" onChange={handleFieldChange('plugin_op')}>
+          {availableOps.map((op) => (
+            <MenuItem key={op} value={op}>
+              {op}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    )}
+
+    {step.plugin_op && selectedPlugin?.input_schema && (
+      <Box sx={{ mt: 1 }}>
+        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+          Parameters (only set values you want to override)
+        </Typography>
+        <SchemaForm
+          schema={selectedPlugin.input_schema}
+          values={step.params_template || {}}
+          onChangeField={(key, type, value) => {
+            const newParams = { ...(step.params_template || {}) };
+            if (value === '' || value === null || value === undefined) {
+              delete newParams[key];
+            } else {
+              newParams[key] = value;
+            }
+            onUpdate({
+              params_template: Object.keys(newParams).length > 0 ? newParams : null,
+            });
+          }}
+          hideKeys={new Set(['op', 'kb_id'])}
+        />
+      </Box>
+    )}
+
+    {step.plugin_op && selectedPlugin?.op_auth?.[step.plugin_op] && (
+      <Box sx={{ mt: 1 }}>
+        <ProviderAuthPanel
+          plugin={selectedPlugin}
+          op={step.plugin_op}
+          onAuthOverlayChange={handleAuthOverlayChange}
+          initialOverlay={authOverlayForPanel}
+        />
+      </Box>
+    )}
+  </>
+);
 
 const StepCard = ({
   step,
@@ -93,6 +222,8 @@ const StepCard = ({
     return [];
   }, [selectedPlugin]);
 
+  const { handleAuthOverlayChange, initialOverlay: authOverlayForPanel } = useAuthOverrideBridge(step, onUpdate);
+
   const handleFieldChange = (field) => (e) => {
     const value = e.target.value;
     const updates = { [field]: value };
@@ -103,9 +234,14 @@ const StepCard = ({
       updates.plugin_op = null;
       updates.knowledge_base_id = null;
       updates.kb_query_template = null;
+      updates.auth_override = null;
     }
     if (field === 'plugin_name') {
       updates.plugin_op = null;
+      updates.auth_override = null;
+    }
+    if (field === 'plugin_op') {
+      updates.auth_override = null;
     }
 
     onUpdate(updates);
@@ -187,58 +323,16 @@ const StepCard = ({
 
               {/* Plugin Configuration */}
               {isPlugin && (
-                <>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Plugin</InputLabel>
-                    <Select value={step.plugin_name || ''} label="Plugin" onChange={handleFieldChange('plugin_name')}>
-                      {plugins.map((p) => (
-                        <MenuItem key={p.name} value={p.name}>
-                          {p.display_name || p.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-
-                  {step.plugin_name && (
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Operation</InputLabel>
-                      <Select value={step.plugin_op || ''} label="Operation" onChange={handleFieldChange('plugin_op')}>
-                        {availableOps.map((op) => (
-                          <MenuItem key={op} value={op}>
-                            {op}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  )}
-
-                  {/* Plugin Parameters Form */}
-                  {step.plugin_op && selectedPlugin?.input_schema && (
-                    <Box sx={{ mt: 1 }}>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Parameters (only set values you want to override)
-                      </Typography>
-                      <SchemaForm
-                        schema={selectedPlugin.input_schema}
-                        values={step.params_template || {}}
-                        onChangeField={(key, type, value) => {
-                          const newParams = { ...(step.params_template || {}) };
-                          // Only keep non-empty values - empty means use backend default
-                          if (value === '' || value === null || value === undefined) {
-                            delete newParams[key];
-                          } else {
-                            newParams[key] = value;
-                          }
-                          // If empty object, set to null
-                          onUpdate({
-                            params_template: Object.keys(newParams).length > 0 ? newParams : null,
-                          });
-                        }}
-                        hideKeys={new Set(['op', 'kb_id'])}
-                      />
-                    </Box>
-                  )}
-                </>
+                <PluginStepConfig
+                  step={step}
+                  plugins={plugins}
+                  selectedPlugin={selectedPlugin}
+                  availableOps={availableOps}
+                  onUpdate={onUpdate}
+                  handleFieldChange={handleFieldChange}
+                  handleAuthOverlayChange={handleAuthOverlayChange}
+                  authOverlayForPanel={authOverlayForPanel}
+                />
               )}
 
               {/* KB Query Configuration */}
@@ -322,16 +416,17 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
       knowledge_base_id: null,
       kb_query_template: null,
       params_template: null,
+      auth_override: null,
       condition_template: null,
       _id: Math.random().toString(36).substr(2, 9), // Stable ID for React key
     };
     onChange([...steps, newStep]);
   };
 
-  const handleUpdateStep = (index) => (updates) => {
+  const handleUpdateStep = (index) => (updates, meta) => {
     const newSteps = [...steps];
     newSteps[index] = { ...newSteps[index], ...updates };
-    onChange(newSteps);
+    onChange(newSteps, meta);
   };
 
   const handleRemoveStep = (index) => () => {

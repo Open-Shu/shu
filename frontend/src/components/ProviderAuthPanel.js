@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -14,7 +14,6 @@ import {
 } from '@mui/material';
 import IdentityGate from './IdentityGate';
 import { hostAuthAPI, extractDataFromResponse, formatError } from '../services/api';
-import { useAuth } from '../hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import useOAuthAuthorize from '../hooks/useOAuthAuthorize';
 
@@ -38,7 +37,6 @@ export default function ProviderAuthPanel({
   initialOverlay = null,
   pluginName = null,
 }) {
-  const { user } = useAuth();
   const opKey = String(op || '').toLowerCase();
   const pluginDef = plugin;
   const opAuthSpec = useMemo(() => {
@@ -108,10 +106,9 @@ export default function ProviderAuthPanel({
       if (typeof prov.mode === 'string' && prov.mode) {
         setSelectedMode(prov.mode);
       }
-      if (typeof prov.subject === 'string' && prov.subject) {
+      if (typeof prov.subject === 'string') {
         setProbeSubject(prov.subject);
-      }
-      if (typeof prov.impersonate_email === 'string' && prov.impersonate_email) {
+      } else if (typeof prov.impersonate_email === 'string') {
         setProbeSubject(prov.impersonate_email);
       }
     } catch (_) {
@@ -144,7 +141,7 @@ export default function ProviderAuthPanel({
   const [identitiesOk, setIdentitiesOk] = useState(true);
 
   // Probe (service account / delegation)
-  const [probeSubject, setProbeSubject] = useState(user?.email || '');
+  const [probeSubject, setProbeSubject] = useState('');
   // Allowed modes from manifest (op_auth.allowed_modes). If absent, treat opAuthSpec.mode as the only allowed.
   const allowedModes = useMemo(() => {
     const raw = Array.isArray(opAuthSpec?.allowed_modes) ? opAuthSpec.allowed_modes : null;
@@ -203,7 +200,7 @@ export default function ProviderAuthPanel({
       if (m === 'user') {
         ok = !!identitiesOk;
       } else if (m === 'domain_delegate') {
-        ok = !!String(probeSubject || '').trim();
+        ok = true; // empty subject auto-impersonates the running user
       } else if (m === 'service_account') {
         ok = !!(googleStatus && googleStatus.service_account_configured);
       }
@@ -230,7 +227,11 @@ export default function ProviderAuthPanel({
       if (m === 'domain_delegate') {
         const subject = String(probeSubject || '').trim();
         if (!subject) {
-          setProbeError('Enter an impersonation email first.');
+          setProbeResult({
+            ready: true,
+            skipped: true,
+            message: 'Will impersonate the running user at execution time.',
+          });
           setProbeLoading(false);
           return;
         }
@@ -250,10 +251,16 @@ export default function ProviderAuthPanel({
     }
   };
 
-  // Emit selected auth overlay to parent so execution/feed can honor it
+  // Only emit overlay changes triggered by real user interaction (mode select,
+  // subject field).  Mount-time state cascades (googleStatus fetch, hydration,
+  // mode reconciliation) never set this ref, so they can't dirty the form.
+  const userInteractedRef = useRef(false);
   useEffect(() => {
     try {
       if (typeof onAuthOverlayChange !== 'function') {
+        return;
+      }
+      if (!userInteractedRef.current) {
         return;
       }
       const overlay = {};
@@ -291,7 +298,10 @@ export default function ProviderAuthPanel({
               labelId="auth-mode-label"
               label="Auth Mode"
               value={effMode || ''}
-              onChange={(e) => setSelectedMode(e.target.value)}
+              onChange={(e) => {
+                userInteractedRef.current = true;
+                setSelectedMode(e.target.value);
+              }}
             >
               {availableModes.map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>
@@ -304,6 +314,14 @@ export default function ProviderAuthPanel({
             <Alert severity="warning" sx={{ mt: 1 }}>
               Service account is not configured on the host. Set GOOGLE_SERVICE_ACCOUNT_JSON or
               GOOGLE_SERVICE_ACCOUNT_FILE.
+            </Alert>
+          )}
+          {effMode === 'domain_delegate' && (
+            <Alert severity="info" sx={{ mt: 1 }}>
+              <strong>User OAuth</strong> requires each user to connect their own account.{' '}
+              <strong>Domain-wide Delegation</strong> uses a service account to act on behalf of users &mdash; leave the
+              email empty to automatically impersonate the running user, or set a specific email to always impersonate
+              that account.
             </Alert>
           )}
         </Box>
@@ -349,7 +367,10 @@ export default function ProviderAuthPanel({
               size="small"
               label="Impersonation Email"
               value={probeSubject}
-              onChange={(e) => setProbeSubject(e.target.value)}
+              onChange={(e) => {
+                userInteractedRef.current = true;
+                setProbeSubject(e.target.value);
+              }}
               placeholder="user@example.com"
               sx={{ minWidth: 360 }}
             />
@@ -357,7 +378,11 @@ export default function ProviderAuthPanel({
               {probeLoading ? 'Testing…' : 'Test Auth'}
             </Button>
             {probeResult ? (
-              probeResult.ready ? (
+              probeResult.skipped ? (
+                <Alert severity="info" sx={{ m: 0 }}>
+                  {probeResult.message}
+                </Alert>
+              ) : probeResult.ready ? (
                 <Alert severity="success" sx={{ m: 0 }}>
                   Authorized (status {probeResult.status}).
                 </Alert>
@@ -389,7 +414,11 @@ export default function ProviderAuthPanel({
               {probeLoading ? 'Testing…' : 'Test Auth'}
             </Button>
             {probeResult ? (
-              probeResult.ready ? (
+              probeResult.skipped ? (
+                <Alert severity="info" sx={{ m: 0 }}>
+                  {probeResult.message}
+                </Alert>
+              ) : probeResult.ready ? (
                 <Alert severity="success" sx={{ m: 0 }}>
                   Authorized (status {probeResult.status}).
                 </Alert>

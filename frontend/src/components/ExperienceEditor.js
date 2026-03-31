@@ -1,38 +1,16 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  Divider,
-  FormControl,
-  Grid,
-  InputLabel,
-  MenuItem,
-  Paper,
-  Select,
-  Stack,
-  TextField,
-  Typography,
-  Tabs,
-  Tab,
-  Switch,
-  FormControlLabel,
-  FormHelperText,
-} from '@mui/material';
+import { Alert, Box, Button, Chip, CircularProgress, Grid, Paper, Stack, Typography, Tabs, Tab } from '@mui/material';
 import { ArrowBack as BackIcon, Save as SaveIcon, PlayArrow as RunIcon } from '@mui/icons-material';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
-import { promptAPI } from '../api/prompts';
 import ExperienceStepBuilder from './ExperienceStepBuilder';
 import ExperienceRunDialog from './ExperienceRunDialog';
 import ExperienceRunsList from './ExperienceRunsList';
 import ExportExperienceButton from './ExportExperienceButton';
-import TemplateVariableHints from './TemplateVariableHints';
 import TriggerConfiguration from './shared/TriggerConfiguration';
-import ModelConfigurationSelector from './shared/ModelConfigurationSelector';
+import ExperienceBasicInfoPanel from './shared/ExperienceBasicInfoPanel';
+import ExperienceLLMPanel from './shared/ExperienceLLMPanel';
 
 export default function ExperienceEditor() {
   const { experienceId } = useParams();
@@ -81,21 +59,6 @@ export default function ExperienceEditor() {
     }
   );
 
-  // Fetch prompts for selector
-  const promptsQuery = useQuery(
-    ['prompts', 'list'],
-    async () => {
-      const result = await promptAPI.list();
-      return result?.data?.items || result?.items || [];
-    },
-    { staleTime: 30000 }
-  );
-
-  const prompts = useMemo(() => {
-    const items = promptsQuery.data || [];
-    return Array.isArray(items) ? items : [];
-  }, [promptsQuery.data]);
-
   // Initialize form from existing experience
   useEffect(() => {
     if (experienceQuery.data) {
@@ -106,7 +69,6 @@ export default function ExperienceEditor() {
       setScope(exp.scope || 'user');
       setTriggerType(exp.trigger_type || 'manual');
       setTriggerConfig(exp.trigger_config || {});
-      // Use model configuration only (no legacy fields)
       setModelConfigurationId(exp.model_configuration_id || '');
       setPromptId(exp.prompt_id || '');
       setInlinePromptTemplate(exp.inline_prompt_template || '');
@@ -147,10 +109,9 @@ export default function ExperienceEditor() {
     }
   );
 
-  const handleFieldChange = (setter, fieldName) => (e) => {
-    setter(e.target.value);
-    setIsDirty(true);
-    // Clear specific field error when it changes
+  const markDirty = () => setIsDirty(true);
+
+  const clearValidationError = (fieldName) => {
     if (validationErrors[fieldName]) {
       const newErrors = { ...validationErrors };
       delete newErrors[fieldName];
@@ -158,18 +119,42 @@ export default function ExperienceEditor() {
     }
   };
 
+  const handleFieldChange = (setter, fieldName) => (e) => {
+    setter(e.target.value);
+    markDirty();
+    clearValidationError(fieldName);
+  };
+
+  // Wrapper for sub-panels: returns onChange handler keyed by field name
+  const makePanelFieldChange = (fieldName) => {
+    const setterMap = {
+      name: setName,
+      description: setDescription,
+      visibility: setVisibility,
+      scope: setScope,
+      max_run_seconds: setMaxRunSeconds,
+      prompt_id: setPromptId,
+      inline_prompt_template: setInlinePromptTemplate,
+    };
+    const setter = setterMap[fieldName];
+    if (typeof setter !== 'function') {
+      console.warn(`makePanelFieldChange: unknown field "${fieldName}"`);
+      return () => {};
+    }
+    return handleFieldChange(setter, fieldName);
+  };
+
   const handleStepsChange = (newSteps) => {
     setSteps(newSteps);
-    setIsDirty(true);
+    markDirty();
   };
 
   // Insert template variable at cursor position in inline prompt
   const handleInsertVariable = (variableText) => {
     const textarea = inlinePromptRef.current;
     if (!textarea) {
-      // Fallback: append to end
       setInlinePromptTemplate((prev) => prev + variableText);
-      setIsDirty(true);
+      markDirty();
       return;
     }
 
@@ -179,9 +164,8 @@ export default function ExperienceEditor() {
     const after = inlinePromptTemplate.substring(end);
 
     setInlinePromptTemplate(before + variableText + after);
-    setIsDirty(true);
+    markDirty();
 
-    // Restore cursor position after the inserted text
     setTimeout(() => {
       textarea.focus();
       textarea.setSelectionRange(start + variableText.length, start + variableText.length);
@@ -189,7 +173,6 @@ export default function ExperienceEditor() {
   };
 
   const handleSave = () => {
-    // Validation
     const errors = {};
     if (!name.trim()) {
       errors.name = 'Name is required';
@@ -208,10 +191,7 @@ export default function ExperienceEditor() {
       }
     }
 
-    // Validate model configuration - only validate if user has selected something
-    // Empty string is valid (means no LLM synthesis)
     if (modelConfigurationId && modelConfigurationId.trim() === '') {
-      // This shouldn't happen with the selector, but just in case
       errors.model_configuration_id = 'Invalid model configuration selection';
     }
 
@@ -220,7 +200,6 @@ export default function ExperienceEditor() {
       return;
     }
 
-    // Validate and coerce maxRunSeconds to prevent NaN
     const parsedMaxRunSeconds = parseInt(maxRunSeconds, 10);
     const safeMaxRunSeconds = Number.isFinite(parsedMaxRunSeconds) ? parsedMaxRunSeconds : null;
 
@@ -231,7 +210,6 @@ export default function ExperienceEditor() {
       scope,
       trigger_type: triggerType,
       trigger_config: triggerConfig,
-      // Use model configuration (no legacy fields)
       model_configuration_id: modelConfigurationId || null,
       prompt_id: promptId || null,
       inline_prompt_template: inlinePromptTemplate || null,
@@ -246,6 +224,7 @@ export default function ExperienceEditor() {
         knowledge_base_id: step.knowledge_base_id || null,
         kb_query_template: step.kb_query_template || null,
         params_template: step.params_template || null,
+        auth_override: step.auth_override || null,
         condition_template: step.condition_template || null,
       })),
     };
@@ -353,7 +332,6 @@ export default function ExperienceEditor() {
         </Stack>
       </Stack>
 
-      {/* Error display */}
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {formatError(error)}
@@ -369,93 +347,28 @@ export default function ExperienceEditor() {
 
       {activeTab === 0 && (
         <Grid container spacing={3}>
-          {/* Left Column - Basic Info & LLM Config */}
           <Grid item xs={12} md={12} xl={5}>
             <Stack spacing={3}>
-              {/* Basic Info */}
               <Paper sx={{ p: 3 }}>
                 <Typography variant="h6" gutterBottom>
                   Basic Information
                 </Typography>
-                <Stack spacing={2}>
-                  <TextField
-                    label="Name"
-                    value={name}
-                    onChange={handleFieldChange(setName, 'name')}
-                    fullWidth
-                    required
-                    error={!!validationErrors.name}
-                    helperText={validationErrors.name}
-                  />
-                  <TextField
-                    label="Description"
-                    value={description}
-                    onChange={handleFieldChange(setDescription, 'description')}
-                    fullWidth
-                    multiline
-                    rows={3}
-                  />
-                  <Stack direction="row" spacing={2}>
-                    <FormControl fullWidth>
-                      <InputLabel>Visibility</InputLabel>
-                      <Select
-                        value={visibility}
-                        label="Visibility"
-                        onChange={handleFieldChange(setVisibility, 'visibility')}
-                      >
-                        <MenuItem value="draft">Draft</MenuItem>
-                        <MenuItem value="admin_only">Admin Only</MenuItem>
-                        <MenuItem value="published">Published</MenuItem>
-                      </Select>
-                      <FormHelperText>
-                        {visibility === 'published'
-                          ? 'Visible to all users'
-                          : visibility === 'admin_only'
-                            ? 'Only admins can see this'
-                            : 'Not visible to users yet'}
-                      </FormHelperText>
-                    </FormControl>
-                    <FormControl fullWidth>
-                      <InputLabel>Scope</InputLabel>
-                      <Select value={scope} label="Scope" onChange={handleFieldChange(setScope, 'scope')}>
-                        <MenuItem value="user">Per User</MenuItem>
-                        <MenuItem value="shared">Shared</MenuItem>
-                      </Select>
-                      <FormHelperText>
-                        {scope === 'shared' ? 'Runs once, result shared with all users' : 'Runs once per active user'}
-                      </FormHelperText>
-                    </FormControl>
-                    <TextField
-                      label="Max Run Time (s)"
-                      type="number"
-                      value={maxRunSeconds}
-                      onChange={handleFieldChange(setMaxRunSeconds, 'max_run_seconds')}
-                      fullWidth
-                      inputProps={{ min: 10, max: 600 }}
-                      helperText="Timeout before the run is cancelled"
-                    />
-                  </Stack>
-                  {scope === 'shared' && (
-                    <Alert severity="info">
-                      This experience will run using the creator's account for data access and plugin authentication.
-                    </Alert>
-                  )}
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={includePreviousRun}
-                        onChange={(e) => {
-                          setIncludePreviousRun(e.target.checked);
-                          setIsDirty(true);
-                        }}
-                      />
-                    }
-                    label="Include output from previous successful run in context"
-                  />
-                </Stack>
+                <ExperienceBasicInfoPanel
+                  name={name}
+                  description={description}
+                  visibility={visibility}
+                  scope={scope}
+                  maxRunSeconds={maxRunSeconds}
+                  includePreviousRun={includePreviousRun}
+                  onFieldChange={makePanelFieldChange}
+                  onIncludePreviousRunChange={(e) => {
+                    setIncludePreviousRun(e.target.checked);
+                    markDirty();
+                  }}
+                  validationErrors={validationErrors}
+                />
               </Paper>
 
-              {/* Trigger Configuration */}
               <Paper sx={{ p: 3 }}>
                 <Typography variant="h6" gutterBottom>
                   Trigger Configuration
@@ -465,12 +378,11 @@ export default function ExperienceEditor() {
                   triggerConfig={triggerConfig}
                   onTriggerTypeChange={(newType) => {
                     setTriggerType(newType);
-                    setIsDirty(true);
+                    markDirty();
                   }}
                   onTriggerConfigChange={(newConfig) => {
                     setTriggerConfig(newConfig);
-                    setIsDirty(true);
-                    // Clear validation errors for trigger config fields when they change
+                    markDirty();
                     if (validationErrors.scheduled_at || validationErrors.cron || validationErrors.timezone) {
                       const newErrors = { ...validationErrors };
                       delete newErrors.scheduled_at;
@@ -485,92 +397,30 @@ export default function ExperienceEditor() {
                 />
               </Paper>
 
-              {/* LLM Configuration */}
               <Paper sx={{ p: 3 }}>
                 <Typography variant="h6" gutterBottom>
                   LLM Configuration (Optional)
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Configure the LLM to process step outputs and generate final results. Leave empty if you only want to
-                  collect data without AI synthesis.
-                </Typography>
-                <Stack spacing={2}>
-                  <ModelConfigurationSelector
-                    modelConfigurationId={modelConfigurationId}
-                    onModelConfigurationChange={(newConfigId) => {
-                      setModelConfigurationId(newConfigId);
-                      setIsDirty(true);
-                      // Clear model configuration validation errors
-                      if (validationErrors.model_configuration_id) {
-                        const newErrors = { ...validationErrors };
-                        delete newErrors.model_configuration_id;
-                        setValidationErrors(newErrors);
-                      }
-                    }}
-                    validationErrors={validationErrors}
-                    required={false}
-                    showHelperText={true}
-                    label="Model Configuration"
-                    showDetails={true}
-                  />
-
-                  {/* Only show prompt options if model configuration is selected */}
-                  {modelConfigurationId && (
-                    <>
-                      <Divider />
-                      <FormControl fullWidth>
-                        <InputLabel>Prompt Template</InputLabel>
-                        <Select
-                          value={promptId}
-                          label="Prompt Template"
-                          onChange={handleFieldChange(setPromptId, 'prompt_id')}
-                        >
-                          <MenuItem value="">
-                            <em>Use model configuration prompt</em>
-                          </MenuItem>
-                          {prompts.map((p) => (
-                            <MenuItem key={p.id} value={p.id}>
-                              {p.name}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      {!promptId && (
-                        <>
-                          <TextField
-                            label="Inline Prompt Template"
-                            value={inlinePromptTemplate}
-                            onChange={handleFieldChange(setInlinePromptTemplate, 'inline_prompt_template')}
-                            fullWidth
-                            multiline
-                            rows={20}
-                            placeholder="Use {{ step_outputs.step_key }} to reference step results"
-                            helperText="Jinja2 template with access to step_outputs, user, and previous_run. Overrides model configuration prompt."
-                            inputRef={inlinePromptRef}
-                          />
-                          <TemplateVariableHints
-                            steps={steps}
-                            includePreviousRun={includePreviousRun}
-                            onInsert={handleInsertVariable}
-                          />
-                        </>
-                      )}
-                    </>
-                  )}
-
-                  {/* Show helpful message when no model configuration is selected */}
-                  {!modelConfigurationId && (
-                    <Alert severity="info" sx={{ mt: 1 }}>
-                      No LLM synthesis configured. This experience will only collect and return step outputs without AI
-                      processing.
-                    </Alert>
-                  )}
-                </Stack>
+                <ExperienceLLMPanel
+                  modelConfigurationId={modelConfigurationId}
+                  promptId={promptId}
+                  inlinePromptTemplate={inlinePromptTemplate}
+                  steps={steps}
+                  includePreviousRun={includePreviousRun}
+                  onModelConfigurationChange={(newConfigId) => {
+                    setModelConfigurationId(newConfigId);
+                    markDirty();
+                    clearValidationError('model_configuration_id');
+                  }}
+                  onFieldChange={makePanelFieldChange}
+                  onInsertVariable={handleInsertVariable}
+                  validationErrors={validationErrors}
+                  inlinePromptRef={inlinePromptRef}
+                />
               </Paper>
             </Stack>
           </Grid>
 
-          {/* Right Column - Steps Builder */}
           <Grid item xs={12} md={12} xl={7}>
             <Paper sx={{ p: 3 }}>
               <Typography variant="h6" gutterBottom>
