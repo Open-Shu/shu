@@ -47,6 +47,13 @@ if "shu.plugins.host" not in sys.modules:
     _host_mod = MagicMock()
     sys.modules["shu.plugins.host"] = _host_mod
 
+# Also mock the services.policy_engine path which creates a second circular
+# import chain: executor -> policy_engine -> services/__init__ -> chat_service
+# -> llm -> plugin_execution -> executor.
+if "shu.services.policy_engine" not in sys.modules:
+    _pe_mod = MagicMock()
+    sys.modules["shu.services.policy_engine"] = _pe_mod
+
 from fastapi import HTTPException
 
 from shu.plugins.executor import Executor
@@ -57,10 +64,10 @@ from shu.plugins.executor import Executor
 # ---------------------------------------------------------------------------
 
 def _make_plugin(schema: dict) -> MagicMock:
-    """Return a minimal plugin stub whose get_schema() returns *schema*."""
+    """Return a minimal plugin stub whose get_schema_for_op() returns *schema*."""
     plugin = MagicMock()
-    plugin.get_schema.return_value = schema
-    plugin.get_schema_for_op = None
+    plugin.name = "test-plugin"
+    plugin.get_schema_for_op.return_value = schema
     return plugin
 
 
@@ -93,7 +100,7 @@ def test_validate_strips_none_params():
     executor = _make_executor()
     plugin = _make_plugin(_SCHEMA)
 
-    result = executor._validate(plugin, {"op": "list", "query_filter": None})
+    result = executor._validate(plugin, {"op": "list", "query_filter": None}, "list")
 
     assert result == {"op": "list"}, (
         "query_filter=None should be stripped; returned dict must not contain it"
@@ -106,7 +113,7 @@ def test_validate_required_field_still_enforced():
     plugin = _make_plugin(_SCHEMA)
 
     with pytest.raises(HTTPException) as exc_info:
-        executor._validate(plugin, {"query_filter": None})
+        executor._validate(plugin, {"query_filter": None}, "list")
 
     assert exc_info.value.status_code == 422, (
         "Missing required field 'op' must raise HTTP 422"

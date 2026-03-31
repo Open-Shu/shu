@@ -21,6 +21,7 @@ from ..plugins.base import Plugin
 from ..plugins.executor import EXECUTOR
 from ..plugins.loader import PluginRecord
 from ..plugins.registry import REGISTRY
+from ..plugins.schema import resolve_all_ops
 from ..schemas.envelope import SuccessResponse
 from ..services.plugin_execution import get_allowed_plugin_names
 from ..services.plugin_identity import (
@@ -62,25 +63,9 @@ def get_chat_ops(rec: PluginRecord) -> list:
         return []
 
 
-async def get_plugin_and_schema(name: str, db: AsyncSession) -> tuple[Plugin | None, dict[str, Any] | None]:
-    plugin = None
+async def resolve_plugin(name: str, db: AsyncSession) -> Plugin | None:
     try:
-        plugin = await REGISTRY.resolve(name, db)
-    except Exception:
-        pass
-
-    schema = None
-    try:
-        schema = plugin.get_schema()
-    except Exception:
-        pass
-
-    return plugin, schema
-
-
-def get_enum_labels(schema: dict[str, Any] | None) -> dict[str, str] | None:
-    try:
-        return ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get("enum_labels")
+        return await REGISTRY.resolve(name, db)
     except Exception:
         return None
 
@@ -110,33 +95,19 @@ async def list_chat_plugins(
         if not chat_ops:
             continue
 
-        # Load plugin to get schema and optional labels/help
-        plugin, schema = await get_plugin_and_schema(name, db)
+        plugin = await resolve_plugin(name, db)
         if not plugin:
             continue
 
-        # Derive enum labels/help for title/description when available
-        enum_labels = get_enum_labels(schema)
-
-        for op in chat_ops:
-            title = None
-            description = None
-            if isinstance(enum_labels, dict):
-                label = enum_labels.get(str(op))
-                if label:
-                    title = label
-            # Fallback titles
-            if not title:
-                title = f"{name}:{op}"
-            base_schema = schema or {
+        for op, resolved in resolve_all_ops(plugin, chat_ops).items():
+            base_schema = resolved.schema or {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": True,
             }
-            # Deep-copy the base schema so we can pin the `op` field per chat-callable operation
-            # without mutating the plugin's original schema (shared across ops/endpoints). This limits
-            # the available operations to the chat-callable subset declared in the manifest, which prevents
-            # op injection attacks or LLM accidental execution of non-chat-callable ops.
+            # Deep-copy so we can pin the `op` field per chat-callable operation without
+            # mutating the plugin's original schema. This limits available operations to
+            # the chat-callable subset, preventing op injection or accidental execution.
             op_schema = copy.deepcopy(base_schema)
             props = op_schema.setdefault("properties", {})
             props["op"] = {
@@ -154,8 +125,8 @@ async def list_chat_plugins(
                 ChatPluginOpDescriptor(
                     name=name,
                     op=op,
-                    title=title,
-                    description=description,
+                    title=resolved.title or f"{name}:{op}",
+                    description=resolved.description,
                     input_schema=op_schema,
                     required_identities=list(getattr(rec, "required_identities", []) or []),
                     chat_callable=True,

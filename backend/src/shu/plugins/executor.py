@@ -30,6 +30,7 @@ from ..core.cache_backend import CacheBackend, get_cache_backend
 from ..core.config import get_settings_instance  # type: ignore
 from ..services.policy_engine import POLICY_CACHE
 from .base import ExecuteContext, Plugin, PluginResult
+from .schema import resolve_op_schema
 
 logger = logging.getLogger(__name__)
 
@@ -233,39 +234,19 @@ class Executor:
             self._limiter = None
             self._provider_limiter = None
 
-    def _validate(self, plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
-        """Validate the provided params against the plugin's input schema and return the params if validation succeeds.
+    def _validate(self, plugin: Plugin, params: dict[str, Any], op: str) -> dict[str, Any]:
+        """Validate params against the plugin's per-op input schema.
 
-        If the plugin exposes no schema, the params are returned unchanged (with stripped None values). If jsonschema
-        is available, perform full schema validation and raise an HTTPException with status 422 and a structured detail
-        on validation failure. If jsonschema is not available, ensure all keys listed under the schema's "required"
-        field are present and raise an HTTPException 422 identifying a missing key if not.
-
-        Parameters
-        ----------
-            plugin (Plugin): Plugin instance whose schema will be used (via plugin.get_schema()).
-            params (Dict[str, Any]): Input parameters to validate.
-
-        Returns
-        -------
-            Dict[str, Any]: The same `params` dictionary if validation passes.
+        If the plugin exposes no schema for *op*, params are returned unchanged
+        (with stripped None values). Uses ``resolve_op_schema`` to try the per-op
+        interface first and fall back to the deprecated combined schema.
 
         Raises
         ------
-            HTTPException: Raised with status code 422 and a structured detail when validation fails or required keys are missing.
+            HTTPException: 422 when validation fails or required keys are missing.
 
         """
-        schema = None
-        try:
-            # Call the more precise `get_schema_for_op` function, with fallback to the legacy `get_schema` function
-            op = params.get("op") if isinstance(params, dict) else None
-            get_schema_for_op = getattr(plugin, "get_schema_for_op", None)
-            if op and get_schema_for_op:
-                schema = get_schema_for_op(op)
-            if not schema:
-                schema = plugin.get_schema()
-        except Exception:
-            logger.exception("Plugin.get_schema failed for %s", getattr(plugin, "name", "?"))
+        schema = resolve_op_schema(plugin, op)
         if not schema:
             return params
 
@@ -587,7 +568,7 @@ class Executor:
                     )
 
             # Validate
-            vparams = self._validate(plugin, raw_params)
+            vparams = self._validate(plugin, raw_params, str(raw_params.get("op") or ""))
 
             # Derive op_auth scopes into host overlay for host.auth resolution (AUTH-REF-001)
             try:

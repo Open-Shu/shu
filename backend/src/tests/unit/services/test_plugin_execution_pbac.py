@@ -134,6 +134,7 @@ class TestExecutorPbac:
         executor = Executor(settings=settings)
         plugin = MagicMock()
         plugin.name = "gmail"
+        plugin.get_schema_for_op.return_value = None
         plugin.get_schema.return_value = None
         plugin.get_output_schema.return_value = None
         mock_result = MagicMock()

@@ -529,9 +529,7 @@ class AnthropicAdapter(BaseProviderAdapter):
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         anthropic_tools = []
         for tool in tools:
-            title = None
-            if isinstance(tool.enum_labels, dict):
-                title = tool.enum_labels.get(str(tool.op))
+            title = tool.title
             tool_name = f"{tool.name}__{tool.op}"
             input_schema = tool.schema or {
                 "type": "object",
