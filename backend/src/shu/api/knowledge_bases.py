@@ -1176,9 +1176,8 @@ async def import_knowledge_base(
 ):
     """Import a knowledge base from a zip archive."""
     try:
-        queue = await get_queue_backend()
         kb_service = KnowledgeBaseService(db)
-        service = KBImportExportService(db, kb_service, queue=queue)
+        service = KBImportExportService(db, kb_service)
         result = await service.start_import(file, skip_embeddings, str(current_user.id))
         return ShuResponse.created(result.model_dump())
 

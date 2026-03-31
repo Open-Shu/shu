@@ -300,6 +300,17 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Failed to start unified scheduler: {e}")
 
+    # Mark stale KB imports as error (runs unconditionally — imports use background
+    # tasks in the API process, not the worker queue)
+    try:
+        from .services.kb_import_export_service import mark_stale_imports_as_error
+
+        marked = await mark_stale_imports_as_error()
+        if marked:
+            logger.info(f"Marked {marked} stale importing KB(s) as error")
+    except Exception as e:
+        logger.error(f"Failed to mark stale imports: {e}", exc_info=True)
+
     # Start inline workers if workers are enabled
     try:
         if settings.workers_enabled:
@@ -320,16 +331,6 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                     logger.info(f"Re-enqueued {resumed} interrupted re-embedding job(s)")
             except Exception as e:
                 logger.error(f"Failed to recover interrupted re-embedding jobs: {e}", exc_info=True)
-
-            # Mark stale KB imports as error (no recovery possible — temp file is gone)
-            try:
-                from .workers.kb_import_handler import mark_stale_imports_as_error
-
-                marked = await mark_stale_imports_as_error()
-                if marked:
-                    logger.info(f"Marked {marked} stale importing KB(s) as error")
-            except Exception as e:
-                logger.error(f"Failed to mark stale imports: {e}", exc_info=True)
 
             # Create process-shared capacity limiter (ensures OCR/profiling limits
             # are enforced across all workers, not per-worker)

@@ -619,15 +619,15 @@ class TestStartImport:
         db = _make_mock_db_for_import()
         kb_service = MagicMock()
         kb_service.slug_exists = AsyncMock(return_value=False)
-        queue = AsyncMock()
 
         with (
-            patch("shu.services.kb_import_export_service.enqueue_job", new_callable=AsyncMock),
+            patch("shu.services.kb_import_export_service.asyncio.create_task"),
             patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings,
         ):
             mock_settings.return_value.default_embedding_model = "test-model"
             mock_settings.return_value.kb_import_max_archive_size = 500 * 1024 * 1024
-            service = KBImportExportService(db, kb_service, queue=queue)
+            mock_settings.return_value.ingestion_staging_dir = "/tmp/test-staging"
+            service = KBImportExportService(db, kb_service)
             result = await service.start_import(file, skip_embeddings=False, owner_id="user-1")
 
         assert result.name == "Test KB"
@@ -645,15 +645,15 @@ class TestStartImport:
         db = _make_mock_db_for_import()
         kb_service = MagicMock()
         kb_service.slug_exists = AsyncMock(return_value=True)  # slug always taken
-        queue = AsyncMock()
 
         with (
-            patch("shu.services.kb_import_export_service.enqueue_job", new_callable=AsyncMock),
+            patch("shu.services.kb_import_export_service.asyncio.create_task"),
             patch("shu.services.kb_import_export_service.get_settings_instance") as mock_settings,
         ):
             mock_settings.return_value.default_embedding_model = "test-model"
             mock_settings.return_value.kb_import_max_archive_size = 500 * 1024 * 1024
-            service = KBImportExportService(db, kb_service, queue=queue)
+            mock_settings.return_value.ingestion_staging_dir = "/tmp/test-staging"
+            service = KBImportExportService(db, kb_service)
             result = await service.start_import(file, skip_embeddings=False, owner_id="user-1")
 
         assert result.slug.startswith("test-kb-")

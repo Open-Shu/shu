@@ -4,6 +4,7 @@ Handles exporting a knowledge base to a portable zip archive and importing
 it on another Shu instance without re-profiling.
 """
 
+import asyncio
 import io
 import json
 import os
@@ -22,9 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.core.config import get_settings_instance
 from shu.core.exceptions import ValidationError
 from shu.core.logging import get_logger
-from shu.core.queue_backend import QueueBackend
 from shu.core.text import slugify
-from shu.core.workload_routing import WorkloadType, enqueue_job
 from shu.models.document import Document, DocumentChunk, DocumentQuery, DocumentStatus
 from shu.models.knowledge_base import KnowledgeBase
 from shu.schemas.knowledge_base import ImportManifestValidation, ImportStartResult
@@ -34,6 +33,9 @@ logger = get_logger(__name__)
 
 SCHEMA_VERSION = "1"
 
+# Prevent background import tasks from being garbage collected before completion
+_active_import_tasks: set[asyncio.Task] = set()
+
 
 class KBImportExportService:
     """Service for importing and exporting knowledge bases."""
@@ -42,19 +44,16 @@ class KBImportExportService:
         self,
         db: AsyncSession,
         kb_service: KnowledgeBaseService,
-        queue: QueueBackend | None = None,
     ) -> None:
         """Initialize the service.
 
         Args:
             db: Async database session.
             kb_service: Knowledge base service for PBAC-enforced lookups.
-            queue: Queue backend for enqueuing import jobs. Required for start_import.
 
         """
         self.db = db
         self.kb_service = kb_service
-        self.queue = queue
         self._settings = get_settings_instance()
 
     @staticmethod
@@ -140,7 +139,9 @@ class KBImportExportService:
 
         """
         max_archive = self._settings.kb_import_max_archive_size
-        archive_path = f"{tempfile.gettempdir()}/shu-import-{uuid.uuid4()}.zip"
+        staging_dir = self._settings.ingestion_staging_dir
+        os.makedirs(staging_dir, exist_ok=True)
+        archive_path = os.path.join(staging_dir, f"import-{uuid.uuid4()}.zip")
         total = 0
         try:
             with open(archive_path, "wb") as out:
@@ -282,24 +283,16 @@ class KBImportExportService:
         await self.db.commit()
         await self.db.refresh(kb)
 
-        # Enqueue background job — clean up on failure
-        try:
-            await enqueue_job(
-                self.queue,
-                WorkloadType.KB_IMPORT,
-                payload={
-                    "knowledge_base_id": kb.id,
-                    "archive_path": archive_path,
-                    "skip_embeddings": skip_embeddings,
-                },
-            )
-        except Exception:
-            logger.error("Failed to enqueue KB import job", extra={"kb_id": kb.id}, exc_info=True)
-            await self._mark_import_failed(kb.id, "Failed to enqueue import job", archive_path)
-            raise
+        # Start background import task. Store reference to prevent GC before completion.
+        task = asyncio.create_task(
+            _run_import_background(kb.id, archive_path, skip_embeddings),
+            name=f"kb-import-{kb.id}",
+        )
+        _active_import_tasks.add(task)
+        task.add_done_callback(_active_import_tasks.discard)
 
         logger.info(
-            "KB import enqueued",
+            "KB import started",
             extra={"kb_id": kb.id, "slug": slug, "archive_path": archive_path},
         )
 
@@ -330,13 +323,13 @@ class KBImportExportService:
     async def execute_import(self, archive_path: str, kb_id: str, skip_embeddings: bool) -> None:
         """Execute the full import from a zip archive.
 
-        Called by the background worker. Reads JSONL files line-by-line,
+        Called by the background task. Reads JSONL files line-by-line,
         assigns new UUIDs, remaps relationships, and bulk-inserts in batches.
         Updates import_progress on the KB row as it goes.
 
         Includes a status guard: if the KB is no longer in ``importing``
-        status (e.g. a duplicate job delivery or a concurrent restart),
-        the import is skipped to avoid duplicating rows.
+        status (e.g. a server restart mid-import), the import is skipped
+        to avoid duplicating rows.
 
         Args:
             archive_path: Path to the temp zip file on disk.
@@ -585,6 +578,7 @@ class KBImportExportService:
             kb.total_chunks = chunk_count
             kb.embedding_status = "stale" if skip_embeddings else "current"
             kb.status = "active"
+            kb.sync_enabled = True
             kb.import_progress = {**(kb.import_progress or {}), "phase": "complete"}
 
             await self.db.commit()
@@ -800,3 +794,70 @@ class KBImportExportService:
                 last_id = rows[-1].id
 
         return count
+
+
+async def _run_import_background(kb_id: str, archive_path: str, skip_embeddings: bool) -> None:
+    """Run KB import in a background task with its own database session.
+
+    This function is spawned by start_import via asyncio.create_task. It creates
+    a fresh database session so the import can proceed after the HTTP request ends.
+
+    Args:
+        kb_id: Knowledge base ID.
+        archive_path: Path to the import archive.
+        skip_embeddings: Whether to skip embedding vectors.
+
+    """
+    from shu.core.database import get_async_session_local
+
+    session_factory = get_async_session_local()
+
+    try:
+        async with session_factory() as session:
+            kb_service = KnowledgeBaseService(session)
+            service = KBImportExportService(session, kb_service)
+            await service.execute_import(archive_path, kb_id, skip_embeddings)
+    except Exception as e:
+        logger.error(
+            "Background KB import failed",
+            extra={"kb_id": kb_id, "error": str(e)},
+            exc_info=True,
+        )
+
+
+async def mark_stale_imports_as_error() -> int:
+    """Mark KBs stuck in 'importing' status as error on startup.
+
+    If the server restarted mid-import, the background task is gone and the
+    archive file may be orphaned. Mark these KBs as error so they don't sit
+    in limbo.
+
+    Returns:
+        Number of KBs marked as error.
+
+    """
+    from shu.core.database import get_async_session_local
+
+    session_factory = get_async_session_local()
+    count = 0
+
+    async with session_factory() as session:
+        result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.status == "importing"))
+        stale_kbs = result.scalars().all()
+
+        for kb in stale_kbs:
+            kb.status = "error"
+            kb.import_progress = {
+                **(kb.import_progress or {}),
+                "error": "Import interrupted by server restart",
+            }
+            count += 1
+            logger.warning(
+                "Marked stale importing KB as error",
+                extra={"kb_id": kb.id, "name": kb.name},
+            )
+
+        if count:
+            await session.commit()
+
+    return count
