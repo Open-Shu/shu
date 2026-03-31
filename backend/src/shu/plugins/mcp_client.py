@@ -240,7 +240,9 @@ class McpClient:
             code = error.get("code") if isinstance(error, dict) else None
             message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
             raise McpProtocolError(f"JSON-RPC error: {message}", server_url=self._url, code=code)
-        return data.get("result", {})
+        if "result" not in data:
+            raise McpProtocolError("Malformed JSON-RPC response: missing 'result' field", server_url=self._url)
+        return data["result"]
 
     def _parse_json_response_from_text(self, body: str, status_code: int, request_id: int) -> dict[str, Any]:
         """Parse a direct JSON-RPC response from body text."""
