@@ -643,8 +643,9 @@ class BenchmarkRunner:
     ) -> dict[str, Any]:
         """Compute head-to-head answer-utility comparison.
 
-        For each query, counts score-2 (highly relevant) documents in each
-        strategy's top-k. The strategy with more score-2 docs wins that query.
+        For each query, counts documents at the maximum relevance level in each
+        strategy's top-k. The strategy with more top-relevance docs wins that query.
+        Adapts to both graded (max=2) and binary (max=1) qrels.
 
         This metric directly measures which strategy surfaces more documents
         that would help an LLM answer the user's question — the core value
@@ -652,8 +653,13 @@ class BenchmarkRunner:
 
         Returns:
             Dict with ms_wins, bl_wins, ties, decided, ms_win_pct,
-            total_bl_score2, total_ms_score2, advantage_pct, and per_query detail.
+            total_bl_score2, total_ms_score2, advantage_pct, max_relevance,
+            and per_query detail.
         """
+        # Determine the maximum relevance label in the qrels
+        all_rels = [rel for doc_rels in qrels_dict.values() for rel in doc_rels.values()]
+        max_relevance = max(all_rels, default=1)
+
         per_query = []
         for query_id, doc_relevance in sorted(qrels_dict.items()):
             # Top-k from each strategy by score
@@ -669,10 +675,10 @@ class BenchmarkRunner:
             )[:k]
 
             bl_score2 = sum(
-                1 for doc_id, _ in bl_docs if doc_relevance.get(doc_id, 0) == 2
+                1 for doc_id, _ in bl_docs if doc_relevance.get(doc_id, 0) >= max_relevance
             )
             ms_score2 = sum(
-                1 for doc_id, _ in ms_docs if doc_relevance.get(doc_id, 0) == 2
+                1 for doc_id, _ in ms_docs if doc_relevance.get(doc_id, 0) >= max_relevance
             )
 
             if ms_score2 > bl_score2:
@@ -696,18 +702,20 @@ class BenchmarkRunner:
         total_bl = sum(r["bl_score2"] for r in per_query)
         total_ms = sum(r["ms_score2"] for r in per_query)
 
+        rel_label = f"score-{max_relevance}" if max_relevance > 1 else "relevant"
         logger.info(
             "  Head-to-head: MS wins %d, BL wins %d, Ties %d "
             "(MS wins %d%% of %d decided). "
-            "Score-2 in top-%d: BL=%d, MS=%d (%+.1f%%)",
+            "%s in top-%d: BL=%d, MS=%d (%+.1f%%)",
             ms_wins, bl_wins, ties,
             round(ms_wins / decided * 100) if decided else 0, decided,
-            k, total_bl, total_ms,
+            rel_label, k, total_bl, total_ms,
             (total_ms - total_bl) / total_bl * 100 if total_bl else 0,
         )
 
         return {
             "k": k,
+            "max_relevance": max_relevance,
             "queries_evaluated": len(per_query),
             "ms_wins": ms_wins,
             "bl_wins": bl_wins,

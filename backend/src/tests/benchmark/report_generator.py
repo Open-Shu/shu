@@ -167,15 +167,17 @@ class ReportGenerator:
         # Head-to-head answer-utility comparison
         h2h = results.head_to_head
         if h2h and h2h.get("decided", 0) > 0:
+            max_rel = h2h.get("max_relevance", 2)
+            txt_rel_label = f"score-{max_rel}" if max_rel > 1 else "relevant"
             w("-" * 70)
-            w(f"ANSWER-UTILITY HEAD-TO-HEAD (score-2 in top-{h2h['k']})")
+            w(f"ANSWER-UTILITY HEAD-TO-HEAD ({txt_rel_label} in top-{h2h['k']})")
             w("-" * 70)
             w("")
             w(f"  MS wins:  {h2h['ms_wins']}")
             w(f"  BL wins:  {h2h['bl_wins']}")
             w(f"  Ties:     {h2h['ties']}")
             w(f"  MS win rate: {h2h['ms_win_pct']:.0f}% of {h2h['decided']} decided")
-            w(f"  Score-2 total: BL={h2h['total_bl_score2']}, MS={h2h['total_ms_score2']} ({h2h['advantage_pct']:+.1f}%)")
+            w(f"  {txt_rel_label.capitalize()} total: BL={h2h['total_bl_score2']}, MS={h2h['total_ms_score2']} ({h2h['advantage_pct']:+.1f}%)")
             w("")
 
         # Threshold analysis
@@ -471,9 +473,11 @@ class ReportGenerator:
         if h2h and h2h.get("decided", 0) > 0:
             w.append("## Answer-Utility Head-to-Head")
             w.append("")
+            max_rel = h2h.get("max_relevance", 2)
+            rel_label = f"score-{max_rel}" if max_rel > 1 else "relevant"
             w.append(
                 f"Per-query comparison: which strategy's top-{h2h['k']} results "
-                "contain more highly-relevant (score-2) documents?"
+                f"contain more {rel_label} documents?"
             )
             w.append("")
             w.append("| Outcome | Count | Percentage |")
@@ -486,7 +490,7 @@ class ReportGenerator:
             w.append(
                 f"MS wins **{h2h['ms_win_pct']:.0f}%** of decided matchups "
                 f"({h2h['ms_wins']} of {h2h['decided']}). "
-                f"Aggregate score-2 in top-{h2h['k']}: "
+                f"Aggregate {rel_label} in top-{h2h['k']}: "
                 f"BL={h2h['total_bl_score2']}, MS={h2h['total_ms_score2']} "
                 f"(**{h2h['advantage_pct']:+.1f}%**)."
             )
@@ -863,10 +867,14 @@ class ReportGenerator:
             )
             w.append("")
 
-        w.append(
-            "**Weight tuning:** Current results use equal weights across active surfaces. "
-            "Data-driven weight optimization would likely improve fusion performance further."
-        )
+        if results.config and results.config.weight_overrides:
+            weight_desc = ", ".join(f"{s}={v}" for s, v in sorted(results.config.weight_overrides.items()))
+            w.append(f"**Weights:** Custom weight overrides applied: {weight_desc}.")
+        else:
+            w.append(
+                "**Weight tuning:** Current results use equal weights across active surfaces. "
+                "Data-driven weight optimization would likely improve fusion performance further."
+            )
         w.append("")
 
         # Attribution

@@ -240,11 +240,15 @@ class ScoreFusionService:
             doc_scores[doc_id] = (final_score, surface_scores, surface_metadata)
 
         # Capture all surface scores before truncation — used by benchmarks
-        # for unbiased per-surface evaluation. Zero additional cost since
-        # doc_scores is already computed.
-        all_surface_scores: dict[str, dict[str, float]] = {
-            str(doc_id): surface_scores for doc_id, (_, surface_scores, _) in doc_scores.items()
-        }
+        # for unbiased per-surface evaluation. Built from doc_hits (not
+        # doc_scores) so zero-weight-only documents (e.g. BM25-only when
+        # BM25 weight is 0) are still included for per-surface analysis.
+        all_surface_scores: dict[str, dict[str, float]] = {}
+        for doc_id, surface_hits in doc_hits.items():
+            scores_for_doc: dict[str, float] = {}
+            for surface_name, hits in surface_hits.items():
+                scores_for_doc[surface_name] = max(h.score for h in hits)
+            all_surface_scores[str(doc_id)] = scores_for_doc
 
         # Step 5: Filter by threshold and sort
         filtered_docs = [
