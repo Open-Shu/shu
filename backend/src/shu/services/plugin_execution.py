@@ -12,6 +12,7 @@ from shu.plugins.base import Plugin
 from shu.plugins.executor import EXECUTOR
 from shu.plugins.loader import PluginRecord
 from shu.plugins.registry import REGISTRY
+from shu.plugins.schema import extract_op_title, resolve_op_schema
 from shu.services.plugin_identity import PluginIdentityError, ensure_user_identity_for_plugin
 from shu.services.policy_engine import POLICY_CACHE
 
@@ -86,50 +87,25 @@ async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[Call
         if not plugin:
             continue
 
-        schema: dict[str, Any] | None = None
-        try:
-            schema = plugin.get_schema()
-        except Exception:
-            pass
-
-        enum_labels: dict[str, Any] | None = None
-        try:
-            enum_labels = ((((schema or {}).get("properties") or {}).get("op") or {}).get("x-ui", {})).get(
-                "enum_labels"
-            )
-        except Exception:
-            pass
-
         for op in chat_ops:
-            # Use a per-op schema when the plugin provides get_schema_for_op().
-            # Falls back to the shared schema for plugins that don't implement it.
-            op_schema = schema
-            try:
-                get_op_schema = getattr(plugin, "get_schema_for_op", None)
-                if callable(get_op_schema):
-                    per_op = get_op_schema(op)
-                    if per_op is not None:
-                        op_schema = per_op
-            except Exception:
-                pass
-
+            op_schema = resolve_op_schema(plugin, op)
             tools.append(
                 CallableTool(
                     name=_sanitize_plugin_name(name),
                     op=op,
                     plugin=plugin,
                     schema=op_schema,
-                    enum_labels=enum_labels,
+                    title=extract_op_title(op_schema, op),
                 )
             )
 
     return tools
 
 
-def _coerce_params(plugin: Plugin, params: dict[str, Any]) -> dict[str, Any]:
+def _coerce_params(plugin: Plugin, params: dict[str, Any], op: str) -> dict[str, Any]:
     """Coerce parameter types based on plugin schema."""
     try:
-        schema = plugin.get_schema()
+        schema = resolve_op_schema(plugin, op)
         if not schema:
             return params
 
@@ -262,8 +238,8 @@ async def execute_plugin(
         user_email_val = None
 
     params = dict(args_dict or {})
-    params = _coerce_params(plugin, params)
     params["op"] = operation
+    params = _coerce_params(plugin, params, operation)
 
     try:
         await ensure_user_identity_for_plugin(

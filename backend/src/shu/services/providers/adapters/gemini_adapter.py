@@ -454,9 +454,7 @@ class GeminiAdapter(BaseProviderAdapter):
     async def inject_tool_payload(self, tools: list[CallableTool], payload: dict[str, Any]) -> dict[str, Any]:
         res: list[dict[str, Any]] = []
         for tool in tools:
-            title = None
-            if isinstance(tool.enum_labels, dict):
-                title = tool.enum_labels.get(str(tool.op))
+            title = tool.title
             fname = f"{tool.name}__{tool.op}"
             op_schema = copy.deepcopy(tool.schema) if tool.schema else {"type": "object", "properties": {}}
             props = op_schema.setdefault("properties", {})

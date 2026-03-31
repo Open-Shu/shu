@@ -42,7 +42,19 @@ class Plugin(Protocol):
     version: str
 
     def get_schema(self) -> dict[str, Any] | None:
-        """Return a JSON schema for parameters if available."""
+        """Return a combined JSON schema for all operations.
+
+        Deprecated: Implement ``get_schema_for_op`` instead to provide
+        accurate per-operation schemas.
+        """
+        ...
+
+    def get_schema_for_op(self, op: str) -> dict[str, Any] | None:
+        """Return the JSON schema for a specific operation.
+
+        Returns ``None`` if the plugin cannot provide a schema for *op*.
+        Preferred over the deprecated ``get_schema`` method.
+        """
         ...
 
     def get_output_schema(self) -> dict[str, Any] | None:

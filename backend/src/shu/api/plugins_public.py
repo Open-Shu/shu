@@ -24,6 +24,7 @@ from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_registry import PluginDefinition
 from ..plugins.executor import EXECUTOR
 from ..plugins.registry import REGISTRY
+from ..plugins.schema import resolve_all_ops
 from ..schemas.envelope import SuccessResponse
 from ..services.plugin_identity import get_provider_identities_map, resolve_user_email_for_execution
 from ..services.plugin_validation import enforce_input_limit, enforce_output_limit
@@ -39,18 +40,47 @@ class PluginExecuteRequest(BaseModel):
     agent_key: str | None = None
 
 
+class OpSchemaResponse(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    input_schema: dict[str, Any] | None = None
+
+
 class PluginInfoResponse(BaseModel):
     name: str
     version: str | None = None
     enabled: bool
     display_name: str | None = None
-    input_schema: dict[str, Any] | None = None
+    ops: dict[str, OpSchemaResponse] = Field(default_factory=dict)
     output_schema: dict[str, Any] | None = None
     capabilities: list[str] | None = None
     required_identities: list[dict[str, Any]] | None = None
     op_auth: dict[str, Any] | None = None
     default_feed_op: str | None = None
     allowed_feed_ops: list[str] | None = None
+
+
+async def _resolve_ops(
+    plugin_name: str,
+    rec: Any,
+    enabled: bool,
+    db: AsyncSession,
+) -> dict[str, OpSchemaResponse]:
+    """Resolve per-op schemas for a plugin from the live instance."""
+    declared_ops = list(rec.chat_callable_ops or []) + list(rec.allowed_feed_ops or [])
+    if not declared_ops or not enabled:
+        return {}
+    plugin = await REGISTRY.resolve(plugin_name, db)
+    if not plugin:
+        return {}
+    return {
+        op_name: OpSchemaResponse(
+            title=resolved.title,
+            description=resolved.description,
+            input_schema=resolved.schema,
+        )
+        for op_name, resolved in resolve_all_ops(plugin, declared_ops).items()
+    }
 
 
 @router.get("/", response_model=SuccessResponse[list[PluginInfoResponse]])
@@ -77,29 +107,31 @@ async def list_plugins(
             req_ids = (
                 list(rec.required_identities or []) if getattr(rec, "required_identities", None) is not None else None
             )
-            op_auth = dict(rec.op_auth or {}) if getattr(rec, "op_auth", None) is not None else None
+            op_auth_val = dict(rec.op_auth or {}) if getattr(rec, "op_auth", None) is not None else None
             default_feed_op = rec.default_feed_op if getattr(rec, "default_feed_op", None) is not None else None
             allowed_feed_ops = (
                 list(rec.allowed_feed_ops or []) if getattr(rec, "allowed_feed_ops", None) is not None else None
             )
             display_name = getattr(rec, "display_name", None) or getattr(rec, "name", None) or name
-            input_schema = getattr(r, "input_schema", None) if r is not None else None
             output_schema = getattr(r, "output_schema", None) if r is not None else None
             version = getattr(r, "version", None) or getattr(rec, "version", None)
             enabled = bool(getattr(r, "enabled", False))
+
+            ops = await _resolve_ops(name, rec, enabled, db)
         except Exception as e:
             logger.warning("Failed to process plugin manifest entry %s: %s", name, e)
+            continue
         out.append(
             PluginInfoResponse(
                 name=name,
                 version=version,
                 enabled=enabled,
                 display_name=display_name,
-                input_schema=input_schema,
+                ops=ops,
                 output_schema=output_schema,
                 capabilities=caps,
                 required_identities=req_ids,
-                op_auth=op_auth,
+                op_auth=op_auth_val,
                 default_feed_op=default_feed_op,
                 allowed_feed_ops=allowed_feed_ops,
             )
@@ -128,7 +160,7 @@ async def get_plugin(
     req_ids = (
         list(rec.required_identities or []) if rec and getattr(rec, "required_identities", None) is not None else None
     )
-    op_auth = dict(rec.op_auth or {}) if rec and getattr(rec, "op_auth", None) is not None else None
+    op_auth_val = dict(rec.op_auth or {}) if rec and getattr(rec, "op_auth", None) is not None else None
     default_feed_op = rec.default_feed_op if rec and getattr(rec, "default_feed_op", None) is not None else None
     allowed_feed_ops = (
         list(rec.allowed_feed_ops or []) if rec and getattr(rec, "allowed_feed_ops", None) is not None else None
@@ -137,17 +169,19 @@ async def get_plugin(
         (getattr(rec, "display_name", None) if rec else None) or (getattr(rec, "name", None) if rec else None) or name
     )
 
+    ops = await _resolve_ops(name, rec, bool(row.enabled), db) if rec else {}
+
     return ShuResponse.success(
         PluginInfoResponse(
             name=row.name,
             version=getattr(row, "version", None),
             enabled=bool(row.enabled),
             display_name=display_name,
-            input_schema=getattr(row, "input_schema", None),
+            ops=ops,
             output_schema=getattr(row, "output_schema", None),
             capabilities=caps,
             required_identities=req_ids,
-            op_auth=op_auth,
+            op_auth=op_auth_val,
             default_feed_op=default_feed_op,
             allowed_feed_ops=allowed_feed_ops,
         )
