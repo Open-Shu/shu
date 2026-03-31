@@ -14,6 +14,7 @@ import InputBar from './InputBar';
 import PluginPickerDialog from '../../PluginPickerDialog';
 import PluginExecutionModal from '../../PluginExecutionModal';
 import EnsembleModeDialog from './EnsembleModeDialog';
+import KBPickerDialog from './KBPickerDialog';
 import RenameConversationDialog from './RenameConversationDialog';
 import DeleteConversationDialog from './DeleteConversationDialog';
 import ChatSettingsDialog from './ChatSettingsDialog';
@@ -39,6 +40,7 @@ const ModernChatView = ({
   pluginPickerDialogProps,
   pluginExecutionModalProps,
   ensembleDialogProps,
+  kbPickerDialogProps,
   renameDialogProps,
   deleteDialogProps,
   settingsDialogProps,
@@ -137,6 +139,7 @@ const ModernChatView = ({
               )}
 
               <EnsembleModeDialog {...ensembleDialogProps} />
+              <KBPickerDialog {...kbPickerDialogProps} />
             </>
           ) : (
             /* Welcome screen - shown when no conversation is selected */

@@ -350,6 +350,7 @@ class TestListKnowledgeBases:
         assert kbs == []
 
 
+
 class TestGetDocument:
     """get_document: single document fetch raises NotFoundError on misses."""
 

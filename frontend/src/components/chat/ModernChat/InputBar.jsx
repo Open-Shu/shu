@@ -6,6 +6,7 @@ import {
   SmartToy as BotIcon,
   Send as SendIcon,
   Hub as EnsembleIcon,
+  LibraryBooks as LibraryBooksIcon,
 } from '@mui/icons-material';
 
 const InputBar = React.memo(function InputBar({
@@ -27,6 +28,9 @@ const InputBar = React.memo(function InputBar({
   onOpenPluginPicker,
   pluginsEnabled,
   onUploadClick,
+  onOpenKBPicker,
+  selectedKBs,
+  onRemoveKB,
   onSelectEnsembleMode,
   isEnsembleModeActive,
   ensembleModeLabel,
@@ -57,6 +61,21 @@ const InputBar = React.memo(function InputBar({
             onDelete={onClearEnsembleMode}
             variant="outlined"
           />
+        </Box>
+      )}
+
+      {selectedKBs && selectedKBs.length > 0 && (
+        <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+          {selectedKBs.map((kb) => (
+            <Chip
+              key={kb.id}
+              label={kb.name}
+              color="secondary"
+              onDelete={onRemoveKB ? () => onRemoveKB(kb.id) : undefined}
+              variant="outlined"
+              icon={<LibraryBooksIcon />}
+            />
+          ))}
         </Box>
       )}
 
@@ -124,6 +143,19 @@ const InputBar = React.memo(function InputBar({
                 <BotIcon fontSize="small" />
               </ListItemIcon>
               Use a plugin
+            </MenuItem>
+          )}
+          {onOpenKBPicker && (
+            <MenuItem
+              onClick={() => {
+                onPlusClose();
+                onOpenKBPicker();
+              }}
+            >
+              <ListItemIcon>
+                <LibraryBooksIcon fontSize="small" />
+              </ListItemIcon>
+              Attach Knowledge Base
             </MenuItem>
           )}
         </Menu>

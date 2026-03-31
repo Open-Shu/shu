@@ -288,7 +288,7 @@ export const brandingAPI = {
 
 // Knowledge base endpoints
 export const knowledgeBaseAPI = {
-  list: () => api.get('/knowledge-bases'),
+  list: (params) => api.get('/knowledge-bases', { params }),
   get: (id) => api.get(`/knowledge-bases/${id}`),
   create: (data) => api.post('/knowledge-bases', data),
   update: (id, data) => api.put(`/knowledge-bases/${id}`, data),

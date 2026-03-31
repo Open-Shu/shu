@@ -24,6 +24,7 @@ const useChatComposer = ({
   ragRewriteMode,
   ensembleModelConfigIds = [],
   onEnsembleRunComplete,
+  selectedKBIds = [],
 }) => {
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -198,6 +199,11 @@ const useChatComposer = ({
       payload.ensemble_model_configuration_ids = ensembleIds;
     }
 
+    const kbIds = Array.isArray(selectedKBIds) ? selectedKBIds.filter(Boolean) : [];
+    if (kbIds.length > 0) {
+      payload.knowledge_base_ids = kbIds;
+    }
+
     // Include attachment IDs to link to this message
     if (pendingAttachments.length > 0) {
       payload.attachment_ids = pendingAttachments.map((att) => att.id);
@@ -232,6 +238,7 @@ const useChatComposer = ({
     scheduleScrollToBottom,
     ensembleModelConfigIds,
     onEnsembleRunComplete,
+    selectedKBIds,
   ]);
 
   const handleKeyPress = useCallback(
