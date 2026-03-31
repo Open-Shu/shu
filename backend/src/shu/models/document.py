@@ -15,7 +15,6 @@ from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
 
 from ..utils.embedding_codec import decode_embedding, encode_embedding
-from ..utils.text import fold_unicode_to_ascii
 
 try:
     from pgvector.sqlalchemy import Vector
@@ -534,7 +533,6 @@ class DocumentChunk(BaseModel):
             "embedding": None if no_embeddings else encode_embedding(self.embedding),
             "summary": self.summary,
             "summary_embedding": None if no_embeddings else encode_embedding(self.summary_embedding),
-            "keywords": self.keywords,
             "topics": self.topics,
             "char_count": self.char_count,
             "word_count": self.word_count,
@@ -556,7 +554,6 @@ class DocumentChunk(BaseModel):
             "chunk_index": row["chunk_index"],
             "content": row.get("content", ""),
             "summary": row.get("summary"),
-            "keywords": row.get("keywords"),
             "topics": row.get("topics"),
             "char_count": row.get("char_count", 0),
             "word_count": row.get("word_count"),

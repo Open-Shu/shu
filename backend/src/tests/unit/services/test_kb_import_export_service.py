@@ -94,7 +94,6 @@ def _mock_chunk() -> MagicMock:
     chunk.embedding = [0.4, 0.5, 0.6]
     chunk.summary = "Chunk summary"
     chunk.summary_embedding = [0.7, 0.8, 0.9]
-    chunk.keywords = ["keyword1"]
     chunk.topics = ["topic1"]
     chunk.char_count = 100
     chunk.word_count = 20
@@ -154,7 +153,7 @@ class TestSerializeChunk:
         assert result["content"] == "Chunk text"
         assert result["embedding"] is not None
         assert result["summary_embedding"] is not None
-        assert result["keywords"] == ["keyword1"]
+        assert result["topics"] == ["topic1"]
 
     def test_no_embeddings_omits_vectors(self) -> None:
         chunk = _mock_chunk()
