@@ -88,16 +88,19 @@ async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[Call
             continue
 
         for op in chat_ops:
-            op_schema = resolve_op_schema(plugin, op)
-            tools.append(
-                CallableTool(
-                    name=_sanitize_plugin_name(name),
-                    op=op,
-                    plugin=plugin,
-                    schema=op_schema,
-                    title=extract_op_title(op_schema, op),
+            try:
+                op_schema = resolve_op_schema(plugin, op)
+                tools.append(
+                    CallableTool(
+                        name=_sanitize_plugin_name(name),
+                        op=op,
+                        plugin=plugin,
+                        schema=op_schema,
+                        title=extract_op_title(op_schema, op),
+                    )
                 )
-            )
+            except Exception:
+                logger.warning("Failed to resolve schema for %s op=%s", name, op, exc_info=True)
 
     return tools
 

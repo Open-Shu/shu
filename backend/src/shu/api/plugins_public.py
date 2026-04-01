@@ -67,12 +67,12 @@ async def _resolve_ops(
     db: AsyncSession,
 ) -> dict[str, OpSchemaResponse]:
     """Resolve per-op schemas for a plugin from the live instance."""
-    declared_ops = list(rec.chat_callable_ops or []) + list(rec.allowed_feed_ops or [])
-    if not declared_ops or not enabled:
+    declared_ops = list(dict.fromkeys(list(rec.chat_callable_ops or []) + list(rec.allowed_feed_ops or [])))
+    if not declared_ops:
         return {}
-    plugin = await REGISTRY.resolve(plugin_name, db)
+    plugin = await REGISTRY.resolve(plugin_name, db) if enabled else None
     if not plugin:
-        return {}
+        return {op: OpSchemaResponse() for op in declared_ops}
     return {
         op_name: OpSchemaResponse(
             title=resolved.title,
@@ -169,7 +169,11 @@ async def get_plugin(
         (getattr(rec, "display_name", None) if rec else None) or (getattr(rec, "name", None) if rec else None) or name
     )
 
-    ops = await _resolve_ops(name, rec, bool(row.enabled), db) if rec else {}
+    try:
+        ops = await _resolve_ops(name, rec, bool(row.enabled), db) if rec else {}
+    except Exception:
+        logger.warning("Failed to resolve ops for plugin %s", name)
+        ops = {}
 
     return ShuResponse.success(
         PluginInfoResponse(

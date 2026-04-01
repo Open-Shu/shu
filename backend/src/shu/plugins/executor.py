@@ -250,6 +250,18 @@ class Executor:
         if not schema:
             return params
 
+        # Ensure the host-injected "op" field is declared in the schema so
+        # validation catches callers that forget to inject it.
+        schema = dict(schema)
+        props = dict(schema.get("properties") or {})
+        if "op" not in props:
+            props["op"] = {"type": "string"}
+            schema["properties"] = props
+        req = list(schema.get("required") or [])
+        if "op" not in req:
+            req.append("op")
+            schema["required"] = req
+
         # Strip None values so optional params sent as null by OLLAMA don't fail schema validation.
         # Models sometimes call {..., "param": None, ...} which fails validation, so we strip them.
         clean_params = {k: v for k, v in params.items() if v is not None}

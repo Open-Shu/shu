@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -47,11 +46,6 @@ class PluginEnableRequest(BaseModel):
     enabled: bool
 
 
-class PluginSchemaRequest(BaseModel):
-    input_schema: dict[str, Any] | None = None
-    output_schema: dict[str, Any] | None = None
-
-
 @router.patch("/admin/{name}/enable", response_model=SuccessResponse[dict])
 async def admin_set_plugin_enabled(
     name: str,
@@ -71,36 +65,6 @@ async def admin_set_plugin_enabled(
             "name": row.name,
             "version": getattr(row, "version", None),
             "enabled": bool(row.enabled),
-            "input_schema": getattr(row, "input_schema", None),
-            "output_schema": getattr(row, "output_schema", None),
-        }
-    )
-
-
-@router.put("/admin/{name}/schema", response_model=SuccessResponse[dict])
-async def admin_set_plugin_schema(
-    name: str,
-    body: PluginSchemaRequest,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_power_user),
-):
-    res = await db.execute(select(PluginDefinition).where(PluginDefinition.name == name))
-    row = res.scalars().first()
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
-    if body.input_schema is not None:
-        row.input_schema = body.input_schema
-    if body.output_schema is not None:
-        row.output_schema = body.output_schema
-    await db.commit()
-    await db.refresh(row)
-    return ShuResponse.success(
-        {
-            "name": row.name,
-            "version": getattr(row, "version", None),
-            "enabled": bool(row.enabled),
-            "input_schema": getattr(row, "input_schema", None),
-            "output_schema": getattr(row, "output_schema", None),
         }
     )
 

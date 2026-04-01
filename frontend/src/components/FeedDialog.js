@@ -172,7 +172,7 @@ export default function FeedDialog({
   const feedOps = useMemo(() => {
     const allOps = Object.keys(selectedPlugin?.ops || {});
     const allowed = Array.isArray(selectedPlugin?.allowed_feed_ops) ? selectedPlugin.allowed_feed_ops : [];
-    return allowed.length > 0 ? allOps.filter((op) => allowed.includes(op)) : allOps;
+    return allowed.length > 0 ? allOps.filter((op) => allowed.includes(op)) : [];
   }, [selectedPlugin]);
 
   const currentOp = useMemo(
@@ -188,7 +188,8 @@ export default function FeedDialog({
     }
     const defaultFeedOp = selectedPlugin?.default_feed_op || null;
     const editOp = isEdit ? schedule?.params?.op : null;
-    const initialOp = editOp || defaultFeedOp || (feedOps.length > 0 ? feedOps[0] : '');
+    const validDefault = defaultFeedOp && feedOps.includes(defaultFeedOp) ? defaultFeedOp : null;
+    const initialOp = editOp || validDefault || (feedOps.length > 0 ? feedOps[0] : '');
     setSelectedOp(initialOp);
 
     const initialSchema = selectedPlugin?.ops?.[initialOp]?.input_schema || null;
@@ -207,13 +208,13 @@ export default function FeedDialog({
     }
     setSchema(opSchema);
     const defaults = buildDefaultValues(opSchema) || {};
-    const merged = isEdit ? { ...defaults, ...(schedule?.params || {}) } : defaults;
+    const isOriginalOp = isEdit && schedule?.params?.op === selectedOp;
+    const merged = isOriginalOp ? { ...defaults, ...(schedule?.params || {}) } : defaults;
     setValues(merged);
-  }, [opSchema]);
+  }, [opSchema, selectedPlugin, isEdit, schedule, selectedOp]);
 
   // OCR section visibility
-  const defaultFeedOp = selectedPlugin?.default_feed_op || null;
-  const opForOcr = useMemo(() => String(values?.op || defaultFeedOp || '').toLowerCase(), [values, defaultFeedOp]);
+  const opForOcr = useMemo(() => String(selectedOp || '').toLowerCase(), [selectedOp]);
   const hasOcrCap = useMemo(
     () => Array.isArray(selectedPlugin?.capabilities) && selectedPlugin.capabilities.includes('ocr'),
     [selectedPlugin]

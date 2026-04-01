@@ -174,12 +174,23 @@ class TestExtractOpTitle:
 
 class TestValidatePerOpSchemas:
     def test_passes_when_all_ops_have_schemas(self):
-        plugin = _make_plugin(per_op_schema={"type": "object"})
+        schema = {"type": "object", "title": "Test Op", "description": "A test operation."}
+        plugin = _make_plugin(per_op_schema=schema)
         validate_per_op_schemas(plugin, ["op1", "op2"])
 
     def test_raises_when_op_returns_none(self):
         plugin = _make_plugin(per_op_schema=None)
         with pytest.raises(ImportError, match="returned None for ops"):
+            validate_per_op_schemas(plugin, ["op1"])
+
+    def test_raises_when_title_missing(self):
+        plugin = _make_plugin(per_op_schema={"type": "object", "description": "Has description."})
+        with pytest.raises(ImportError, match="missing 'title'"):
+            validate_per_op_schemas(plugin, ["op1"])
+
+    def test_raises_when_description_missing(self):
+        plugin = _make_plugin(per_op_schema={"type": "object", "title": "Has Title"})
+        with pytest.raises(ImportError, match="missing 'description'"):
             validate_per_op_schemas(plugin, ["op1"])
 
 class TestValidateLegacySchema:

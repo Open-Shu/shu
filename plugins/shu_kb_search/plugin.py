@@ -256,6 +256,8 @@ class KbSearchPlugin:
 
         if op == "search_chunks":
             return {
+                "title": "Search Chunks",
+                "description": "Search document chunks by field, operator, and value.",
                 "type": "object",
                 "properties": {
                     "field": {
@@ -296,6 +298,8 @@ class KbSearchPlugin:
 
         if op == "search_documents":
             return {
+                "title": "Search Documents",
+                "description": "Search documents by field, operator, and value.",
                 "type": "object",
                 "properties": {
                     "field": {
@@ -345,6 +349,8 @@ class KbSearchPlugin:
 
         if op == "get_document":
             return {
+                "title": "Get Document",
+                "description": "Retrieve a document by its ID.",
                 "type": "object",
                 "properties": {
                     "document_id": {

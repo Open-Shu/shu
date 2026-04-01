@@ -192,8 +192,7 @@ async def test_outlook_mail_plugin_registry_sync(client, db, auth_headers):
     assert plugin_def is not None, "outlook_mail plugin not found in database after sync"
     assert plugin_def.name == "outlook_mail", f"Expected name 'outlook_mail', got '{plugin_def.name}'"
 
-    # Verify plugin has schemas
-    assert plugin_def.input_schema is not None, "Plugin should have input_schema"
+    # Verify plugin has output_schema (input_schema is now resolved live, not stored in DB)
     assert plugin_def.output_schema is not None, "Plugin should have output_schema"
 
     # Note: Plugin is created with enabled=False by default (admin must enable)
