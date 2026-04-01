@@ -173,7 +173,7 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                         Matched query: &quot;{chunk.matched_query}&quot;
                       </Typography>
                     )}
-                    <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
                       {chunk.snippet || chunk.content}
                     </Typography>
                     {chunk.summary && (
