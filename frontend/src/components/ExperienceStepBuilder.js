@@ -146,13 +146,13 @@ const PluginStepConfig = ({
       </FormControl>
     )}
 
-    {step.plugin_op && selectedPlugin?.input_schema && (
+    {step.plugin_op && selectedPlugin?.ops?.[step.plugin_op]?.input_schema && (
       <Box sx={{ mt: 1 }}>
         <Typography variant="subtitle2" color="text.secondary" gutterBottom>
           Parameters (only set values you want to override)
         </Typography>
         <SchemaForm
-          schema={selectedPlugin.input_schema}
+          schema={selectedPlugin.ops[step.plugin_op].input_schema}
           values={step.params_template || {}}
           onChangeField={(key, type, value) => {
             const newParams = { ...(step.params_template || {}) };
@@ -165,7 +165,7 @@ const PluginStepConfig = ({
               params_template: Object.keys(newParams).length > 0 ? newParams : null,
             });
           }}
-          hideKeys={new Set(['op', 'kb_id'])}
+          hideKeys={new Set(['kb_id'])}
         />
       </Box>
     )}
@@ -210,12 +210,10 @@ const StepCard = ({
     if (!selectedPlugin) {
       return [];
     }
-    // Get operations from input_schema.properties.op.enum
-    const enumOps = selectedPlugin?.input_schema?.properties?.op?.enum;
-    if (Array.isArray(enumOps) && enumOps.length > 0) {
-      return enumOps;
+    const opKeys = Object.keys(selectedPlugin?.ops || {});
+    if (opKeys.length > 0) {
+      return opKeys;
     }
-    // Fallback to allowed_feed_ops if no enum
     if (Array.isArray(selectedPlugin?.allowed_feed_ops)) {
       return selectedPlugin.allowed_feed_ops;
     }
