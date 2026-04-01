@@ -9,11 +9,6 @@ export const pluginsAPI = {
       agent_key: agentKey,
     }),
   setEnabled: (name, enabled) => api.patch(`/plugins/admin/${encodeURIComponent(name)}/enable`, { enabled }),
-  setSchema: (name, input_schema = null, output_schema = null) =>
-    api.put(`/plugins/admin/${encodeURIComponent(name)}/schema`, {
-      input_schema,
-      output_schema,
-    }),
   sync: () => api.post('/plugins/admin/sync'),
   upload: (file, force = false) => {
     const form = new FormData();

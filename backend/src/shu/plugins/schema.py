@@ -54,12 +54,27 @@ def resolve_op_schema(plugin: Plugin, op: str) -> dict[str, Any] | None:
 def validate_per_op_schemas(plugin: Plugin, declared_ops: list[str]) -> None:
     """Validate that a per-op plugin produces a schema for each declared op.
 
-    Raises ``ImportError`` if any declared op returns ``None`` from
-    ``get_schema_for_op``.
+    Each schema must be non-None and include ``title`` and ``description``.
+    Raises ``ImportError`` on violations.
     """
-    missing = [op for op in declared_ops if plugin.get_schema_for_op(op) is None]
+    missing: list[str] = []
+    missing_title: list[str] = []
+    missing_description: list[str] = []
+    for op in declared_ops:
+        schema = plugin.get_schema_for_op(op)
+        if schema is None:
+            missing.append(op)
+            continue
+        if not schema.get("title"):
+            missing_title.append(op)
+        if not schema.get("description"):
+            missing_description.append(op)
     if missing:
         raise ImportError(f"Plugin '{plugin.name}' get_schema_for_op returned None for ops: {missing}")
+    if missing_title:
+        raise ImportError(f"Plugin '{plugin.name}' per-op schema missing 'title' for ops: {missing_title}")
+    if missing_description:
+        raise ImportError(f"Plugin '{plugin.name}' per-op schema missing 'description' for ops: {missing_description}")
 
 
 def validate_legacy_schema(plugin: Plugin) -> None:

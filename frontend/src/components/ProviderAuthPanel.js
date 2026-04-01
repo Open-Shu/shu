@@ -277,6 +277,10 @@ export default function ProviderAuthPanel({
   const showProbe = effMode === 'domain_delegate' && provider === 'google';
   const showSaProbe = effMode === 'service_account' && provider === 'google';
 
+  if (!provider) {
+    return null;
+  }
+
   return (
     <Box>
       <Typography variant="subtitle1" gutterBottom>
