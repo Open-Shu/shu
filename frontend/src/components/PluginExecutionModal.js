@@ -27,8 +27,11 @@ import { pluginDisplayName } from '../utils/plugins';
 
 export default function PluginExecutionModal({ open, onClose, plugin, onStart = null, onResult = null }) {
   const pluginDef = plugin;
-  const [schema, setSchema] = useState(pluginDef?.input_schema || null);
-  const [values, setValues] = useState(() => buildDefaultValues(pluginDef?.input_schema));
+  const availableOps = useMemo(() => Object.keys(pluginDef?.ops || {}), [pluginDef]);
+  const [selectedOp, setSelectedOp] = useState('');
+  const opSchema = useMemo(() => pluginDef?.ops?.[selectedOp]?.input_schema || null, [pluginDef, selectedOp]);
+  const [schema, setSchema] = useState(null);
+  const [values, setValues] = useState({});
   const [agentKey, setAgentKey] = useState('');
   const [rawMode, setRawMode] = useState(false);
   const [rawJson, setRawJson] = useState('');
@@ -39,18 +42,17 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   const [identitiesOk, setIdentitiesOk] = useState(true);
   const [authOverlay, setAuthOverlay] = useState({});
 
-  // Current operation used to derive auth spec (op_auth)
   const currentOp = useMemo(() => {
     if (rawMode) {
       try {
         const obj = JSON.parse(rawJson || '{}');
-        return String(obj?.op || '').toLowerCase();
+        return String(obj?.op || selectedOp || '').toLowerCase();
       } catch (_) {
         // Ignore error
       }
     }
-    return String(values?.op || '').toLowerCase();
-  }, [rawMode, rawJson, values]);
+    return String(selectedOp || '').toLowerCase();
+  }, [rawMode, rawJson, selectedOp]);
 
   const hasKbId = useMemo(() => Boolean(schema?.properties?.kb_id), [schema]);
   const kbsQ = useQuery(['kbs', 'list'], () => knowledgeBaseAPI.list().then(extractItemsFromResponse), {
@@ -59,17 +61,25 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   });
 
   useEffect(() => {
-    setSchema(pluginDef?.input_schema || null);
-    const defaults = buildDefaultValues(pluginDef?.input_schema);
+    const firstOp = availableOps.length > 0 ? availableOps[0] : '';
+    setSelectedOp(firstOp);
+    const firstSchema = pluginDef?.ops?.[firstOp]?.input_schema || null;
+    setSchema(firstSchema);
+    const defaults = buildDefaultValues(firstSchema);
     setValues(defaults);
     setRawJson(JSON.stringify(defaults, null, 2));
     setResult(null);
     setErrorEnvelope(null);
     setShowErrorDetails(false);
-    // Default to allowed until IdentityGate reports otherwise (based on selected mode)
     setIdentitiesOk(true);
-    // Auth UI state managed inside ProviderAuthPanel
-  }, [pluginDef]);
+  }, [pluginDef, availableOps]);
+
+  useEffect(() => {
+    setSchema(opSchema);
+    const defaults = buildDefaultValues(opSchema);
+    setValues(defaults);
+    setRawJson(JSON.stringify(defaults, null, 2));
+  }, [opSchema]);
 
   const execMut = useMutation(
     ({ name, params, agentKey }) => pluginsAPI.execute(name, params, agentKey).then(extractDataFromResponse),
@@ -162,7 +172,7 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   }, [schema, values, rawMode]);
 
   const handleRun = () => {
-    let params = values;
+    let params = rawMode ? null : { ...values, op: selectedOp };
     if (rawMode) {
       try {
         params = JSON.parse(rawJson || '{}');
@@ -171,7 +181,6 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
         return;
       }
     }
-    // Merge auth overlay under reserved __host key
     if (authOverlay && Object.keys(authOverlay).length > 0) {
       params = {
         ...params,
@@ -196,7 +205,7 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   };
 
   const handlePreview = () => {
-    let params = values;
+    let params = rawMode ? null : { ...values, op: selectedOp };
     if (rawMode) {
       try {
         params = JSON.parse(rawJson || '{}');
@@ -205,7 +214,6 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
         return;
       }
     }
-    // Merge auth overlay
     if (authOverlay && Object.keys(authOverlay).length > 0) {
       params = {
         ...params,
@@ -231,7 +239,7 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
   };
 
   const handleApproveRun = () => {
-    let params = values;
+    let params = rawMode ? null : { ...values, op: selectedOp };
     if (rawMode) {
       try {
         params = JSON.parse(rawJson || '{}');
@@ -240,7 +248,6 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
         return;
       }
     }
-    // Merge auth overlay
     if (authOverlay && Object.keys(authOverlay).length > 0) {
       params = {
         ...params,
@@ -269,14 +276,32 @@ export default function PluginExecutionModal({ open, onClose, plugin, onStart = 
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Execute Plugin: {pluginDisplayName(pluginDef) || pluginDef?.name}</DialogTitle>
       <DialogContent dividers>
-        {pluginDef?.input_schema ? (
+        {availableOps.length > 0 ? (
           <Typography variant="body2" color="text.secondary" mb={2}>
             Schema-based form. Toggle Raw JSON if needed.
           </Typography>
         ) : (
           <Alert severity="info" sx={{ mb: 2 }}>
-            This plugin does not declare an input schema. Use Raw JSON mode to provide params.
+            This plugin does not declare any operations. Use Raw JSON mode to provide params.
           </Alert>
+        )}
+
+        {availableOps.length > 1 && (
+          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+            <InputLabel id="exec-op-label">Operation</InputLabel>
+            <Select
+              labelId="exec-op-label"
+              label="Operation"
+              value={selectedOp}
+              onChange={(e) => setSelectedOp(e.target.value)}
+            >
+              {availableOps.map((op) => (
+                <MenuItem key={op} value={op}>
+                  {pluginDef?.ops?.[op]?.title || op}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         )}
 
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>

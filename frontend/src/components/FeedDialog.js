@@ -167,71 +167,49 @@ export default function FeedDialog({
     }
   }, [open, isEdit, pluginName, plugins]);
 
-  // Identity gating derived from op_auth (provider-agnostic)
+  const [selectedOp, setSelectedOp] = useState('');
+
+  const feedOps = useMemo(() => {
+    const allOps = Object.keys(selectedPlugin?.ops || {});
+    const allowed = Array.isArray(selectedPlugin?.allowed_feed_ops) ? selectedPlugin.allowed_feed_ops : [];
+    return allowed.length > 0 ? allOps.filter((op) => allowed.includes(op)) : allOps;
+  }, [selectedPlugin]);
+
   const currentOp = useMemo(
-    () => String(values?.op || selectedPlugin?.default_feed_op || '').toLowerCase(),
-    [values, selectedPlugin]
+    () => String(selectedOp || selectedPlugin?.default_feed_op || '').toLowerCase(),
+    [selectedOp, selectedPlugin]
   );
 
-  // Schema + defaults merge
+  const opSchema = useMemo(() => selectedPlugin?.ops?.[selectedOp]?.input_schema || null, [selectedPlugin, selectedOp]);
+
   useEffect(() => {
     if (!selectedPlugin) {
       return;
     }
-    if (selectedPlugin.input_schema) {
-      const defaults = buildDefaultValues(selectedPlugin.input_schema) || {};
-      let merged = isEdit ? { ...defaults, ...(schedule?.params || {}) } : defaults;
-      const allowedFeedOps = Array.isArray(selectedPlugin?.allowed_feed_ops) ? selectedPlugin.allowed_feed_ops : [];
-      try {
-        const defaultFeedOp = selectedPlugin?.default_feed_op || null;
-        if (allowedFeedOps.length > 0 && !merged.op && defaultFeedOp) {
-          merged = { ...merged, op: defaultFeedOp };
-        }
-      } catch (_) {
-        // Ignore error
-      }
-      // Filter op enum to only show feed-eligible ops
-      const rawSchema = selectedPlugin.input_schema;
-      if (allowedFeedOps.length > 0 && rawSchema?.properties?.op?.enum) {
-        const filtered = rawSchema.properties.op.enum.filter((v) => allowedFeedOps.includes(v));
-        if (filtered.length === 0) {
-          setSchema(rawSchema);
-          setValues(merged);
-          return;
-        }
-        const filteredLabels = rawSchema.properties.op['x-ui']?.enum_labels
-          ? Object.fromEntries(
-              Object.entries(rawSchema.properties.op['x-ui'].enum_labels).filter(([k]) => allowedFeedOps.includes(k))
-            )
-          : undefined;
-        const filteredHelp = rawSchema.properties.op['x-ui']?.enum_help
-          ? Object.fromEntries(
-              Object.entries(rawSchema.properties.op['x-ui'].enum_help).filter(([k]) => allowedFeedOps.includes(k))
-            )
-          : undefined;
-        setSchema({
-          ...rawSchema,
-          properties: {
-            ...rawSchema.properties,
-            op: {
-              ...rawSchema.properties.op,
-              enum: filtered,
-              'x-ui': { ...rawSchema.properties.op['x-ui'], enum_labels: filteredLabels, enum_help: filteredHelp },
-            },
-          },
-        });
-      } else {
-        setSchema(rawSchema);
-      }
-      setValues(merged);
-    } else {
-      setSchema(null);
-      setValues(isEdit ? schedule?.params || {} : {});
-    }
+    const defaultFeedOp = selectedPlugin?.default_feed_op || null;
+    const editOp = isEdit ? schedule?.params?.op : null;
+    const initialOp = editOp || defaultFeedOp || (feedOps.length > 0 ? feedOps[0] : '');
+    setSelectedOp(initialOp);
+
+    const initialSchema = selectedPlugin?.ops?.[initialOp]?.input_schema || null;
+    const defaults = buildDefaultValues(initialSchema) || {};
+    const merged = isEdit ? { ...defaults, ...(schedule?.params || {}) } : defaults;
+    setSchema(initialSchema);
+    setValues(merged);
     setIdentitiesOk(
       !(Array.isArray(selectedPlugin?.required_identities) && selectedPlugin.required_identities.length > 0)
     );
-  }, [selectedPlugin, isEdit, schedule]);
+  }, [selectedPlugin, isEdit, schedule, feedOps]);
+
+  useEffect(() => {
+    if (!selectedPlugin) {
+      return;
+    }
+    setSchema(opSchema);
+    const defaults = buildDefaultValues(opSchema) || {};
+    const merged = isEdit ? { ...defaults, ...(schedule?.params || {}) } : defaults;
+    setValues(merged);
+  }, [opSchema]);
 
   // OCR section visibility
   const defaultFeedOp = selectedPlugin?.default_feed_op || null;
@@ -292,6 +270,7 @@ export default function FeedDialog({
 
     const baseParams = {
       ...(values || {}),
+      op: selectedOp,
       ...(isEdit ? (kbId ? { kb_id: kbId } : {}) : { kb_id: effectiveKb }),
     };
     // Merge host overlays: OCR + auth overlay
@@ -408,6 +387,26 @@ export default function FeedDialog({
                         {pluginPrimaryLabel(t)}
                       </MenuItem>
                     ))}
+                </Select>
+              </FormControl>
+            </Grid>
+          )}
+
+          {feedOps.length > 1 && (
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel id="feed-op-label">Operation</InputLabel>
+                <Select
+                  labelId="feed-op-label"
+                  label="Operation"
+                  value={selectedOp}
+                  onChange={(e) => setSelectedOp(e.target.value)}
+                >
+                  {feedOps.map((op) => (
+                    <MenuItem key={op} value={op}>
+                      {selectedPlugin?.ops?.[op]?.title || op}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
             </Grid>
