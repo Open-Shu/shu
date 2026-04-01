@@ -174,7 +174,7 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                       </Typography>
                     )}
                     <Typography variant="body2" sx={{ mt: 0.5 }}>
-                      {chunk.snippet}
+                      {chunk.snippet || chunk.content}
                     </Typography>
                     {chunk.summary && (
                       <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>

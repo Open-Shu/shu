@@ -867,14 +867,10 @@ class ReportGenerator:
             )
             w.append("")
 
-        if results.config and results.config.weight_overrides:
-            weight_desc = ", ".join(f"{s}={v}" for s, v in sorted(results.config.weight_overrides.items()))
-            w.append(f"**Weights:** Custom weight overrides applied: {weight_desc}.")
-        else:
-            w.append(
-                "**Weight tuning:** Current results use equal weights across active surfaces. "
-                "Data-driven weight optimization would likely improve fusion performance further."
-            )
+        if results.effective_weights:
+            active = {s: v for s, v in sorted(results.effective_weights.items()) if v > 0}
+            weight_desc = ", ".join(f"{s}={v}" for s, v in active.items())
+            w.append(f"**Surface weights:** {weight_desc}.")
         w.append("")
 
         # Attribution

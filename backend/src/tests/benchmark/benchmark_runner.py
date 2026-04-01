@@ -114,6 +114,8 @@ class BenchmarkResults:
     # ranking when a surface is zeroed out, recomputed locally from surface scores.
     # Contribution matrix: {query_type: {surface: avg_fraction_of_fused_score}}
     contribution_matrix: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Effective surface weights used for this run (defaults + overrides + exclusions)
+    effective_weights: dict[str, float] = field(default_factory=dict)
     # Raw run data for reproducibility
     baseline_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
     multi_surface_run_dict: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -364,6 +366,7 @@ class BenchmarkRunner:
             head_to_head=head_to_head,
             threshold_analysis=threshold_analysis,
             contribution_matrix=contribution_matrix,
+            effective_weights=effective_weights,
             baseline_run_dict=baseline_run_dict,
             multi_surface_run_dict=ms_run_dict,
             multi_surface_surface_scores=ms_all_surface_scores if ms_all_surface_scores else ms_surface_scores,
