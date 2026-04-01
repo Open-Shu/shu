@@ -97,6 +97,14 @@ class McpConnectionCreate(BaseModel):
     )
     enabled: bool = Field(default=True, description="Whether the connection is enabled")
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Reject names containing __ which conflicts with the tool name delimiter."""
+        if "__" in v:
+            raise ValueError("Connection name must not contain '__' (reserved as tool name delimiter)")
+        return v
+
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:

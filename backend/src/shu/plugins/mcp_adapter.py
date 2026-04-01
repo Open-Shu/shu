@@ -6,6 +6,7 @@ import json
 import time
 from typing import Any
 
+from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
 from shu.models.mcp_server_connection import McpServerConnection
 from shu.plugins.base import ExecuteContext, PluginResult
@@ -33,6 +34,8 @@ class McpPluginAdapter:
     def __init__(self, connection: McpServerConnection, client: McpClient | None = None) -> None:
         self._connection = connection
         self._client = client
+        settings = get_settings_instance()
+        self._max_pagination_pages = getattr(settings, "max_pagination_limit", 1000)
         self.name: str = f"mcp:{connection.name}"
         server_info = connection.server_info or {}
         self.version: str = server_info.get("version", "1.0")
@@ -129,20 +132,17 @@ class McpPluginAdapter:
         discovered = self._discovered_tools_by_name()
         tool_info = discovered.get(op, {})
         input_schema = tool_info.get("inputSchema")
-
-        properties: dict[str, Any] = {}
-        required: list[str] = ["op"]
+        description = tool_info.get("description")
 
         if input_schema and isinstance(input_schema, dict):
-            properties.update(input_schema.get("properties", {}))
-            required.extend(input_schema.get("required", []))
+            schema = dict(input_schema)
+        else:
+            schema = {"type": "object", "properties": {}, "additionalProperties": True}
 
-        return {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": True,
-        }
+        schema["title"] = op.replace("_", " ").replace("-", " ").title()
+        if description:
+            schema["description"] = description
+        return schema
 
     def get_output_schema(self) -> dict[str, Any] | None:
         """MCP output schemas are ephemeral — return None."""
@@ -263,7 +263,7 @@ class McpPluginAdapter:
         warnings: list[str] = []
         last_cursor: str | None = None
 
-        while True:
+        for page in range(self._max_pagination_pages):
             outcome = await self._call_tool(op, call_params)
             if isinstance(outcome, PluginResult):
                 if cursor_field and cursor_param and last_cursor:
@@ -299,6 +299,12 @@ class McpPluginAdapter:
 
             last_cursor = str(next_cursor)
             call_params[cursor_param] = last_cursor
+        else:
+            logger.warning(
+                "mcp.pagination_limit_reached [%s/%s] after %d pages, ingested=%d",
+                self.name, op, self._max_pagination_pages, ingested_count,
+            )
+            warnings.append(f"Pagination stopped after {self._max_pagination_pages} pages")
 
         if cursor_field and cursor_param and last_cursor and not await self._save_cursor(host, kb_id, last_cursor):
             warnings.append("Cursor save failed; next run may re-process items")
@@ -376,7 +382,8 @@ class McpPluginAdapter:
             return None
         try:
             return await host.cursor.get(kb_id)
-        except Exception:
+        except Exception as e:
+            logger.warning("Could not load cursor: %s", e)
             return None
 
     async def _save_cursor(self, host: Any, kb_id: str, cursor: str) -> bool:

@@ -24,7 +24,13 @@ def enforce_feed_op(plugin_name: str, params: dict[str, Any] | None) -> dict[str
         default_op = None
 
     if not allowed:
-        return p
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_feed_op",
+                "message": f"Plugin '{plugin_name}' does not declare any allowed_feed_ops",
+            },
+        )
 
     op = p.get("op")
     if not op:

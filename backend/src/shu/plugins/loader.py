@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..core.config import get_settings_instance
 from .base import Plugin
+from .schema import validate_legacy_schema, validate_per_op_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -243,16 +244,13 @@ class PluginLoader:
             mod = importlib.import_module(module_path)
         cls = getattr(mod, class_name)
         plugin = cls()  # type: ignore[call-arg]
-        # Validate op requirement: schema must declare properties.op.enum with at least one value
+        # Validate op requirement: plugin must produce schemas for its declared ops.
         try:
-            in_schema = None
-            if hasattr(plugin, "get_schema"):
-                in_schema = plugin.get_schema()
-            props = (in_schema or {}).get("properties") if isinstance(in_schema, dict) else None
-            op_def = (props or {}).get("op") if isinstance(props, dict) else None
-            enum_vals = (op_def or {}).get("enum") if isinstance(op_def, dict) else None
-            if not (isinstance(enum_vals, (list, tuple)) and len(enum_vals) >= 1):
-                raise ImportError(f"Plugin '{record.name}' missing op enum in input schema")
+            declared_ops = list(record.chat_callable_ops or []) + list(record.allowed_feed_ops or [])
+            if callable(getattr(plugin, "get_schema_for_op", None)):
+                validate_per_op_schemas(plugin, declared_ops)
+            else:
+                validate_legacy_schema(plugin)
         except ImportError:
             raise
         except Exception as e:

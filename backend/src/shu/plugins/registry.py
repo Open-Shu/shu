@@ -58,7 +58,7 @@ class PluginRegistry:
     async def sync(self, session: AsyncSession) -> dict:  # noqa: PLR0912, PLR0915
         """Auto-register discovered plugins into PluginDefinition.
         - Creates a row if missing (enabled=False by default)
-        - Updates input_schema/output_schema if provided by plugin
+        - Updates output_schema if provided by plugin (input_schema is resolved live)
         - Purges DB rows for plugins no longer present on disk
         - Does not flip enabled state automatically.
         """
@@ -84,19 +84,12 @@ class PluginRegistry:
                     continue
                 row = PluginDefinition(name=name, version=getattr(record, "version", "1"), enabled=False)
                 try:
-                    in_schema = None
                     out_schema = None
-                    try:
-                        in_schema = plugin.get_schema()
-                    except Exception:
-                        in_schema = None
                     try:
                         get_out = getattr(plugin, "get_output_schema", None)
                         out_schema = get_out() if callable(get_out) else None
                     except Exception:
                         out_schema = None
-                    if in_schema:
-                        row.input_schema = in_schema
                     if out_schema:
                         row.output_schema = out_schema
                 finally:
@@ -104,28 +97,17 @@ class PluginRegistry:
                     await session.commit()
                     created += 1
             else:
-                # update schema if available
+                # update output_schema if available
                 try:
                     plugin = self._loader.load(record)
-                    in_schema = None
                     out_schema = None
-                    try:
-                        in_schema = plugin.get_schema()
-                    except Exception:
-                        in_schema = None
                     try:
                         get_out = getattr(plugin, "get_output_schema", None)
                         out_schema = get_out() if callable(get_out) else None
                     except Exception:
                         out_schema = None
-                    changed = False
-                    if in_schema and row.input_schema != in_schema:
-                        row.input_schema = in_schema
-                        changed = True
                     if out_schema and row.output_schema != out_schema:
                         row.output_schema = out_schema
-                        changed = True
-                    if changed:
                         await session.commit()
                         updated += 1
                 except Exception:

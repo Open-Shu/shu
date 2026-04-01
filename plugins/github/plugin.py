@@ -99,9 +99,10 @@ async def _resolve_pat(host: Any) -> tuple[str, PluginResult | None]:
 
 _OP_SCHEMAS: dict[str, dict[str, Any]] = {
     "fetch_activity": {
+        "title": "Fetch Activity",
+        "description": "Retrieve commits, PRs, and reviews for a repository.",
         "type": "object",
         "properties": {
-            "op": {"type": "string", "enum": ["fetch_activity"]},
             "repo": {
                 "type": "string",
                 "description": "Repository in owner/repo format",
@@ -117,7 +118,7 @@ _OP_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": "End date (ISO 8601 YYYY-MM-DD); defaults to today (UTC)",
             },
         },
-        "required": ["op", "repo"],
+        "required": ["repo"],
         "additionalProperties": False,
     },
 }

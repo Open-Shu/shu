@@ -61,4 +61,4 @@ class CallableTool:
     op: str
     plugin: Plugin | None
     schema: dict[str, Any] | None
-    enum_labels: dict[str, Any] | None
+    title: str | None
