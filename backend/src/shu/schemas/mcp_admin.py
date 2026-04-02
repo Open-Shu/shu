@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from shu.schemas.integration_common import IngestConfig as McpIngestConfig
+
 
 def _validate_mcp_url(v: str) -> str:
     """Validate URL scheme: HTTPS required except for localhost."""
@@ -18,13 +20,6 @@ def _validate_mcp_url(v: str) -> str:
             return v
         raise ValueError("Plain HTTP is only allowed for localhost connections. Use HTTPS for remote servers.")
     raise ValueError("URL must start with http:// or https://")
-
-
-class McpIngestMethod(str, Enum):
-    """Ingest method for MCP tools."""
-
-    TEXT = "text"
-    DOCUMENT = "document"
 
 
 class McpConnectionStatus(str, Enum):
@@ -42,47 +37,6 @@ class McpTimeoutsConfig(BaseModel):
     connect_ms: int = Field(default=5000, ge=1000, le=60000, description="Connection timeout in milliseconds")
     call_ms: int = Field(default=30000, ge=1000, le=600000, description="Tool call timeout in milliseconds")
     read_ms: int = Field(default=30000, ge=1000, le=600000, description="Read timeout in milliseconds")
-
-
-class McpIngestFieldMapping(BaseModel):
-    """Field mapping for ingest-type MCP tools."""
-
-    title: str = Field(..., description="Dot-notation path to title field in response")
-    content: str = Field(..., description="Dot-notation path to content field in response")
-    source_id: str = Field(..., description="Dot-notation path to source ID field in response")
-    source_url: str | None = Field(None, description="Dot-notation path to source URL field in response")
-
-
-class McpIngestConfig(BaseModel):
-    """Ingest configuration for an MCP tool."""
-
-    method: McpIngestMethod = Field(default=McpIngestMethod.TEXT, description="Ingest method")
-    field_mapping: McpIngestFieldMapping = Field(..., description="Field mapping from tool response to ingest fields")
-    collection_field: str | None = Field(None, description="Dot-notation path to collection array in response")
-    attributes: dict[str, str] | None = Field(None, description="Static attributes to attach to ingested items")
-    cursor_field: str | None = Field(
-        None, description="Dot-notation path to next-page cursor in response (enables pagination loop)"
-    )
-    cursor_param: str | None = Field(None, description="Tool argument name to pass the cursor value as")
-
-
-class McpToolConfigUpdate(BaseModel):
-    """Schema for updating a single tool's configuration."""
-
-    chat_callable: bool = Field(default=True, description="Tool is callable from chat")
-    feed_eligible: bool = Field(default=False, description="Tool is available as a feed source")
-    enabled: bool = Field(default=True, description="Whether the tool is enabled")
-    ingest: McpIngestConfig | None = Field(
-        None, description="Ingest configuration (required when feed_eligible is True)"
-    )
-
-    @field_validator("ingest")
-    @classmethod
-    def validate_ingest_config(cls, v: McpIngestConfig | None, info) -> McpIngestConfig | None:
-        """Require ingest config when feed_eligible is True."""
-        if info.data.get("feed_eligible") and v is None:
-            raise ValueError("ingest configuration is required when feed_eligible is True")
-        return v
 
 
 class McpConnectionCreate(BaseModel):

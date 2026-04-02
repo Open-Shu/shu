@@ -337,7 +337,7 @@ class TestIngest:
         assert len(host.kb.text_calls) == 0
 
     @pytest.mark.asyncio
-    @patch("shu.plugins.mcp_adapter.logger")
+    @patch("shu.plugins.base_adapter.logger")
     async def test_ingest_text_raises_increments_error_count(self, _mock_logger: Any) -> None:
         """A failed ingest_text call increments error_count without aborting the batch."""
         adapter, client = _make_adapter(

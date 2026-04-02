@@ -7,6 +7,7 @@ used by the Shu application.
 
 from .access_policy import AccessPolicy, AccessPolicyBinding, AccessPolicyStatement
 from .agent_memory import AgentMemory
+from .api_server_connection import ApiServerConnection
 from .attachment import Attachment, MessageAttachment
 from .base import Base
 from .document import (
@@ -68,6 +69,7 @@ __all__ = [
     "AccessPolicyBinding",
     "AccessPolicyStatement",
     "AgentMemory",
+    "ApiServerConnection",
     "Base",
     "CapabilityManifest",
     "Conversation",
