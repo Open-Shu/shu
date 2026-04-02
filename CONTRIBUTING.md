@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Shu. This document outlines how t
 
 ## Contributor License Agreement (CLA)
 
-By submitting a contribution, you agree to the [Contributor License Agreement](CLA.md). This allows Shu to be dual-licensed under GPLv3 and commercial terms.
+By submitting a contribution, you agree to the [Contributor License Agreement](CLA.md). This allows Shu to be dual-licensed under the Shu Community License and commercial terms.
 
 ## Getting Started
 
@@ -153,4 +153,4 @@ Be respectful and constructive. We're building something together.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's dual license (GPLv3 and Commercial). See [LICENSE.md](LICENSE.md) for details.
+By contributing, you agree that your contributions will be licensed under the project's dual license (Community and Commercial). See [LICENSE.md](LICENSE.md) for details.

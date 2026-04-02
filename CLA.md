@@ -23,10 +23,10 @@ You grant Open Shu Technologies, LLC. a worldwide, perpetual, irrevocable, non-e
 - use, reproduce, modify, publish, distribute, and create derivative works of your Contributions; and
 - relicense your Contributions under any terms, including open-source and commercial licenses.
 
-This allows the Project to be licensed under both GPLv3 and commercial terms.
+This allows the Project to be licensed under both the Shu Community License and commercial terms.
 
 2.3 **License to the Public**
-You also grant a license to the public to use your Contributions under the same license(s) that the Project uses at the time of your Contribution (currently GPLv3 and any future versions thereof, as well as any other licenses the Project may adopt for public use).
+You also grant a license to the public to use your Contributions under the same license(s) that the Project uses at the time of your Contribution (currently the Shu Community License, as well as any other licenses the Project may adopt for public use).
 
 ---
 

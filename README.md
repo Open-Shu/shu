@@ -628,10 +628,8 @@ See [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md) for Kubernetes manifests a
 
 Shu is dual-licensed:
 
-- **Open Source:** under the [GNU General Public License v3.0](./LICENSE.GPL-3.0) (GPLv3).
-- **Commercial:** under the [Shu Commercial License](./LICENSE.COMMERCIAL.md) for organizations that wish to:
-  - integrate Shu into proprietary products or services, or
-  - avoid GPLv3 copyleft obligations.
+- **Community:** under the [Shu Community License](./LICENSE.COMMUNITY.md) for personal, educational, and non-commercial use.
+- **Commercial:** under the [Shu Commercial License](./LICENSE.COMMERCIAL.md) for any use in connection with a business or revenue-generating activity.
 
 For commercial licensing terms and contact information, see [LICENSE.COMMERCIAL.md](./LICENSE.COMMERCIAL.md).
 
@@ -686,7 +684,7 @@ make test-cov
 
 Open Shu Technologies, LLC. has filed patent applications related to the technology used in this software.
 
-- **For GPLv3 Users:** You are granted a patent license to use these inventions solely as part of this software, subject to the terms and conditions of the GNU General Public License v3.0.
+- **For Community License Users:** You are granted a patent license to use these inventions solely as part of this software for Non-Commercial Use, subject to the terms and conditions of the Shu Community License.
 - **For Commercial Users:** If you are using this software under the Commercial License, your patent rights are governed by that agreement.
 - **No Other Rights:** Use of this software outside the terms of the applicable license may constitute patent infringement.
 
