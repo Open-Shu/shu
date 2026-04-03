@@ -1,4 +1,4 @@
-# Benchmark Methodology: Answer-Utility Evaluation for Multi-Surface Retrieval
+# Benchmark Methodology: Evaluating Multi-Surface Retrieval
 
 ## Context
 
@@ -14,172 +14,167 @@ The benchmark must demonstrate two things:
 1. Multi-surface finds documents baseline misses when user language diverges from document language
 2. Multi-surface doesn't lose accuracy on queries where vocabulary overlaps directly
 
-## Why Traditional Benchmarks Fail
+## Two Evaluation Methodologies
 
-Standard IR benchmarks (BEIR, NDCG, MAP) measure whether a system ranks a pre-determined set of "correct" documents highly. These qrels were created for systems that find documents through vocabulary overlap or learned semantic similarity. The relevant documents share vocabulary or topic with the query.
+### 1. BEIR Benchmarks (traditional IR metrics)
 
-When multi-surface finds a genuinely relevant document through cross-topic semantic bridging, traditional benchmarks score it as a **false positive** — the document wasn't in the pre-determined relevant set. The better the system gets at vocabulary-gap retrieval, the worse it scores.
+Standard IR evaluation using published BEIR datasets with professional qrels (pre-determined relevance judgments). We measure NDCG@10, precision, recall, MRR, and MAP against frozen qrels using the ranx evaluation library.
 
-Even with this penalty, multi-surface beats baseline on BEIR (+9.0% NDCG@10, +13.0% MAP@10, +8.8% MRR@10 on NFCorpus). But this understates the real advantage.
+**Strengths**: reproducible, comparable to published results from other systems, professionally curated qrels.
 
-### Topical Relevance Also Fails
+**Limitations**: qrels are incomplete — when multi-surface finds genuinely relevant documents that the original annotators didn't anticipate, BEIR scores them as false positives. The better multi-surface gets at vocabulary-gap retrieval, the more BEIR understates its advantage.
 
-Our first attempt at custom relevance judgments used topical relevance criteria ("is this document about the same topic as the query?"). This produced results similar to BEIR — baseline slightly ahead. Topical relevance is what baseline optimizes for.
+**Results on published datasets:**
 
-The benchmark only shows multi-surface's advantage when relevance is judged by **answer utility** — "does this document contain information that helps answer the question?" A document about prostate cancer is not "about" avocados, but it contains direct evidence that avocado intake reduces cancer risk. A topical judge scores it 0. An answer-utility judge scores it 2.
+| Corpus | Documents | NDCG@10 vs Baseline | Notes |
+|--------|-----------|-------------------|-------|
+| NFCorpus | 3,633 biomedical abstracts | **+8.0%** | Short single-paragraph documents |
+| SciFact | 5,183 scientific abstracts | **+5.9%** | Declarative claim-style queries |
 
-## Our Approach: Frozen Answer-Utility QRels
+Multi-surface beats baseline on every standard metric across both published datasets, with statistical significance (p < 0.05, paired t-test). These results are achieved despite the incomplete qrels penalty.
 
-We build a benchmark dataset of natural-language questions with answer-utility relevance judgments, then score deterministically against those frozen qrels on every future run.
+### 2. Answer-Utility Case Study (LLM-as-judge)
 
-### Question Generation
+Automated blinded A/B evaluation where LLM judges compare both strategies' result sets and determine which better equips an LLM to answer the query. This methodology was developed because BEIR's incomplete qrels cannot measure multi-surface's core value — finding relevant documents through vocabulary-gap bridging that traditional annotators didn't anticipate.
 
-Questions are generated from corpus documents, deliberately written in everyday language that diverges from the document's technical vocabulary:
+**Why we moved beyond BEIR**: on SciFact, we found that 36% of queries where BEIR says baseline wins are actually multi-surface wins when evaluated by answer utility. BEIR is positive for multi-surface but dramatically understates the real advantage, especially on long-document corpora where multi-surface's ability to find different information in different sections doesn't register in short-document BEIR datasets.
 
-- Read a corpus document with technical language
-- Write 2-3 natural questions a regular user would ask that the document helps answer
-- "Can the way you cook food cause disease?" NOT "heterocyclic amine formation during high-temperature pyrolysis"
+**Methodology:**
+1. For each query, both strategies search independently with the same parameters (result limit, score threshold)
+2. Results are formatted identically with per-document chunk caps matching the KB's RAG configuration
+3. Result sets are randomly assigned to "Set A" and "Set B" (blinded, randomized position)
+4. An LLM judge evaluates retrieval relevance and answer utility, producing a structured verdict
+5. Verdicts are de-blinded and aggregated across all queries
 
-Questions are categorized as **vocabulary-mismatch** (user language differs from document language) or **direct-match** (user terms appear in relevant documents) to enable segmented analysis.
+**PMC Health results (100 queries, 500 full-text research papers):**
 
-### Candidate Collection
+| Judge | Provider | MS Win Rate |
+|-------|----------|-------------|
+| Claude Haiku 4.5 | Anthropic | **84%** |
+| Gemini 3.1 Pro | Google | **86%** |
+| Grok 4.20 | xAI | **87%** |
+| GPT-5.4 | OpenAI | **89%** |
+| Claude Opus 4.5 | Anthropic | **97%** |
 
-For each question, both strategies search the same KB:
-- **Baseline**: `query_type=similarity` (cosine similarity on chunk content embeddings)
-- **Multi-surface**: `query_type=multi_surface` (parallel execution of chunk_vector, chunk_summary, query_match, synopsis_match surfaces with surface-agreement fusion — see Score Fusion Evolution below)
+Five judges from four providers independently agree: multi-surface wins 84-97% of queries on long-document corpora with natural language questions.
 
-Baseline is collected with `limit=40` (chunks, which deduplicate to ~15-20 unique documents), multi-surface with `limit=20` (already document-level). After deduplication, this yields ~25 unique candidate documents per query. The JSON field is `limit`, not `top_k`.
+### Why Both Methodologies Matter
 
-### Judgment
+BEIR provides credibility — it's the standard benchmark that reviewers and researchers expect. Multi-surface beats baseline on published BEIR datasets, which establishes that the approach doesn't hurt traditional metrics.
 
-Every candidate document is read and scored on a 3-point answer-utility scale:
+The case study provides truth — it measures what actually matters for RAG: does the retrieval result help an LLM answer the question? On long-document corpora where multi-surface should shine, the case study reveals an 84-97% win rate that BEIR's +4-8% NDCG improvement dramatically understates.
 
-- **0 — Not useful**: Document does not help answer the question.
-- **1 — Partially useful**: Document contains tangentially related information that could inform but not directly answer the question.
-- **2 — Highly relevant**: Document directly helps answer the question with specific information, evidence, or data.
+Together, they tell a complete story: multi-surface is at least as good as baseline on traditional metrics (BEIR), and dramatically better on the metric that matters for real-world usage (answer utility).
 
-Every judgment includes a **written justification** explaining why the document received its score. This makes the qrels auditable — anyone can read the justification and decide if they agree.
+## Why Traditional Benchmarks Understate Multi-Surface Value
 
-Cross-topic connections are explicitly considered. A document about fatty acids and prostate cancer is scored 2 for "are avocados good for you?" if it identifies avocado as the principal MUFA source and concludes the association reduces cancer risk.
+Standard IR benchmarks score against a pre-determined set of "correct" documents. These qrels were created for systems that find documents through vocabulary overlap or learned semantic similarity.
 
-### Scoring
+Three specific problems:
 
-Once qrels are frozen, scoring is deterministic and repeatable:
-- Run both strategies against the KB
-- For each query, count score-2 documents in each strategy's top-K
-- Compute standard IR metrics (NDCG@K, MAP@K) against the frozen qrels
-- Head-to-head: per query, which strategy surfaced more score-2 documents?
-- Segment results by query type (vocabulary-mismatch vs direct-match)
+**1. Cross-topic discoveries are penalized.** When multi-surface finds a genuinely relevant document through cross-topic semantic bridging (e.g., query_match finding a prostate cancer paper for "are avocados good for you?" because the synthesized query was "can eating avocados lower prostate cancer risk?"), BEIR scores it as a false positive.
 
-Only documents returned by at least one strategy need judgments. Documents neither strategy surfaces are implicitly score-0 (sparse qrels, standard practice — BEIR's NFCorpus has 12K qrels across 1.17M possible pairs).
+**2. Short-document datasets can't test multi-surface's strength.** NFCorpus documents are single paragraphs. SciFact documents are short abstracts. On these corpora, all surfaces embed essentially the same text — there's no opportunity for chunk_summary to find something chunk_vector missed in a different section of a long paper. The published BEIR datasets test multi-surface under the worst conditions for it.
 
-### Why This Isn't Biased
+**3. Topical relevance ≠ answer utility.** A document about prostate cancer is not "about" avocados, but it contains direct evidence that avocado intake reduces cancer risk. Traditional relevance judges score by topic overlap. Answer-utility judges score by information content.
 
-Both strategies are candidate generators — neither determines relevance. The judge reads every candidate document from both strategies and scores independently. Questions are generated from corpus documents before seeing what either strategy retrieves. Profiling happened at ingestion against raw documents, before any questions existed. The qrels include written justifications anyone can audit.
+## Score Fusion
 
-## Current Results
+Multi-surface search runs 5 retrieval surfaces in parallel and fuses their scores into a final document ranking. Two fusion formulas are available, selectable per query:
 
-### PMC Health Track (85 queries judged of 100 generated, in progress)
+### Weighted Average
 
-- 500 full-text open-access articles (median 5,838 words, multi-chunk)
-- 100 natural-language questions generated across diverse health topics
-- 1,961 judgments for 85 queries, all scores verified from chunk content
-- Score distribution: 1,138 score-0 (58%), 520 score-1 (27%), 302 score-2 (15%)
-- BEIR-format files ready: run with `run_benchmark.py --dataset pmc_health`
+`final_score = Σ(score × weight) / Σ(weight)` for surfaces with weight > 0 and score > 0.
 
-### Benchmark Results Comparison (live runs, 2026-03-25)
+Each surface contributes proportionally to its configured weight. Allows genuine multi-surface consensus without penalizing documents found strongly by a single surface. Better for multi-chunk corpora where surfaces find genuinely different content in different parts of the document.
 
-| Corpus | Formula | NDCG@10 | MAP@10 | H2H Win% | Score-2 |
-|--------|---------|---------|--------|----------|---------|
-| NFCorpus (3633 docs) | max×√(mean/max) | **+8.0%** | **+13.4%** | 57% | +3.5% |
-| NFCorpus (3633 docs) | weighted_average | +4.8% | +9.7% | 39% | -2.5% |
-| PMC Health (500 docs) | max×√(mean/max) | +3.6% | +4.4% | 65% | +5.8% |
-| PMC Health (500 docs) | weighted_average | **+5.5%** | **+6.3%** | **89%** | **+7.7%** |
+### Max × √(mean/max)
 
-All results are statistically significant (p < 0.05, paired t-test) and
-reproducible from frozen qrels. The head-to-head metric counts score-2
-(highly relevant) documents in each strategy's top-10 per query.
+`final_score = max(scores) × √(mean(scores) / max(scores))`
 
-Neither fusion formula is universally optimal for NDCG. max×√(mean/max)
-inflates NDCG on single-chunk corpora through agreement scoring on
-near-identical surface signals. weighted_average is better on multi-chunk
-documents where surfaces genuinely differentiate.
+The max score determines the ceiling. The mean/max ratio measures surface agreement. Documents with balanced scores across surfaces get full credit; those dominated by a single surface are penalized. Better for single-chunk corpora where surfaces produce correlated scores and the agreement signal filters false positives.
 
-### Practical Retrieval: Relevant Documents Above Threshold
-
-Traditional IR metrics (NDCG, MAP) measure ranking quality assuming the
-full result set is presented. In practice, applications apply a minimum
-score threshold. This metric measures what users actually experience: how
-many highly-relevant documents survive a given threshold.
-
-**NFCorpus (weighted_average, full 3633-doc corpus):**
-
-| Threshold | BL score-2 | MS score-2 | Advantage |
-|-----------|-----------|-----------|-----------|
-| 0.30 | 306 | 329 | +7.5% |
-| 0.40 | 200 | 221 | +10.5% |
-| 0.50 | 105 | 123 | **+17.1%** |
-
-**PMC Health (weighted_average, 500-doc corpus):**
-
-| Threshold | BL score-2 | MS score-2 | Advantage |
-|-----------|-----------|-----------|-----------|
-| 0.30 | 272 | 293 | +7.7% |
-| 0.35 | 262 | 280 | +6.9% |
-| 0.40 | 228 | 238 | +4.4% |
-
-Multi-surface consistently surfaces more highly-relevant documents at
-every practical threshold on both corpora. On NFCorpus, the advantage
-grows from +5% to +17% as the threshold increases — the more selective the
-user, the bigger multi-surface's edge. This is the strongest evidence that
-multi-surface retrieval provides genuine value beyond ranking improvements.
-
-### NFCorpus Track (24 queries, preserved from earlier work)
-
-The original NFCorpus answer-utility evaluation used 24 queries against single-chunk medical abstracts. These results are preserved but use older scoring methodology and are not directly comparable to the PMC Health track. See `nfcorpus/answer_utility/` for data.
-
-## Two Benchmark Tracks
-
-### Track 1: NFCorpus — Query Match Evaluation (complete, 27 queries)
-
-NFCorpus documents are medical abstracts (~90 words each). Every document is a single chunk, so chunk_summary, chunk_vector, and synopsis_match produce nearly identical embeddings. On this corpus, query_match is responsible for 98.3% of multi-surface's top scores. The benchmark validates query_match's vocabulary-gap bridging but cannot evaluate the other surfaces.
-
-**Status:** 27 queries, 687 judgments, MS wins 14, BL wins 7, Ties 6. Live scoring against the KB reproduces hand-computed results exactly. This track is complete and preserved as the definitive evidence for query_match vocabulary-gap bridging.
-
-### Track 2: PMC Health — Full Multi-Surface Evaluation (in progress)
-
-500 full-text open-access PubMed Central articles (median 5,838 words, ~12 chunks per document) ingested into KB `6e05a257-9981-4e8d-b7e0-ba44fba5a654`. On this corpus, chunk_summary, chunk_vector, and synopsis_match produce meaningfully different embeddings. Validation testing confirmed chunk_summary wins as top surface on some results — something that never occurred on NFCorpus.
-
-**Status:** 45 queries, 1,150 judgments. All 500 documents profiled. `max × √(mean/max)` fusion active with `SHU_MULTI_SURFACE_CHUNK_LIMIT=500`. MS wins 78% of decided matchups, +17.5% score-2 in top-10. Target: 100 queries.
-
-**Key finding from this track:** Surface agreement — measured as mean/max ratio of surface scores — is a strong signal for document relevance. Documents with balanced scores across all surfaces are more likely to be genuinely relevant than documents dominated by a single surface. This led to the continuous agreement fusion formula (see Score Fusion Evolution below).
-
-### Score Fusion Evolution
+### Fusion Formula History
 
 The benchmark data drove scoring improvements through four stages:
 
-**Stage 1: Max fusion.** `final_score = max(surface_scores)`. The highest individual surface score determines rank. Simple and preserves cross-topic discoveries, but query_match false positives — matching on question structure rather than content — displace genuine multi-surface consensus results. BEIR: +5.4% NDCG@10.
+1. **Max fusion** (+5.4% NDCG@10). Simplest — highest surface score wins. Query_match false positives displace genuine results.
 
-**Stage 2: Max-then-rerank (tested, failed).** Select top-K by max, then re-sort by weighted average. Failed (-11.4% score-2) because weighted average demotes query_match-only finds. Revisited in Stage 4 after fixing a data loss problem.
+2. **Max-then-rerank** (failed, -11.4% score-2). Weighted average as a reranker demoted query_match-only finds.
 
-**Stage 3: Binary surface-agreement fusion (superseded).** `final_score = max × √(active_surfaces / total_surfaces)`. Counts how many surfaces have nonzero scores. Initially showed +7.5% NDCG@10, but this was inflated by a data loss artifact: the per-surface retrieval limit (`SHU_MULTI_SURFACE_CHUNK_LIMIT=50`) was causing relevant documents to get zero on surfaces they shouldn't have, which made binary active/inactive counting artificially discriminating. After fixing the limit to 500, binary agreement regressed to +6.0% because every document registered on all surfaces with weak-but-nonzero scores.
+3. **Binary surface-agreement** (+6.0% NDCG@10, superseded). Counted active surfaces. Initially showed +7.5% but this was inflated by a data loss artifact from a low per-surface retrieval limit (50 vs 500). After fixing the limit, binary counting lost discriminating power because every document registered on all surfaces.
 
-**Stage 4: Continuous agreement fusion (current).** `final_score = max × √(mean / max)`. Instead of counting surfaces as binary active/inactive, uses the ratio of mean to max surface score. A document where all surfaces score ~0.45 gets full credit (mean/max ≈ 1.0). A document dominated by one surface at 0.50 with others at 0.10 is penalized (mean/max ≈ 0.2). This combines the best of max fusion (protects strong single-surface finds from dilution) and weighted average (rewards genuine multi-surface agreement).
+4. **Continuous agreement** (max × √(mean/max), +9.0% NDCG@10). Replaced binary active/inactive with the continuous mean/max ratio. Combines max fusion's protection of strong single-surface finds with weighted average's reward for consensus.
 
-BEIR comparison (all on same surface score data, 2103-subset KB):
+The weighted average formula, previously rejected as broken (-5.6% NDCG), was rehabilitated after fixing the per-surface retrieval limit (50→500) that had been corrupting scores with truncation artifacts. With correct data, weighted average performs well on multi-chunk corpora (+5.5% NDCG@10 on PMC Health, +4.8% on NFCorpus).
 
-| Formula | NDCG@10 | MAP@10 | MRR@10 |
-|---|---|---|---|
-| Max fusion | +5.4% | +8.9% | +6.7% |
-| Weighted average | +8.2% | +11.0% | +7.7% |
-| **Max × √(mean/max)** | **+9.0%** | **+13.0%** | **+8.8%** |
+Neither formula is universally optimal. The choice depends on corpus characteristics — document length, query style, and surface score correlation.
 
-The weighted average, previously rejected as broken, now works because the surface limit fix (50→500) eliminated the zero-score artifacts that were corrupting the average. The continuous agreement formula outperforms both by combining their strengths.
+## Corpus Characteristics and Weight Guidance
 
-### Scoring Tooling
+| Corpus | Doc Length | Query Style | Weight Strategy |
+|--------|-----------|-------------|-----------------|
+| NFCorpus | Sub-chunk (single paragraph) | Keywords/phrases | cv high, sm moderate, qm low |
+| SciFact | Short abstracts (1-3 chunks) | Declarative claims | cv=0.35, sm=0.30, cs=0.25, qm=0.10 |
+| PMC Health | Full papers (avg 57 chunks) | Natural questions | cv=0.25, qm=0.30, sm=0.25, cs=0.20 |
 
-Live scoring against frozen qrels was validated during the NFCorpus track. The same approach applies to PMC Health: POST to `/api/v1/query/{kb_id}/search` with both `similarity` and `multi_surface` query types, count score-2 documents in each strategy's top-K, compute head-to-head wins. Collection script: `backend/src/tests/benchmark/.datasets/pmc_health/answer_utility/collect_candidates.py`.
+**query_match** is most valuable when queries are natural language questions (PMC Health). It adds noise when queries are keyword-style claims (SciFact) or phrases (NFCorpus).
 
-### Query-Type-Aware Weight Adjustment
+**synopsis_match** is most valuable on short documents where the synopsis captures the entire document's meaning, and on long documents where it provides the only document-level semantic signal.
 
-The data suggests query_match should be weighted more heavily for general/exploratory queries and less for specific/targeted queries. A lightweight query classification (LLM or heuristic) could select weight profiles before fusion. Both benchmark tracks enable measuring the impact — NFCorpus for query_match tuning, PMC Health for full surface weight tuning. See `docs/.internal/session-handoff-benchmarking.md` for implementation details.
+**Threshold matters.** At threshold 0.0, multi-surface returns much more noise than baseline. At 0.3 (practical usage), noise is filtered and multi-surface's advantage shows through clearly.
+
+## Key Lessons Learned
+
+### Ablation-based weight recommendations don't work
+
+Local ablation (zeroing a surface's scores and recomputing fusion from collected data) does not predict actual weight sensitivity. On PMC Health, ablation predicted that removing query_match would improve NDCG by +2.6%. Actually reducing query_match's weight made NDCG go down. The local recomputation shortcut doesn't match real search behavior because the document set changes when weights change. Weight recommendations and fusion impact sections have been removed from the BEIR report (SHU-653).
+
+The real weight tuning tool is the case study evaluation — run the same queries with different weight configurations and compare LLM judge verdicts.
+
+### Chunk cap is critical for fair evaluation
+
+Early case study runs on PMC Health had a severe bias: multi-surface was returning up to 49 chunks per document while baseline returned 2-4. LLM judges were comparing fundamentally different amounts of information. After applying the KB's `max_chunks_per_document` RAG config cap, multi-surface's win rate actually increased (Haiku: 77% → 84%) because the cap removed noise that was costing verdicts. The chunk cap is now enforced in the result formatter.
+
+### All surfaces underperform individually, but fusion outperforms
+
+On PMC Health, every individual surface has lower NDCG@10 than baseline chunk similarity. But fused together they beat baseline by +4%. This demonstrates that multi-surface value comes from complementary signals, not from any single superior surface. Single-surface ablation cannot capture this interaction.
+
+### Synthetic qrels are unreliable
+
+Our attempt to build custom answer-utility qrels for PMC Health (generating questions, judging every document 0/1/2 with LLMs) produced a 36.6% error rate on batch judgments. The comparative case study approach (which set is better?) is more robust than absolute scoring (how relevant is this document?) because it doesn't require reading thousands of documents individually.
+
+## Future Directions
+
+### Query-type-aware weight adjustment
+
+The data suggests weights should vary by query type — natural language questions benefit from high query_match weight, while keyword-style queries benefit from low query_match weight. A lightweight query classification could select weight profiles before fusion. Both benchmark corpora enable measuring the impact.
+
+### Long-document BEIR dataset
+
+NFCorpus and SciFact are short-document corpora that can't fully test multi-surface's advantage. A BEIR dataset with long documents and professional qrels would let us validate multi-surface where it should be strongest. CODEC's judged subset (~17,500 documents, full web pages, complex research queries) is the best candidate identified so far.
+
+### NFCorpus case study
+
+The case study methodology could be applied to NFCorpus to measure answer utility on short documents and compare with the existing BEIR results. This would strengthen the cross-corpus story.
+
+## Tooling
+
+### BEIR Benchmark
+```bash
+cd shu/backend/src
+python -m tests.benchmark.run_benchmark --dataset nfcorpus --reuse-kb <kb-id>
+python -m tests.benchmark.run_benchmark --dataset scifact --reuse-kb <kb-id>
+```
+
+### Answer-Utility Case Study
+```bash
+cd shu/backend/src
+python -m tests.benchmark.run_answer_utility_eval \
+    --dataset pmc_health --reuse-kb <kb-id> --model-config <config-id> \
+    --run-name <name> --concurrency 8 --qrels-only \
+    --weight chunk_vector=0.25 --weight query_match=0.30 \
+    --weight synopsis_match=0.25 --weight chunk_summary=0.20
+```
+
+See `backend/src/tests/benchmark/README.md` for full documentation of both tools.

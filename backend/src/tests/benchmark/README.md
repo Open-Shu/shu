@@ -108,6 +108,41 @@ python backend/scripts/.internal/requeue_profiling.py <kb-id>
 python backend/scripts/.internal/requeue_profiling.py <kb-id> --include-errors
 ```
 
+### Answer-Utility Case Study Evaluation
+
+Measures retrieval quality by answer utility — "which result set better helps an LLM answer the query?" — using blinded A/B comparison with an LLM judge. This complements BEIR metrics by capturing value that traditional relevance judgments miss (cross-topic discovery, vocabulary-gap bridging).
+
+```bash
+cd shu/backend/src
+
+# Run evaluation (requires a model configuration for the LLM judge)
+python -m tests.benchmark.run_answer_utility_eval \
+    --dataset scifact \
+    --reuse-kb 7fe6dcb8-c946-4134-9ad1-68bd4586c895 \
+    --model-config <model-config-id> \
+    --max-queries 10
+
+# With custom weights and fusion formula
+python -m tests.benchmark.run_answer_utility_eval \
+    --dataset scifact --reuse-kb <kb-id> --model-config <config-id> \
+    --weight chunk_vector=0.40 --weight query_match=0.30 \
+    --fusion-formula weighted_average
+
+# Aggregate existing results (no LLM calls)
+python -m tests.benchmark.run_answer_utility_eval \
+    --aggregate --dataset scifact
+
+# Aggregate filtered by judge model
+python -m tests.benchmark.run_answer_utility_eval \
+    --aggregate --dataset scifact --model claude-haiku
+```
+
+Results are written to `.case-study/{corpus}/`:
+- Per-query markdown files with full judge reasoning, verdict block, and de-blinded footer
+- `_summary.md` with win/loss/tie counts, confidence distribution, and per-query detail table
+
+The evaluation uses blinded A/B testing: baseline and multi-surface results are randomly assigned to "Set A" and "Set B" to prevent label bias. Verdicts are de-blinded in the output.
+
 ## Output Files
 
 Each benchmark run produces four files in `.results/`:
@@ -171,13 +206,21 @@ tests/benchmark/
 ├── query_classifier.py          # Heuristic query type classification
 ├── beir_reference_scores.py     # Published BEIR scores and methodologies
 ├── download_datasets.py         # Dataset download utility
+├── run_answer_utility_eval.py   # Answer-utility case study evaluation (SHU-647)
 ├── .datasets/                   # Downloaded corpora (gitignored)
 │   ├── nfcorpus/
 │   ├── test_subset/
 │   └── ...
-└── .results/                    # Benchmark output (gitignored)
-    ├── benchmark_nfcorpus_*_executive_summary.md
-    ├── benchmark_nfcorpus_*_report.json
-    ├── benchmark_nfcorpus_*_report.txt
-    └── benchmark_nfcorpus_*_runs.json
+├── .results/                    # Benchmark output (gitignored)
+│   ├── benchmark_nfcorpus_*_executive_summary.md
+│   ├── benchmark_nfcorpus_*_report.json
+│   ├── benchmark_nfcorpus_*_report.txt
+│   └── benchmark_nfcorpus_*_runs.json
+└── .case-study/                 # Answer-utility case study output (gitignored)
+    ├── scifact/
+    │   ├── _summary.md
+    │   ├── q219_claude-haiku-4-5-20251001.md
+    │   └── ...
+    └── nfcorpus/
+        └── ...
 ```

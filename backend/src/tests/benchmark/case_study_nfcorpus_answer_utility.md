@@ -4,7 +4,7 @@
 **Corpus:** NFCorpus (3,633 biomedical documents, BEIR benchmark)
 **Profiling Model:** Claude Haiku 4.5
 **Embedding Model:** Snowflake/snowflake-arctic-embed-l-v2.0
-**Fusion:** Max (highest vector surface score per document), BM25 excluded
+**Fusion:** `max_sqrt_mean_max` (Max × √(mean/max)), BM25 excluded
 **KB ID:** 63f1d9ff-b6a2-420b-9f06-6a1400bda65f
 
 ## Summary

@@ -15,10 +15,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ...core.logging import get_logger
 from .protocol import FusedResult, RetrievalSurface, SurfaceResult
+from .result_formatter import FormattedDocument, format_results
 from .score_fusion import ScoreFusionService
 
 if TYPE_CHECKING:
     from shu.core.embedding_service import EmbeddingService
+    from shu.core.vector_store import VectorStore
 
 logger = get_logger(__name__)
 
@@ -39,6 +41,7 @@ class MultiSurfaceSearchService:
         surfaces: list[RetrievalSurface],
         embedding_service: EmbeddingService,
         fusion_service: ScoreFusionService | None = None,
+        vector_store: VectorStore | None = None,
         *,
         surface_limit: int = DEFAULT_SURFACE_LIMIT,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
@@ -49,6 +52,7 @@ class MultiSurfaceSearchService:
             surfaces: List of retrieval surfaces to execute.
             embedding_service: Service for generating query embeddings.
             fusion_service: Service for fusing results. If None, creates default.
+            vector_store: Vector store for result formatting (chunk promotion).
             surface_limit: Max results per surface.
             timeout_ms: Timeout for surface execution in milliseconds.
 
@@ -56,6 +60,7 @@ class MultiSurfaceSearchService:
         self._surfaces = surfaces
         self._embedding_service = embedding_service
         self._fusion_service = fusion_service or ScoreFusionService()
+        self._vector_store = vector_store
         self._surface_limit = surface_limit
         self._timeout_ms = timeout_ms
 
@@ -66,8 +71,9 @@ class MultiSurfaceSearchService:
         *,
         limit: int = 10,
         threshold: float = 0.0,
+        max_chunks_per_document: int = 2,
         session_factory: async_sessionmaker,
-    ) -> tuple[list[FusedResult], dict[str, dict[str, float]]]:
+    ) -> tuple[list[FusedResult], dict[str, dict[str, float]], list[FormattedDocument]]:
         """Execute multi-surface search and return fused results.
 
         Args:
@@ -79,9 +85,10 @@ class MultiSurfaceSearchService:
                 gets its own session to allow safe parallel execution.
 
         Returns:
-            Tuple of (fused_results, all_surface_scores) where fused_results
-            is sorted by final_score descending and all_surface_scores contains
-            per-surface scores for ALL scored documents (before top-k truncation).
+            Tuple of (fused_results, all_surface_scores, formatted_docs) where
+            fused_results is sorted by final_score descending, all_surface_scores
+            contains per-surface scores for ALL scored documents (before top-k
+            truncation), and formatted_docs is the structured LLM-readable context.
 
         """
         start_time = time.perf_counter()
@@ -134,9 +141,9 @@ class MultiSurfaceSearchService:
                 "All surfaces failed or returned no results",
                 extra={"query": query[:100], "kb_id": str(kb_id)},
             )
-            return []
+            return [], {}, []
 
-        # Step 5: Fuse results (fusion gets its own session)
+        # Step 5: Fuse results and format (fusion + formatting get their own session)
         async with session_factory() as db:
             fused_results, all_surface_scores = await self._fusion_service.fuse(
                 valid_results,
@@ -144,6 +151,17 @@ class MultiSurfaceSearchService:
                 threshold=threshold,
                 db=db,
             )
+
+            # Step 6: Format results into structured document context
+            formatted_docs: list[FormattedDocument] = []
+            if fused_results and self._vector_store:
+                formatted_docs = await format_results(
+                    fused_results,
+                    query_vector,
+                    self._vector_store,
+                    db,
+                    max_chunks_per_document=max_chunks_per_document,
+                )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
@@ -157,7 +175,7 @@ class MultiSurfaceSearchService:
             },
         )
 
-        return fused_results, all_surface_scores
+        return fused_results, all_surface_scores, formatted_docs
 
     async def _execute_surface(
         self,

@@ -11,6 +11,7 @@ from uuid import UUID
 
 from ...core.exceptions import ShuException
 from ...schemas.query import QueryResponse, QueryResult, QueryType
+from ...services.retrieval.result_formatter import dedupe_contributing_chunks
 from .base import measure_execution_time
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class MultiSurfaceSearchMixin:
     """Mixin providing multi-surface search orchestration."""
 
     @measure_execution_time
-    async def _multi_surface_search(
+    async def _multi_surface_search(  # noqa: PLR0915
         self,
         knowledge_base_id: str,
         query: str,
@@ -69,6 +70,7 @@ class MultiSurfaceSearchMixin:
         synopsis_match_weight: float | None = None,
         bm25_weight: float | None = None,
         chunk_summary_weight: float | None = None,
+        fusion_formula: str | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
@@ -142,25 +144,34 @@ class MultiSurfaceSearchMixin:
 
             surfaces = _build_surfaces(vector_store, weights, settings.execute_zero_weight_surfaces)
 
-            # Create fusion service with configured weights
-            fusion_service = ScoreFusionService(weights=weights)
+            # Create fusion service with configured weights and optional formula override
+            fusion_kwargs: dict[str, Any] = {"weights": weights}
+            if fusion_formula:
+                fusion_kwargs["fusion_formula"] = fusion_formula
+            fusion_service = ScoreFusionService(**fusion_kwargs)
 
             # Create orchestrator
             search_service = MultiSurfaceSearchService(
                 surfaces=surfaces,
                 embedding_service=embedding_service,
                 fusion_service=fusion_service,
+                vector_store=vector_store,
                 surface_limit=settings.multi_surface_chunk_limit,
                 timeout_ms=settings.multi_surface_timeout_ms,
             )
 
+            # Get max_chunks_per_document from RAG config (same limit baseline uses)
+            rag_config = knowledge_base.get_rag_config()
+            max_chunks_per_doc = rag_config.get("max_chunks_per_document", 2)
+
             # Execute search (pass session factory for safe parallel execution)
             kb_uuid = UUID(knowledge_base_id)
-            fused_results, all_surface_scores = await search_service.search(
+            fused_results, all_surface_scores, formatted_docs = await search_service.search(
                 query=query,
                 kb_id=kb_uuid,
                 limit=limit,
                 threshold=threshold,
+                max_chunks_per_document=max_chunks_per_doc,
                 session_factory=get_async_session_local(),
             )
 
@@ -223,19 +234,37 @@ class MultiSurfaceSearchMixin:
                     "final_score": r.final_score,
                     "surface_scores": r.surface_scores,
                     "surface_metadata": r.surface_metadata,
-                    "contributing_chunks": [
-                        {
-                            "chunk_id": str(c.chunk_id),
-                            "chunk_index": c.chunk_index,
-                            "surface": c.surface,
-                            "score": c.score,
-                            "snippet": c.snippet,
-                            "summary": c.summary,
-                        }
-                        for c in r.contributing_chunks
-                    ],
+                    "contributing_chunks": dedupe_contributing_chunks(
+                        r.contributing_chunks, max_chunks=max_chunks_per_doc
+                    )[0],
                 }
                 for r in fused_results
+            ]
+
+            # Structured document context from result formatter (SHU-652)
+            response_dict["formatted_results"] = [
+                {
+                    "document_id": doc.document_id,
+                    "document_title": doc.document_title,
+                    "final_score": doc.final_score,
+                    "surface_scores": doc.surface_scores,
+                    "synopsis": doc.synopsis,
+                    "title_summary": doc.title_summary,
+                    "chunks": [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "chunk_index": c.chunk_index,
+                            "score": c.score,
+                            "content": c.content,
+                            "surfaces": c.surfaces,
+                            "summary": c.summary,
+                            "matched_query": c.matched_query,
+                            "promoted": c.promoted,
+                        }
+                        for c in doc.chunks
+                    ],
+                }
+                for doc in formatted_docs
             ]
 
             # Per-surface scores for all scored documents (before top-k truncation)

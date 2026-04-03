@@ -189,6 +189,10 @@ class TestSynopsisMatchSurface:
         ]
         surface, _ = self._make_surface(mock_results)
         mock_db = AsyncMock()
+        # Mock the DB execute → fetchall chain for synopsis loading
+        mock_db_result = MagicMock()
+        mock_db_result.fetchall.return_value = []
+        mock_db.execute = AsyncMock(return_value=mock_db_result)
 
         result = await surface.search(
             query_text="test query",

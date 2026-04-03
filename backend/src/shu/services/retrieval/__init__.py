@@ -12,14 +12,19 @@ from .protocol import (
     SurfaceHit,
     SurfaceResult,
 )
+from .result_formatter import FormattedChunk, FormattedDocument, dedupe_contributing_chunks, format_results
 from .score_fusion import ScoreFusionService
 
 __all__ = [
     "ContributingChunk",
+    "FormattedChunk",
+    "FormattedDocument",
     "FusedResult",
     "MultiSurfaceSearchService",
     "RetrievalSurface",
     "ScoreFusionService",
     "SurfaceHit",
     "SurfaceResult",
+    "dedupe_contributing_chunks",
+    "format_results",
 ]

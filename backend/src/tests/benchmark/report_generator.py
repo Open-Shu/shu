@@ -101,9 +101,7 @@ class ReportGenerator:
                     if k != "per_query"
                 } if results.head_to_head else {},
                 "threshold_analysis": results.threshold_analysis if results.threshold_analysis else {},
-                "fusion_impact": results.fusion_impact,
                 "contribution_matrix": results.contribution_matrix,
-                "weight_recommendations": results.weight_recommendations,
             },
             "timing": {
                 "ingestion_seconds": results.ingestion_time_s,
@@ -169,15 +167,17 @@ class ReportGenerator:
         # Head-to-head answer-utility comparison
         h2h = results.head_to_head
         if h2h and h2h.get("decided", 0) > 0:
+            max_rel = h2h.get("max_relevance", 2)
+            txt_rel_label = f"score-{max_rel}" if max_rel > 1 else "relevant"
             w("-" * 70)
-            w(f"ANSWER-UTILITY HEAD-TO-HEAD (score-2 in top-{h2h['k']})")
+            w(f"ANSWER-UTILITY HEAD-TO-HEAD ({txt_rel_label} in top-{h2h['k']})")
             w("-" * 70)
             w("")
             w(f"  MS wins:  {h2h['ms_wins']}")
             w(f"  BL wins:  {h2h['bl_wins']}")
             w(f"  Ties:     {h2h['ties']}")
             w(f"  MS win rate: {h2h['ms_win_pct']:.0f}% of {h2h['decided']} decided")
-            w(f"  Score-2 total: BL={h2h['total_bl_score2']}, MS={h2h['total_ms_score2']} ({h2h['advantage_pct']:+.1f}%)")
+            w(f"  {txt_rel_label.capitalize()} total: BL={h2h['total_bl_score2']}, MS={h2h['total_ms_score2']} ({h2h['advantage_pct']:+.1f}%)")
             w("")
 
         # Threshold analysis
@@ -473,9 +473,11 @@ class ReportGenerator:
         if h2h and h2h.get("decided", 0) > 0:
             w.append("## Answer-Utility Head-to-Head")
             w.append("")
+            max_rel = h2h.get("max_relevance", 2)
+            rel_label = f"score-{max_rel}" if max_rel > 1 else "relevant"
             w.append(
                 f"Per-query comparison: which strategy's top-{h2h['k']} results "
-                "contain more highly-relevant (score-2) documents?"
+                f"contain more {rel_label} documents?"
             )
             w.append("")
             w.append("| Outcome | Count | Percentage |")
@@ -488,7 +490,7 @@ class ReportGenerator:
             w.append(
                 f"MS wins **{h2h['ms_win_pct']:.0f}%** of decided matchups "
                 f"({h2h['ms_wins']} of {h2h['decided']}). "
-                f"Aggregate score-2 in top-{h2h['k']}: "
+                f"Aggregate {rel_label} in top-{h2h['k']}: "
                 f"BL={h2h['total_bl_score2']}, MS={h2h['total_ms_score2']} "
                 f"(**{h2h['advantage_pct']:+.1f}%**)."
             )
@@ -666,31 +668,6 @@ class ReportGenerator:
             w.append(f"| Baseline | {baseline_ndcg:.4f} | — | Standard RAG |")
             w.append("")
 
-        # Fusion impact analysis (local ablation)
-        if results.fusion_impact:
-            w.append("## Fusion Impact: Effect of Removing Each Surface")
-            w.append("")
-            w.append(
-                "Each row shows fused NDCG@10 when that surface is zeroed out, "
-                "computed locally from collected per-surface scores (no extra API calls)."
-            )
-            w.append("")
-            w.append("| Surface Removed | NDCG@10 | vs Full | Impact |")
-            w.append("|-----------------|---------|---------|--------|")
-
-            full_ndcg_for_impact = results.multi_surface_scores.get("ndcg@10", 0.0)
-            for surface, scores in sorted(
-                results.fusion_impact.items(),
-                key=lambda x: x[1].get("ndcg@10", 0.0),
-            ):
-                ablated_ndcg = scores.get("ndcg@10", 0.0)
-                delta = ((ablated_ndcg - full_ndcg_for_impact) / full_ndcg_for_impact * 100) if full_ndcg_for_impact > 0 else 0.0
-                # Larger drop = more important surface
-                impact_label = "critical" if delta < -5 else "significant" if delta < -2 else "moderate" if delta < -0.5 else "minimal"
-                w.append(f"| {surface} | {ablated_ndcg:.4f} | {delta:+.1f}% | {impact_label} |")
-
-            w.append("")
-
         # Contribution matrix by query type
         if results.contribution_matrix:
             w.append("## Surface Contribution by Query Type")
@@ -717,21 +694,6 @@ class ReportGenerator:
                     row += f" {pct:.1f}% |"
                 w.append(row)
 
-            w.append("")
-
-        # Weight recommendations
-        if results.weight_recommendations:
-            w.append("## Weight Recommendations")
-            w.append("")
-            w.append(
-                "Proportional weights based on fusion impact — surfaces whose "
-                "removal causes the largest NDCG@10 drop get higher weights."
-            )
-            w.append("")
-            w.append("| Surface | Recommended Weight |")
-            w.append("|---------|-------------------|")
-            for surface, weight in sorted(results.weight_recommendations.items(), key=lambda x: x[1], reverse=True):
-                w.append(f"| {surface} | {weight:.2f} |")
             w.append("")
 
         # Leaderboard comparison
@@ -865,7 +827,11 @@ class ReportGenerator:
         w.append(f"- **Evaluation library:** ranx (published in ECIR, validated against TREC Eval)")
         w.append(f"- **Embedding model:** {results.embedding_model}")
         w.append(f"- **Profiling model:** {results.profiling_model}")
-        w.append(f"- **Statistical test:** Paired t-test, significance threshold p < 0.05")
+        stat_name = {"student": "Paired t-test", "fisher": "Fisher's randomization test"}.get(
+            results.config.stat_test, results.config.stat_test
+        ) if results.config else "Paired t-test"
+        max_p = results.config.max_p if results.config else 0.05
+        w.append(f"- **Statistical test:** {stat_name}, significance threshold p < {max_p}")
 
         excluded = results.config.exclude_surfaces
         if excluded:
@@ -901,10 +867,10 @@ class ReportGenerator:
             )
             w.append("")
 
-        w.append(
-            "**Weight tuning:** Current results use equal weights across active surfaces. "
-            "Data-driven weight optimization would likely improve fusion performance further."
-        )
+        if results.effective_weights:
+            active = {s: v for s, v in sorted(results.effective_weights.items()) if v > 0}
+            weight_desc = ", ".join(f"{s}={v}" for s, v in active.items())
+            w.append(f"**Surface weights:** {weight_desc}.")
         w.append("")
 
         # Attribution
