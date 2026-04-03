@@ -17,6 +17,27 @@ from shu.services.policy_engine import POLICY_CACHE
 
 logger = get_logger(__name__)
 
+_MCP_INTERNAL_PREFIX = "mcp:"
+_MCP_WIRE_PREFIX = "mcp-"
+
+
+def _sanitize_plugin_name(name: str) -> str:
+    """Convert internal plugin name to LLM-safe wire format (mcp:Foo → mcp-Foo)."""
+    if name.startswith(_MCP_INTERNAL_PREFIX):
+        return f"{_MCP_WIRE_PREFIX}{name[len(_MCP_INTERNAL_PREFIX):]}"
+    return name
+
+
+def _unsanitize_plugin_name(name: str) -> str:
+    """Convert wire-format plugin name back to internal format (mcp-foo → mcp:foo).
+
+    Note: the original casing is lost; the manifest lookup is case-insensitive
+    for MCP plugins via _resolve_mcp_wire_name.
+    """
+    if name.startswith(_MCP_WIRE_PREFIX):
+        return f"{_MCP_INTERNAL_PREFIX}{name[len(_MCP_WIRE_PREFIX):]}"
+    return name
+
 
 async def get_allowed_plugin_names(user_id: str, manifest_names: set[str] | list[str], db: AsyncSession) -> set[str]:
     """Return the set of plugin names the user is allowed to see.
@@ -38,10 +59,10 @@ async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[Call
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:
-            REGISTRY.refresh()
+            await REGISTRY.full_refresh(db_session)
             manifest = getattr(REGISTRY, "_manifest", {}) or {}
     except Exception:
-        pass
+        logger.warning("Failed to load plugin manifest for agent tools")
 
     allowed = await get_allowed_plugin_names(user_id, set(manifest or {}), db_session)
 
@@ -94,7 +115,7 @@ async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[Call
 
             tools.append(
                 CallableTool(
-                    name=name,
+                    name=_sanitize_plugin_name(name),
                     op=op,
                     plugin=plugin,
                     schema=op_schema,
@@ -191,6 +212,7 @@ async def execute_plugin(
     conversation_owner_id: str,
 ) -> dict[str, Any]:
     """Execute a chat-callable plugin op using the internal executor and return a serializable dict."""
+    plugin_name = _unsanitize_plugin_name(plugin_name)
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:
