@@ -14,7 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.models.experience import Experience
-from shu.services.experiences_scheduler_service import ExperiencesSchedulerService
+from shu.services.experiences_scheduler_service import (
+    ExperiencesSchedulerService,
+    _get_linked_experience_ids,
+)
 
 
 def _allow_all_pbac():
@@ -409,3 +412,314 @@ class TestRunDueExperiences:
         assert result["user_failures"] == 1
         # Both users were attempted
         assert service.execute_experience.call_count == 2
+
+
+class TestGetLinkedExperienceIds:
+    """Tests for the module-level _get_linked_experience_ids function."""
+
+    def _make_step(self, step_type: str, params_template: dict | None = None) -> MagicMock:
+        """Create a mock ExperienceStep with given type and params."""
+        step = MagicMock()
+        step.step_type = step_type
+        step.params_template = params_template
+        return step
+
+    def test_extracts_ids_from_experience_run_steps(self):
+        """Extracts source_experience_id from experience_run steps."""
+        exp = MagicMock(spec=Experience)
+        exp.steps = [
+            self._make_step("experience_run", {"source_experience_id": "exp-a"}),
+            self._make_step("experience_run", {"source_experience_id": "exp-b"}),
+        ]
+
+        result = _get_linked_experience_ids(exp)
+
+        assert result == ["exp-a", "exp-b"]
+
+    def test_ignores_non_experience_run_steps(self):
+        """Only experience_run steps are considered; plugin/kb steps are ignored."""
+        exp = MagicMock(spec=Experience)
+        exp.steps = [
+            self._make_step("plugin", {"source_experience_id": "should-ignore"}),
+            self._make_step("knowledge_base", {"source_experience_id": "also-ignore"}),
+            self._make_step("experience_run", {"source_experience_id": "exp-c"}),
+        ]
+
+        result = _get_linked_experience_ids(exp)
+
+        assert result == ["exp-c"]
+
+    def test_ignores_experience_run_without_source_id(self):
+        """experience_run steps without source_experience_id are skipped."""
+        exp = MagicMock(spec=Experience)
+        exp.steps = [
+            self._make_step("experience_run", {"other_param": "value"}),
+            self._make_step("experience_run", None),
+        ]
+
+        result = _get_linked_experience_ids(exp)
+
+        assert result == []
+
+    def test_empty_steps(self):
+        """Returns empty list when experience has no steps."""
+        exp = MagicMock(spec=Experience)
+        exp.steps = []
+
+        result = _get_linked_experience_ids(exp)
+
+        assert result == []
+
+
+class TestCheckDependenciesResolved:
+    """Tests for _check_dependencies_resolved method."""
+
+    @pytest.fixture
+    def mock_db(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def service(self, mock_db):
+        return ExperiencesSchedulerService(mock_db)
+
+    def _make_experience_with_linked(self, linked_ids: list[str], next_run_at=None, last_run_at=None) -> MagicMock:
+        """Create a mock experience with experience_run steps pointing to linked_ids."""
+        exp = MagicMock(spec=Experience)
+        steps = []
+        for lid in linked_ids:
+            step = MagicMock()
+            step.step_type = "experience_run"
+            step.params_template = {"source_experience_id": lid}
+            steps.append(step)
+        exp.steps = steps
+        exp.next_run_at = next_run_at
+        exp.last_run_at = last_run_at
+        return exp
+
+    @pytest.mark.asyncio
+    async def test_all_resolved(self, service, mock_db):
+        """Returns True when all linked experiences have last_run_at >= next_run_at."""
+        now = datetime.now(UTC)
+        exp = self._make_experience_with_linked(["dep-1", "dep-2"], next_run_at=now)
+
+        mock_row_1 = MagicMock()
+        mock_row_1.id = "dep-1"
+        mock_row_1.last_run_at = now + timedelta(seconds=10)
+        mock_row_2 = MagicMock()
+        mock_row_2.id = "dep-2"
+        mock_row_2.last_run_at = now + timedelta(seconds=5)
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = [mock_row_1, mock_row_2]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await service._check_dependencies_resolved(exp)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_one_pending(self, service, mock_db):
+        """Returns False when one linked experience has not run yet (last_run_at is None)."""
+        now = datetime.now(UTC)
+        exp = self._make_experience_with_linked(["dep-1", "dep-2"], next_run_at=now)
+
+        mock_row_1 = MagicMock()
+        mock_row_1.id = "dep-1"
+        mock_row_1.last_run_at = now + timedelta(seconds=10)
+        mock_row_2 = MagicMock()
+        mock_row_2.id = "dep-2"
+        mock_row_2.last_run_at = None  # Never ran
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = [mock_row_1, mock_row_2]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await service._check_dependencies_resolved(exp)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_missing_dep_treated_as_resolved(self, service, mock_db):
+        """Missing/deleted dependency is treated as resolved with a warning logged."""
+        now = datetime.now(UTC)
+        exp = self._make_experience_with_linked(["dep-1", "dep-missing"], next_run_at=now)
+
+        mock_row_1 = MagicMock()
+        mock_row_1.id = "dep-1"
+        mock_row_1.last_run_at = now + timedelta(seconds=10)
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = [mock_row_1]  # dep-missing not in results
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("shu.services.experiences_scheduler_service.logger") as mock_logger:
+            result = await service._check_dependencies_resolved(exp)
+
+        assert result is True
+        mock_logger.warning.assert_called_once()
+        assert "dep-missing" in mock_logger.warning.call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_no_linked_ids(self, service, mock_db):
+        """Returns True when experience has no linked experience IDs."""
+        exp = MagicMock(spec=Experience)
+        exp.steps = []  # No experience_run steps
+
+        result = await service._check_dependencies_resolved(exp)
+
+        assert result is True
+        mock_db.execute.assert_not_called()
+
+
+class TestResolveLinkedExperienceSchedule:
+    """Tests for _resolve_linked_experience_schedule method."""
+
+    @pytest.fixture
+    def mock_db(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def service(self, mock_db):
+        return ExperiencesSchedulerService(mock_db)
+
+    def _make_experience_with_linked(self, linked_ids: list[str]) -> MagicMock:
+        """Create a mock experience with experience_run steps pointing to linked_ids."""
+        exp = MagicMock(spec=Experience)
+        steps = []
+        for lid in linked_ids:
+            step = MagicMock()
+            step.step_type = "experience_run"
+            step.params_template = {"source_experience_id": lid}
+            steps.append(step)
+        exp.steps = steps
+        exp.next_run_at = None
+        return exp
+
+    @pytest.mark.asyncio
+    async def test_max_of_next_run_at_values(self, service, mock_db):
+        """Sets next_run_at to the MAX of linked experiences' next_run_at values."""
+        now = datetime.now(UTC)
+        earlier = now + timedelta(hours=1)
+        later = now + timedelta(hours=3)
+
+        exp = self._make_experience_with_linked(["dep-1", "dep-2"])
+
+        mock_row_1 = MagicMock()
+        mock_row_1.id = "dep-1"
+        mock_row_1.next_run_at = earlier
+        mock_row_2 = MagicMock()
+        mock_row_2.id = "dep-2"
+        mock_row_2.next_run_at = later
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = [mock_row_1, mock_row_2]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        await service._resolve_linked_experience_schedule(exp)
+
+        assert exp.next_run_at == later
+
+    @pytest.mark.asyncio
+    async def test_all_manual_returns_none(self, service, mock_db):
+        """Sets next_run_at to None when all linked experiences are manual (next_run_at=None)."""
+        exp = self._make_experience_with_linked(["dep-1", "dep-2"])
+
+        mock_row_1 = MagicMock()
+        mock_row_1.id = "dep-1"
+        mock_row_1.next_run_at = None
+        mock_row_2 = MagicMock()
+        mock_row_2.id = "dep-2"
+        mock_row_2.next_run_at = None
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = [mock_row_1, mock_row_2]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        await service._resolve_linked_experience_schedule(exp)
+
+        assert exp.next_run_at is None
+
+    @pytest.mark.asyncio
+    async def test_all_deleted_returns_none(self, service, mock_db):
+        """Sets next_run_at to None when all linked experiences are deleted (not in DB)."""
+        exp = self._make_experience_with_linked(["dep-deleted-1", "dep-deleted-2"])
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = []  # No rows returned
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        await service._resolve_linked_experience_schedule(exp)
+
+        assert exp.next_run_at is None
+
+    @pytest.mark.asyncio
+    async def test_no_linked_ids_returns_none(self, service, mock_db):
+        """Sets next_run_at to None when experience has no linked IDs."""
+        exp = MagicMock(spec=Experience)
+        exp.steps = []
+
+        await service._resolve_linked_experience_schedule(exp)
+
+        assert exp.next_run_at is None
+        mock_db.execute.assert_not_called()
+
+
+class TestExecuteAndTrack:
+    """Tests for _execute_and_track method."""
+
+    @pytest.fixture
+    def mock_db(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def service(self, mock_db):
+        return ExperiencesSchedulerService(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_pbac_denies(self, service):
+        """Returns False when POLICY_CACHE denies the user permission."""
+        mock_exp = MagicMock(spec=Experience)
+        mock_exp.id = "exp-1"
+        mock_exp.slug = "test-exp"
+
+        mock_policy = MagicMock()
+        mock_policy.check = AsyncMock(return_value=False)
+
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", mock_policy):
+            result = await service._execute_and_track(mock_exp, "user-1")
+
+        assert result is False
+        mock_policy.check.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, service):
+        """Returns True when execution succeeds."""
+        mock_exp = MagicMock(spec=Experience)
+        mock_exp.id = "exp-1"
+        mock_exp.slug = "test-exp"
+
+        service.execute_experience = AsyncMock(
+            return_value={"status": "completed", "run_id": "run-1"}
+        )
+
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", _allow_all_pbac()):
+            result = await service._execute_and_track(mock_exp, "user-1")
+
+        assert result is True
+        service.execute_experience.assert_called_once_with(mock_exp, "user-1")
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_failure(self, service):
+        """Returns False when execution fails."""
+        mock_exp = MagicMock(spec=Experience)
+        mock_exp.id = "exp-1"
+        mock_exp.slug = "test-exp"
+
+        service.execute_experience = AsyncMock(
+            return_value={"status": "failed", "error": "Something broke"}
+        )
+
+        with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", _allow_all_pbac()):
+            result = await service._execute_and_track(mock_exp, "user-1")
+
+        assert result is False

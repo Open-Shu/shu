@@ -38,6 +38,7 @@ class TriggerType(str, Enum):
     MANUAL = "manual"
     SCHEDULED = "scheduled"
     CRON = "cron"
+    ON_LINKED_EXPERIENCES_COMPLETE = "on_linked_experiences_complete"
 
 
 class StepType(str, Enum):

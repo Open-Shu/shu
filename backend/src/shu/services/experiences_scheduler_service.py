@@ -29,6 +29,17 @@ from shu.services.policy_engine import POLICY_CACHE
 logger = logging.getLogger(__name__)
 
 
+def _get_linked_experience_ids(experience: Experience) -> list[str]:
+    """Extract source experience IDs from experience_run steps."""
+    return [
+        step.params_template.get("source_experience_id")
+        for step in experience.steps
+        if step.step_type == "experience_run"
+        and step.params_template
+        and step.params_template.get("source_experience_id")
+    ]
+
+
 class ExperiencesSchedulerService:
     """Service for scheduling and executing due experiences."""
 
@@ -76,7 +87,7 @@ class ExperiencesSchedulerService:
             .options(selectinload(Experience.steps))
             .where(
                 and_(
-                    Experience.trigger_type.in_(["scheduled", "cron"]),
+                    Experience.trigger_type.in_(["scheduled", "cron", "on_linked_experiences_complete"]),
                     Experience.visibility.in_(["published", "admin_only"]),
                     Experience.next_run_at <= now,  # Due now
                 )
@@ -128,6 +139,74 @@ class ExperiencesSchedulerService:
             )
             return {"status": "failed", "error": str(e)}
 
+    async def _check_dependencies_resolved(self, experience: Experience) -> bool:
+        """Check whether all linked experiences have completed their current cycle.
+
+        Returns True if every linked experience has last_run_at >= this experience's
+        next_run_at. Missing/deleted dependencies are treated as resolved (with warning).
+        """
+        linked_ids = _get_linked_experience_ids(experience)
+        if not linked_ids:
+            return True
+
+        result = await self.db.execute(
+            select(Experience.id, Experience.last_run_at).where(Experience.id.in_(linked_ids))
+        )
+        deps = {row.id: row.last_run_at for row in result.all()}
+
+        for dep_id in linked_ids:
+            if dep_id not in deps:
+                logger.warning("Linked experience '%s' not found, treating as resolved", dep_id)
+                continue
+            last_run = deps[dep_id]
+            if last_run is None or (experience.next_run_at and last_run < experience.next_run_at):
+                return False
+
+        return True
+
+    async def _resolve_linked_experience_schedule(self, experience: Experience) -> None:
+        """Set next_run_at to the MAX of linked experiences' next_run_at values.
+
+        Excludes None values (manual triggers) and missing/deleted experiences.
+        Sets next_run_at to None if all linked are manual or none exist.
+        """
+        linked_ids = _get_linked_experience_ids(experience)
+        if not linked_ids:
+            experience.next_run_at = None
+            return
+
+        result = await self.db.execute(
+            select(Experience.id, Experience.next_run_at).where(Experience.id.in_(linked_ids))
+        )
+        next_run_values = [row.next_run_at for row in result.all() if row.next_run_at is not None]
+
+        experience.next_run_at = max(next_run_values) if next_run_values else None
+
+    async def _execute_and_track(self, experience: Experience, user_id: str) -> bool:
+        """Execute an experience for a user and return True if succeeded.
+
+        Checks PBAC before execution — returns False if the user is denied.
+        """
+        if not await POLICY_CACHE.check(str(user_id), "experience.run", f"experience:{experience.slug}", self.db):
+            logger.debug("User denied experience.run | experience=%s user=%s", experience.id, user_id)
+            return False
+        result = await self.execute_experience(experience, user_id)
+        if result.get("status") == "completed":
+            logger.debug(
+                "Experience completed for user | experience=%s user=%s run_id=%s",
+                experience.id,
+                user_id,
+                result.get("run_id"),
+            )
+            return True
+        logger.debug(
+            "Experience failed for user (silent) | experience=%s user=%s error=%s",
+            experience.id,
+            user_id,
+            result.get("error"),
+        )
+        return False
+
     async def run_due_experiences(self, *, limit: int = 10) -> dict[str, int]:
         """Find and execute due experiences for ALL active users.
 
@@ -160,6 +239,16 @@ class ExperiencesSchedulerService:
         user_failures = 0
 
         for exp in due_experiences:
+            # Dependency gate: skip if linked experiences haven't completed their cycle
+            if exp.trigger_type == "on_linked_experiences_complete" and not await self._check_dependencies_resolved(
+                exp
+            ):
+                logger.debug(
+                    "Dependencies not resolved, skipping | experience=%s",
+                    exp.id,
+                )
+                continue
+
             logger.info(
                 "Executing scheduled experience for all users | experience=%s name=%s trigger=%s user_count=%d",
                 exp.id,
@@ -172,47 +261,36 @@ class ExperiencesSchedulerService:
             run_count = 0
             failure_count = 0
 
-            # Execute for each user
-            for user in all_users:
-                # PBAC enforcement: skip users denied experience.run
-                if not await POLICY_CACHE.check(str(user.id), "experience.run", f"experience:{exp.slug}", self.db):
-                    continue
-                try:
-                    result = await self.execute_experience(exp, user.id)
-
-                    if result.get("status") == "completed":
-                        run_count += 1
-                        logger.debug(
-                            "Experience completed for user | experience=%s user=%s run_id=%s",
-                            exp.id,
-                            user.id,
-                            result.get("run_id"),
-                        )
-                    else:
+            if exp.scope == "shared":
+                # Shared-scope: execute once using the experience creator
+                if await self._execute_and_track(exp, exp.created_by):
+                    run_count = 1
+                else:
+                    failure_count = 1
+            else:
+                # Per-user scope: execute for each active user
+                for user in all_users:
+                    try:
+                        if await self._execute_and_track(exp, user.id):
+                            run_count += 1
+                        else:
+                            failure_count += 1
+                    except Exception as e:
                         failure_count += 1
-                        # Log at debug level - silent failure for missing provider connections
                         logger.debug(
-                            "Experience failed for user (silent) | experience=%s user=%s error=%s",
+                            "Experience execution error for user (silent) | experience=%s user=%s error=%s",
                             exp.id,
                             user.id,
-                            result.get("error"),
+                            str(e),
                         )
-
-                except Exception as e:
-                    failure_count += 1
-                    # Log at debug level for silent failure
-                    logger.debug(
-                        "Experience execution error for user (silent) | experience=%s user=%s error=%s",
-                        exp.id,
-                        user.id,
-                        str(e),
-                    )
 
             # Update schedule ONCE per experience (not per user)
-            # Use experience creator's timezone for scheduling
-            creator_tz = await self.get_user_timezone(exp.created_by) if exp.created_by else None
             exp.last_run_at = now
-            exp.schedule_next(user_timezone=creator_tz)
+            if exp.trigger_type == "on_linked_experiences_complete":
+                await self._resolve_linked_experience_schedule(exp)
+            else:
+                creator_tz = await self.get_user_timezone(exp.created_by) if exp.created_by else None
+                exp.schedule_next(user_timezone=creator_tz)
             await self.db.commit()
 
             logger.info(
