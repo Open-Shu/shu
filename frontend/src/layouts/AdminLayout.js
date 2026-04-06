@@ -73,7 +73,7 @@ const AdminLayout = ({ children }) => {
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
     { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
     { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
-    { text: 'MCP Servers', icon: <HubIcon />, path: '/admin/mcp' },
+    { text: 'Integrations', icon: <HubIcon />, path: '/admin/integrations' },
     {
       text: 'Experiences',
       icon: <ExperiencesIcon />,

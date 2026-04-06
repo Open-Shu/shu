@@ -23,6 +23,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings_instance
+from ..models.api_server_connection import ApiServerConnection
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..plugins.registry import REGISTRY
@@ -72,6 +73,8 @@ class PluginsSchedulerService:
         skipped_already_enqueued = 0
         skipped_degraded = 0
         degraded_mcp = await self._get_degraded_mcp_connections(due_scheds)
+        degraded_api = await self._get_degraded_api_connections(due_scheds)
+        degraded = degraded_mcp | degraded_api
 
         # Get queue backend for job enqueueing
         try:
@@ -82,9 +85,9 @@ class PluginsSchedulerService:
             queue_backend = None
 
         for s in due_scheds:
-            # Skip degraded MCP connections — advance next_run_at to avoid re-selecting every tick
-            if s.plugin_name in degraded_mcp:
-                logger.warning("Skipping feed '%s': MCP connection is degraded", s.plugin_name)
+            # Skip degraded connections — advance next_run_at to avoid re-selecting every tick
+            if s.plugin_name in degraded:
+                logger.warning("Skipping feed '%s': connection is degraded", s.plugin_name)
                 s.schedule_next()
                 skipped_degraded += 1
                 continue
@@ -150,6 +153,16 @@ class PluginsSchedulerService:
             McpServerConnection.name.in_(mcp_names)
         )
         return {f"mcp:{name}" for name, failures in (await self.db.execute(q)).all() if (failures or 0) >= 5}
+
+    async def _get_degraded_api_connections(self, due_scheds: list) -> set[str]:
+        """Batch-check API connection health and return degraded plugin names."""
+        api_names = {s.plugin_name.removeprefix("api:") for s in due_scheds if s.plugin_name.startswith("api:")}
+        if not api_names:
+            return set()
+        q = select(ApiServerConnection.name, ApiServerConnection.consecutive_failures).where(
+            ApiServerConnection.name.in_(api_names)
+        )
+        return {f"api:{name}" for name, failures in (await self.db.execute(q)).all() if (failures or 0) >= 5}
 
     async def _create_and_enqueue_execution(self, schedule, user_id: str, queue_backend) -> bool:
         """Create a PluginExecution record and enqueue a job. Returns True if queued."""

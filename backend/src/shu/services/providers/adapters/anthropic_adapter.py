@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 import jmespath
@@ -530,7 +531,11 @@ class AnthropicAdapter(BaseProviderAdapter):
         anthropic_tools = []
         for tool in tools:
             title = tool.title
+
+            # Anthropic requires tool names match ^[a-zA-Z0-9_-]{1,128}$
             tool_name = f"{tool.name}__{tool.op}"
+            tool_name = re.sub(r"[^a-zA-Z0-9_-]", "_", tool_name)[:128]
+
             input_schema = tool.schema or {
                 "type": "object",
                 "properties": {},
@@ -543,6 +548,7 @@ class AnthropicAdapter(BaseProviderAdapter):
                 "const": tool.op,
                 "default": tool.op,
             }
+
             if isinstance(input_schema.get("required"), list):
                 if "op" not in input_schema["required"]:
                     input_schema["required"].append("op")
@@ -578,6 +584,11 @@ class AnthropicAdapter(BaseProviderAdapter):
                     args_dict = parsed
             except Exception:
                 args_dict = args_dict or {}
+
+        # If the combined tool name was truncated to 128 chars, the op from the
+        # name split may be incomplete. Fall back to the op injected in args.
+        if len(tool_name) >= 128 and args_dict.get("op"):
+            op = args_dict["op"]
 
         return ToolCallInstructions(
             plugin_name=plugin_name,

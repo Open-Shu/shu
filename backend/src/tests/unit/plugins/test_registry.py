@@ -1,7 +1,8 @@
-"""Unit tests for PluginRegistry MCP integration.
+"""Unit tests for PluginRegistry MCP and API integration.
 
 Tests verify that resolve() handles MCP plugins by bypassing PluginLoader,
-and that sync() creates/purges PluginDefinition rows for MCP plugins.
+that sync() creates/purges PluginDefinition rows for MCP plugins,
+and that _refresh_api populates the manifest with api: prefixed records.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -157,7 +158,8 @@ class TestSyncMcpDefinitions:
         session.add = MagicMock()
 
         with patch.object(registry, "refresh"), \
-             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock), \
+             patch.object(registry, "_refresh_api", new_callable=AsyncMock):
             registry._manifest = {"mcp:wiki": mcp_record}
             result = await registry.sync(session)
 
@@ -185,7 +187,8 @@ class TestSyncMcpDefinitions:
         session.execute = AsyncMock(return_value=exec_result_all)
 
         with patch.object(registry, "refresh"), \
-             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock), \
+             patch.object(registry, "_refresh_api", new_callable=AsyncMock):
             result = await registry.sync(session)
 
         session.delete.assert_awaited_once_with(stale_row)
@@ -227,9 +230,72 @@ class TestSyncMcpDefinitions:
         session.add = MagicMock()
 
         with patch.object(registry, "refresh"), \
-             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock):
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock), \
+             patch.object(registry, "_refresh_api", new_callable=AsyncMock):
             registry._manifest = {"mcp:existing": mcp_record}
             result = await registry.sync(session)
 
         session.add.assert_not_called()
         assert result["created"] == 0
+
+
+class TestRefreshApi:
+    """Verify _refresh_api populates the manifest with api: prefixed records."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_api_populates_manifest(self):
+        """API plugin records from ApiIntegrationService are merged into the manifest."""
+        registry = PluginRegistry()
+        session = AsyncMock()
+
+        api_record = PluginRecord(
+            name="api:weather",
+            version="1.0",
+            entry="shu.plugins.api_adapter:ApiPluginAdapter",
+            capabilities=["http", "kb"],
+        )
+
+        with patch(
+            "shu.services.api_integration_service.ApiIntegrationService"
+        ) as mock_cls:
+            mock_service = AsyncMock()
+            mock_service.generate_all_plugin_records.return_value = [api_record]
+            mock_cls.return_value = mock_service
+
+            await registry._refresh_api(session)
+
+        assert "api:weather" in registry._manifest
+        assert registry._manifest["api:weather"] is api_record
+
+    @pytest.mark.asyncio
+    async def test_refresh_api_failure_is_non_fatal(self):
+        """A failure in ApiIntegrationService does not crash; manifest stays unchanged."""
+        registry = PluginRegistry()
+        registry._manifest = {"native": MagicMock()}
+        session = AsyncMock()
+
+        with patch(
+            "shu.services.api_integration_service.ApiIntegrationService"
+        ) as mock_cls:
+            mock_cls.return_value.generate_all_plugin_records = AsyncMock(
+                side_effect=RuntimeError("db down")
+            )
+
+            await registry._refresh_api(session)
+
+        assert "native" in registry._manifest
+        assert len(registry._manifest) == 1
+
+    @pytest.mark.asyncio
+    async def test_full_refresh_calls_refresh_api(self):
+        """full_refresh calls _refresh_api alongside _refresh_mcp."""
+        registry = PluginRegistry()
+        session = AsyncMock()
+
+        with patch.object(registry, "refresh"), \
+             patch.object(registry, "_refresh_mcp", new_callable=AsyncMock) as mock_mcp, \
+             patch.object(registry, "_refresh_api", new_callable=AsyncMock) as mock_api:
+            await registry.full_refresh(session)
+
+        mock_mcp.assert_awaited_once_with(session)
+        mock_api.assert_awaited_once_with(session)

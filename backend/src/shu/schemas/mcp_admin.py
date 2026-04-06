@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shu.schemas.integration_common import IngestConfig as McpIngestConfig
+from shu.schemas.integration_common import IngestFieldMapping as McpIngestFieldMapping
+from shu.schemas.integration_common import IngestMethod as McpIngestMethod
+from shu.schemas.integration_common import ToolConfigUpdate as McpToolConfigUpdate
 
 
 def _validate_mcp_url(v: str) -> str:

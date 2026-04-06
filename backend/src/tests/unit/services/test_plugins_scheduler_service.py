@@ -1,11 +1,16 @@
 """Unit tests for PluginsSchedulerService.
 
-Tests the plugin feed scheduling service, particularly NULL handling in queries.
+Tests the plugin feed scheduling service, particularly NULL handling in queries
+and degraded connection detection for MCP and API integrations.
 """
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import Column, Integer, String, select
 from sqlalchemy.orm import declarative_base
+
+from shu.services.plugins_scheduler_service import PluginsSchedulerService
 
 
 @pytest.mark.asyncio
@@ -53,3 +58,65 @@ async def test_sqlalchemy_null_check_generates_correct_sql() -> None:
     sql_not_equals = str(query_not_equals.compile(compile_kwargs={"literal_binds": True}))
 
     assert "IS NOT NULL" in sql_not_equals, f"Expected 'IS NOT NULL' in SQL, got: {sql_not_equals}"
+
+
+def _make_schedule(plugin_name: str):
+    """Build a minimal mock PluginFeed schedule."""
+    s = MagicMock()
+    s.plugin_name = plugin_name
+    return s
+
+
+class TestGetDegradedApiConnections:
+    """Verify _get_degraded_api_connections detects degraded API connections."""
+
+    @pytest.mark.asyncio
+    async def test_api_connection_above_threshold_is_degraded(self):
+        """An API connection with consecutive_failures >= 5 is reported as degraded."""
+        db = AsyncMock()
+        db.execute.return_value = MagicMock(all=MagicMock(return_value=[("weather", 5)]))
+
+        svc = PluginsSchedulerService(db)
+        schedules = [_make_schedule("api:weather")]
+
+        result = await svc._get_degraded_api_connections(schedules)
+
+        assert result == {"api:weather"}
+
+    @pytest.mark.asyncio
+    async def test_api_connection_below_threshold_is_not_degraded(self):
+        """An API connection with consecutive_failures < 5 is not degraded."""
+        db = AsyncMock()
+        db.execute.return_value = MagicMock(all=MagicMock(return_value=[("weather", 3)]))
+
+        svc = PluginsSchedulerService(db)
+        schedules = [_make_schedule("api:weather")]
+
+        result = await svc._get_degraded_api_connections(schedules)
+
+        assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_no_api_schedules_returns_empty(self):
+        """When no api: schedules are present, no query is executed."""
+        db = AsyncMock()
+        svc = PluginsSchedulerService(db)
+        schedules = [_make_schedule("mcp:server"), _make_schedule("github")]
+
+        result = await svc._get_degraded_api_connections(schedules)
+
+        assert result == set()
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mixed_schedules_only_checks_api(self):
+        """Only api: prefixed schedules trigger the API degradation query."""
+        db = AsyncMock()
+        db.execute.return_value = MagicMock(all=MagicMock(return_value=[("svc1", 10)]))
+
+        svc = PluginsSchedulerService(db)
+        schedules = [_make_schedule("api:svc1"), _make_schedule("mcp:server")]
+
+        result = await svc._get_degraded_api_connections(schedules)
+
+        assert result == {"api:svc1"}

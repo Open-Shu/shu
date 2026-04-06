@@ -18,7 +18,7 @@ import UserGroups from './components/UserGroups';
 import LLMProviders from './components/LLMProviders';
 import ModelConfigurations from './components/ModelConfigurations';
 import Prompts from './pages/Prompts';
-import McpAdmin from './components/McpAdmin';
+import IntegrationsAdmin from './components/IntegrationsAdmin';
 import PluginsAdmin from './components/PluginsAdmin';
 import PluginsAdminFeeds from './components/PluginsAdminFeeds';
 import ExperiencesAdmin from './components/ExperiencesAdmin';
@@ -307,13 +307,14 @@ const AuthenticatedApp = () => {
             }
           />
           <Route
-            path="/admin/mcp"
+            path="/admin/integrations"
             element={
               <RoleBasedRoute adminOnly>
-                <McpAdmin />
+                <IntegrationsAdmin />
               </RoleBasedRoute>
             }
           />
+          <Route path="/admin/mcp" element={<Navigate to="/admin/integrations" replace />} />
           <Route
             path="/admin/feeds"
             element={

@@ -26,9 +26,10 @@ class PluginRegistry:
         self._cache.clear()
 
     async def full_refresh(self, session: AsyncSession) -> None:
-        """Async refresh: discover filesystem plugins and MCP connections."""
+        """Async refresh: discover filesystem plugins, MCP connections, and API integrations."""
         self.refresh()
         await self._refresh_mcp(session)
+        await self._refresh_api(session)
 
     async def _refresh_mcp(self, session: AsyncSession) -> None:
         """Load MCP plugin records from the database and merge into the manifest."""
@@ -39,6 +40,19 @@ class PluginRegistry:
             records = await service.generate_all_plugin_records()
         except Exception:
             logger.warning("Failed to refresh MCP plugin records")
+            return
+        for record in records:
+            self._manifest[record.name] = record
+
+    async def _refresh_api(self, session: AsyncSession) -> None:
+        """Load API plugin records from the database and merge into the manifest."""
+        from ..services.api_integration_service import ApiIntegrationService
+
+        try:
+            service = ApiIntegrationService(session)
+            records = await service.generate_all_plugin_records()
+        except Exception:
+            logger.warning("Failed to refresh API plugin records")
             return
         for record in records:
             self._manifest[record.name] = record
@@ -73,6 +87,10 @@ class PluginRegistry:
             row = res.scalars().first()
             if name.startswith("mcp:"):
                 c, u = await self._sync_mcp_definition(name, record, row, session)
+                created += c
+                updated += u
+            elif name.startswith("api:"):
+                c, u = await self._sync_api_definition(name, record, row, session)
                 created += c
                 updated += u
             elif not row:
@@ -171,6 +189,32 @@ class PluginRegistry:
         await session.commit()
         return 1, 0
 
+    async def _sync_api_definition(
+        self, name: str, record: PluginRecord, row: PluginDefinition | None, session: AsyncSession
+    ) -> tuple[int, int]:
+        """Create or update a PluginDefinition row for an API integration plugin.
+
+        Returns (created, updated) counts.
+        """
+        from ..services.api_integration_service import ApiIntegrationService
+
+        connection_name = name.removeprefix("api:")
+        svc = ApiIntegrationService(session)
+
+        if row:
+            return 0, 0
+
+        connection_enabled = await svc.is_connection_enabled(connection_name)
+        version = getattr(record, "version", "1.0")[:50]
+        row = PluginDefinition(
+            name=name,
+            version=version,
+            enabled=connection_enabled,
+        )
+        session.add(row)
+        await session.commit()
+        return 1, 0
+
     async def resolve(self, name: str, session: AsyncSession) -> Plugin | None:
         from ..services.mcp_service import McpService
 
@@ -178,6 +222,9 @@ class PluginRegistry:
         if name in self._cache:
             if name.startswith("mcp:"):
                 enabled = await McpService(session).is_connection_enabled(name.removeprefix("mcp:"))
+            elif name.startswith("api:"):
+                from ..services.api_integration_service import ApiIntegrationService
+                enabled = await ApiIntegrationService(session).is_connection_enabled(name.removeprefix("api:"))
             else:
                 try:
                     res = await session.execute(select(PluginDefinition.enabled).where(PluginDefinition.name == name))
@@ -199,6 +246,8 @@ class PluginRegistry:
 
         if name.startswith("mcp:"):
             plugin = await self._resolve_mcp(name, session)
+        elif name.startswith("api:"):
+            plugin = await self._resolve_api(name, session)
         else:
             # Check DB enablement for native plugins
             res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
@@ -225,6 +274,22 @@ class PluginRegistry:
             return adapter
         except Exception:
             logger.warning("Failed to resolve MCP plugin '%s'", name)
+            return None
+
+
+    async def _resolve_api(self, name: str, session: AsyncSession) -> Plugin | None:
+        """Resolve an API integration plugin by delegating adapter creation to ApiIntegrationService."""
+        from ..services.api_integration_service import ApiIntegrationService
+
+        try:
+            adapter = await ApiIntegrationService(session).resolve_adapter(name.removeprefix("api:"))
+            if adapter is not None:
+                record = self._manifest.get(name)
+                if record:
+                    adapter._capabilities = list(record.capabilities or [])
+            return adapter
+        except Exception:
+            logger.warning("Failed to resolve API plugin '%s'", name)
             return None
 
 
