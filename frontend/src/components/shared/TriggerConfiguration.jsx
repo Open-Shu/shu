@@ -57,6 +57,7 @@ const TriggerConfiguration = ({
           <MenuItem value="scheduled">Scheduled</MenuItem>
           {/* We do not call it cron on the frontend to avoid confusion */}
           <MenuItem value="cron">Recurring</MenuItem>
+          <MenuItem value="on_linked_experiences_complete">After Linked Experiences Complete</MenuItem>
         </Select>
         {validationErrors.trigger_type && <FormHelperText>{validationErrors.trigger_type}</FormHelperText>}
       </FormControl>
@@ -99,6 +100,13 @@ const TriggerConfiguration = ({
           onChange={onTriggerConfigChange}
           validationErrors={validationErrors}
         />
+      )}
+
+      {triggerType === 'on_linked_experiences_complete' && (
+        <Alert severity="info">
+          This experience will run automatically after all linked experience_run steps complete their cycle.
+          Dependencies are derived from the experience&apos;s steps — no additional configuration needed.
+        </Alert>
       )}
 
       {triggerType === 'manual' && showHelperText && (

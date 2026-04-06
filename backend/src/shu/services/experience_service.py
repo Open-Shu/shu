@@ -106,12 +106,39 @@ class ExperienceService:
             else:
                 logger.warning("croniter not installed, skipping strict cron validation")
 
+        elif trigger_type == TriggerType.ON_LINKED_EXPERIENCES_COMPLETE:
+            # No trigger_config fields needed — dependencies are derived at runtime
+            # from the experience's experience_run steps. Step-presence validation
+            # is handled separately in create/update experience.
+            pass
+
         # Validate timezone if provided (for both scheduled and cron)
         if trigger_config and trigger_config.get("timezone"):
             try:
                 zoneinfo.ZoneInfo(trigger_config["timezone"])
             except Exception:
                 raise ValidationError(f"Invalid timezone: {trigger_config['timezone']}")
+
+    async def _resolve_linked_schedule(self, experience: Experience) -> None:
+        """Resolve next_run_at for an on_linked_experiences_complete experience.
+
+        Sets next_run_at to the MAX of linked experiences' next_run_at values,
+        excluding None (manual triggers). Sets None if no valid values exist.
+        """
+        linked_ids = [
+            step.params_template.get("source_experience_id")
+            for step in experience.steps
+            if step.step_type == "experience_run"
+            and step.params_template
+            and step.params_template.get("source_experience_id")
+        ]
+        if not linked_ids:
+            experience.next_run_at = None
+            return
+
+        result = await self.db.execute(select(Experience.next_run_at).where(Experience.id.in_(linked_ids)))
+        next_run_values = [r.next_run_at for r in result.all() if r.next_run_at is not None]
+        experience.next_run_at = max(next_run_values) if next_run_values else None
 
     async def _validate_model_configuration(
         self, model_configuration_id: str, current_user: Optional["User"] = None
@@ -175,6 +202,13 @@ class ExperienceService:
 
         # Validate trigger config
         self._validate_trigger_config(experience_data.trigger_type, experience_data.trigger_config)
+
+        if experience_data.trigger_type == TriggerType.ON_LINKED_EXPERIENCES_COMPLETE and not any(
+            s.step_type == StepType.EXPERIENCE_RUN for s in experience_data.steps
+        ):
+            raise ValidationError(
+                "Trigger type 'on_linked_experiences_complete' requires at least one 'experience_run' step"
+            )
 
         # Validate model configuration if provided (with user access check)
         if experience_data.model_configuration_id:
@@ -487,6 +521,9 @@ class ExperienceService:
                 # Fallback to None (which falls back to UTC in schedule_next)
                 pass
             experience.schedule_next(user_timezone=user_tz)
+
+            if experience.trigger_type == "on_linked_experiences_complete":
+                await self._resolve_linked_schedule(experience)
 
         # Replace steps if provided
         if update_data.steps is not None:

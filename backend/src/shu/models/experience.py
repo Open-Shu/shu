@@ -172,6 +172,10 @@ class Experience(BaseModel):
                 logger.error("Could not get next run: %s", e)
                 # Fallback: schedule for next hour
                 self.next_run_at = now + timedelta(hours=1)
+        elif self.trigger_type == "on_linked_experiences_complete":
+            # next_run_at is resolved by the scheduler via _resolve_linked_experience_schedule().
+            # schedule_next() alone is insufficient for this trigger type.
+            self.next_run_at = None
         else:
             self.next_run_at = None
 
