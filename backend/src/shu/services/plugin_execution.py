@@ -20,23 +20,29 @@ logger = get_logger(__name__)
 
 _MCP_INTERNAL_PREFIX = "mcp:"
 _MCP_WIRE_PREFIX = "mcp-"
+_API_INTERNAL_PREFIX = "api:"
+_API_WIRE_PREFIX = "api-"
 
 
 def _sanitize_plugin_name(name: str) -> str:
-    """Convert internal plugin name to LLM-safe wire format (mcp:Foo → mcp-Foo)."""
+    """Convert internal plugin name to LLM-safe wire format (mcp:Foo → mcp-Foo, api:Foo → api-Foo)."""
     if name.startswith(_MCP_INTERNAL_PREFIX):
         return f"{_MCP_WIRE_PREFIX}{name[len(_MCP_INTERNAL_PREFIX):]}"
+    if name.startswith(_API_INTERNAL_PREFIX):
+        return f"{_API_WIRE_PREFIX}{name[len(_API_INTERNAL_PREFIX):]}"
     return name
 
 
 def _unsanitize_plugin_name(name: str) -> str:
-    """Convert wire-format plugin name back to internal format (mcp-foo → mcp:foo).
+    """Convert wire-format plugin name back to internal format (mcp-foo → mcp:foo, api-foo → api:foo).
 
     Note: the original casing is lost; the manifest lookup is case-insensitive
-    for MCP plugins via _resolve_mcp_wire_name.
+    for MCP and API plugins via _resolve_mcp_wire_name.
     """
     if name.startswith(_MCP_WIRE_PREFIX):
         return f"{_MCP_INTERNAL_PREFIX}{name[len(_MCP_WIRE_PREFIX):]}"
+    if name.startswith(_API_WIRE_PREFIX):
+        return f"{_API_INTERNAL_PREFIX}{name[len(_API_WIRE_PREFIX):]}"
     return name
 
 

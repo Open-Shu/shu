@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from ..auth.rbac import get_current_user
 from ..schemas.envelope import SuccessResponse
+from .api_integration_admin import router as api_integration_router
 from .dependencies import get_db
 from .mcp_admin import router as mcp_router
 from .plugin_secrets import router as secrets_router
@@ -27,6 +28,7 @@ router.include_router(feeds_router)
 router.include_router(exec_router)
 router.include_router(secrets_router)
 router.include_router(mcp_router)
+router.include_router(api_integration_router)
 
 
 # Alias: allow GET /api/v1/plugins (no trailing slash) without 307 redirect

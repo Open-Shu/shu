@@ -4,7 +4,7 @@ Unit tests for plugin execution service.
 
 from unittest.mock import MagicMock
 
-from shu.services.plugin_execution import _coerce_params
+from shu.services.plugin_execution import _coerce_params, _sanitize_plugin_name, _unsanitize_plugin_name
 
 
 class TestParamCoercion:
@@ -53,3 +53,33 @@ class TestParamCoercion:
         params = {"limit": "abc"}
         result = _coerce_params(mock_plugin, params, "some_op")
         assert result["limit"] == "abc"  # Should remain string if not coercible
+
+
+class TestPluginNameSanitization:
+    """Verify _sanitize_plugin_name and _unsanitize_plugin_name handle mcp: and api: prefixes."""
+
+    def test_sanitize_mcp_prefix(self):
+        assert _sanitize_plugin_name("mcp:server") == "mcp-server"
+
+    def test_unsanitize_mcp_prefix(self):
+        assert _unsanitize_plugin_name("mcp-server") == "mcp:server"
+
+    def test_sanitize_api_prefix(self):
+        assert _sanitize_plugin_name("api:weather") == "api-weather"
+
+    def test_unsanitize_api_prefix(self):
+        assert _unsanitize_plugin_name("api-weather") == "api:weather"
+
+    def test_sanitize_native_plugin_unchanged(self):
+        assert _sanitize_plugin_name("github") == "github"
+
+    def test_unsanitize_native_plugin_unchanged(self):
+        assert _unsanitize_plugin_name("github") == "github"
+
+    def test_sanitize_api_roundtrip(self):
+        original = "api:my-service"
+        assert _unsanitize_plugin_name(_sanitize_plugin_name(original)) == original
+
+    def test_sanitize_mcp_roundtrip(self):
+        original = "mcp:my-server"
+        assert _unsanitize_plugin_name(_sanitize_plugin_name(original)) == original
