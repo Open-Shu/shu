@@ -808,6 +808,7 @@ class ExperienceService:
         user_id: str,
         limit: int = 50,
         offset: int = 0,
+        mine_only: bool = False,
     ) -> ExperienceRunList:
         """List runs for an experience.
 
@@ -816,6 +817,7 @@ class ExperienceService:
             user_id: Current user ID
             limit: Maximum number of results
             offset: Number of results to skip
+            mine_only: If True, only return runs for the current user (even for admins)
 
         Returns:
             Paginated list of runs
@@ -838,8 +840,8 @@ class ExperienceService:
 
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
-        # Non-admins see their own runs and shared runs (user_id IS NULL)
-        if not await POLICY_CACHE.is_admin(user_id, self.db):
+        # Filter to current user's runs + shared runs
+        if mine_only or not await POLICY_CACHE.is_admin(user_id, self.db):
             stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
         # Execute with pagination

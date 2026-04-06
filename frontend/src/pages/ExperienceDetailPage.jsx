@@ -6,9 +6,12 @@ import {
   Box,
   Button,
   CircularProgress,
+  FormControl,
   IconButton,
   InputAdornment,
+  MenuItem,
   Paper,
+  Select,
   Snackbar,
   TextField,
   Typography,
@@ -16,11 +19,18 @@ import {
 import {
   ArrowBack as ArrowBackIcon,
   Chat as ChatIcon,
+  History as HistoryIcon,
   PlayArrow as PlayArrowIcon,
   Send as SendIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
-import { chatAPI, experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
+import {
+  chatAPI,
+  experiencesAPI,
+  extractDataFromResponse,
+  extractItemsFromResponse,
+  formatError,
+} from '../services/api';
 import ExperienceRunDialog from '../components/ExperienceRunDialog';
 import MarkdownRenderer from '../components/shared/MarkdownRenderer';
 import { formatDateTimeFull } from '../utils/timezoneFormatter';
@@ -40,6 +50,7 @@ const ExperienceDetailPage = () => {
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [initialQuestion, setInitialQuestion] = useState('');
   const [runDialogOpen, setRunDialogOpen] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState(null);
   const [errorSnackbar, setErrorSnackbar] = useState({
     open: false,
     message: '',
@@ -57,12 +68,32 @@ const ExperienceDetailPage = () => {
     staleTime: 0,
   });
 
+  // Fetch last 50 runs for this experience
+  const { data: runsData } = useQuery(
+    ['experience-runs', experienceId],
+    () => experiencesAPI.listRuns(experienceId, { limit: 50, mine_only: true }),
+    {
+      enabled: !!experienceId,
+      onSuccess: (data) => {
+        const items = extractItemsFromResponse(data);
+        if (items.length > 0 && !selectedRunId) {
+          setSelectedRunId(items[0].id);
+        }
+      },
+    }
+  );
+
+  const allRuns = runsData ? extractItemsFromResponse(runsData) : [];
+  const runs = allRuns.filter((r) => r.status === 'succeeded' && r.result_content);
+  const selectedRun = runs.find((r) => r.id === selectedRunId);
+
   const handleBack = () => {
     navigate('/dashboard');
   };
 
   const handleStartConversation = async (question) => {
-    if (!experience?.latest_run_id) {
+    const runId = selectedRunId || experience?.latest_run_id;
+    if (!runId) {
       setErrorSnackbar({
         open: true,
         message: 'No result content available to start conversation',
@@ -73,12 +104,12 @@ const ExperienceDetailPage = () => {
     try {
       setIsCreatingConversation(true);
 
-      const response = await chatAPI.createConversationFromExperience(experience.latest_run_id);
+      const response = await chatAPI.createConversationFromExperience(runId);
       const conversation = extractDataFromResponse(response);
 
       log.info('Started conversation from experience', {
         conversationId: conversation.id,
-        runId: experience.latest_run_id,
+        runId,
         experienceId: experience.experience_id,
       });
 
@@ -129,17 +160,32 @@ const ExperienceDetailPage = () => {
         <Typography variant="h6" sx={{ fontWeight: 600, flex: 1 }}>
           {experience?.experience_name || 'Experience Details'}
         </Typography>
-        {experience && (
-          <>
-            <Button
-              variant="outlined"
-              startIcon={<PlayArrowIcon />}
-              disabled={!experience.can_run}
-              onClick={() => setRunDialogOpen(true)}
+        {runs.length > 0 && (
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <Select
+              value={selectedRunId || ''}
+              onChange={(e) => setSelectedRunId(e.target.value)}
+              startAdornment={<HistoryIcon sx={{ mr: 1 }} fontSize="small" />}
             >
-              Run
-            </Button>
-          </>
+              {runs.map((run) => (
+                <MenuItem key={run.id} value={run.id}>
+                  {experience?.trigger_config?.timezone
+                    ? formatDateTimeFull(run.finished_at, experience.trigger_config.timezone)
+                    : new Date(run.finished_at).toLocaleString()}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )}
+        {experience && (
+          <Button
+            variant="outlined"
+            startIcon={<PlayArrowIcon />}
+            disabled={!experience.can_run}
+            onClick={() => setRunDialogOpen(true)}
+          >
+            Run
+          </Button>
         )}
       </Paper>
 
@@ -192,23 +238,29 @@ const ExperienceDetailPage = () => {
             }}
           >
             {/* Experience metadata */}
-            {experience.latest_run_finished_at && (
+            {(selectedRun?.finished_at || experience.latest_run_finished_at) && (
               <Box sx={{ mb: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
                 <Typography variant="body2" color="text.secondary" gutterBottom>
                   <strong>Generated:</strong>{' '}
                   {experience.trigger_config?.timezone
-                    ? formatDateTimeFull(experience.latest_run_finished_at, experience.trigger_config.timezone)
-                    : new Date(experience.latest_run_finished_at).toLocaleString()}
+                    ? formatDateTimeFull(
+                        selectedRun?.finished_at || experience.latest_run_finished_at,
+                        experience.trigger_config.timezone
+                      )
+                    : new Date(selectedRun?.finished_at || experience.latest_run_finished_at).toLocaleString()}
                 </Typography>
               </Box>
             )}
 
-            <MarkdownRenderer content={experience.result_preview} isDarkMode={isDarkMode} />
+            <MarkdownRenderer
+              content={selectedRun?.result_content || experience.result_preview}
+              isDarkMode={isDarkMode}
+            />
           </Box>
         )}
 
         {/* Question input — inline below output */}
-        {!isLoading && !error && experience?.latest_run_id && (
+        {!isLoading && !error && (selectedRunId || experience?.latest_run_id) && (
           <Paper
             elevation={0}
             sx={{
@@ -268,6 +320,7 @@ const ExperienceDetailPage = () => {
           onClose={() => {
             setRunDialogOpen(false);
             queryClient.invalidateQueries(['my-experience-results']);
+            queryClient.invalidateQueries(['experience-runs', experienceId]);
           }}
           experienceId={experienceId}
           experienceName={experience?.experience_name}
