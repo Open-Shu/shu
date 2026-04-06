@@ -410,12 +410,13 @@ async def list_experience_runs(
     experience_id: str = Path(..., description="Experience ID"),
     limit: int = Query(50, ge=1, le=100, description="Number of runs to return"),
     offset: int = Query(0, ge=0, description="Number of runs to skip"),
+    mine_only: bool = Query(False, description="If true, only return runs for the current user (even for admins)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """List runs for a specific experience.
 
-    - Admins see all runs
+    - Admins see all runs (unless mine_only=true)
     - Non-admins see their own runs plus shared runs
     - Experience visibility is applied before returning run history
     """
@@ -432,6 +433,7 @@ async def list_experience_runs(
             user_id=current_user.id,
             offset=offset,
             limit=limit,
+            mine_only=mine_only,
         )
 
         return ShuResponse.success(result.model_dump())

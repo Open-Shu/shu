@@ -10,11 +10,13 @@ import * as api from '../../services/api';
 vi.mock('../../services/api', () => ({
   experiencesAPI: {
     getMyResults: vi.fn(),
+    listRuns: vi.fn().mockResolvedValue({ data: { items: [], total: 0 } }),
   },
   chatAPI: {
     createConversationFromExperience: vi.fn(),
   },
   extractDataFromResponse: vi.fn(),
+  extractItemsFromResponse: vi.fn().mockReturnValue([]),
   formatError: vi.fn((err) => err?.message || 'An error occurred'),
 }));
 
