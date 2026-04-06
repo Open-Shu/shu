@@ -48,7 +48,8 @@ Except as expressly permitted by this Agreement or by applicable law, Licensee s
 - Distribute, sublicense, sell, lease, or otherwise make the Software available to any third party except as integrated into Licensee's Commercial Products or Services as permitted herein;
 - Remove, obscure, or alter any copyright, trademark, or other proprietary notices;
 - Use the Software in violation of any applicable laws or regulations; or
-- Attempt to circumvent any technical safeguards or license controls implemented by Licensor.
+- Attempt to circumvent any technical safeguards or license controls implemented by Licensor; or
+- Rebrand, rename, or otherwise represent the Software as Licensee's own product, except through white-label features officially provided by the Software.
 
 If Licensee wishes to engage in distribution or usage beyond what is permitted in this Agreement, Licensee must obtain a separate written agreement from Licensor.
 
