@@ -46,7 +46,7 @@ class StepType(str, Enum):
     PLUGIN = "plugin"
     KNOWLEDGE_BASE = "knowledge_base"
     DECISION_CONTROL = "decision_control"
-    # Future: AGENT_NETWORK = "agent_network"
+    EXPERIENCE_RUN = "experience_run"
 
 
 class RunStatus(str, Enum):

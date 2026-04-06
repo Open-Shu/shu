@@ -19,7 +19,7 @@ from typing import Any
 
 from jinja2 import DebugUndefined, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
@@ -343,7 +343,7 @@ class ExperienceExecutor:
                 continue
 
             try:
-                output = await self._execute_step(step, context, user_id, current_user, knowledge_base_ids)
+                output = await self._execute_step(step, context, user_id, current_user, knowledge_base_ids, experience)
                 step_end = datetime.now(UTC)
 
                 # Update context
@@ -677,8 +677,9 @@ class ExperienceExecutor:
         user_id: str | None,
         current_user: User,
         knowledge_base_ids: list[str] | None = None,
+        experience: Experience | None = None,
     ) -> dict[str, Any]:
-        """Execute a single step (plugin, KB, or decision_control)."""
+        """Execute a single step (plugin, KB, decision_control, or experience_run)."""
         if step.step_type == "plugin":
             # For shared runs user_id is None (run ownership), but plugins need a
             # real user ID for auth/identity. Use current_user (the creator for shared runs).
@@ -688,6 +689,8 @@ class ExperienceExecutor:
             return await self._execute_kb_step(step, context, current_user)
         if step.step_type == "decision_control":
             return await self._execute_decision_control_step(step, context)
+        if step.step_type == "experience_run":
+            return await self._execute_experience_run_step(step, context, experience)
         raise ValueError(f"Unknown step type: {step.step_type}")
 
     def _build_auth_overlay(self, step: ExperienceStep, context: dict[str, Any]) -> dict | None:
@@ -854,6 +857,83 @@ class ExperienceExecutor:
         )
 
         return result
+
+    async def _fetch_users(self, user_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch user info by ID list, returning a dict keyed by user ID."""
+        if not user_ids:
+            return {}
+        result = await self.db.execute(select(User).where(User.id.in_(user_ids)))
+        return {
+            str(u.id): {"id": str(u.id), "email": u.email, "display_name": u.name or u.email}
+            for u in result.scalars().all()
+        }
+
+    @staticmethod
+    def _format_run_entry(run: ExperienceRun, users_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Format a single run into the step output shape."""
+        user_info = users_by_id.get(run.user_id, {}) if run.user_id else {}
+        return {
+            "user_email": user_info.get("email"),
+            "user_display_name": user_info.get("display_name"),
+            "result_content": run.result_content,
+            "status": run.status,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        }
+
+    async def _execute_experience_run_step(
+        self,
+        step: ExperienceStep,
+        context: dict[str, Any],
+        experience: Experience | None,
+    ) -> dict[str, Any]:
+        """Execute an experience_run step that aggregates runs from a source experience."""
+        params = self._render_params(step.params_template, context)
+        source_id = params.get("source_experience_id")
+        if not source_id:
+            raise ValueError(f"Step {step.step_key} missing source_experience_id in params_template")
+
+        source_result = await self.db.execute(select(Experience).where(Experience.id == source_id))
+        source = source_result.scalars().first()
+        if not source:
+            raise ValueError(f"Source experience '{source_id}' not found")
+
+        cycle_boundary = experience.last_run_at if experience else None
+
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=ExperienceRun.user_id,
+                order_by=ExperienceRun.finished_at.desc(),
+            )
+            .label("rn")
+        )
+
+        base = select(ExperienceRun, row_num).where(
+            ExperienceRun.experience_id == source_id,
+            ExperienceRun.status.in_(["succeeded", "failed", "cancelled"]),
+        )
+        if cycle_boundary:
+            base = base.where(ExperienceRun.finished_at > cycle_boundary)
+
+        subq = base.subquery()
+        stmt = select(ExperienceRun).join(subq, ExperienceRun.id == subq.c.id).where(subq.c.rn == 1)
+
+        result = await self.db.execute(stmt)
+        runs = result.scalars().all()
+
+        user_ids = [r.user_id for r in runs if r.user_id]
+        users_by_id = await self._fetch_users(user_ids)
+
+        if source.scope == "shared":
+            run = runs[0] if runs else None
+            return {
+                "runs": [self._format_run_entry(run, users_by_id)] if run else [],
+                "count": 1 if run else 0,
+                "scope": "shared",
+            }
+
+        entries = [self._format_run_entry(r, users_by_id) for r in runs]
+        return {"runs": entries, "count": len(entries), "scope": "user"}
 
     async def _synthesize_with_llm_streaming(
         self,

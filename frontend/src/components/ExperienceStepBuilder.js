@@ -18,6 +18,7 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  AccountTree as ExperienceRunIcon,
   Delete as DeleteIcon,
   DragIndicator as DragIcon,
   ExpandMore as ExpandIcon,
@@ -28,12 +29,19 @@ import {
   KeyboardArrowDown as MoveDownIcon,
 } from '@mui/icons-material';
 import { pluginsAPI } from '../services/pluginsApi';
-import { knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
+import { experiencesAPI, knowledgeBaseAPI, extractDataFromResponse, extractItemsFromResponse } from '../services/api';
 import SchemaForm from './SchemaForm';
 import ProviderAuthPanel from './ProviderAuthPanel';
 
+const STEP_TYPE_STYLES = {
+  plugin: { bgcolor: 'primary.50', color: 'primary.main', icon: PluginIcon, label: 'Plugin' },
+  knowledge_base: { bgcolor: 'secondary.50', color: 'secondary.main', icon: KBIcon, label: 'Knowledge Base' },
+  experience_run: { bgcolor: 'success.50', color: 'success.main', icon: ExperienceRunIcon, label: 'Experience Run' },
+};
+
 const StepTypeChip = ({ type }) => {
-  const isPlugin = type === 'plugin';
+  const style = STEP_TYPE_STYLES[type] || STEP_TYPE_STYLES.plugin;
+  const Icon = style.icon;
   return (
     <Box
       sx={{
@@ -43,14 +51,14 @@ const StepTypeChip = ({ type }) => {
         px: 1,
         py: 0.25,
         borderRadius: 1,
-        bgcolor: isPlugin ? 'primary.50' : 'secondary.50',
-        color: isPlugin ? 'primary.main' : 'secondary.main',
+        bgcolor: style.bgcolor,
+        color: style.color,
         fontSize: '0.75rem',
         fontWeight: 500,
       }}
     >
-      {isPlugin ? <PluginIcon sx={{ fontSize: 14 }} /> : <KBIcon sx={{ fontSize: 14 }} />}
-      {isPlugin ? 'Plugin' : 'Knowledge Base'}
+      <Icon sx={{ fontSize: 14 }} />
+      {style.label}
     </Box>
   );
 };
@@ -194,9 +202,11 @@ const StepCard = ({
   onMoveDown,
   plugins,
   knowledgeBases,
+  experiences,
 }) => {
   const [expanded, setExpanded] = useState(true);
   const isPlugin = step.step_type === 'plugin';
+  const isExperienceRun = step.step_type === 'experience_run';
 
   // Get available operations for selected plugin
   const selectedPlugin = useMemo(() => {
@@ -233,6 +243,7 @@ const StepCard = ({
       updates.knowledge_base_id = null;
       updates.kb_query_template = null;
       updates.auth_override = null;
+      updates.params_template = null;
     }
     if (field === 'plugin_name') {
       updates.plugin_op = null;
@@ -316,6 +327,7 @@ const StepCard = ({
                 <Select value={step.step_type || 'plugin'} label="Step Type" onChange={handleFieldChange('step_type')}>
                   <MenuItem value="plugin">Plugin Call</MenuItem>
                   <MenuItem value="knowledge_base">Knowledge Base Query</MenuItem>
+                  <MenuItem value="experience_run">Experience Run</MenuItem>
                 </Select>
               </FormControl>
 
@@ -334,7 +346,7 @@ const StepCard = ({
               )}
 
               {/* KB Query Configuration */}
-              {!isPlugin && (
+              {step.step_type === 'knowledge_base' && (
                 <>
                   <FormControl fullWidth size="small">
                     <InputLabel>Knowledge Base</InputLabel>
@@ -363,6 +375,28 @@ const StepCard = ({
                     helperText="Jinja2 template for the KB query"
                   />
                 </>
+              )}
+
+              {/* Experience Run Configuration */}
+              {isExperienceRun && (
+                <FormControl fullWidth size="small">
+                  <InputLabel>Source Experience</InputLabel>
+                  <Select
+                    value={step.params_template?.source_experience_id || ''}
+                    label="Source Experience"
+                    onChange={(e) => {
+                      onUpdate({
+                        params_template: { source_experience_id: e.target.value },
+                      });
+                    }}
+                  >
+                    {experiences.map((exp) => (
+                      <MenuItem key={exp.id} value={exp.id}>
+                        {exp.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
               )}
 
               {/* Condition Template - actually just a required step key */}
@@ -394,6 +428,13 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
     staleTime: 30000,
   });
 
+  // Fetch experiences (for experience_run steps)
+  const experiencesQuery = useQuery(
+    ['experiences', 'list'],
+    () => experiencesAPI.list().then(extractItemsFromResponse),
+    { staleTime: 30000 }
+  );
+
   const plugins = useMemo(() => {
     const items = pluginsQuery.data || [];
     return Array.isArray(items) ? items : [];
@@ -403,6 +444,11 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
     const items = kbQuery.data || [];
     return Array.isArray(items) ? items : [];
   }, [kbQuery.data]);
+
+  const experiences = useMemo(() => {
+    const items = experiencesQuery.data || [];
+    return Array.isArray(items) ? items : [];
+  }, [experiencesQuery.data]);
 
   const handleAddStep = (type) => {
     const newStep = {
@@ -470,6 +516,7 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
               onMoveDown={handleMoveDown(index)}
               plugins={plugins}
               knowledgeBases={knowledgeBases}
+              experiences={experiences}
             />
           ))
         )}
@@ -482,6 +529,14 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
         </Button>
         <Button variant="outlined" size="small" startIcon={<KBIcon />} onClick={() => handleAddStep('knowledge_base')}>
           Add KB Query Step
+        </Button>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<ExperienceRunIcon />}
+          onClick={() => handleAddStep('experience_run')}
+        >
+          Add Experience Run Step
         </Button>
       </Stack>
     </Box>
