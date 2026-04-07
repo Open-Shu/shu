@@ -25,9 +25,39 @@ Do not treat schemas as UI‑only; they are the foundation for plugin interopera
 ## Base Interface (Conceptual)
 - BaseTool
   - execute(parameters: JSON, user_context)
-  - get_schema(): JSON Schema for parameters
+  - get_schema_for_op(op: str): JSON Schema for a specific operation's parameters (preferred)
+  - get_schema(): JSON Schema for parameters (deprecated — use get_schema_for_op)
   - get_output_schema(): JSON Schema for ToolResult.data when status == "success" (recommended)
   - requires_permission(): permission key(s)
+
+### Per-Op Schema Contract
+
+Plugins SHOULD implement `get_schema_for_op(op)` instead of `get_schema()`. Each per-op schema MUST include:
+
+- `title`: Human-readable display name for the operation (shown in UI and LLM tool descriptions)
+- `description`: One-sentence explanation of what the operation does (shown as tooltip/help text)
+- `type`: Always `"object"`
+- `properties`: The operation's parameters (do NOT include an `op` property — the host pins it automatically)
+
+Example:
+```python
+def get_schema_for_op(self, op: str) -> dict | None:
+    schemas = {
+        "fetch_activity": {
+            "title": "Fetch GitHub Activity",
+            "description": "Retrieve commits, PRs, and reviews for a repository.",
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository in owner/repo format"},
+                "date": {"type": "string", "description": "Start date (YYYY-MM-DD)"},
+            },
+            "required": ["repo"],
+        },
+    }
+    return schemas.get(op)
+```
+
+Plugins that only implement `get_schema()` still work via the fallback path, but the host logs a deprecation warning. The combined schema cannot provide accurate per-op parameter sets and will be removed in a future version.
 
 ## Result Contract
 - ToolResult

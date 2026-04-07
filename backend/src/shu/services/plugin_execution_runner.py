@@ -254,6 +254,8 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
 
     _apply_to_record(rec, status=status, error=error_str, result=payload, completed_at=now)
 
+    await _maybe_update_mcp_health(session, rec.plugin_name, status, _err_val, error_str)
+
     # Step 13: Diagnostics logging
     try:
         from ..plugins.utils import log_plugin_diagnostics as _log_diags
@@ -411,3 +413,63 @@ async def _check_subscription(
         )
         return _preflight_failure(rec, "subscription_check_error")
     return None
+
+
+_MCP_CONNECTIVITY_ERROR_CODES = frozenset(
+    {
+        "mcp_connection_error",
+        "mcp_timeout",
+        "mcp_server_error",
+        "mcp_protocol_error",
+        "mcp_response_too_large",
+    }
+)
+
+
+async def _maybe_update_mcp_health(
+    session: AsyncSession,
+    plugin_name: str,
+    status: PluginExecutionStatus,
+    err_val: Any,
+    error_str: str | None,
+) -> None:
+    """Update MCP connection health only for success or actual connectivity failures."""
+    if not plugin_name or not plugin_name.startswith("mcp:"):
+        return
+    error_code = err_val.get("code") if isinstance(err_val, dict) else None
+    is_mcp_error = error_code in _MCP_CONNECTIVITY_ERROR_CODES
+    if status == PluginExecutionStatus.COMPLETED or is_mcp_error:
+        await _update_mcp_health(session, plugin_name, not is_mcp_error, error_str)
+
+
+async def _update_mcp_health(session: AsyncSession, plugin_name: str, success: bool, error: str | None) -> None:
+    """Update MCP connection health tracking after feed execution."""
+    from sqlalchemy import update
+
+    from ..models.mcp_server_connection import McpServerConnection
+
+    connection_name = plugin_name.removeprefix("mcp:").strip()
+    if not connection_name:
+        return
+    try:
+        if success:
+            await session.execute(
+                update(McpServerConnection)
+                .where(McpServerConnection.name == connection_name)
+                .values(consecutive_failures=0, last_error=None, last_connected_at=datetime.now(UTC))
+            )
+        else:
+            await session.execute(
+                update(McpServerConnection)
+                .where(McpServerConnection.name == connection_name)
+                .values(
+                    consecutive_failures=McpServerConnection.consecutive_failures + 1,
+                    last_error=(error or "feed execution failed")[:500],
+                )
+            )
+    except Exception:
+        logger.warning(
+            "Failed to update MCP health after feed execution | plugin=%s",
+            plugin_name,
+            exc_info=True,
+        )

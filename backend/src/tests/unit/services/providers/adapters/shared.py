@@ -2085,13 +2085,7 @@ TOOLS = [
             "required": [],
             "additionalProperties": True,
         },
-        enum_labels={
-            "list": "List emails",
-            "mark_read": "Mark read",
-            "archive": "Archive",
-            "digest": "Digest summary",
-            "ingest": "Ingest to KB",
-        },
+        title="List emails",
     ),
     CallableTool(
         name="calendar_events",
@@ -2138,6 +2132,6 @@ TOOLS = [
             "required": [],
             "additionalProperties": True,
         },
-        enum_labels=None,
+        title=None,
     ),
 ]

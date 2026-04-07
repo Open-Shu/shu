@@ -110,12 +110,11 @@ const PluginCard = ({
     };
   };
 
-  const enumOps = Array.isArray(plugin?.input_schema?.properties?.op?.enum)
-    ? plugin.input_schema.properties.op.enum
-    : [];
+  const opsMap = plugin.ops || {};
+  const opKeys = Object.keys(opsMap);
   const allowed = Array.isArray(plugin.allowed_feed_ops) ? plugin.allowed_feed_ops : [];
   const defaultOp = plugin.default_feed_op || null;
-  const ops = enumOps && enumOps.length ? enumOps : allowed;
+  const ops = opKeys.length > 0 ? opKeys : allowed;
 
   return (
     <Card
@@ -251,12 +250,8 @@ const PluginCard = ({
                   {ops.slice(0, 3).map((op) => {
                     const feedSafe = allowed.includes(op);
                     const isDefault = defaultOp === op;
-                    const opDef = plugin?.input_schema?.properties?.op || {};
-                    const xui = opDef['x-ui'] || opDef['x_ui'] || {};
-                    const enumLabels = xui.enum_labels || {};
-                    const enumHelp = xui.enum_help || {};
-                    const label = enumLabels[String(op)] || String(op);
-                    const help = enumHelp[String(op)];
+                    const label = opsMap[op]?.title || String(op);
+                    const help = opsMap[op]?.description;
                     const chip = (
                       <Chip
                         key={op}
@@ -283,12 +278,8 @@ const PluginCard = ({
                             Additional Operations:
                           </Typography>
                           {ops.slice(3).map((op) => {
-                            const opDef = plugin?.input_schema?.properties?.op || {};
-                            const xui = opDef['x-ui'] || opDef['x_ui'] || {};
-                            const enumLabels = xui.enum_labels || {};
-                            const enumHelp = xui.enum_help || {};
-                            const label = enumLabels[String(op)] || String(op);
-                            const help = enumHelp[String(op)] || 'No description available';
+                            const label = opsMap[op]?.title || String(op);
+                            const help = opsMap[op]?.description || 'No description available';
                             return (
                               <Box key={op}>
                                 <Typography variant="body2" sx={{ fontWeight: 500 }}>
@@ -333,7 +324,7 @@ const PluginCard = ({
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end">
               {/* Schema indicators */}
               <Stack direction="row" spacing={0.5} alignItems="center">
-                {plugin.input_schema && (
+                {plugin.ops && Object.keys(plugin.ops).length > 0 && (
                   <Tooltip title="Has input schema">
                     <Chip
                       size="small"
@@ -402,7 +393,7 @@ const PluginCard = ({
           <Divider sx={{ my: 2 }} />
           <Box>
             <Typography variant="subtitle2" gutterBottom>
-              Input Schema
+              Operations
             </Typography>
             <Box
               sx={{
@@ -414,7 +405,7 @@ const PluginCard = ({
                 mb: 2,
               }}
             >
-              <JSONPretty data={plugin.input_schema || {}} />
+              <JSONPretty data={plugin.ops || {}} />
             </Box>
             <Typography variant="subtitle2" gutterBottom>
               Output Schema
