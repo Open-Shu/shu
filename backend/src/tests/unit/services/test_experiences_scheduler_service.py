@@ -688,12 +688,12 @@ class TestExecuteAndTrack:
         with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", mock_policy):
             result = await service._execute_and_track(mock_exp, "user-1")
 
-        assert result is False
+        assert result == (0, 1)
         mock_policy.check.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_returns_true_on_success(self, service):
-        """Returns True when execution succeeds."""
+    async def test_returns_success_on_completed(self, service):
+        """Returns (1, 0) when execution succeeds."""
         mock_exp = MagicMock(spec=Experience)
         mock_exp.id = "exp-1"
         mock_exp.slug = "test-exp"
@@ -705,12 +705,12 @@ class TestExecuteAndTrack:
         with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", _allow_all_pbac()):
             result = await service._execute_and_track(mock_exp, "user-1")
 
-        assert result is True
+        assert result == (1, 0)
         service.execute_experience.assert_called_once_with(mock_exp, "user-1")
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_failure(self, service):
-        """Returns False when execution fails."""
+    async def test_returns_failure_on_failed(self, service):
+        """Returns (0, 1) when execution fails."""
         mock_exp = MagicMock(spec=Experience)
         mock_exp.id = "exp-1"
         mock_exp.slug = "test-exp"
@@ -722,4 +722,4 @@ class TestExecuteAndTrack:
         with patch("shu.services.experiences_scheduler_service.POLICY_CACHE", _allow_all_pbac()):
             result = await service._execute_and_track(mock_exp, "user-1")
 
-        assert result is False
+        assert result == (0, 1)

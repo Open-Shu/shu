@@ -114,6 +114,9 @@ class ExperiencesSchedulerService:
         if not user:
             return {"status": "failed", "error": "user_not_found"}
 
+        # Shared runs have NULL user_id ownership; the user is only the execution identity
+        run_user_id = None if experience.scope == "shared" else user_id
+
         try:
             from shu.core.config import get_config_manager
             from shu.services.experience_executor import ExperienceExecutor
@@ -122,8 +125,8 @@ class ExperiencesSchedulerService:
             executor = ExperienceExecutor(self.db, config_manager)
             run = await executor.execute(
                 experience=experience,
-                user_id=user_id,
-                input_params={},  # No input params for scheduled runs
+                user_id=run_user_id,
+                input_params={},
                 current_user=user,
             )
             return {
@@ -182,30 +185,40 @@ class ExperiencesSchedulerService:
 
         experience.next_run_at = max(next_run_values) if next_run_values else None
 
-    async def _execute_and_track(self, experience: Experience, user_id: str) -> bool:
-        """Execute an experience for a user and return True if succeeded.
+    async def _execute_and_track(self, experience: Experience, user_id: str) -> tuple[int, int]:
+        """Execute an experience for a user and return (successes, failures).
 
-        Checks PBAC before execution — returns False if the user is denied.
+        Checks PBAC before execution. Catches exceptions so callers don't need
+        individual try/except blocks.
         """
-        if not await POLICY_CACHE.check(str(user_id), "experience.run", f"experience:{experience.slug}", self.db):
-            logger.debug("User denied experience.run | experience=%s user=%s", experience.id, user_id)
-            return False
-        result = await self.execute_experience(experience, user_id)
-        if result.get("status") == "completed":
+        try:
+            if not await POLICY_CACHE.check(str(user_id), "experience.run", f"experience:{experience.slug}", self.db):
+                logger.debug("User denied experience.run | experience=%s user=%s", experience.id, user_id)
+                return (0, 1)
+            result = await self.execute_experience(experience, user_id)
+            if result.get("status") == "completed":
+                logger.debug(
+                    "Experience completed for user | experience=%s user=%s run_id=%s",
+                    experience.id,
+                    user_id,
+                    result.get("run_id"),
+                )
+                return (1, 0)
             logger.debug(
-                "Experience completed for user | experience=%s user=%s run_id=%s",
+                "Experience failed for user (silent) | experience=%s user=%s error=%s",
                 experience.id,
                 user_id,
-                result.get("run_id"),
+                result.get("error"),
             )
-            return True
-        logger.debug(
-            "Experience failed for user (silent) | experience=%s user=%s error=%s",
-            experience.id,
-            user_id,
-            result.get("error"),
-        )
-        return False
+            return (0, 1)
+        except Exception as e:
+            logger.debug(
+                "Experience execution error (silent) | experience=%s user=%s error=%s",
+                experience.id,
+                user_id,
+                str(e),
+            )
+            return (0, 1)
 
     async def run_due_experiences(self, *, limit: int = 10) -> dict[str, int]:
         """Find and execute due experiences for ALL active users.
@@ -262,27 +275,12 @@ class ExperiencesSchedulerService:
             failure_count = 0
 
             if exp.scope == "shared":
-                # Shared-scope: execute once using the experience creator
-                if await self._execute_and_track(exp, exp.created_by):
-                    run_count = 1
-                else:
-                    failure_count = 1
+                run_count, failure_count = await self._execute_and_track(exp, exp.created_by)
             else:
-                # Per-user scope: execute for each active user
                 for user in all_users:
-                    try:
-                        if await self._execute_and_track(exp, user.id):
-                            run_count += 1
-                        else:
-                            failure_count += 1
-                    except Exception as e:
-                        failure_count += 1
-                        logger.debug(
-                            "Experience execution error for user (silent) | experience=%s user=%s error=%s",
-                            exp.id,
-                            user.id,
-                            str(e),
-                        )
+                    runs, failures = await self._execute_and_track(exp, user.id)
+                    run_count += runs
+                    failure_count += failures
 
             # Update schedule ONCE per experience (not per user)
             exp.last_run_at = now

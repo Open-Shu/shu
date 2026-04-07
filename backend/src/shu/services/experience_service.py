@@ -518,9 +518,6 @@ class ExperienceService:
                 pass
             experience.schedule_next(user_timezone=user_tz)
 
-            if experience.trigger_type == "on_linked_experiences_complete":
-                await self._resolve_linked_schedule(experience)
-
         # Replace steps if provided
         if update_data.steps is not None:
             # Validate new steps
@@ -537,6 +534,14 @@ class ExperienceService:
             for step_data in update_data.steps:
                 step = await self._create_step(experience.id, step_data)
                 self.db.add(step)
+
+        # Resolve linked schedule after steps are replaced so it reads the new steps
+        if experience.trigger_type == "on_linked_experiences_complete" and (
+            trigger_changed or update_data.steps is not None
+        ):
+            await self.db.flush()
+            await self.db.refresh(experience, ["steps"])
+            await self._resolve_linked_schedule(experience)
 
         await self.db.commit()
         await self.db.refresh(experience, ["steps", "model_configuration", "prompt"])
@@ -780,6 +785,11 @@ class ExperienceService:
             elif step.step_type == StepType.KNOWLEDGE_BASE:
                 if not step.knowledge_base_id:
                     raise ValidationError(f"Step '{step.step_key}' requires knowledge_base_id for knowledge_base type")
+            elif step.step_type == StepType.EXPERIENCE_RUN:
+                if not step.params_template or not step.params_template.get("source_experience_id"):
+                    raise ValidationError(
+                        f"Step '{step.step_key}' requires source_experience_id in params_template for experience_run type"
+                    )
 
             # Validate templates in params_template
             if step.params_template:
