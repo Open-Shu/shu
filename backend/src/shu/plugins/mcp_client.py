@@ -90,7 +90,9 @@ def _extract_auth(headers: dict[str, str]) -> httpx.Auth | None:
         try:
             decoded = base64.b64decode(auth_value[6:]).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
-            logger.warning("mcp.auth.invalid_basic_credentials: malformed base64 or encoding in plugin secret Authorization header")
+            logger.warning(
+                "mcp.auth.invalid_basic_credentials: malformed base64 or encoding in plugin secret Authorization header"
+            )
             return None
         username, _, password = decoded.partition(":")
         return httpx.BasicAuth(username, password)
