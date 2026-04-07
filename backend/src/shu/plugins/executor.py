@@ -257,7 +257,13 @@ class Executor:
         """
         schema = None
         try:
-            schema = plugin.get_schema()
+            # Call the more precise `get_schema_for_op` function, with fallback to the legacy `get_schema` function
+            op = params.get("op") if isinstance(params, dict) else None
+            get_schema_for_op = getattr(plugin, "get_schema_for_op", None)
+            if op and get_schema_for_op:
+                schema = get_schema_for_op(op)
+            if not schema:
+                schema = plugin.get_schema()
         except Exception:
             logger.exception("Plugin.get_schema failed for %s", getattr(plugin, "name", "?"))
         if not schema:

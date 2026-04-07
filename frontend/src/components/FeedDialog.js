@@ -181,8 +181,8 @@ export default function FeedDialog({
     if (selectedPlugin.input_schema) {
       const defaults = buildDefaultValues(selectedPlugin.input_schema) || {};
       let merged = isEdit ? { ...defaults, ...(schedule?.params || {}) } : defaults;
+      const allowedFeedOps = Array.isArray(selectedPlugin?.allowed_feed_ops) ? selectedPlugin.allowed_feed_ops : [];
       try {
-        const allowedFeedOps = Array.isArray(selectedPlugin?.allowed_feed_ops) ? selectedPlugin.allowed_feed_ops : [];
         const defaultFeedOp = selectedPlugin?.default_feed_op || null;
         if (allowedFeedOps.length > 0 && !merged.op && defaultFeedOp) {
           merged = { ...merged, op: defaultFeedOp };
@@ -190,7 +190,39 @@ export default function FeedDialog({
       } catch (_) {
         // Ignore error
       }
-      setSchema(selectedPlugin.input_schema);
+      // Filter op enum to only show feed-eligible ops
+      const rawSchema = selectedPlugin.input_schema;
+      if (allowedFeedOps.length > 0 && rawSchema?.properties?.op?.enum) {
+        const filtered = rawSchema.properties.op.enum.filter((v) => allowedFeedOps.includes(v));
+        if (filtered.length === 0) {
+          setSchema(rawSchema);
+          setValues(merged);
+          return;
+        }
+        const filteredLabels = rawSchema.properties.op['x-ui']?.enum_labels
+          ? Object.fromEntries(
+              Object.entries(rawSchema.properties.op['x-ui'].enum_labels).filter(([k]) => allowedFeedOps.includes(k))
+            )
+          : undefined;
+        const filteredHelp = rawSchema.properties.op['x-ui']?.enum_help
+          ? Object.fromEntries(
+              Object.entries(rawSchema.properties.op['x-ui'].enum_help).filter(([k]) => allowedFeedOps.includes(k))
+            )
+          : undefined;
+        setSchema({
+          ...rawSchema,
+          properties: {
+            ...rawSchema.properties,
+            op: {
+              ...rawSchema.properties.op,
+              enum: filtered,
+              'x-ui': { ...rawSchema.properties.op['x-ui'], enum_labels: filteredLabels, enum_help: filteredHelp },
+            },
+          },
+        });
+      } else {
+        setSchema(rawSchema);
+      }
       setValues(merged);
     } else {
       setSchema(null);
@@ -327,9 +359,7 @@ export default function FeedDialog({
         </Alert>
       );
     }
-    const allowedOps = Array.isArray(selectedPlugin?.allowed_feed_ops) ? selectedPlugin.allowed_feed_ops : [];
-    const hideOp = allowedOps.length === 1; // lock op when only one feed-safe op
-    const hideKeys = new Set(['kb_id', ...(hideOp ? ['op'] : [])]);
+    const hideKeys = new Set(['kb_id']);
     return (
       <SchemaForm
         schema={schema}
