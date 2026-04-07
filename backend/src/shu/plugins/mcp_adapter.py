@@ -263,7 +263,7 @@ class McpPluginAdapter:
         warnings: list[str] = []
         last_cursor: str | None = None
 
-        for page in range(self._max_pagination_pages):
+        for _ in range(self._max_pagination_pages):
             outcome = await self._call_tool(op, call_params)
             if isinstance(outcome, PluginResult):
                 if cursor_field and cursor_param and last_cursor:

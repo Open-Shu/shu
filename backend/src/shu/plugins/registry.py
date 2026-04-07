@@ -55,7 +55,7 @@ class PluginRegistry:
             return {}
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def sync(self, session: AsyncSession) -> dict:  # noqa: PLR0912, PLR0915
+    async def sync(self, session: AsyncSession) -> dict:  # noqa: PLR0915
         """Auto-register discovered plugins into PluginDefinition.
         - Creates a row if missing (enabled=False by default)
         - Updates output_schema if provided by plugin (input_schema is resolved live)
