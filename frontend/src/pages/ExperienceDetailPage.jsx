@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -59,6 +59,11 @@ const ExperienceDetailPage = () => {
   // Detect dark mode from theme
   const isDarkMode = theme.palette.mode === 'dark';
 
+  // Reset run selection when navigating between experiences
+  useEffect(() => {
+    setSelectedRunId(null);
+  }, [experienceId]);
+
   // Fetch experience details from my-results endpoint
   const {
     data: results,
@@ -76,8 +81,9 @@ const ExperienceDetailPage = () => {
       enabled: !!experienceId,
       onSuccess: (data) => {
         const items = extractItemsFromResponse(data);
-        if (items.length > 0 && !selectedRunId) {
-          setSelectedRunId(items[0].id);
+        const successfulRuns = items.filter((r) => r.status === 'succeeded' && r.result_content);
+        if (successfulRuns.length > 0 && !selectedRunId) {
+          setSelectedRunId(String(successfulRuns[0].id));
         }
       },
     }
@@ -86,13 +92,14 @@ const ExperienceDetailPage = () => {
   const allRuns = runsData ? extractItemsFromResponse(runsData) : [];
   const runs = allRuns.filter((r) => r.status === 'succeeded' && r.result_content);
   const selectedRun = runs.find((r) => r.id === selectedRunId);
+  const activeRunId = selectedRun?.id || null;
 
   const handleBack = () => {
     navigate('/dashboard');
   };
 
   const handleStartConversation = async (question) => {
-    const runId = selectedRunId || experience?.latest_run_id;
+    const runId = activeRunId;
     if (!runId) {
       setErrorSnackbar({
         open: true,
@@ -260,7 +267,7 @@ const ExperienceDetailPage = () => {
         )}
 
         {/* Question input — inline below output */}
-        {!isLoading && !error && (selectedRunId || experience?.latest_run_id) && (
+        {!isLoading && !error && activeRunId && (
           <Paper
             elevation={0}
             sx={{

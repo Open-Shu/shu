@@ -16,7 +16,11 @@ vi.mock('../../services/api', () => ({
     createConversationFromExperience: vi.fn(),
   },
   extractDataFromResponse: vi.fn(),
-  extractItemsFromResponse: vi.fn().mockReturnValue([]),
+  extractItemsFromResponse: vi
+    .fn()
+    .mockReturnValue([
+      { id: 'run-1', status: 'succeeded', result_content: 'Some result', finished_at: '2025-01-01T00:00:00Z' },
+    ]),
   formatError: vi.fn((err) => err?.message || 'An error occurred'),
 }));
 
