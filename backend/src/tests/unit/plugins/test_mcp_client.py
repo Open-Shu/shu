@@ -22,6 +22,8 @@ from shu.plugins.mcp_client import (
     McpTimeoutError,
     McpToolInfo,
     McpToolResult,
+    _BearerAuth,
+    _extract_auth,
 )
 
 SERVER_URL = "http://mcp.test/rpc"
@@ -426,3 +428,97 @@ async def test_non_dict_json_response(client: McpClient) -> None:
 
     with pytest.raises(McpProtocolError, match="not a JSON object"):
         await client._send_jsonrpc("test/method")
+
+
+class TestExtractAuth:
+    """Tests for _extract_auth and _BearerAuth."""
+
+    def test_basic_auth_extracted(self) -> None:
+        """Basic auth header is decoded and returned as httpx.BasicAuth."""
+        import base64
+
+        encoded = base64.b64encode(b"user@example.com:api-token").decode()
+        headers = {"Authorization": f"Basic {encoded}"}
+
+        auth = _extract_auth(headers)
+
+        assert isinstance(auth, httpx.BasicAuth)
+        assert auth._auth_header == httpx.BasicAuth("user@example.com", "api-token")._auth_header
+
+    def test_bearer_auth_extracted(self) -> None:
+        """Bearer auth header is returned as _BearerAuth."""
+        headers = {"Authorization": "Bearer ghp_abc123"}
+
+        auth = _extract_auth(headers)
+
+        assert isinstance(auth, _BearerAuth)
+        assert auth._token == "ghp_abc123"
+
+    def test_no_authorization_header(self) -> None:
+        """Returns None when no Authorization header is present."""
+        assert _extract_auth({}) is None
+        assert _extract_auth({"Content-Type": "application/json"}) is None
+
+    def test_unknown_scheme_returns_none(self) -> None:
+        """Returns None for unrecognized auth schemes."""
+        assert _extract_auth({"Authorization": "Digest abc123"}) is None
+
+    def test_case_insensitive_header_key(self) -> None:
+        """Authorization header key matching is case-insensitive."""
+        import base64
+
+        encoded = base64.b64encode(b"user:pass").decode()
+        auth = _extract_auth({"authorization": f"Basic {encoded}"})
+        assert isinstance(auth, httpx.BasicAuth)
+
+    def test_case_insensitive_scheme(self) -> None:
+        """Auth scheme matching is case-insensitive."""
+        auth = _extract_auth({"Authorization": "BEARER my-token"})
+        assert isinstance(auth, _BearerAuth)
+        assert auth._token == "my-token"
+
+    def test_basic_auth_with_colon_in_password(self) -> None:
+        """Basic auth correctly handles passwords containing colons."""
+        import base64
+
+        encoded = base64.b64encode(b"user:pass:with:colons").decode()
+        auth = _extract_auth({"Authorization": f"Basic {encoded}"})
+
+        assert isinstance(auth, httpx.BasicAuth)
+        assert auth._auth_header == httpx.BasicAuth("user", "pass:with:colons")._auth_header
+
+    def test_bearer_auth_flow_sets_header(self) -> None:
+        """_BearerAuth.auth_flow sets the Authorization header on the request."""
+        auth = _BearerAuth("my-token")
+        request = httpx.Request("GET", "http://example.com")
+
+        flow = auth.auth_flow(request)
+        yielded = next(flow)
+
+        assert yielded.headers["Authorization"] == "Bearer my-token"
+
+    def test_client_with_basic_auth_uses_httpx_auth(self) -> None:
+        """McpClient constructed with Basic auth uses httpx.Auth, not raw header."""
+        import base64
+
+        encoded = base64.b64encode(b"user:pass").decode()
+        with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+            c = McpClient(url=SERVER_URL, headers={"Authorization": f"Basic {encoded}"})
+
+        assert isinstance(c._auth, httpx.BasicAuth)
+        assert "authorization" not in {k.lower() for k in c._client.headers}
+
+    def test_client_with_bearer_auth_uses_httpx_auth(self) -> None:
+        """McpClient constructed with Bearer auth uses httpx.Auth, not raw header."""
+        with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+            c = McpClient(url=SERVER_URL, headers={"Authorization": "Bearer ghp_abc"})
+
+        assert isinstance(c._auth, _BearerAuth)
+        assert "authorization" not in {k.lower() for k in c._client.headers}
+
+    def test_client_without_auth_has_none(self) -> None:
+        """McpClient constructed without auth headers has _auth=None."""
+        with patch("shu.plugins.mcp_client.get_settings_instance", return_value=_mock_settings()):
+            c = McpClient(url=SERVER_URL)
+
+        assert c._auth is None
