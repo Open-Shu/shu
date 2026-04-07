@@ -302,7 +302,10 @@ class McpPluginAdapter:
         else:
             logger.warning(
                 "mcp.pagination_limit_reached [%s/%s] after %d pages, ingested=%d",
-                self.name, op, self._max_pagination_pages, ingested_count,
+                self.name,
+                op,
+                self._max_pagination_pages,
+                ingested_count,
             )
             warnings.append(f"Pagination stopped after {self._max_pagination_pages} pages")
 
