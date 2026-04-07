@@ -7,6 +7,7 @@ JSON-RPC based MCP protocol for tool discovery and invocation.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import urllib.parse
 from dataclasses import dataclass, field
@@ -73,6 +74,47 @@ MCP_PROTOCOL_VERSION = "2025-03-26"
 MCP_SUPPORTED_VERSIONS = {"2024-11-05", "2025-03-26"}
 
 
+def _extract_auth(headers: dict[str, str]) -> httpx.Auth | None:
+    """Extract an Authorization header into an httpx.Auth instance.
+
+    httpx.Auth re-attaches credentials on redirects, unlike raw headers
+    which get stripped on cross-origin redirects.
+    """
+    auth_value = next((v for k, v in headers.items() if k.lower() == "authorization"), None)
+    if not auth_value:
+        return None
+    lower = auth_value.lower()
+
+    # For basic headers we need to use "httpx.BasicAuth" so the headers are preserved across redirects
+    if lower.startswith("basic "):
+        try:
+            decoded = base64.b64decode(auth_value[6:]).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            logger.warning(
+                "mcp.auth.invalid_basic_credentials: malformed base64 or encoding in plugin secret Authorization header"
+            )
+            return None
+        username, _, password = decoded.partition(":")
+        return httpx.BasicAuth(username, password)
+
+    if lower.startswith("bearer "):
+        token = auth_value[7:]
+        return _BearerAuth(token)
+
+    scheme = auth_value.split()[0] if auth_value else "empty"
+    logger.warning("mcp.auth.unsupported_scheme scheme=%s (from plugin secret Authorization header)", scheme)
+    return None
+
+
+class _BearerAuth(httpx.Auth):
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self._token}"
+        yield request
+
+
 class McpClient:
     """Async MCP client using Streamable HTTP transport.
 
@@ -91,7 +133,9 @@ class McpClient:
     ) -> None:
         settings = get_settings_instance()
         self._url = url
-        self._headers = headers or {}
+        raw_headers = headers or {}
+        self._auth = _extract_auth(raw_headers)
+        self._headers = {k: v for k, v in raw_headers.items() if k.lower() != "authorization"}
 
         allowlist = getattr(settings, "http_egress_allowlist", None)
         if allowlist:
@@ -128,6 +172,7 @@ class McpClient:
                 "Accept": "application/json, text/event-stream",
                 **self._headers,
             },
+            auth=self._auth,
             follow_redirects=False,
         )
 
