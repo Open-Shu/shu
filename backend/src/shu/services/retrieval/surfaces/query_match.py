@@ -31,10 +31,15 @@ class QueryMatchSurface(RetrievalSurface):
     interpretive queries like "Why did we choose X?" or structural queries
     like "What topics does this cover?".
 
-    Unlike synopsis_match which returns document_ids directly, this surface:
+    When source_chunk_id is available (KBs profiled with SHU-645+), this
+    surface emits chunk-level hits so the matched chunk appears as a
+    contributing chunk in fused results. Falls back to document-level hits
+    for older KBs without chunk provenance.
+
+    Steps:
     1. Searches the queries collection (returns query_ids)
-    2. Looks up DocumentQuery records to get document_id and query_text
-    3. Aggregates by document_id using max score
+    2. Looks up DocumentQuery records to get source_chunk_id and query_text
+    3. Aggregates by source_chunk_id (best score per chunk), falls back to document_id
     4. Includes the matched query text in metadata for provenance
     """
 
@@ -75,11 +80,16 @@ class QueryMatchSurface(RetrievalSurface):
         """
         start = time.perf_counter()
 
-        # Steps 1-3: Page through vector results until we have `limit` distinct documents.
-        # A fixed multiplier can underfill when one document dominates the top-k slots.
+        # Steps 1-3: Page through vector results until we have `limit` distinct
+        # entities (chunks when source_chunk_id is available, documents otherwise).
         page_size = limit * 3
         max_pages = 5  # guard against looping on very small corpora
-        doc_best: dict[str, tuple[float, str, str | None]] = {}  # doc_id -> (score, query_text, source_chunk_id)
+
+        # Aggregate by source_chunk_id when available, document_id otherwise.
+        # chunk_best: source_chunk_id -> (score, query_text, document_id)
+        chunk_best: dict[str, tuple[float, str, str]] = {}
+        # doc_best: document_id -> (score, query_text) — fallback for null source_chunk_id
+        doc_best: dict[str, tuple[float, str]] = {}
 
         for page in range(max_pages):
             offset = page * page_size
@@ -110,13 +120,17 @@ class QueryMatchSurface(RetrievalSurface):
 
             for query_id, document_id, query_text_val, source_chunk_id in query_records:
                 score = score_by_query_id.get(str(query_id), 0.0)
-                if document_id not in doc_best or score > doc_best[document_id][0]:
-                    doc_best[document_id] = (score, query_text_val, source_chunk_id)
+                if source_chunk_id:
+                    if source_chunk_id not in chunk_best or score > chunk_best[source_chunk_id][0]:
+                        chunk_best[source_chunk_id] = (score, query_text_val, document_id)
+                elif document_id not in doc_best or score > doc_best[document_id][0]:
+                    doc_best[document_id] = (score, query_text_val)
 
-            if len(doc_best) >= limit or len(page_results) < page_size:
+            total_entities = len(chunk_best) + len(doc_best)
+            if total_entities >= limit or len(page_results) < page_size:
                 break
 
-        if not doc_best:
+        if not chunk_best and not doc_best:
             elapsed_ms = (time.perf_counter() - start) * 1000
             return SurfaceResult(
                 surface_name=self.name,
@@ -124,22 +138,31 @@ class QueryMatchSurface(RetrievalSurface):
                 execution_time_ms=elapsed_ms,
             )
 
-        # Step 4: Build hits sorted by score, limited to requested count
-        sorted_docs = sorted(doc_best.items(), key=lambda x: x[1][0], reverse=True)[:limit]
+        # Step 4: Build hits — chunk-level when provenance exists, document-level otherwise
+        hits: list[SurfaceHit] = []
 
-        hits = []
-        for doc_id, (score, matched_query, source_chunk_id) in sorted_docs:
-            meta: dict[str, str] = {"matched_query": matched_query}
-            if source_chunk_id:
-                meta["source_chunk_id"] = str(source_chunk_id)
+        for chunk_id, (score, matched_query, _document_id) in chunk_best.items():
+            hits.append(
+                SurfaceHit(
+                    id=UUID(chunk_id),
+                    id_type="chunk",
+                    score=score,
+                    metadata={"matched_query": matched_query},
+                )
+            )
+
+        for doc_id, (score, matched_query) in doc_best.items():
             hits.append(
                 SurfaceHit(
                     id=UUID(doc_id),
                     id_type="document",
                     score=score,
-                    metadata=meta,
+                    metadata={"matched_query": matched_query},
                 )
             )
+
+        hits.sort(key=lambda h: h.score, reverse=True)
+        hits = hits[:limit]
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 

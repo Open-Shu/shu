@@ -44,7 +44,7 @@ class TestScoreFusionService:
 
         # Mock document metadata lookup (title, file_type, source_url, source_id, created_at)
         with patch.object(
-            service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "pdf", None, None, None)}
+            service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "pdf", None, None, None, None)}
         ):
             with patch.object(service, "_load_chunk_details", return_value={}):
                 result, all_scores = await service.fuse([surface_result], db=mock_db)
@@ -81,12 +81,12 @@ class TestScoreFusionService:
             service, "_resolve_chunk_documents", return_value={chunk_id: doc_id}
         ):
             with patch.object(
-                service, "_load_document_metadata", return_value={doc_id: ("Combined Doc", "txt", None, None, None)}
+                service, "_load_document_metadata", return_value={doc_id: ("Combined Doc", "txt", None, None, None, None)}
             ):
                 with patch.object(
                     service,
                     "_load_chunk_details",
-                    return_value={chunk_id: (0, "Chunk content...", None, None, None)},
+                    return_value={chunk_id: (0, "Chunk content...", None, None, None, None)},
                 ):
                     result, all_scores = await service.fuse(
                         [chunk_surface, synopsis_surface], db=mock_db
@@ -94,8 +94,8 @@ class TestScoreFusionService:
 
         assert len(result) == 1
         assert result[0].document_id == doc_id
-        # max * sqrt(mean/max): max=0.9, mean=0.85, mean/max=0.944, sqrt=0.972, score=0.9*0.972≈0.874
-        assert abs(result[0].final_score - 0.874) < 0.01
+        # weighted_average: (0.9*0.6 + 0.8*0.4) / (0.6 + 0.4) = 0.86
+        assert abs(result[0].final_score - 0.86) < 0.02
 
     @pytest.mark.asyncio
     async def test_fuse_respects_threshold(self):
@@ -111,7 +111,7 @@ class TestScoreFusionService:
         )
 
         with patch.object(
-            service, "_load_document_metadata", return_value={doc_id: ("Low Score Doc", "txt", None, None, None)}
+            service, "_load_document_metadata", return_value={doc_id: ("Low Score Doc", "txt", None, None, None, None)}
         ):
             with patch.object(service, "_load_chunk_details", return_value={}):
                 result, all_scores = await service.fuse(
@@ -138,7 +138,7 @@ class TestScoreFusionService:
             execution_time_ms=10.0,
         )
 
-        metadata = {did: (f"Doc {i}", "txt", None, None, None) for i, did in enumerate(doc_ids)}
+        metadata = {did: (f"Doc {i}", "txt", None, None, None, None) for i, did in enumerate(doc_ids)}
         with patch.object(service, "_load_document_metadata", return_value=metadata):
             with patch.object(service, "_load_chunk_details", return_value={}):
                 result, all_scores = await service.fuse(
@@ -175,14 +175,14 @@ class TestScoreFusionService:
             return_value={chunk1_id: doc_id, chunk2_id: doc_id},
         ):
             with patch.object(
-                service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "txt", None, None, None)}
+                service, "_load_document_metadata", return_value={doc_id: ("Test Doc", "txt", None, None, None, None)}
             ):
                 with patch.object(
                     service,
                     "_load_chunk_details",
                     return_value={
-                        chunk1_id: (0, "First chunk content...", "Summary 1", 0, 100),
-                        chunk2_id: (1, "Second chunk content...", None, 100, 200),
+                        chunk1_id: (0, "First chunk content...", "Summary 1", 0, 100, None),
+                        chunk2_id: (1, "Second chunk content...", None, 100, 200, None),
                     },
                 ):
                     result, all_scores = await service.fuse([surface_result], db=mock_db)

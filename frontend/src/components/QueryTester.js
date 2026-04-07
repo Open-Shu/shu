@@ -21,8 +21,11 @@ import {
   Switch,
   Slider,
   Divider,
+  Snackbar,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
-import { Search as SearchIcon } from '@mui/icons-material';
+import { Search as SearchIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import {
   knowledgeBaseAPI,
   queryAPI,
@@ -36,6 +39,7 @@ import JSONPretty from 'react-json-pretty';
 import 'react-json-pretty/themes/monikai.css';
 
 import { log } from '../utils/log';
+import { formatResultsForJudgment } from '../utils/exportForJudgment';
 
 const RAG_MODE_OPTIONS = [
   { value: 'no_rag', label: 'No RAG (model only)' },
@@ -54,12 +58,15 @@ function QueryTester() {
   const [titleWeightMultiplier, setTitleWeightMultiplier] = useState(3.0);
   const [activeTab, setActiveTab] = useState(0);
   const [ragRewriteMode, setRagRewriteMode] = useState('raw_query');
-  // Multi-surface search weights
+  const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+  const [exportLoading, setExportLoading] = useState(false);
+  // Multi-surface search weights and fusion
   const [chunkVectorWeight, setChunkVectorWeight] = useState(0.25);
   const [queryMatchWeight, setQueryMatchWeight] = useState(0.2);
   const [synopsisMatchWeight, setSynopsisMatchWeight] = useState(0.15);
   const [bm25Weight, setBm25Weight] = useState(0.15);
   const [chunkSummaryWeight, setChunkSummaryWeight] = useState(0.25);
+  const [fusionFormula, setFusionFormula] = useState(null);
 
   const { data: knowledgeBasesResponse, isLoading: kbLoading } = useQuery('knowledgeBases', knowledgeBaseAPI.list);
 
@@ -80,59 +87,62 @@ function QueryTester() {
     },
   });
 
-  const queryMutation = useMutation(
-    (params) => {
-      const basePayload = {
-        query: params.query,
-        limit: params.limit,
-        rag_rewrite_mode: params.ragRewriteMode || 'raw_query',
+  const buildSearchPayload = (params) => {
+    const base = {
+      query: params.query,
+      limit: params.limit,
+      rag_rewrite_mode: params.ragRewriteMode || 'raw_query',
+    };
+
+    if (params.searchType === 'similarity') {
+      return {
+        ...base,
+        query_type: 'similarity',
+        similarity_threshold: params.threshold,
       };
+    }
 
-      if (params.searchType === 'similarity') {
-        return queryAPI.search(params.kbId, {
-          ...basePayload,
-          query_type: 'similarity',
-          similarity_threshold: params.threshold,
-        });
-      }
-
-      if (params.searchType === 'keyword') {
-        return queryAPI.search(params.kbId, {
-          ...basePayload,
-          query_type: 'keyword',
-          similarity_threshold: params.threshold,
-          title_weighting_enabled: params.titleWeightingEnabled,
-          title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
-        });
-      }
-
-      if (params.searchType === 'multi_surface') {
-        return queryAPI.search(params.kbId, {
-          ...basePayload,
-          query_type: 'multi_surface',
-          similarity_threshold: params.threshold,
-          chunk_vector_weight: params.chunkVectorWeight,
-          query_match_weight: params.queryMatchWeight,
-          synopsis_match_weight: params.synopsisMatchWeight,
-          bm25_weight: params.bm25Weight,
-          chunk_summary_weight: params.chunkSummaryWeight,
-        });
-      }
-
-      return queryAPI.search(params.kbId, {
-        ...basePayload,
-        query_type: 'hybrid',
+    if (params.searchType === 'keyword') {
+      return {
+        ...base,
+        query_type: 'keyword',
         similarity_threshold: params.threshold,
         title_weighting_enabled: params.titleWeightingEnabled,
         title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
-      });
-    },
-    {
-      onError: (error) => {
-        log.error('Query error:', error);
-      },
+      };
     }
-  );
+
+    if (params.searchType === 'multi_surface') {
+      const payload = {
+        ...base,
+        query_type: 'multi_surface',
+        similarity_threshold: params.threshold,
+        chunk_vector_weight: params.chunkVectorWeight,
+        query_match_weight: params.queryMatchWeight,
+        synopsis_match_weight: params.synopsisMatchWeight,
+        bm25_weight: params.bm25Weight,
+        chunk_summary_weight: params.chunkSummaryWeight,
+      };
+      if (params.fusionFormula) {
+        payload.fusion_formula = params.fusionFormula;
+      }
+      return payload;
+    }
+
+    return {
+      ...base,
+      query_type: 'hybrid',
+      similarity_threshold: params.threshold,
+      title_weighting_enabled: params.titleWeightingEnabled,
+      title_weight_multiplier: params.titleWeightingEnabled ? params.titleWeightMultiplier : 1.0,
+    };
+  };
+
+  const queryMutation = useMutation((params) => queryAPI.search(params.kbId, buildSearchPayload(params)), {
+    onError: (error) => {
+      log.error('Query error:', error);
+    },
+  });
 
   const handleSearch = () => {
     if (!selectedKB || !queryText.trim()) {
@@ -153,49 +163,56 @@ function QueryTester() {
       synopsisMatchWeight: synopsisMatchWeight,
       bm25Weight: bm25Weight,
       chunkSummaryWeight: chunkSummaryWeight,
+      fusionFormula: fusionFormula,
     });
   };
 
   const formatQueryRequest = () => {
-    const baseRequest = {
+    return buildSearchPayload({
       query: queryText,
+      searchType,
       limit: parseInt(limit),
-      rag_rewrite_mode: ragRewriteMode,
-    };
+      threshold: parseFloat(threshold),
+      ragRewriteMode,
+      titleWeightingEnabled,
+      titleWeightMultiplier,
+      chunkVectorWeight,
+      queryMatchWeight,
+      synopsisMatchWeight,
+      bm25Weight,
+      chunkSummaryWeight,
+      fusionFormula,
+    });
+  };
 
-    if (searchType === 'similarity') {
-      return {
-        ...baseRequest,
+  const handleExportForJudgment = async () => {
+    if (!queryResults?.multi_surface_results || !selectedKB) {
+      return;
+    }
+    setExportLoading(true);
+    try {
+      const topN = parseInt(limit);
+
+      // Run a separate similarity search to get true baseline results
+      const baselineResponse = await queryAPI.search(selectedKB, {
+        query: queryText,
+        limit: topN,
         query_type: 'similarity',
         similarity_threshold: parseFloat(threshold),
-      };
-    } else if (searchType === 'keyword') {
-      return {
-        ...baseRequest,
-        query_type: 'keyword',
-        similarity_threshold: parseFloat(threshold),
-        title_weighting_enabled: titleWeightingEnabled,
-        title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
-      };
-    } else if (searchType === 'multi_surface') {
-      return {
-        ...baseRequest,
-        query_type: 'multi_surface',
-        similarity_threshold: parseFloat(threshold),
-        chunk_vector_weight: chunkVectorWeight,
-        query_match_weight: queryMatchWeight,
-        synopsis_match_weight: synopsisMatchWeight,
-        bm25_weight: bm25Weight,
-        chunk_summary_weight: chunkSummaryWeight,
-      };
-    } else {
-      return {
-        ...baseRequest,
-        query_type: 'hybrid',
-        similarity_threshold: parseFloat(threshold),
-        title_weighting_enabled: titleWeightingEnabled,
-        title_weight_multiplier: titleWeightingEnabled ? titleWeightMultiplier : 1.0,
-      };
+        rag_rewrite_mode: 'raw_query',
+      });
+      const baselineData = extractDataFromResponse(baselineResponse);
+      const baselineResults = baselineData?.results || [];
+
+      // Use formatted_results from backend (SHU-652) — already deduplicated, annotated, title-filtered
+      const text = formatResultsForJudgment(queryText, baselineResults, queryResults.formatted_results || [], topN);
+      await navigator.clipboard.writeText(text);
+      setSnackbar({ open: true, message: 'Exported to clipboard' });
+    } catch (err) {
+      log.error('Export for judgment failed:', err);
+      setSnackbar({ open: true, message: 'Export failed — see console' });
+    } finally {
+      setExportLoading(false);
     }
   };
 
@@ -473,6 +490,20 @@ function QueryTester() {
                       Adjust weights to control how much each surface contributes to the final score
                     </Typography>
                   </Box>
+
+                  <Divider sx={{ my: 2 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Fusion Formula
+                    </Typography>
+                  </Divider>
+
+                  <FormControl fullWidth size="small">
+                    <Select value={fusionFormula || ''} onChange={(e) => setFusionFormula(e.target.value || null)}>
+                      <MenuItem value="">Server Default</MenuItem>
+                      <MenuItem value="weighted_average">Weighted Average</MenuItem>
+                      <MenuItem value="max_sqrt_mean_max">Max × √(mean/max)</MenuItem>
+                    </Select>
+                  </FormControl>
                 </Box>
               )}
 
@@ -495,13 +526,22 @@ function QueryTester() {
             <CardContent>
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="h6">Results</Typography>
-                {queryResults && (
-                  <Chip
-                    label={`${queryResults.multi_surface_results?.length || queryResults.results?.length || 0} results`}
-                    color="primary"
-                    size="small"
-                  />
-                )}
+                <Box display="flex" gap={1} alignItems="center">
+                  {queryResults?.multi_surface_results?.length > 0 && (
+                    <Tooltip title="Export for LLM Judgment">
+                      <IconButton size="small" onClick={handleExportForJudgment} disabled={exportLoading}>
+                        {exportLoading ? <CircularProgress size={18} /> : <ContentCopyIcon fontSize="small" />}
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {queryResults && (
+                    <Chip
+                      label={`${queryResults.multi_surface_results?.length || queryResults.results?.length || 0} results`}
+                      color="primary"
+                      size="small"
+                    />
+                  )}
+                </Box>
               </Box>
 
               {queryMutation.isLoading && (
@@ -601,6 +641,12 @@ function QueryTester() {
           </Card>
         </Grid>
       </Grid>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar({ open: false, message: '' })}
+        message={snackbar.message}
+      />
     </Box>
   );
 }

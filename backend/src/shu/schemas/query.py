@@ -6,7 +6,7 @@ search and query operations.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -82,6 +82,9 @@ class QueryRequest(BaseModel):
     )
     chunk_summary_weight: float | None = Field(
         None, ge=0.0, le=1.0, description="Weight for chunk summary surface (None = use config default)"
+    )
+    fusion_formula: Literal["weighted_average", "max_sqrt_mean_max"] | None = Field(
+        None, description="Score fusion formula (None = use default)"
     )
 
     @field_validator("query")

@@ -70,9 +70,12 @@ class ContributingChunk:
     surface: str
     score: float
     snippet: str
+    content: str = ""
     summary: str | None = None
     start_char: int | None = None
     end_char: int | None = None
+    matched_query: str | None = None
+    chunk_metadata: dict | None = None
 
 
 @dataclass
@@ -103,6 +106,7 @@ class FusedResult:
     source_url: str | None = None
     source_id: str | None = None
     created_at: datetime | None = None
+    synopsis: str | None = None
 
 
 @runtime_checkable

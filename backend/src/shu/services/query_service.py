@@ -149,6 +149,7 @@ class QueryService(
                     synopsis_match_weight=request.synopsis_match_weight,
                     bm25_weight=request.bm25_weight,
                     chunk_summary_weight=request.chunk_summary_weight,
+                    fusion_formula=request.fusion_formula,
                 )
             else:
                 raise ShuException(f"Unsupported search type: {search_type}", "UNSUPPORTED_SEARCH_TYPE")

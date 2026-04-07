@@ -117,7 +117,7 @@ class TestMultiSurfaceSearchService:
         mock_session_factory = _make_mock_session_factory()
         kb_id = uuid4()
 
-        result, all_scores = await service.search(
+        result, all_scores, _formatted = await service.search(
             "test",
             kb_id,
             limit=5,
@@ -169,11 +169,13 @@ class TestMultiSurfaceSearchService:
         service = self._make_service(surfaces=[bad_surface])
         mock_session_factory = _make_mock_session_factory()
 
-        result = await service.search(
+        result, all_scores, formatted = await service.search(
             "test", uuid4(), session_factory=mock_session_factory
         )
 
         assert result == []
+        assert all_scores == {}
+        assert formatted == []
 
     @pytest.mark.asyncio
     async def test_search_respects_timeout(self):
@@ -194,7 +196,7 @@ class TestMultiSurfaceSearchService:
         mock_session_factory = _make_mock_session_factory()
 
         # Should not hang, should handle timeout
-        result = await service.search(
+        result, _all_scores, _formatted = await service.search(
             "test", uuid4(), session_factory=mock_session_factory
         )
 

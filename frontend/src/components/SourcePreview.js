@@ -3,6 +3,7 @@ import { Box, Typography, Paper, Chip, Divider, Card, CardContent, Collapse, Ico
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ChunkDetailModal from './ChunkDetailModal';
+import { getSurfaceColor } from '../utils/constants';
 
 function safeGet(obj, keys, fallback = '') {
   for (const k of keys) {
@@ -72,24 +73,13 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
         </Box>
         <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
           {Object.entries(result.surface_scores || {}).map(([surface, score]) => {
-            // Color coding for different surface types
-            let color = 'secondary';
-            if (surface === 'chunk_vector') {
-              color = 'info';
-            } else if (surface === 'query_match') {
-              color = 'success';
-            } else if (surface === 'bm25') {
-              color = 'warning';
-            } else if (surface === 'chunk_summary') {
-              color = 'default';
-            }
             return (
               <Chip
                 key={surface}
                 label={`${surface}: ${(score * 100).toFixed(1)}%`}
                 variant="outlined"
                 size="small"
-                color={color}
+                color={getSurfaceColor(surface)}
               />
             );
           })}
@@ -150,20 +140,41 @@ function MultiSurfaceItem({ result, rank, onChunkClick, showAllChunks = false })
                         sx={{ fontWeight: 'bold', minWidth: 45 }}
                       />
                       <Chip
-                        label={chunk.surface || 'unknown'}
-                        size="small"
-                        variant="outlined"
-                        color={chunk.surface === 'chunk_vector' ? 'info' : 'secondary'}
-                      />
-                      <Chip
-                        label={typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A'}
+                        label={
+                          'Score: ' + (typeof chunk.score === 'number' ? `${(chunk.score * 100).toFixed(1)}%` : 'N/A')
+                        }
                         size="small"
                         variant="outlined"
                       />
+                      {(chunk.surfaces || [chunk.surface || 'unknown']).map((s) => {
+                        const surfaceScore = chunk.surface_scores?.[s];
+                        const scoreLabel =
+                          typeof surfaceScore === 'number' ? ` ${(surfaceScore * 100).toFixed(1)}%` : '';
+                        return (
+                          <Chip
+                            key={s}
+                            label={`${s}${scoreLabel}`}
+                            size="small"
+                            variant="outlined"
+                            color={getSurfaceColor(s)}
+                          />
+                        );
+                      })}
                       {onChunkClick && <VisibilityIcon fontSize="small" sx={{ ml: 'auto', color: 'action.active' }} />}
                     </Box>
-                    <Typography variant="body2" sx={{ mt: 0.5 }}>
-                      {chunk.snippet}
+                    {chunk.matched_query && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        display="block"
+                        mt={0.5}
+                        sx={{ fontStyle: 'italic' }}
+                      >
+                        Matched query: &quot;{chunk.matched_query}&quot;
+                      </Typography>
+                    )}
+                    <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
+                      {chunk.snippet || chunk.content}
                     </Typography>
                     {chunk.summary && (
                       <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>

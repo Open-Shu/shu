@@ -10,6 +10,9 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from sqlalchemy import select
+
+from ....models.document import Document
 from ..protocol import RetrievalSurface, SurfaceHit, SurfaceResult
 
 if TYPE_CHECKING:
@@ -74,13 +77,22 @@ class SynopsisMatchSurface(RetrievalSurface):
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
+        if not results:
+            return SurfaceResult(surface_name=self.name, hits=[], execution_time_ms=elapsed_ms)
+
+        # Load synopsis text for matched documents
+        doc_ids = [r.id for r in results]
+        stmt = select(Document.id, Document.synopsis).where(Document.id.in_(doc_ids))
+        db_result = await db.execute(stmt)
+        synopsis_map = {str(row.id): row.synopsis for row in db_result.fetchall()}
+
         # For synopses collection, the id is already the document_id
         hits = [
             SurfaceHit(
                 id=UUID(r.id),
                 id_type="document",
                 score=r.score,
-                metadata={},
+                metadata={"synopsis": synopsis_map.get(r.id) or ""},
             )
             for r in results
         ]
