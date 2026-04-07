@@ -87,7 +87,11 @@ def _extract_auth(headers: dict[str, str]) -> httpx.Auth | None:
 
     # For basic headers we need to use "httpx.BasicAuth" so the headers are preserved across redirects
     if lower.startswith("basic "):
-        decoded = base64.b64decode(auth_value[6:]).decode("utf-8")
+        try:
+            decoded = base64.b64decode(auth_value[6:]).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            logger.warning("mcp.auth.invalid_basic_credentials: malformed base64 or encoding in plugin secret Authorization header")
+            return None
         username, _, password = decoded.partition(":")
         return httpx.BasicAuth(username, password)
 
@@ -95,6 +99,8 @@ def _extract_auth(headers: dict[str, str]) -> httpx.Auth | None:
         token = auth_value[7:]
         return _BearerAuth(token)
 
+    scheme = auth_value.split()[0] if auth_value else "empty"
+    logger.warning("mcp.auth.unsupported_scheme scheme=%s (from plugin secret Authorization header)", scheme)
     return None
 
 
