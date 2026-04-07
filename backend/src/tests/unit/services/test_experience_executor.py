@@ -1462,3 +1462,403 @@ class TestExecuteExperienceRunStep:
         assert output["scope"] == "shared"
         assert output["count"] == 0
         assert output["runs"] == []
+
+
+class TestNotifyDownstreamAggregates:
+    """Tests for _notify_downstream_aggregates, _evaluate_aggregate_trigger, and _atomic_set_next_run."""
+
+    @pytest.fixture
+    def executor(self):
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        config_manager = MagicMock()
+        return ExperienceExecutor(db, config_manager)
+
+    @staticmethod
+    def _no_pending_result():
+        """Mock result for the pending-runs check (count=0, no in-flight runs)."""
+        result = MagicMock()
+        result.scalar.return_value = 0
+        return result
+
+    @pytest.mark.asyncio
+    async def test_sets_last_run_at_on_success(self, executor):
+        """last_run_at is stamped on the completed experience before downstream evaluation."""
+        experience = MagicMock()
+        experience.id = "exp-1"
+        experience.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        no_aggs = MagicMock()
+        no_aggs.scalars.return_value.all.return_value = []
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            return no_aggs
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert experience.last_run_at is not None
+        executor.db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_sets_last_run_at_on_failure(self, executor):
+        """last_run_at is stamped even when the method is called after a failed run."""
+        experience = MagicMock()
+        experience.id = "exp-2"
+        experience.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        no_aggs = MagicMock()
+        no_aggs.scalars.return_value.all.return_value = []
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            return no_aggs
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert experience.last_run_at is not None
+
+    @pytest.mark.asyncio
+    async def test_any_mode_triggers_on_first_dep(self, executor):
+        """ANY mode triggers the aggregate immediately without checking other deps."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {"completion_mode": "any"}
+        aggregate.next_run_at = None
+        aggregate.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        update_result = MagicMock()
+        update_result.rowcount = 1
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            return update_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_all_mode_does_not_trigger_until_all_deps_complete(self, executor):
+        """ALL mode: does not trigger when some deps have not run since aggregate's last run."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {"completion_mode": "all"}
+        aggregate.last_run_at = datetime(2024, 1, 1, tzinfo=UTC)
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        dep_result = MagicMock()
+        dep_result.scalars.return_value.all.return_value = [
+            datetime(2024, 1, 2, tzinfo=UTC),
+            datetime(2023, 12, 1, tzinfo=UTC),
+        ]
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            return dep_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_all_mode_triggers_when_all_deps_fresh(self, executor):
+        """ALL mode: triggers when all deps have completed since aggregate's last run."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {"completion_mode": "all"}
+        aggregate.last_run_at = datetime(2024, 1, 1, tzinfo=UTC)
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        dep_result = MagicMock()
+        dep_result.scalars.return_value.all.return_value = [
+            datetime(2024, 1, 2, tzinfo=UTC),
+            datetime(2024, 1, 3, tzinfo=UTC),
+        ]
+        update_result = MagicMock()
+        update_result.rowcount = 1
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            if call_count == 3:
+                return dep_result
+            return update_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_all_mode_first_run_triggers_when_all_deps_have_any_last_run_at(self, executor):
+        """ALL mode with aggregate.last_run_at IS NULL: triggers when all deps have any last_run_at."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {"completion_mode": "all"}
+        aggregate.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        dep_result = MagicMock()
+        dep_result.scalars.return_value.all.return_value = [
+            datetime(2024, 1, 1, tzinfo=UTC),
+            datetime(2024, 1, 2, tzinfo=UTC),
+        ]
+        update_result = MagicMock()
+        update_result.rowcount = 1
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            if call_count == 3:
+                return dep_result
+            return update_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_all_mode_first_run_blocks_when_dep_has_null_last_run_at(self, executor):
+        """ALL mode first run: does not trigger when a dep has never run (last_run_at is None)."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {"completion_mode": "all"}
+        aggregate.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        dep_result = MagicMock()
+        dep_result.scalars.return_value.all.return_value = [
+            datetime(2024, 1, 1, tzinfo=UTC),
+            None,
+        ]
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            return dep_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_skips_non_aggregate_trigger_types(self, executor):
+        """Non-aggregate experiences are filtered out by the query, so no evaluation happens."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        no_aggs = MagicMock()
+        no_aggs.scalars.return_value.all.return_value = []
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            return no_aggs
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_race_condition_skips_already_scheduled(self, executor):
+        """When next_run_at is already set (rowcount=0), the trigger is a no-op."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {"completion_mode": "any"}
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        update_result = MagicMock()
+        update_result.rowcount = 0
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            return update_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_db_error_logs_and_does_not_raise(self, executor):
+        """DB errors are caught and logged; the method does not propagate exceptions."""
+        experience = MagicMock()
+        experience.id = "exp-err"
+        experience.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        executor.db.execute = AsyncMock(return_value=no_pending)
+        executor.db.commit = AsyncMock(side_effect=Exception("DB connection lost"))
+        executor.db.rollback = AsyncMock()
+
+        await executor._notify_downstream_aggregates(experience)
+
+        executor.db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_default_completion_mode_is_all(self, executor):
+        """When trigger_config has no completion_mode, defaults to 'all'."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        aggregate = MagicMock()
+        aggregate.id = "agg-1"
+        aggregate.trigger_config = {}
+        aggregate.last_run_at = None
+
+        no_pending = self._no_pending_result()
+        agg_result = MagicMock()
+        agg_result.scalars.return_value.all.return_value = [aggregate]
+        dep_result = MagicMock()
+        dep_result.scalars.return_value.all.return_value = [
+            datetime(2024, 1, 1, tzinfo=UTC),
+        ]
+        update_result = MagicMock()
+        update_result.rowcount = 1
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return no_pending
+            if call_count == 2:
+                return agg_result
+            if call_count == 3:
+                return dep_result
+            return update_result
+
+        executor.db.execute = AsyncMock(side_effect=mock_execute)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_skips_when_other_runs_still_pending(self, executor):
+        """Defers notification until all user runs for this experience have finished."""
+        experience = MagicMock()
+        experience.id = "dep-1"
+        experience.last_run_at = None
+
+        pending_result = MagicMock()
+        pending_result.scalar.return_value = 2
+        executor.db.execute = AsyncMock(return_value=pending_result)
+
+        await executor._notify_downstream_aggregates(experience)
+
+        assert experience.last_run_at is None
+        executor.db.commit.assert_not_called()

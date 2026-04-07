@@ -5,6 +5,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   FormControl,
   IconButton,
@@ -41,7 +42,7 @@ import log from '../utils/log';
  * Accessible via /dashboard/experience/:experienceId route.
  */
 const ExperienceDetailPage = () => {
-  const { experienceId } = useParams();
+  const { experienceId, runId: urlRunId } = useParams();
   const navigate = useNavigate();
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -59,10 +60,11 @@ const ExperienceDetailPage = () => {
   // Detect dark mode from theme
   const isDarkMode = theme.palette.mode === 'dark';
 
-  // Reset run selection when navigating between experiences
+  // Reset run selection when navigating between experiences.
+  // If a runId was provided in the URL, use it as the initial selection.
   useEffect(() => {
-    setSelectedRunId(null);
-  }, [experienceId]);
+    setSelectedRunId(urlRunId || null);
+  }, [experienceId, urlRunId]);
 
   // Fetch experience details from my-results endpoint
   const {
@@ -76,13 +78,30 @@ const ExperienceDetailPage = () => {
   // Fetch last 50 runs for this experience
   const { data: runsData } = useQuery(
     ['experience-runs', experienceId],
-    () => experiencesAPI.listRuns(experienceId, { limit: 50, mine_only: true }),
+    () => experiencesAPI.listRuns(experienceId, { limit: 50 }),
     {
       enabled: !!experienceId,
       onSuccess: (data) => {
         const items = extractItemsFromResponse(data);
         const successfulRuns = items.filter((r) => r.status === 'succeeded' && r.result_content);
-        if (successfulRuns.length > 0 && !selectedRunId) {
+        if (successfulRuns.length === 0) {
+          return;
+        }
+
+        // If a URL runId was provided and matches a successful run, keep it selected
+        if (urlRunId && successfulRuns.some((r) => String(r.id) === urlRunId)) {
+          setSelectedRunId(urlRunId);
+          return;
+        }
+
+        // URL pointed to a run we can't display — leave selectedRunId as the
+        // urlRunId so the render path shows the "not available" message.
+        if (urlRunId) {
+          return;
+        }
+
+        // Fall back to the most recent successful run
+        if (!selectedRunId || !successfulRuns.some((r) => String(r.id) === selectedRunId)) {
           setSelectedRunId(String(successfulRuns[0].id));
         }
       },
@@ -93,6 +112,7 @@ const ExperienceDetailPage = () => {
   const runs = allRuns.filter((r) => r.status === 'succeeded' && r.result_content);
   const selectedRun = runs.find((r) => r.id === selectedRunId);
   const activeRunId = selectedRun?.id || null;
+  const urlRunUnavailable = urlRunId && runsData && !selectedRun;
 
   const handleBack = () => {
     navigate('/dashboard');
@@ -171,16 +191,23 @@ const ExperienceDetailPage = () => {
           <FormControl size="small" sx={{ minWidth: 220 }}>
             <Select
               value={selectedRunId || ''}
-              onChange={(e) => setSelectedRunId(e.target.value)}
+              onChange={(e) => {
+                setSelectedRunId(e.target.value);
+                navigate(`/dashboard/experience/${experienceId}/${e.target.value}`, { replace: true });
+              }}
               startAdornment={<HistoryIcon sx={{ mr: 1 }} fontSize="small" />}
             >
-              {runs.map((run) => (
-                <MenuItem key={run.id} value={run.id}>
-                  {experience?.trigger_config?.timezone
-                    ? formatDateTimeFull(run.finished_at, experience.trigger_config.timezone)
-                    : new Date(run.finished_at).toLocaleString()}
-                </MenuItem>
-              ))}
+              {runs.map((run) => {
+                const dateStr = experience?.trigger_config?.timezone
+                  ? formatDateTimeFull(run.finished_at, experience.trigger_config.timezone)
+                  : new Date(run.finished_at).toLocaleString();
+                const userLabel = run.user?.email || run.user?.display_name;
+                return (
+                  <MenuItem key={run.id} value={run.id}>
+                    {userLabel ? `${dateStr} — ${userLabel}` : dateStr}
+                  </MenuItem>
+                );
+              })}
             </Select>
           </FormControl>
         )}
@@ -212,6 +239,12 @@ const ExperienceDetailPage = () => {
 
         {!isLoading && !error && !experience && (
           <Alert severity="warning">Experience not found or no results available.</Alert>
+        )}
+
+        {urlRunUnavailable && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            The requested run is not available. It may have failed, belong to another user, or no longer exist.
+          </Alert>
         )}
 
         {!isLoading && !error && experience && experience.missing_identities?.length > 0 && (
@@ -256,6 +289,61 @@ const ExperienceDetailPage = () => {
                       )
                     : new Date(selectedRun?.finished_at || experience.latest_run_finished_at).toLocaleString()}
                 </Typography>
+              </Box>
+            )}
+
+            {selectedRun?.step_outputs && Object.values(selectedRun.step_outputs).some((o) => o?.source) && (
+              <Box sx={{ mb: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  <strong>Sources:</strong>
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5 }}>
+                  {Object.values(selectedRun.step_outputs)
+                    .filter((o) => o?.source)
+                    .flatMap((output) => {
+                      const { source } = output;
+                      const depRuns = output.runs || [];
+
+                      if (depRuns.length === 0) {
+                        return [
+                          <Chip
+                            key={source.experience_id}
+                            label={`${source.experience_name || source.experience_id} — (no runs)`}
+                            aria-label={`Source: ${source.experience_name || source.experience_id}, no runs available`}
+                            size="small"
+                          />,
+                        ];
+                      }
+
+                      return depRuns.map((run, idx) => {
+                        const dateStr = run.finished_at ? new Date(run.finished_at).toLocaleString() : '';
+                        const parts = [source.experience_name || source.experience_id];
+                        if (dateStr) {
+                          parts.push(dateStr);
+                        }
+                        if (run.user_email) {
+                          parts.push(run.user_email);
+                        }
+                        const runId = source.run_ids?.[idx];
+                        return (
+                          <Chip
+                            key={runId || `${source.experience_id}-${idx}`}
+                            label={parts.join(' — ')}
+                            aria-label={`View source run: ${source.experience_name || source.experience_id}`}
+                            size="small"
+                            clickable
+                            onClick={() =>
+                              navigate(
+                                runId
+                                  ? `/dashboard/experience/${source.experience_id}/${runId}`
+                                  : `/dashboard/experience/${source.experience_id}`
+                              )
+                            }
+                          />
+                        );
+                      });
+                    })}
+                </Box>
               </Box>
             )}
 

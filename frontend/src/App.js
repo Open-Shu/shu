@@ -156,6 +156,14 @@ const AuthenticatedApp = () => {
               </RoleBasedRoute>
             }
           />
+          <Route
+            path="/dashboard/experience/:experienceId/:runId"
+            element={
+              <RoleBasedRoute layout="user">
+                <ExperienceDetailPage />
+              </RoleBasedRoute>
+            }
+          />
 
           {/* User Permissions Dashboard - Available to ALL users */}
           <Route

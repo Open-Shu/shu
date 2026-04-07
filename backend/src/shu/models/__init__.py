@@ -31,7 +31,7 @@ from .document import (
     ParticipantRole,
     RelationalContext,
 )
-from .experience import Experience, ExperienceRun, ExperienceStep
+from .experience import Experience, ExperienceDependency, ExperienceRun, ExperienceStep
 from .knowledge_base import KnowledgeBase
 from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message
 from .mcp_server_connection import McpServerConnection
@@ -78,6 +78,7 @@ __all__ = [
     "DocumentQuery",
     "EntityType",
     "Experience",
+    "ExperienceDependency",
     "ExperienceRun",
     "ExperienceStep",
     "GroupRole",

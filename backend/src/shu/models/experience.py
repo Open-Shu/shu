@@ -19,6 +19,8 @@ from sqlalchemy.orm import relationship
 
 from shu.core.logging import get_logger
 
+# Import Base directly for association tables that don't need UUID/timestamps
+from ..core.database import Base
 from .base import BaseModel
 
 logger = get_logger(__name__)
@@ -47,7 +49,7 @@ class Experience(BaseModel):
     scope = Column(String(20), default="user", nullable=False)  # user, shared
 
     # Trigger configuration
-    trigger_type = Column(String(20), default="manual", nullable=False)  # manual, scheduled, cron
+    trigger_type = Column(String(50), default="manual", nullable=False)  # manual, scheduled, cron
     trigger_config = Column(JSON, nullable=True)
     # Examples:
     # scheduled: {"time": "08:00", "timezone": "America/Chicago"}
@@ -88,6 +90,18 @@ class Experience(BaseModel):
     prompt = relationship("Prompt")
     parent_version = relationship("Experience", remote_side="Experience.id")
     creator = relationship("User", foreign_keys=[created_by])
+    dependencies = relationship(
+        "ExperienceDependency",
+        foreign_keys="ExperienceDependency.aggregate_experience_id",
+        back_populates="aggregate",
+        cascade="all, delete-orphan",
+    )
+    downstream_aggregates = relationship(
+        "ExperienceDependency",
+        foreign_keys="ExperienceDependency.dependency_experience_id",
+        back_populates="dependency",
+        cascade="all, delete-orphan",
+    )
 
     def schedule_next(self, user_timezone: str | None = None) -> None:
         """Compute and set the next_run_at based on trigger_type and trigger_config.
@@ -173,8 +187,8 @@ class Experience(BaseModel):
                 # Fallback: schedule for next hour
                 self.next_run_at = now + timedelta(hours=1)
         elif self.trigger_type == "on_linked_experiences_complete":
-            # next_run_at is resolved by the scheduler via _resolve_linked_experience_schedule().
-            # schedule_next() alone is insufficient for this trigger type.
+            # Event-driven: next_run_at is set by the completion hook when all
+            # dependencies finish, not by schedule_next().
             self.next_run_at = None
         else:
             self.next_run_at = None
@@ -182,6 +196,35 @@ class Experience(BaseModel):
     def __repr__(self) -> str:
         """Represent as string."""
         return f"<Experience(id={self.id}, name='{self.name}', visibility='{self.visibility}')>"
+
+
+class ExperienceDependency(Base):
+    """Association between an aggregate experience and its dependency experiences.
+
+    An aggregate experience depends on one or more other experiences completing
+    before it can be triggered. This table tracks those dependencies using a
+    composite primary key of (aggregate_experience_id, dependency_experience_id).
+    """
+
+    __tablename__ = "experience_dependencies"
+
+    aggregate_experience_id = Column(String, ForeignKey("experiences.id", ondelete="CASCADE"), primary_key=True)
+    dependency_experience_id = Column(String, ForeignKey("experiences.id", ondelete="CASCADE"), primary_key=True)
+
+    aggregate = relationship("Experience", foreign_keys=[aggregate_experience_id], back_populates="dependencies")
+    dependency = relationship(
+        "Experience", foreign_keys=[dependency_experience_id], back_populates="downstream_aggregates"
+    )
+
+    __table_args__ = (Index("idx_exp_deps_dependency", "dependency_experience_id"),)
+
+    def __repr__(self) -> str:
+        """Represent as string."""
+        return (
+            f"<ExperienceDependency("
+            f"aggregate={self.aggregate_experience_id}, "
+            f"dependency={self.dependency_experience_id})>"
+        )
 
 
 class ExperienceStep(BaseModel):

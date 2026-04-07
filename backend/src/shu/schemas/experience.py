@@ -285,6 +285,14 @@ class ExperienceUpdate(BaseModel):
         return v.strip() if v else v
 
 
+class DependencyReference(BaseModel):
+    """Reference to a dependency experience for display in aggregate details."""
+
+    id: str
+    name: str
+    slug: str
+
+
 class ExperienceResponse(ExperienceBase):
     """Schema for experience responses."""
 
@@ -306,6 +314,7 @@ class ExperienceResponse(ExperienceBase):
         None, description="Model configuration details when include_relationships=True"
     )
     prompt: dict[str, Any] | None = None
+    dependencies: list[DependencyReference] = Field(default_factory=list)
 
     # Computed
     step_count: int = Field(default=0, description="Number of steps")
