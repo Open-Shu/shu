@@ -429,8 +429,10 @@ export default function ExperienceStepBuilder({ steps, onChange }) {
   });
 
   // Fetch experiences (for experience_run steps)
+  // Distinct key from ExperiencesAdmin (which caches the full paginated envelope)
+  // to avoid shape mismatch — this query extracts just the items array.
   const experiencesQuery = useQuery(
-    ['experiences', 'list'],
+    ['experiences', 'list', 'items'],
     () => experiencesAPI.list().then(extractItemsFromResponse),
     { staleTime: 30000 }
   );

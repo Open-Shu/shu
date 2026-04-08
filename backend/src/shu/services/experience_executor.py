@@ -539,7 +539,8 @@ class ExperienceExecutor:
             if pending.scalar() > 0:
                 return
 
-            experience.last_run_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            await self.db.execute(update(Experience).where(Experience.id == str(experience.id)).values(last_run_at=now))
             await self.db.commit()
 
             agg_alias = (
@@ -1013,7 +1014,17 @@ class ExperienceExecutor:
         if not source:
             raise ValueError(f"Source experience '{source_id}' not found")
 
-        cycle_boundary = experience.last_run_at if experience else None
+        # Disabled: cycle_boundary filtered to only runs newer than the aggregate's
+        # last execution. This caused empty results when last_run_at was stale.
+        # Currently we always return the latest run per user — ANY mode accepts
+        # potentially stale data from non-triggering sources, ALL mode guarantees
+        # all sources are fresh via the trigger gate. Revisit if aggregates should
+        # only see runs from the current cycle.
+        #
+        # cycle_boundary = experience.last_run_at if experience else None
+        #
+        # if cycle_boundary:
+        #     base = base.where(ExperienceRun.finished_at > cycle_boundary)
 
         row_num = (
             func.row_number()
@@ -1028,8 +1039,8 @@ class ExperienceExecutor:
             ExperienceRun.experience_id == source_id,
             ExperienceRun.status.in_(["succeeded", "failed", "cancelled"]),
         )
-        if cycle_boundary:
-            base = base.where(ExperienceRun.finished_at > cycle_boundary)
+        # if cycle_boundary:
+        #     base = base.where(ExperienceRun.finished_at > cycle_boundary)
 
         subq = base.subquery()
         stmt = select(ExperienceRun).join(subq, ExperienceRun.id == subq.c.id).where(subq.c.rn == 1)

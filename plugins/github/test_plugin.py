@@ -310,7 +310,7 @@ async def test_fetch_activity_success() -> None:
         "created_at": f"{_DATE}T09:00:00Z",
         "pull_request": {},
     }
-    reviewed_pr = {"number": 43, "title": "Review this"}
+    reviewed_pr = {"number": 43, "title": "Review this", "user": {"login": "prauthor"}}
     # Two reviews on the PR: one by our user, one by someone else.
     user_review = {
         "id": 1001,
@@ -381,7 +381,7 @@ async def test_fetch_activity_success() -> None:
     assert commits[0]["stats"]["files_changed"] == 2
     assert len(commits[0]["files"]) == 2
     assert commits[0]["files"][0]["filename"] == "file0.py"
-    assert "@@ -1,3 +1,4 @@" in commits[0]["files"][0]["patch"]
+    assert "patch" not in commits[0]["files"][0]
 
     # PR assertions — real diff stats, commit SHAs, created_at
     pull_requests = result.data["pull_requests"]
@@ -399,6 +399,7 @@ async def test_fetch_activity_success() -> None:
     reviews = result.data["reviews"]
     assert len(reviews) == 1
     assert reviews[0]["pr_number"] == 43
+    assert reviews[0]["pr_author"] == "prauthor"
     assert reviews[0]["state"] == "APPROVED"
     assert reviews[0]["body"] == "LGTM"
     assert len(reviews[0]["comments"]) == 1
@@ -412,7 +413,7 @@ async def test_reviewed_pr_filters_out_of_range_reviews() -> None:
 
     _Requirements: 9.2, 9.3_
     """
-    reviewed_pr = {"number": 43, "title": "Review this"}
+    reviewed_pr = {"number": 43, "title": "Review this", "user": {"login": "prauthor"}}
     in_range_review = {
         "id": 1001,
         "state": "APPROVED",

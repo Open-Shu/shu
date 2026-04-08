@@ -464,6 +464,9 @@ class UnifiedLLMClient:
 
         try:
             async with self.client.stream("POST", endpoint, json=payload, **stream_kwargs) as response:
+                # Surface these errors so we get more information about failing LLM calls in the logs
+                if response.status_code >= 400:
+                    await response.aread()
                 response.raise_for_status()
 
                 # DEBUG: Log response headers for debugging
