@@ -15,8 +15,8 @@ Environment variables:
     SHU_DATABASE_URL           PostgreSQL connection URL
 
 Usage:
-    python scripts/hosting_deployment.py
-    python scripts/hosting_deployment.py --database-url postgresql://...
+    python scripts/hosting_deployment.py seed
+    python scripts/hosting_deployment.py seed --database-url postgresql://...
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import json
 import os
 import sys
 import uuid
-from urllib.parse import urlparse
 
 import psycopg2
 from cryptography.fernet import Fernet
@@ -140,7 +139,7 @@ def _parse_models(models_json: str) -> list[dict[str, str]]:
     return models
 
 
-def _ensure_llm_model(cur, model_id: str, display_name: str, provider_id: str) -> None:
+def _ensure_llm_model(cur, model_id: str, provider_id: str) -> None:
     """Ensure an llm_models row exists for the given model."""
     cur.execute(
         "SELECT id FROM llm_models WHERE model_name = %s AND provider_id = %s",
@@ -150,6 +149,7 @@ def _ensure_llm_model(cur, model_id: str, display_name: str, provider_id: str) -
         print(f"{LOG_PREFIX} Model '{model_id}' already exists, skipping", flush=True)
         return
 
+    display_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
     model_row_id = str(uuid.uuid4())
     cur.execute(
         """
@@ -164,9 +164,7 @@ def _ensure_llm_model(cur, model_id: str, display_name: str, provider_id: str) -
     print(f"{LOG_PREFIX} Created model '{model_id}'", flush=True)
 
 
-def _seed_models(
-    cur, models_json: str, provider_ids: dict[str, str], designated_model_ids: set[str]
-) -> None:
+def _seed_models(cur, models_json: str, provider_ids: dict[str, str]) -> None:
     """Seed llm_models rows and model_configurations for user-facing models.
 
     Models that are designated as side caller or profiling get an llm_models row
@@ -192,18 +190,15 @@ def _seed_models(
             print(f"{LOG_PREFIX} No provider for model '{model_id}', skipping", flush=True)
             continue
 
-        _ensure_llm_model(cur, model_id, display_name, provider_id)
-
-        if model_id in designated_model_ids:
-            continue
+        _ensure_llm_model(cur, model_id, provider_id)
 
         # Seed model_configurations row for user-facing models only
         cur.execute(
-            "SELECT id FROM model_configurations WHERE model_name = %s AND llm_provider_id = %s AND is_active = true",
-            (model_id, provider_id),
+            "SELECT id FROM model_configurations WHERE name = %s AND is_active = true",
+            (display_name,),
         )
         if cur.fetchone():
-            print(f"{LOG_PREFIX} Model configuration for '{model_id}' already exists, skipping", flush=True)
+            print(f"{LOG_PREFIX} Model configuration '{display_name}' already exists, skipping", flush=True)
             continue
 
         config_id = str(uuid.uuid4())
@@ -240,7 +235,7 @@ def _seed_designated_model(
         print(f"{LOG_PREFIX} No provider for '{config_name}' model '{model_id}', skipping", flush=True)
         return
 
-    _ensure_llm_model(cur, model_id, model_id, provider_id)
+    _ensure_llm_model(cur, model_id, provider_id)
 
     config_id = str(uuid.uuid4())
     functionalities = {**DEFAULT_FUNCTIONALITIES, **extra_functionalities}
@@ -271,7 +266,7 @@ def run(url: str) -> bool:
     """Seed OpenRouter providers, models, side caller, and profiling model. Idempotent."""
     api_key = os.getenv("SHU_OPENROUTER_API_KEY")
     encryption_key = os.getenv("SHU_LLM_ENCRYPTION_KEY")
-    model_csv = os.getenv("SHU_SEED_MODELS", "")
+    models_json = os.getenv("SHU_SEED_MODELS", "")
     side_caller_model = os.getenv("SHU_SEED_SIDE_CALLER", "")
     profiling_model = os.getenv("SHU_SEED_PROFILING_MODEL", "")
 
@@ -297,12 +292,8 @@ def run(url: str) -> bool:
                     return False
                 provider_ids[spec["provider_type"]] = pid
 
-            designated_model_ids = {
-                m for m in (side_caller_model, profiling_model) if m
-            }
-
-            if model_csv:
-                _seed_models(cur, model_csv, provider_ids, designated_model_ids)
+            if models_json:
+                _seed_models(cur, models_json, provider_ids)
 
             if side_caller_model:
                 _seed_designated_model(
