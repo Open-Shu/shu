@@ -575,6 +575,11 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     # Attachment cleanup: TTL-based chat attachment deletion (always enabled)
     sources.append(AttachmentCleanupSource())
 
+    # Billing quantity sync: daily reconciliation of Stripe seat count (skips if billing unconfigured)
+    from ..billing.sync import BillingQuantitySyncSource
+
+    sources.append(BillingQuantitySyncSource())
+
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",
         tick_interval,
