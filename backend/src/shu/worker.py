@@ -42,6 +42,7 @@ from sqlalchemy import select
 from .auth.models import User
 from .core.config import get_settings_instance
 from .core.database import get_async_session_local, init_db
+from .core.embedding_service import get_embedding_service
 from .core.exceptions import ShuException
 from .core.logging import get_logger, setup_logging
 from .core.queue_backend import get_queue_backend
@@ -431,6 +432,16 @@ async def _handle_content_embed_job(job) -> None:
                     "chunk_count": chunk_count,
                 },
             )
+
+            # The KB's embedding_model column defaults to SHU_EMBEDDING_MODEL (the
+            # local model name) at creation time. When the active service is an
+            # external provider, the default is wrong. Correct it here so that
+            # stale-KB detection at startup compares against the model that
+            # actually produced the vectors.
+            embedding_service = await get_embedding_service()
+            if kb.embedding_model != embedding_service.model_name:
+                kb.embedding_model = embedding_service.model_name
+                await session.commit()
 
             settings = get_settings_instance()
             await _finalize_embed_job(job, session, document, document_id, settings.enable_document_profiling)
