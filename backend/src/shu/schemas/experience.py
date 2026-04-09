@@ -38,6 +38,7 @@ class TriggerType(str, Enum):
     MANUAL = "manual"
     SCHEDULED = "scheduled"
     CRON = "cron"
+    ON_LINKED_EXPERIENCES_COMPLETE = "on_linked_experiences_complete"
 
 
 class StepType(str, Enum):
@@ -46,7 +47,7 @@ class StepType(str, Enum):
     PLUGIN = "plugin"
     KNOWLEDGE_BASE = "knowledge_base"
     DECISION_CONTROL = "decision_control"
-    # Future: AGENT_NETWORK = "agent_network"
+    EXPERIENCE_RUN = "experience_run"
 
 
 class RunStatus(str, Enum):
@@ -284,6 +285,14 @@ class ExperienceUpdate(BaseModel):
         return v.strip() if v else v
 
 
+class DependencyReference(BaseModel):
+    """Reference to a dependency experience for display in aggregate details."""
+
+    id: str
+    name: str
+    slug: str
+
+
 class ExperienceResponse(ExperienceBase):
     """Schema for experience responses."""
 
@@ -305,6 +314,7 @@ class ExperienceResponse(ExperienceBase):
         None, description="Model configuration details when include_relationships=True"
     )
     prompt: dict[str, Any] | None = None
+    dependencies: list[DependencyReference] = Field(default_factory=list)
 
     # Computed
     step_count: int = Field(default=0, description="Number of steps")

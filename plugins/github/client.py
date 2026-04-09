@@ -243,7 +243,7 @@ class _GithubClient:
             "files": [
                 {
                     "filename": f.get("filename", ""),
-                    "patch": f.get("patch", ""),
+                    # "patch": f.get("patch", ""),  # TODO: re-enable when experiences support larger payloads
                 }
                 for f in files
             ],
@@ -405,7 +405,14 @@ class _GithubClient:
         q = quote(f"type:pr repo:{repo} reviewed-by:{user} updated:{date}..{date_end}", safe="")
         base_url = f"{self.BASE_URL}/search/issues?q={q}"
         items = await self._paginate_search(base_url)
-        return [{"number": item["number"], "title": item["title"]} for item in items]
+        return [
+            {
+                "number": item["number"],
+                "title": item["title"],
+                "author": (item.get("user") or {}).get("login", ""),
+            }
+            for item in items
+        ]
 
     async def fetch_review_comments(
         self,
@@ -440,6 +447,7 @@ class _GithubClient:
         repo_name: str,
         pr_number: int,
         pr_title: str,
+        pr_author: str,
         user: str,
         date: str,
         date_end: str,
@@ -455,6 +463,7 @@ class _GithubClient:
             repo_name: Repository name (without owner prefix).
             pr_number: Pull request number.
             pr_title:  Pull request title (carried through for display purposes).
+            pr_author: GitHub username of the PR author.
             user:      GitHub username to filter reviews by.
             date:      Start date string ``YYYY-MM-DD`` (inclusive).
             date_end:  End date string ``YYYY-MM-DD`` (inclusive).
@@ -501,6 +510,7 @@ class _GithubClient:
             {
                 "pr_number": pr_number,
                 "pr_title": pr_title,
+                "pr_author": pr_author,
                 "state": review.get("state", ""),
                 "body": review.get("body", ""),
                 "submitted_at": review.get("submitted_at", ""),
@@ -587,6 +597,7 @@ class _GithubClient:
                 repo_name,
                 pr["number"],
                 pr["title"],
+                pr["author"],
                 github_username,
                 date,
                 date_end,

@@ -598,6 +598,168 @@ class TestExperienceSource:
         assert mock_enqueue_run.call_args.kwargs["user_id"] == "user-1"
 
 
+class TestExperienceSourceAggregateTrigger:
+    """Tests for on_linked_experiences_complete handling in ExperienceSource."""
+
+    @pytest.mark.asyncio
+    async def test_enqueue_due_picks_up_aggregate_experiences(self):
+        """enqueue_due includes on_linked_experiences_complete experiences with next_run_at set."""
+        source = ExperienceSource()
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        queue = AsyncMock()
+
+        mock_exp = MagicMock()
+        mock_exp.id = "agg-1"
+        mock_exp.slug = "agg-1"
+        mock_exp.trigger_type = "on_linked_experiences_complete"
+        mock_exp.created_by = None
+        mock_exp.model_configuration_id = None
+        mock_exp.scope = "shared"
+        mock_exp.schedule_next = MagicMock()
+
+        mock_user = MagicMock()
+        mock_user.id = "user-1"
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalars.return_value.all.return_value = [mock_exp]
+            elif call_count == 2:
+                result.scalars.return_value.all.return_value = [mock_user]
+            elif call_count == 3:
+                result.__iter__ = MagicMock(return_value=iter([]))
+            else:
+                result.scalar_one_or_none.return_value = None
+            return result
+
+        db.execute = mock_execute
+
+        with patch(
+            "shu.services.scheduler_service._enqueue_experience_run",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_enqueue_run:
+            result = await source.enqueue_due(db, queue, limit=10)
+
+        assert result["due"] == 1
+        assert result["enqueued"] == 1
+        assert mock_enqueue_run.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_advance_schedule_skips_last_run_at_for_aggregates(self):
+        """_advance_schedule does NOT set last_run_at for on_linked_experiences_complete experiences."""
+        db = AsyncMock()
+        db.commit = AsyncMock()
+
+        exp = MagicMock()
+        exp.trigger_type = "on_linked_experiences_complete"
+        exp.created_by = None
+        exp.last_run_at = None
+        exp.schedule_next = MagicMock()
+
+        from datetime import UTC, datetime
+
+        now = datetime(2024, 6, 1, tzinfo=UTC)
+
+        await ExperienceSource._advance_schedule(db, exp, now)
+
+        # last_run_at should NOT be set by the scheduler for aggregate experiences
+        assert exp.last_run_at is None
+        exp.schedule_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_advance_schedule_sets_last_run_at_for_cron(self):
+        """_advance_schedule still sets last_run_at for cron experiences."""
+        db = AsyncMock()
+
+        exp = MagicMock()
+        exp.trigger_type = "cron"
+        exp.created_by = None
+        exp.last_run_at = None
+        exp.schedule_next = MagicMock()
+
+        from datetime import UTC, datetime
+
+        now = datetime(2024, 6, 1, tzinfo=UTC)
+
+        await ExperienceSource._advance_schedule(db, exp, now)
+
+        assert exp.last_run_at == now
+        exp.schedule_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_advance_schedule_sets_last_run_at_for_scheduled(self):
+        """_advance_schedule still sets last_run_at for scheduled experiences."""
+        db = AsyncMock()
+
+        exp = MagicMock()
+        exp.trigger_type = "scheduled"
+        exp.created_by = None
+        exp.last_run_at = None
+        exp.schedule_next = MagicMock()
+
+        from datetime import UTC, datetime
+
+        now = datetime(2024, 6, 1, tzinfo=UTC)
+
+        await ExperienceSource._advance_schedule(db, exp, now)
+
+        assert exp.last_run_at == now
+        exp.schedule_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_enqueue_due_no_users_skips_last_run_at_for_aggregates(self):
+        """When no active users exist, last_run_at is NOT set for aggregate experiences."""
+        source = ExperienceSource()
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        queue = AsyncMock()
+
+        mock_agg_exp = MagicMock()
+        mock_agg_exp.id = "agg-1"
+        mock_agg_exp.trigger_type = "on_linked_experiences_complete"
+        mock_agg_exp.created_by = None
+        mock_agg_exp.last_run_at = None
+        mock_agg_exp.schedule_next = MagicMock()
+
+        mock_cron_exp = MagicMock()
+        mock_cron_exp.id = "cron-1"
+        mock_cron_exp.trigger_type = "cron"
+        mock_cron_exp.created_by = None
+        mock_cron_exp.last_run_at = None
+        mock_cron_exp.schedule_next = MagicMock()
+
+        call_count = 0
+
+        async def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalars.return_value.all.return_value = [mock_agg_exp, mock_cron_exp]
+            else:
+                result.scalars.return_value.all.return_value = []
+            return result
+
+        db.execute = mock_execute
+
+        result = await source.enqueue_due(db, queue, limit=10)
+
+        # Aggregate should NOT have last_run_at set
+        assert mock_agg_exp.last_run_at is None
+        # Cron should have last_run_at set
+        assert mock_cron_exp.last_run_at is not None
+        # Both should have schedule_next called
+        mock_agg_exp.schedule_next.assert_called_once()
+        mock_cron_exp.schedule_next.assert_called_once()
+        assert result["no_users"] == 1
+
+
 class TestAttachmentCleanupSource:
     """Tests for AttachmentCleanupSource delegation."""
 

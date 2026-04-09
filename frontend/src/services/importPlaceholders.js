@@ -16,6 +16,7 @@ export const SUPPORTED_IMPORT_PLACEHOLDERS = {
       { value: 'manual', label: 'Manual' },
       { value: 'scheduled', label: 'Scheduled' },
       { value: 'cron', label: 'Cron' },
+      { value: 'on_linked_experiences_complete', label: 'On Linked Experiences Complete' },
     ],
   },
   trigger_config: {

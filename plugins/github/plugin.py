@@ -181,15 +181,11 @@ class GithubPlugin:
                             },
                             "files": {
                                 "type": "array",
-                                "description": "Changed files with unified-diff patches",
+                                "description": "Changed files",
                                 "items": {
                                     "type": "object",
                                     "properties": {
                                         "filename": {"type": "string"},
-                                        "patch": {
-                                            "type": "string",
-                                            "description": "Unified diff hunks (changed lines only)",
-                                        },
                                     },
                                     "additionalProperties": False,
                                 },
@@ -235,6 +231,10 @@ class GithubPlugin:
                         "properties": {
                             "pr_number": {"type": "integer"},
                             "pr_title": {"type": "string"},
+                            "pr_author": {
+                                "type": "string",
+                                "description": "GitHub username of the PR author",
+                            },
                             "state": {"type": "string"},
                             "body": {
                                 "type": "string",
