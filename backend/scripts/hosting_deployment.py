@@ -12,6 +12,7 @@ Environment variables:
                                '[{"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet"}]'
     SHU_SEED_SIDE_CALLER       Model ID to designate as the side caller
     SHU_SEED_PROFILING_MODEL   Model ID to designate for document profiling
+    SHU_SEED_EMBEDDING_MODEL   Embedding model ID and dimension, e.g. "qwen/qwen3-embedding-8b:4096"
     SHU_DATABASE_URL           PostgreSQL connection URL
 
 Usage:
@@ -262,6 +263,60 @@ def _seed_designated_model(
     print(f"{LOG_PREFIX} Registered '{config_name}' in system_settings", flush=True)
 
 
+def _seed_embedding_model(cur, embedding_spec: str, provider_ids: dict[str, str]) -> None:
+    """Seed an embedding model row in llm_models.
+
+    Uses the OpenAI provider since OpenRouter's embeddings endpoint
+    follows the OpenAI format regardless of the underlying model vendor.
+
+    Args:
+        embedding_spec: "model_id:dimension" e.g. "qwen/qwen3-embedding-8b:4096"
+    """
+    if ":" not in embedding_spec:
+        print(
+            f"{LOG_PREFIX} SHU_SEED_EMBEDDING_MODEL must be 'model_id:dimension' "
+            f"(e.g. 'qwen/qwen3-embedding-8b:4096'), got: {embedding_spec}",
+            file=sys.stderr,
+        )
+        return
+
+    model_id, dim_str = embedding_spec.rsplit(":", 1)
+    model_id = model_id.strip()
+    try:
+        dimension = int(dim_str.strip())
+    except ValueError:
+        print(f"{LOG_PREFIX} Invalid dimension '{dim_str}' in SHU_SEED_EMBEDDING_MODEL", file=sys.stderr)
+        return
+
+    provider_id = provider_ids.get("openai")
+    if not provider_id:
+        print(f"{LOG_PREFIX} OpenAI provider not found, cannot seed embedding model", flush=True)
+        return
+
+    cur.execute(
+        "SELECT id FROM llm_models WHERE model_name = %s AND provider_id = %s",
+        (model_id, provider_id),
+    )
+    if cur.fetchone():
+        print(f"{LOG_PREFIX} Embedding model '{model_id}' already exists, skipping", flush=True)
+        return
+
+    display_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
+    model_row_id = str(uuid.uuid4())
+    model_config = json.dumps({"dimension": dimension})
+    cur.execute(
+        """
+        INSERT INTO llm_models
+            (id, provider_id, model_name, display_name, model_type,
+             supports_streaming, supports_functions, supports_vision,
+             is_active, config, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, 'embedding', false, false, false, true, %s, now(), now())
+        """,
+        (model_row_id, provider_id, model_id, display_name, model_config),
+    )
+    print(f"{LOG_PREFIX} Created embedding model '{model_id}' (dimension={dimension})", flush=True)
+
+
 def run(url: str) -> bool:
     """Seed OpenRouter providers, models, side caller, and profiling model. Idempotent."""
     api_key = os.getenv("SHU_OPENROUTER_API_KEY")
@@ -269,6 +324,7 @@ def run(url: str) -> bool:
     models_json = os.getenv("SHU_SEED_MODELS", "")
     side_caller_model = os.getenv("SHU_SEED_SIDE_CALLER", "")
     profiling_model = os.getenv("SHU_SEED_PROFILING_MODEL", "")
+    embedding_model = os.getenv("SHU_SEED_EMBEDDING_MODEL", "")
 
     if not api_key:
         print(f"{LOG_PREFIX} SHU_OPENROUTER_API_KEY not set, skipping", flush=True)
@@ -317,6 +373,9 @@ def run(url: str) -> bool:
                     extra_functionalities={"profiling": True},
                 )
 
+            if embedding_model:
+                _seed_embedding_model(cur, embedding_model, provider_ids)
+
         conn.commit()
         print(f"{LOG_PREFIX} Hosting deployment seed complete", flush=True)
         return True
@@ -347,6 +406,7 @@ Environment variables (for seed):
   SHU_SEED_MODELS            JSON array: [{"id": "model-id", "name": "Display Name"}, ...]
   SHU_SEED_SIDE_CALLER       Model ID for the side caller
   SHU_SEED_PROFILING_MODEL   Model ID for document profiling
+  SHU_SEED_EMBEDDING_MODEL   Embedding model as "model_id:dimension" (e.g. "qwen/qwen3-embedding-8b:4096")
   SHU_DATABASE_URL           PostgreSQL connection URL
 
 Examples:
