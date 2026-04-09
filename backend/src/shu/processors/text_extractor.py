@@ -11,8 +11,6 @@ import time
 from pathlib import Path
 from typing import Any, ClassVar
 
-import easyocr
-
 from ..core.config import ConfigurationManager
 from ..core.logging import get_logger
 from ..ingestion.filetypes import (
@@ -54,7 +52,7 @@ class TextExtractor:
     # --- EasyOCR singleton management ---
     # The Reader loads ~1.5-2.5 GiB of models; creating one per call causes OOM
     # under concurrency.  We cache a single instance and guard init with an async lock.
-    _ocr_instance: ClassVar[easyocr.Reader | None] = None
+    _ocr_instance: ClassVar[Any] = None
     _ocr_init_lock: ClassVar[asyncio.Lock | None] = None
     _ocr_init_failed: ClassVar[bool] = False
 
@@ -103,7 +101,7 @@ class TextExtractor:
         return cls._ocr_init_lock
 
     @classmethod
-    async def get_ocr_instance(cls) -> easyocr.Reader | None:
+    async def get_ocr_instance(cls) -> Any:
         """Get or create the singleton EasyOCR Reader.
 
         Uses double-checked locking: fast path returns the cached instance without
@@ -135,6 +133,10 @@ class TextExtractor:
             try:
                 logger.info("Initializing EasyOCR singleton Reader")
                 loop = asyncio.get_running_loop()
+                # Deferred import: easyocr loads ~2GB of models on import,
+                # must not load when external OCR is configured.
+                import easyocr
+
                 instance = await loop.run_in_executor(None, lambda: easyocr.Reader(["en"]))
                 cls._ocr_instance = instance
                 logger.info("EasyOCR singleton Reader initialized successfully")

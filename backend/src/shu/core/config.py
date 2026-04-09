@@ -513,11 +513,15 @@ class Settings(BaseSettings):
     # Note: No page limits - OCR processes all pages in document
 
     # Service backend configuration
-    # Controls whether local OCR/embedding models are loaded into memory.
-    # Set to false for hosted deployments that use external API providers,
-    # avoiding the memory overhead of EasyOCR and sentence-transformers.
-    local_ocr_enabled: bool = Field(True, alias="SHU_LOCAL_OCR_ENABLED")
+    # Embedding: set to false for hosted deployments that use external API providers,
+    # avoiding the memory overhead of sentence-transformers (~2GB).
     local_embedding_enabled: bool = Field(True, alias="SHU_LOCAL_EMBEDDING_ENABLED")
+
+    # OCR: set SHU_MISTRAL_OCR_API_KEY to use Mistral OCR via OpenRouter
+    # instead of local EasyOCR/Tesseract. API key presence is the switch.
+    mistral_ocr_api_key: str | None = Field(None, alias="SHU_MISTRAL_OCR_API_KEY")
+    mistral_ocr_base_url: str = Field("https://api.mistral.ai/v1", alias="SHU_MISTRAL_OCR_BASE_URL")
+    mistral_ocr_model: str = Field("mistral-ocr-latest", alias="SHU_MISTRAL_OCR_MODEL")
 
     @field_validator("database_url")
     @classmethod
