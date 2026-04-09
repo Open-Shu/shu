@@ -166,6 +166,8 @@ async def get_subscription_status(
     """
     billing_config = await get_billing_config(db)
     user_count = await get_user_count(db)
+    user_limit = billing_config.get("quantity", 0)
+    enforcement = billing_config.get("user_limit_enforcement", "soft")
 
     return ShuResponse.success({
         "stripe_customer_id": billing_config.get("stripe_customer_id"),
@@ -174,6 +176,9 @@ async def get_subscription_status(
         "current_period_start": billing_config.get("current_period_start"),
         "current_period_end": billing_config.get("current_period_end"),
         "user_count": user_count,
+        "user_limit": user_limit,
+        "user_limit_enforcement": enforcement,
+        "at_user_limit": user_count >= user_limit > 0,
         "cancel_at_period_end": billing_config.get("cancel_at_period_end", False),
     })
 
