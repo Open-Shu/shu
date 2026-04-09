@@ -33,7 +33,7 @@ from .document import (
 )
 from .experience import Experience, ExperienceRun, ExperienceStep
 from .knowledge_base import KnowledgeBase
-from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message
+from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message, ModelType
 from .mcp_server_connection import McpServerConnection
 from .model_configuration import ModelConfiguration
 from .model_configuration_kb_prompt import ModelConfigurationKBPrompt
@@ -89,6 +89,7 @@ __all__ = [
     "Message",
     "ModelConfiguration",
     "ModelConfigurationKBPrompt",
+    "ModelType",
     "ParticipantEntityType",
     "ParticipantRole",
     "PluginDefinition",

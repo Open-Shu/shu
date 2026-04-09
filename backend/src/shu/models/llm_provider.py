@@ -4,12 +4,21 @@ This module defines the database models for managing LLM providers,
 models, and usage tracking in the Shu system.
 """
 
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import DECIMAL, JSON, Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .base import BaseModel
+
+
+class ModelType(StrEnum):
+    """Valid values for LLMModel.model_type."""
+
+    CHAT = "chat"
+    EMBEDDING = "embedding"
+    OCR = "ocr"
 
 
 class LLMProvider(BaseModel):
@@ -131,7 +140,7 @@ class LLMModel(BaseModel):
     # Model information
     model_name = Column(String(100), nullable=False, index=True)  # "gpt-4", "claude-3-opus"
     display_name = Column(String(100), nullable=True)  # "GPT-4 (Latest)"
-    model_type = Column(String(50), default="chat", nullable=False)  # "chat", "completion", "embedding"
+    model_type = Column(String(50), default=ModelType.CHAT, nullable=False)
 
     # Model capabilities
     supports_streaming = Column(Boolean, default=True, nullable=False)
