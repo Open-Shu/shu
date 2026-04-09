@@ -1,8 +1,8 @@
-"""EmbeddingService protocol and LocalEmbeddingService implementation.
+"""LocalEmbeddingService implementation and DI wiring.
 
-Abstracts embedding generation behind a protocol interface following the
-CacheBackend/QueueBackend pattern. LocalEmbeddingService wraps
-sentence-transformers for local embedding generation.
+Wraps sentence-transformers for local embedding generation. The
+EmbeddingService protocol lives in embedding_protocol.py to avoid
+loading sentence-transformers (~2GB) when only the protocol is needed.
 
 DI wiring:
     - get_embedding_service()           — async singleton factory (workers, services)
@@ -15,79 +15,18 @@ import asyncio
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Protocol, runtime_checkable
 
-import sentence_transformers
-
+from ..models.llm_provider import ModelType
 from .config import get_settings_instance
+from .embedding_protocol import EmbeddingService
+from .exceptions import LLMConfigurationError
+from .external_model_resolver import resolve_external_model
 from .logging import get_logger
 
 logger = get_logger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Protocol
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class EmbeddingService(Protocol):
-    """Protocol for embedding generation services.
-
-    Implementations must provide async methods for generating embeddings
-    from text. Supports both batch and single-query paths.
-    """
-
-    @property
-    def dimension(self) -> int:
-        """Dimensionality of the embedding vectors produced by this service."""
-        ...
-
-    @property
-    def model_name(self) -> str:
-        """Name of the underlying embedding model."""
-        ...
-
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a batch of texts.
-
-        Args:
-            texts: List of text strings to embed. Empty list returns [].
-
-        Returns:
-            List of embedding vectors, one per input text.
-
-        """
-        ...
-
-    async def embed_query(self, text: str) -> list[float]:
-        """Generate an embedding for a single query text.
-
-        Args:
-            text: The query text to embed.
-
-        Returns:
-            A single embedding vector.
-
-        """
-        ...
-
-    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a batch of query texts.
-
-        Like embed_texts(), but applies the query prompt for asymmetric
-        models (e.g., Snowflake arctic-embed). Use this when embedding
-        synthesized queries or any text that will be matched against
-        user search queries.
-
-        Args:
-            texts: List of query strings to embed. Empty list returns [].
-
-        Returns:
-            List of embedding vectors, one per input text.
-
-        """
-        ...
+# Re-export so existing callers don't break
+__all__ = ["EmbeddingService", "LocalEmbeddingService"]
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +118,11 @@ class LocalEmbeddingService:
         executor: ThreadPoolExecutor,
         dtype: str = "float32",
     ) -> None:
+        # Deferred import: sentence-transformers loads ~2GB of models on import.
+        # Kept inside __init__ (not at module level) so that importing this module
+        # doesn't trigger the load when SHU_LOCAL_EMBEDDING_ENABLED=false.
+        import sentence_transformers
+
         self._model_name = model_name
         self._device = device
         self._batch_size = batch_size
@@ -450,13 +394,18 @@ _embedding_service: EmbeddingService | None = None
 async def get_embedding_service() -> EmbeddingService:
     """Get the configured embedding service (singleton).
 
-    Creates a LocalEmbeddingService using settings for model, device, batch
-    size, and dtype. Suitable for use in background tasks, workers, and
-    services. For FastAPI endpoints, prefer get_embedding_service_dependency().
+    Resolution order:
+    1. Return cached singleton if already initialized.
+    2. If SHU_LOCAL_EMBEDDING_ENABLED=true, create a LocalEmbeddingService
+       (default, backward-compatible — local is preferred when enabled).
+    3. If SHU_LOCAL_EMBEDDING_ENABLED=false and an active model with
+       model_type="embedding" exists in the DB, create an
+       ExternalEmbeddingService using the provider's credentials.
+    4. If local is disabled and no external model is configured, raise
+       LLMConfigurationError.
 
-    Returns:
-        The configured EmbeddingService instance.
-
+    Suitable for use in background tasks, workers, and services. For
+    FastAPI endpoints, prefer get_embedding_service_dependency().
     """
     global _embedding_service  # noqa: PLW0603
 
@@ -464,16 +413,46 @@ async def get_embedding_service() -> EmbeddingService:
         return _embedding_service
 
     settings = get_settings_instance()
-    device = resolve_embedding_device(settings.embedding_device)
-    dtype = resolve_embedding_dtype(settings.embedding_dtype, device)
 
-    _embedding_service = _service_manager.get_service(
-        model_name=settings.default_embedding_model,
-        device=device,
-        batch_size=settings.embedding_batch_size,
-        dtype=dtype,
+    if settings.local_embedding_enabled:
+        logger.info("Using local embedding service")
+        device = resolve_embedding_device(settings.embedding_device)
+        dtype = resolve_embedding_dtype(settings.embedding_dtype, device)
+        _embedding_service = _service_manager.get_service(
+            model_name=settings.default_embedding_model,
+            device=device,
+            batch_size=settings.embedding_batch_size,
+            dtype=dtype,
+        )
+        return _embedding_service
+
+    resolved = await resolve_external_model(ModelType.EMBEDDING)
+    if resolved is None:
+        raise LLMConfigurationError(
+            "No embedding service available: SHU_LOCAL_EMBEDDING_ENABLED=false "
+            "and no external embedding model (model_type='embedding') is configured "
+            "in llm_models. Either enable local embedding or register an external model."
+        )
+
+    dimension = resolved.config.get("dimension")
+    if not dimension:
+        raise LLMConfigurationError(
+            f"External embedding model '{resolved.model_name}' is missing 'dimension' "
+            f"in its config. Set config.dimension on the llm_models record."
+        )
+
+    from ..services.external_embedding_service import ExternalEmbeddingService
+
+    logger.info(
+        "Using external embedding service",
+        extra={"model": resolved.model_name, "provider": resolved.provider_name, "dimension": dimension},
     )
-
+    _embedding_service = ExternalEmbeddingService(
+        api_base_url=resolved.api_base_url,
+        api_key=resolved.api_key,
+        model_name=resolved.model_name,
+        dimension=int(dimension),
+    )
     return _embedding_service
 
 
@@ -481,7 +460,8 @@ def get_embedding_service_dependency() -> EmbeddingService:
     """Dependency injection function for EmbeddingService.
 
     Use in FastAPI endpoints with Depends(). Returns the cached singleton
-    if available, otherwise creates one synchronously via the manager.
+    if available, otherwise raises. Startup should have initialized the
+    service via initialize_embedding_service().
 
     Returns:
         An EmbeddingService instance.
@@ -492,9 +472,16 @@ def get_embedding_service_dependency() -> EmbeddingService:
     if _embedding_service is not None:
         return _embedding_service
 
-    # Fallback: create synchronously (startup should have initialized)
+    # Fallback: create synchronously via local path (startup should have initialized)
     logger.debug("get_embedding_service_dependency called before async initialization")
     settings = get_settings_instance()
+
+    if not settings.local_embedding_enabled:
+        raise LLMConfigurationError(
+            "Embedding service not initialized and local embedding is disabled. "
+            "Ensure initialize_embedding_service() is called during startup."
+        )
+
     device = resolve_embedding_device(settings.embedding_device)
     dtype = resolve_embedding_dtype(settings.embedding_dtype, device)
     _embedding_service = _service_manager.get_service(

@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,7 @@ from ..auth.rbac import get_current_user, require_admin
 from ..core.exceptions import LLMProviderError
 from ..core.response import ShuResponse
 from ..llm.service import LLMService
-from ..models.llm_provider import LLMProvider
+from ..models.llm_provider import LLMProvider, ModelType
 from ..schemas.envelope import SuccessResponse
 from ..schemas.llm_provider_type import (
     ProviderTypeDefinitionListItem,
@@ -122,7 +122,7 @@ class LLMModelCreate(BaseModel):
 
     model_name: str = Field(..., description="Model name")
     display_name: str | None = Field(None, description="Display name")
-    model_type: str = Field("chat", description="Model type (chat, completion, embedding)")
+    model_type: str = Field("chat", description="Model type (chat, embedding, ocr)")
     supports_streaming: bool = Field(True, description="Supports streaming")
     supports_functions: bool = Field(False, description="Supports function calling")
     supports_vision: bool = Field(False, description="Supports vision/image inputs")
@@ -312,14 +312,30 @@ async def test_provider(
 @router.get("/models", response_model=SuccessResponse[list[LLMModelResponse]])
 async def list_models(
     provider_id: str | None = None,
+    model_type: str | None = Query(
+        None, description="Filter by model type (chat, embedding, ocr). Omit for chat-only; use 'all' for all types."
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List available LLM models."""
     try:
         llm_service = LLMService(db)
-        models = await llm_service.get_available_models(provider_id)
+        if model_type is None:
+            model_types = [ModelType.CHAT]
+        elif model_type == "all":
+            model_types = None
+        elif model_type in ModelType.__members__.values():
+            model_types = [model_type]
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid model_type '{model_type}'. Valid values: {', '.join(ModelType)}, all",
+            )
+        models = await llm_service.get_available_models(provider_id, model_types=model_types)
         return ShuResponse.success(models)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing LLM models: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list LLM models")
