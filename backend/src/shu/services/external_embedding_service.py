@@ -9,6 +9,7 @@ TODO: Abstract provider-specific formatting when we support more than
 OpenRouter for embedding models.
 """
 
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -22,7 +23,8 @@ class ExternalEmbeddingService:
     """Embedding service backed by an external API provider.
 
     Conforms to the EmbeddingService protocol. Calls the provider's
-    /embeddings endpoint following the OpenAI format.
+    /embeddings endpoint following the OpenAI format. Records token
+    usage in llm_usage after each API call.
     """
 
     def __init__(
@@ -31,11 +33,15 @@ class ExternalEmbeddingService:
         api_key: str,
         model_name: str,
         dimension: int,
+        provider_id: str,
+        model_id: str,
     ) -> None:
         self._api_base_url = api_base_url.rstrip("/")
         self._api_key = api_key
         self._model_name = model_name
         self._dimension = dimension
+        self._provider_id = provider_id
+        self._model_id = model_id
 
     def __repr__(self) -> str:
         """Redact API key from repr to prevent leaking credentials in logs/tracebacks."""
@@ -55,6 +61,9 @@ class ExternalEmbeddingService:
 
         response_data = await self._call_embeddings_api(texts)
         entries = sorted(response_data["data"], key=lambda e: e["index"])
+
+        await self._record_usage(response_data.get("usage"))
+
         return [entry["embedding"] for entry in entries]
 
     async def embed_query(self, text: str) -> list[float]:
@@ -90,3 +99,36 @@ class ExternalEmbeddingService:
             response.raise_for_status()
 
         return response.json()
+
+    async def _record_usage(self, usage: dict[str, Any] | None) -> None:
+        """Record embedding API usage in llm_usage. Best-effort — failures are logged, not raised."""
+        if not usage:
+            return
+
+        try:
+            from ..core.database import get_async_session_local
+            from ..models.llm_provider import LLMUsage
+
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+            cost = usage.get("cost", 0)
+
+            record = LLMUsage(
+                provider_id=self._provider_id,
+                model_id=self._model_id,
+                request_type="embedding",
+                input_tokens=prompt_tokens,
+                output_tokens=0,
+                total_tokens=total_tokens,
+                input_cost=Decimal(str(cost)),
+                output_cost=Decimal("0"),
+                total_cost=Decimal(str(cost)),
+                success=True,
+            )
+
+            session_factory = get_async_session_local()
+            async with session_factory() as session:
+                session.add(record)
+                await session.commit()
+        except Exception as e:
+            logger.warning("Failed to record embedding usage: %s", e)

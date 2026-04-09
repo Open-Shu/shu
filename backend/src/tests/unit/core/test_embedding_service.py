@@ -268,10 +268,12 @@ class TestDIWiring:
 def _make_resolved_model(**overrides) -> ResolvedExternalModel:
     """Build a ResolvedExternalModel with sensible defaults."""
     defaults = {
+        "model_id": "model-123",
         "model_name": "qwen/qwen3-embedding-8b",
+        "provider_id": "provider-456",
+        "provider_name": "OpenRouter",
         "api_base_url": "https://openrouter.ai/api/v1",
         "api_key": "test-key",
-        "provider_name": "OpenRouter",
         "config": {"dimension": 1024},
     }
     defaults.update(overrides)

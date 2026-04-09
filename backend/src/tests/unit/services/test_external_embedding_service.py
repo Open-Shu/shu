@@ -22,6 +22,8 @@ API_BASE = "https://openrouter.ai/api/v1"
 API_KEY = "test-key"
 MODEL = "qwen/qwen3-embedding-8b"
 DIM = 1024
+PROVIDER_ID = "provider-123"
+MODEL_ID = "model-456"
 
 
 def _make_service() -> ExternalEmbeddingService:
@@ -30,6 +32,8 @@ def _make_service() -> ExternalEmbeddingService:
         api_key=API_KEY,
         model_name=MODEL,
         dimension=DIM,
+        provider_id=PROVIDER_ID,
+        model_id=MODEL_ID,
     )
 
 
@@ -45,8 +49,11 @@ def _mock_embeddings_response(embeddings: list[list[float]]) -> httpx.Response:
 
 @contextmanager
 def _patched_httpx(response=None, side_effect=None):
-    """Patch httpx.AsyncClient to return a mock that yields the given response or side_effect."""
-    with patch("shu.services.external_embedding_service.httpx.AsyncClient") as mock_cls:
+    """Patch httpx.AsyncClient and usage recording to isolate API tests from the DB."""
+    with (
+        patch("shu.services.external_embedding_service.httpx.AsyncClient") as mock_cls,
+        patch.object(ExternalEmbeddingService, "_record_usage", new_callable=AsyncMock),
+    ):
         mock_client = AsyncMock()
         if side_effect:
             mock_client.post = AsyncMock(side_effect=side_effect)
@@ -83,6 +90,8 @@ class TestProperties:
             api_key="k",
             model_name="m",
             dimension=128,
+            provider_id="p",
+            model_id="m",
         )
         assert svc._api_base_url == "https://example.com/v1"
 

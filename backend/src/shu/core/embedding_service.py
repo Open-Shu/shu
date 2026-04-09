@@ -452,6 +452,8 @@ async def get_embedding_service() -> EmbeddingService:
         api_key=resolved.api_key,
         model_name=resolved.model_name,
         dimension=int(dimension),
+        provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
     )
     return _embedding_service
 

@@ -18,11 +18,13 @@ logger = get_logger(__name__)
 class ResolvedExternalModel:
     """Credentials and metadata for an external model ready to use."""
 
+    model_id: str
     model_name: str
+    provider_id: str
+    provider_name: str
     api_base_url: str
     api_key: str = field(repr=False)
-    provider_name: str
-    config: dict[str, Any]
+    config: dict[str, Any] = field(default_factory=dict)
 
 
 async def resolve_external_model(model_type: str) -> ResolvedExternalModel | None:
@@ -104,9 +106,11 @@ async def resolve_external_model(model_type: str) -> ResolvedExternalModel | Non
         return None
 
     return ResolvedExternalModel(
+        model_id=model.id,
         model_name=model.model_name,
+        provider_id=provider.id,
+        provider_name=provider.name,
         api_base_url=api_base_url,
         api_key=api_key,
-        provider_name=provider.name,
         config=model.config or {},
     )
