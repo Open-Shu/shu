@@ -308,6 +308,21 @@ class UserService:
         provider_key = provider_info["provider_key"]
 
         is_first_user = await self.is_first_user(db)
+
+        # Enforce user limit (skip for the very first user bootstrapping the instance)
+        soft_limit_info: dict[str, int] | None = None
+        if not is_first_user:
+            from shu.billing.enforcement import check_user_limit
+
+            limit_status = await check_user_limit(db)
+            if limit_status.at_limit and limit_status.enforcement == "hard":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"User limit ({limit_status.user_limit}) reached. Contact your administrator.",
+                )
+            if limit_status.at_limit and limit_status.enforcement == "soft":
+                soft_limit_info = {"current_users": limit_status.current_count, "limit": limit_status.user_limit}
+
         user_role = self.determine_user_role(email, is_first_user)
         is_active = self.is_active(user_role, is_first_user)
 
@@ -346,6 +361,12 @@ class UserService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="User with this email already exists"
             ) from e
+
+        if soft_limit_info:
+            logger.warning(
+                "SSO user created above subscription limit",
+                extra=soft_limit_info,
+            )
 
         if not is_active:
             # Note: Using HTTPException for 201 is unconventional but allows the service
