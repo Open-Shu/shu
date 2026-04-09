@@ -40,6 +40,7 @@ from .api.side_call import router as side_call_router
 from .api.system import router as system_router
 from .api.user_permissions import router as user_permissions_router
 from .api.user_preferences import router as user_preferences_router
+from .billing.router import router as billing_router
 from .core.config import get_settings_instance
 from .core.database import init_db
 from .core.exceptions import ShuException
@@ -788,6 +789,9 @@ def setup_routes(app: FastAPI) -> None:
     # Side-call routes
     app.include_router(side_call_router, prefix=settings.api_v1_prefix)
 
+    # Billing routes
+    app.include_router(billing_router, prefix=settings.api_v1_prefix)
+
     # Compute known API router root paths for middleware normalization
     try:
         router_prefixes = [
@@ -811,6 +815,7 @@ def setup_routes(app: FastAPI) -> None:
             policies_router.prefix,
             experiences_router.prefix,
             side_call_router.prefix,
+            billing_router.prefix,
         ]
         base = settings.api_v1_prefix.rstrip("/")
         app.state.api_root_paths = {base + p for p in router_prefixes}
