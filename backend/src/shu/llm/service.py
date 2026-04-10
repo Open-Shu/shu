@@ -24,7 +24,7 @@ from ..core.exceptions import (
     LLMConfigurationError,
     LLMProviderError,
 )
-from ..models.llm_provider import LLMModel, LLMProvider, LLMUsage
+from ..models.llm_provider import LLMModel, LLMProvider, LLMUsage, ModelType
 from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
 from .client import UnifiedLLMClient
 
@@ -179,12 +179,28 @@ class LLMService:
         logger.info(f"Deleted LLM provider: {provider.name}")
         return True
 
-    async def get_available_models(self, provider_id: str | None = None) -> list[LLMModel]:
-        """Get available LLM models, optionally filtered by provider."""
+    async def get_available_models(
+        self,
+        provider_id: str | None = None,
+        model_types: list[str] | None = None,
+    ) -> list[LLMModel]:
+        """Get available LLM models, optionally filtered by provider and type.
+
+        Args:
+            provider_id: Filter to models from this provider.
+            model_types: Filter to these model types (e.g. ["chat"]).
+                Pass None to return all types (for admin model management).
+                Defaults to None (no type filter) for backward compatibility;
+                callers that serve chat contexts should pass ["chat"].
+
+        """
         stmt = select(LLMModel).where(LLMModel.is_active)
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
+
+        if model_types is not None:
+            stmt = stmt.where(LLMModel.model_type.in_(model_types))
 
         stmt = stmt.options(selectinload(LLMModel.provider))
 
@@ -338,7 +354,7 @@ class LLMService:
                         provider_id=provider_id,
                         model_name=model_name,
                         display_name=self._generate_display_name(model_name),
-                        model_type="chat",  # Default to chat
+                        model_type=ModelType.CHAT,
                         supports_streaming=True,  # Most modern models support streaming
                         supports_functions=self._supports_functions(model_name),
                         supports_vision=self._supports_vision(model_name),

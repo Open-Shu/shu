@@ -392,6 +392,18 @@ async def _handle_content_embed_job(job) -> None:
             return
 
         try:
+            # The KB's embedding_model defaults to SHU_EMBEDDING_MODEL (the local
+            # model name) at creation time. When the active service is an external
+            # provider, the default is wrong. Correct it on the first document so
+            # stale-KB detection at startup compares against the model that actually
+            # produced the vectors. Only runs once — subsequent documents skip this.
+            if kb.total_chunks == 0:
+                from .core.embedding_service import get_embedding_service
+
+                embedding_svc = await get_embedding_service()
+                if kb.embedding_model != embedding_svc.model_name:
+                    kb.embedding_model = embedding_svc.model_name
+
             # Set EMBEDDING status before processing so a crash mid-embed leaves
             # the document in a diagnosable state rather than the previous status.
             document.update_status(DocumentStatus.EMBEDDING)
