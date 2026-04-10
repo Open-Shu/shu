@@ -116,7 +116,6 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
     from .models.document import Document, DocumentStatus
-    from .processors.text_extractor import TextExtractor
     from .services.file_staging_service import FileStagingError, FileStagingService
 
     # Validate required payload fields
@@ -202,15 +201,15 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 },
             )
 
-            # Extract text using TextExtractor
-            extractor = TextExtractor(config_manager=get_config_manager())
+            from .core.ocr_service import extract_text_with_ocr_fallback
 
-            extraction_result = await extractor.extract_text(
-                file_path=filename,
-                file_bytes=file_bytes,
-                ocr_mode=ocr_mode,
+            extraction_result = await extract_text_with_ocr_fallback(
+                file_bytes,
+                mime_type,
+                get_config_manager(),
+                filename=filename,
+                ocr_mode=ocr_mode or "auto",
             )
-
             extracted_text = extraction_result.get("text", "")
             extraction_metadata = extraction_result.get("metadata", {})
 

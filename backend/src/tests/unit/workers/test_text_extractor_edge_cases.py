@@ -335,45 +335,53 @@ class TestOcrCapabilityIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_file_bytes_and_mime_reach_extractor(self):
+    async def test_delegates_to_extract_text_with_ocr_fallback(self):
+        """Should delegate to extract_text_with_ocr_fallback with correct args."""
         cap = self._make_capability()
 
-        mock_result = {"text": "extracted", "metadata": {"method": "ocr"}}
-        with patch.object(_ocr_mod, "TextExtractor") as mock_cls:
-            instance = mock_cls.return_value
-            instance.extract_text = AsyncMock(return_value=mock_result)
-
+        mock_result = {"text": "extracted", "metadata": {"method": "pdf_text"}}
+        with patch.object(
+            _ocr_mod,
+            "extract_text_with_ocr_fallback",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_fn:
             result = await cap.extract_text(
                 file_bytes=b"pdf-data",
                 mime_type="application/pdf",
                 mode="fallback",
             )
 
-        instance.extract_text.assert_called_once_with(
-            file_bytes=b"pdf-data",
-            mime_type="application/pdf",
+        mock_fn.assert_called_once_with(
+            b"pdf-data",
+            "application/pdf",
+            cap._config_manager,
             ocr_mode="fallback",
         )
         assert result == mock_result
 
     @pytest.mark.asyncio
     async def test_ocr_mode_resolved_from_capability_default(self):
+        """When mode=None, uses the capability's default ocr_mode."""
         cap = self._make_capability(ocr_mode="never")
 
         mock_result = {"text": "", "metadata": {}}
-        with patch.object(_ocr_mod, "TextExtractor") as mock_cls:
-            instance = mock_cls.return_value
-            instance.extract_text = AsyncMock(return_value=mock_result)
-
+        with patch.object(
+            _ocr_mod,
+            "extract_text_with_ocr_fallback",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_fn:
             await cap.extract_text(
                 file_bytes=b"data",
                 mime_type="text/plain",
                 mode=None,
             )
 
-        instance.extract_text.assert_called_once_with(
-            file_bytes=b"data",
-            mime_type="text/plain",
+        mock_fn.assert_called_once_with(
+            b"data",
+            "text/plain",
+            cap._config_manager,
             ocr_mode="never",
         )
 
@@ -382,11 +390,13 @@ class TestOcrCapabilityIntegration:
         cap = self._make_capability()
 
         mock_result = {"text": "ok", "metadata": {}}
-        with patch.object(_ocr_mod, "TextExtractor") as mock_cls:
-            instance = mock_cls.return_value
-            instance.extract_text = AsyncMock(return_value=mock_result)
-
-            with caplog.at_level(logging.INFO, logger="shu.plugins.host.ocr_capability"):
+        with patch.object(
+            _ocr_mod,
+            "extract_text_with_ocr_fallback",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            with caplog.at_level(logging.INFO, logger="shu.shu.plugins.host.ocr_capability"):
                 await cap.extract_text(
                     file_bytes=b"data",
                     mime_type="text/plain",

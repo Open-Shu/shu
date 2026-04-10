@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
-from ...processors.text_extractor import TextExtractor
+from ...core.logging import get_logger
+from ...core.ocr_service import extract_text_with_ocr_fallback
 from .base import ImmutableCapabilityMixin
 
 if TYPE_CHECKING:
     from ...core.config import ConfigurationManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Valid OCR mode values accepted by the ingestion pipeline.
 _VALID_OCR_MODES = {"auto", "always", "never", "fallback", "text_only"}
@@ -49,10 +49,10 @@ class OcrCapability(ImmutableCapabilityMixin):
     async def extract_text(self, *, file_bytes: bytes, mime_type: str, mode: str | None = None) -> dict[str, Any]:
         mm = (mode or self._ocr_mode or "auto").strip().lower()
 
-        extractor = TextExtractor(config_manager=self._config_manager)
-        res = await extractor.extract_text(
-            file_bytes=file_bytes,
-            mime_type=mime_type,
+        res = await extract_text_with_ocr_fallback(
+            file_bytes,
+            mime_type,
+            self._config_manager,
             ocr_mode=mm,
         )
 

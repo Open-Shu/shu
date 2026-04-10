@@ -9,11 +9,17 @@ DI wiring:
     - reset_ocr_service() — test teardown
 """
 
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from ..processors.text_extractor import TextExtractor
 from .config import get_settings_instance
 from .logging import get_logger
+
+if TYPE_CHECKING:
+    from .config import ConfigurationManager
 
 logger = get_logger(__name__)
 
@@ -93,3 +99,90 @@ def reset_ocr_service() -> None:
     """Reset the OCR service singleton (for testing only)."""
     global _ocr_service  # noqa: PLW0603
     _ocr_service = None
+
+
+async def extract_text_with_ocr_fallback(
+    file_bytes: bytes,
+    mime_type: str,
+    config_manager: ConfigurationManager,
+    *,
+    filename: str | None = None,
+    ocr_mode: str = "auto",
+) -> dict:
+    """Two-step text extraction: fast extraction first, OCR service if needed.
+
+    Step 1 uses TextExtractor with ocr_mode="text_only" (PDF text, DOCX, etc.).
+    Step 2 routes through get_ocr_service() (Mistral or local EasyOCR/Tesseract)
+    only when step 1 yields insufficient text and ocr_mode permits it.
+
+    "auto" and "fallback" behave identically: try fast text extraction,
+    fall back to OCR when the result is below the minimum threshold.
+
+    Args:
+        file_bytes: Raw document bytes.
+        mime_type: MIME type of the document.
+        config_manager: ConfigurationManager for TextExtractor.
+        filename: Optional filename for extension detection in fast extraction.
+        ocr_mode: One of "auto", "always", "never", "fallback", "text_only".
+
+    Returns:
+        Dict with "text" and "metadata" keys, same shape as TextExtractor.extract_text().
+
+    """
+    effective_mode = (ocr_mode or "auto").strip().lower()
+    settings = get_settings_instance()
+
+    if effective_mode in ("never", "text_only"):
+        return await TextExtractor(config_manager=config_manager).extract_text(
+            file_bytes=file_bytes,
+            mime_type=mime_type,
+            ocr_mode="text_only",
+            **({"file_path": filename} if filename else {}),
+        )
+
+    if effective_mode == "always":
+        return await _run_ocr_service(file_bytes, mime_type, effective_mode)
+
+    # auto / fallback: try cheap text extraction, fall back to OCR if
+    # the result is missing or below the minimum length threshold.
+    try:
+        result = await TextExtractor(config_manager=config_manager).extract_text(
+            file_bytes=file_bytes,
+            mime_type=mime_type,
+            ocr_mode="text_only",
+            **({"file_path": filename} if filename else {}),
+        )
+        extracted_text = result.get("text", "")
+    except Exception:
+        extracted_text = ""
+        result = {"text": "", "metadata": {}}
+
+    if len(extracted_text.strip()) >= settings.ocr_fallback_min_text_length:
+        return result
+
+    return await _run_ocr_service(file_bytes, mime_type, effective_mode)
+
+
+async def _run_ocr_service(file_bytes: bytes, mime_type: str, ocr_mode: str) -> dict:
+    """Call the configured OCR service and return a result dict with timing."""
+    import time
+
+    start = time.monotonic()
+    ocr_service = get_ocr_service()
+    ocr_result = await ocr_service.extract_text(file_bytes, mime_type)
+    duration = time.monotonic() - start
+
+    return {
+        "text": ocr_result.text,
+        "metadata": {
+            "method": "ocr",
+            "engine": ocr_result.engine,
+            "confidence": ocr_result.confidence,
+            "duration": duration,
+            "details": {
+                "page_count": ocr_result.page_count,
+                "ocr_mode": ocr_mode,
+                "processing_time": duration,
+            },
+        },
+    }

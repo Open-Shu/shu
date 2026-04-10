@@ -31,7 +31,7 @@ class TestLocalOCRService:
         svc = LocalOCRService(config_manager=config_manager)
 
         with patch(
-            "shu.processors.text_extractor.TextExtractor",
+            "shu.services.local_ocr_service.TextExtractor",
             return_value=mock_extractor,
         ) as mock_cls:
             result = await svc.extract_text(b"pdf bytes", "application/pdf")
@@ -61,7 +61,7 @@ class TestLocalOCRService:
         svc = LocalOCRService(config_manager=config_manager)
 
         with patch(
-            "shu.processors.text_extractor.TextExtractor",
+            "shu.services.local_ocr_service.TextExtractor",
             return_value=mock_extractor,
         ):
             result = await svc.extract_text(b"data", "image/png")
@@ -81,7 +81,7 @@ class TestLocalOCRService:
         svc = LocalOCRService(config_manager=config_manager)
 
         with patch(
-            "shu.processors.text_extractor.TextExtractor",
+            "shu.services.local_ocr_service.TextExtractor",
             return_value=mock_extractor,
         ):
             with pytest.raises(RuntimeError, match="OCR failed"):
