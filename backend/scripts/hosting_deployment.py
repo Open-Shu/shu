@@ -263,7 +263,13 @@ def _seed_designated_model(
     print(f"{LOG_PREFIX} Registered '{config_name}' in system_settings", flush=True)
 
 
-def _seed_embedding_model(cur, embedding_spec: str, provider_ids: dict[str, str]) -> None:
+def _seed_embedding_model(
+    cur,
+    embedding_spec: str,
+    provider_ids: dict[str, str],
+    query_prefix: str = "",
+    document_prefix: str = "",
+) -> None:
     """Seed an embedding model row in llm_models.
 
     Uses the OpenAI provider since OpenRouter's embeddings endpoint
@@ -271,6 +277,8 @@ def _seed_embedding_model(cur, embedding_spec: str, provider_ids: dict[str, str]
 
     Args:
         embedding_spec: "model_id:dimension" e.g. "qwen/qwen3-embedding-8b:4096"
+        query_prefix: Prefix prepended to query texts before embedding.
+        document_prefix: Prefix prepended to document texts before embedding.
     """
     if ":" not in embedding_spec:
         print(
@@ -303,7 +311,12 @@ def _seed_embedding_model(cur, embedding_spec: str, provider_ids: dict[str, str]
 
     display_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
     model_row_id = str(uuid.uuid4())
-    model_config = json.dumps({"dimension": dimension})
+    config = {"dimension": dimension}
+    if query_prefix:
+        config["query_prefix"] = query_prefix
+    if document_prefix:
+        config["document_prefix"] = document_prefix
+    model_config = json.dumps(config)
     cur.execute(
         """
         INSERT INTO llm_models
@@ -325,6 +338,8 @@ def run(url: str) -> bool:
     side_caller_model = os.getenv("SHU_SEED_SIDE_CALLER", "")
     profiling_model = os.getenv("SHU_SEED_PROFILING_MODEL", "")
     embedding_model = os.getenv("SHU_SEED_EMBEDDING_MODEL", "")
+    embedding_query_prefix = os.getenv("SHU_SEED_EMBEDDING_QUERY_PREFIX", "")
+    embedding_document_prefix = os.getenv("SHU_SEED_EMBEDDING_DOCUMENT_PREFIX", "")
 
     if not api_key:
         print(f"{LOG_PREFIX} SHU_OPENROUTER_API_KEY not set, skipping", flush=True)
@@ -374,7 +389,13 @@ def run(url: str) -> bool:
                 )
 
             if embedding_model:
-                _seed_embedding_model(cur, embedding_model, provider_ids)
+                _seed_embedding_model(
+                    cur,
+                    embedding_model,
+                    provider_ids,
+                    query_prefix=embedding_query_prefix,
+                    document_prefix=embedding_document_prefix,
+                )
 
         conn.commit()
         print(f"{LOG_PREFIX} Hosting deployment seed complete", flush=True)
