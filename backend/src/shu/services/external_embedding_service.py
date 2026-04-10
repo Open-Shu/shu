@@ -78,7 +78,12 @@ class ExternalEmbeddingService:
         if not texts:
             return []
         response_data = await self._call_embeddings_api(texts, prefix=prefix)
-        entries = sorted(response_data["data"], key=lambda e: e["index"])
+        entries = response_data.get("data") or []
+        if len(entries) != len(texts):
+            raise ValueError(
+                f"Embedding API returned {len(entries)} results for {len(texts)} inputs (model={self._model_name})"
+            )
+        entries = sorted(entries, key=lambda e: e["index"])
         await self._record_usage(response_data.get("usage"))
         return [entry["embedding"] for entry in entries]
 
