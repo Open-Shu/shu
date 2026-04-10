@@ -113,30 +113,28 @@ class ExternalEmbeddingService:
         if not usage:
             return
 
-        try:
-            from ..core.database import get_async_session_local
-            from ..models.llm_provider import LLMUsage
+        from .usage_recording import record_llm_usage
 
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            total_tokens = usage.get("total_tokens", 0)
-            cost = usage.get("cost", 0)
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+        cost = usage.get("cost")
 
-            record = LLMUsage(
-                provider_id=self._provider_id,
-                model_id=self._model_id,
-                request_type="embedding",
-                input_tokens=prompt_tokens,
-                output_tokens=0,
-                total_tokens=total_tokens,
-                input_cost=Decimal(str(cost)),
-                output_cost=Decimal("0"),
-                total_cost=Decimal(str(cost)),
-                success=True,
-            )
+        await record_llm_usage(
+            provider_id=self._provider_id,
+            model_id=self._model_id,
+            request_type="embedding",
+            input_tokens=prompt_tokens,
+            total_tokens=total_tokens,
+            input_cost=_safe_decimal(cost),
+            total_cost=_safe_decimal(cost),
+        )
 
-            session_factory = get_async_session_local()
-            async with session_factory() as session:
-                session.add(record)
-                await session.commit()
-        except Exception as e:
-            logger.warning("Failed to record embedding usage: %s", e)
+
+def _safe_decimal(value: Any) -> Decimal:
+    """Convert a value to Decimal, falling back to zero for None or non-numeric."""
+    if value is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal("0")

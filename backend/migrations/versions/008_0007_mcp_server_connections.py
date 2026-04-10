@@ -1,7 +1,7 @@
 """Create mcp_server_connections table
 
-Revision ID: 008_0006
-Revises: 008_0005
+Revision ID: 008_0007
+Revises: 008_0006
 Create Date: 2026-03-26
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "008_0006"
-down_revision = "008_0005"
+revision = "008_0007"
+down_revision = "008_0006"
 branch_labels = None
 depends_on = None
 
