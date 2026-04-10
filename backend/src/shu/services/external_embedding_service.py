@@ -35,6 +35,8 @@ class ExternalEmbeddingService:
         dimension: int,
         provider_id: str,
         model_id: str,
+        query_prefix: str = "",
+        document_prefix: str = "",
     ) -> None:
         self._api_base_url = api_base_url.rstrip("/")
         self._api_key = api_key
@@ -42,6 +44,8 @@ class ExternalEmbeddingService:
         self._dimension = dimension
         self._provider_id = provider_id
         self._model_id = model_id
+        self._query_prefix = query_prefix
+        self._document_prefix = document_prefix
 
     def __repr__(self) -> str:
         """Redact API key from repr to prevent leaking credentials in logs/tracebacks."""
@@ -56,18 +60,10 @@ class ExternalEmbeddingService:
         return self._model_name
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-
-        response_data = await self._call_embeddings_api(texts)
-        entries = sorted(response_data["data"], key=lambda e: e["index"])
-
-        await self._record_usage(response_data.get("usage"))
-
-        return [entry["embedding"] for entry in entries]
+        return await self._embed_batch(texts, prefix=self._document_prefix)
 
     async def embed_query(self, text: str) -> list[float]:
-        results = await self.embed_texts([text])
+        results = await self._embed_batch([text], prefix=self._query_prefix)
         if not results:
             raise ValueError(
                 f"embed_texts returned no results for query text "
@@ -76,13 +72,20 @@ class ExternalEmbeddingService:
         return results[0]
 
     async def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        return await self.embed_texts(texts)
+        return await self._embed_batch(texts, prefix=self._query_prefix)
 
-    async def _call_embeddings_api(self, texts: list[str]) -> dict[str, Any]:
-        # See docs here: https://openrouter.ai/docs/api/reference/embeddings
+    async def _embed_batch(self, texts: list[str], prefix: str = "") -> list[list[float]]:
+        if not texts:
+            return []
+        response_data = await self._call_embeddings_api(texts, prefix=prefix)
+        entries = sorted(response_data["data"], key=lambda e: e["index"])
+        await self._record_usage(response_data.get("usage"))
+        return [entry["embedding"] for entry in entries]
+
+    async def _call_embeddings_api(self, texts: list[str], prefix: str = "") -> dict[str, Any]:
         payload = {
             "model": self._model_name,
-            "input": [{"content": [{"type": "text", "text": t}]} for t in texts],
+            "input": [{"content": [{"type": "text", "text": prefix + t}]} for t in texts],
             "encoding_format": "float",
         }
 

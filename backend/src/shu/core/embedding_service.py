@@ -454,6 +454,8 @@ async def get_embedding_service() -> EmbeddingService:
         dimension=int(dimension),
         provider_id=resolved.provider_id,
         model_id=resolved.model_id,
+        query_prefix=resolved.config.get("query_prefix", ""),
+        document_prefix=resolved.config.get("document_prefix", ""),
     )
     return _embedding_service
 

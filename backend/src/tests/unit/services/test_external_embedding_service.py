@@ -26,7 +26,7 @@ PROVIDER_ID = "provider-123"
 MODEL_ID = "model-456"
 
 
-def _make_service() -> ExternalEmbeddingService:
+def _make_service(query_prefix: str = "", document_prefix: str = "") -> ExternalEmbeddingService:
     return ExternalEmbeddingService(
         api_base_url=API_BASE,
         api_key=API_KEY,
@@ -34,6 +34,8 @@ def _make_service() -> ExternalEmbeddingService:
         dimension=DIM,
         provider_id=PROVIDER_ID,
         model_id=MODEL_ID,
+        query_prefix=query_prefix,
+        document_prefix=document_prefix,
     )
 
 
@@ -186,6 +188,67 @@ class TestEmbedQueries:
         svc = _make_service()
         result = await svc.embed_queries([])
         assert result == []
+
+
+class TestPrefixes:
+    @pytest.mark.asyncio
+    async def test_embed_texts_applies_document_prefix(self):
+        """embed_texts should prepend the document prefix to each text in the API payload."""
+        with _patched_httpx(_mock_embeddings_response([[0.1]])) as mock_client:
+            svc = _make_service(document_prefix="search_document: ")
+            await svc.embed_texts(["hello"])
+
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["input"] == [{"content": [{"type": "text", "text": "search_document: hello"}]}]
+
+    @pytest.mark.asyncio
+    async def test_embed_query_applies_query_prefix(self):
+        """embed_query should prepend the query prefix to the text in the API payload."""
+        with _patched_httpx(_mock_embeddings_response([[0.1]])) as mock_client:
+            svc = _make_service(query_prefix="search_query: ")
+            await svc.embed_query("hello")
+
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["input"] == [{"content": [{"type": "text", "text": "search_query: hello"}]}]
+
+    @pytest.mark.asyncio
+    async def test_embed_queries_applies_query_prefix(self):
+        """embed_queries should prepend the query prefix to each text in the API payload."""
+        with _patched_httpx(_mock_embeddings_response([[0.1], [0.2]])) as mock_client:
+            svc = _make_service(query_prefix="search_query: ")
+            await svc.embed_queries(["q1", "q2"])
+
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["input"] == [
+            {"content": [{"type": "text", "text": "search_query: q1"}]},
+            {"content": [{"type": "text", "text": "search_query: q2"}]},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_prefix_when_empty_string(self):
+        """When no prefix is configured, the text should be sent unmodified."""
+        with _patched_httpx(_mock_embeddings_response([[0.1]])) as mock_client:
+            svc = _make_service()
+            await svc.embed_texts(["hello"])
+
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["input"] == [{"content": [{"type": "text", "text": "hello"}]}]
+
+    @pytest.mark.asyncio
+    async def test_query_and_document_prefixes_differ(self):
+        """embed_texts and embed_query on the same service should use their respective prefixes."""
+        svc = _make_service(query_prefix="query: ", document_prefix="passage: ")
+
+        with _patched_httpx(_mock_embeddings_response([[0.1]])) as mock_client:
+            await svc.embed_texts(["doc"])
+        doc_payload = mock_client.post.call_args[1]["json"]
+
+        with _patched_httpx(_mock_embeddings_response([[0.2]])) as mock_client:
+            await svc.embed_query("q")
+        query_payload = mock_client.post.call_args[1]["json"]
+
+        assert doc_payload["input"] == [{"content": [{"type": "text", "text": "passage: doc"}]}]
+        assert query_payload["input"] == [{"content": [{"type": "text", "text": "query: q"}]}]
 
 
 class TestErrorHandling:
