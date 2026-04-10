@@ -396,7 +396,7 @@ class TestOcrCapabilityIntegration:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            with caplog.at_level(logging.INFO, logger="shu.shu.plugins.host.ocr_capability"):
+            with caplog.at_level(logging.INFO, logger="shu.plugins.host.ocr_capability"):
                 await cap.extract_text(
                     file_bytes=b"data",
                     mime_type="text/plain",

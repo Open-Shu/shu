@@ -56,8 +56,9 @@ async def record_llm_usage(
         )
 
         if session is not None:
-            session.add(record)
-            await session.commit()
+            async with session.begin_nested():
+                session.add(record)
+                await session.flush()
         else:
             session_factory = get_async_session_local()
             async with session_factory() as new_session:

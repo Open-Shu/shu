@@ -496,6 +496,10 @@ def setup_logging() -> None:  # noqa: PLR0915
 
 def get_logger(name: str) -> logging.Logger:
     """Get a logger with the specified name."""
+    # __name__ inside the shu package is already "shu.some.module",
+    # so prefixing again would produce "shu.shu.some.module".
+    if name.startswith("shu."):
+        return logging.getLogger(name)
     return logging.getLogger(f"shu.{name}")
 
 

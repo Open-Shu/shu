@@ -117,7 +117,7 @@ class ExternalEmbeddingService:
 
         prompt_tokens = usage.get("prompt_tokens", 0)
         total_tokens = usage.get("total_tokens", 0)
-        cost = usage.get("cost", 0)
+        cost = usage.get("cost")
 
         await record_llm_usage(
             provider_id=self._provider_id,
@@ -125,6 +125,16 @@ class ExternalEmbeddingService:
             request_type="embedding",
             input_tokens=prompt_tokens,
             total_tokens=total_tokens,
-            input_cost=Decimal(str(cost)),
-            total_cost=Decimal(str(cost)),
+            input_cost=_safe_decimal(cost),
+            total_cost=_safe_decimal(cost),
         )
+
+
+def _safe_decimal(value: Any) -> Decimal:
+    """Convert a value to Decimal, falling back to zero for None or non-numeric."""
+    if value is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal("0")
