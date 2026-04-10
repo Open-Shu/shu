@@ -361,7 +361,7 @@ class StripeClient:
             Created MeterEvent or None if meters not configured
 
         """
-        if not self._settings.meter_id_tokens:
+        if not self._settings.meter_id_cost:
             logger.debug("Meter ID not configured, skipping usage report")
             return None
 
@@ -416,15 +416,15 @@ class StripeClient:
             end_time: Unix timestamp for range end
 
         Returns:
-            Aggregated token total from Stripe, or 0 if no data / meter not configured.
+            Aggregated cost total (in microdollars) from Stripe, or 0 if no data / meter not configured.
 
         """
-        if not self._settings.meter_id_tokens:
+        if not self._settings.meter_id_cost:
             return 0
 
         try:
             summaries = stripe.billing.Meter.list_event_summaries(
-                self._settings.meter_id_tokens,
+                self._settings.meter_id_cost,
                 customer=customer_id,
                 start_time=start_time,
                 end_time=end_time,

@@ -176,9 +176,9 @@ class LLMUsage(BaseModel):
     total_tokens = Column(Integer, default=0, nullable=False)
 
     # Cost tracking
-    input_cost = Column(DECIMAL(10, 6), default=0, nullable=False)
-    output_cost = Column(DECIMAL(10, 6), default=0, nullable=False)
-    total_cost = Column(DECIMAL(10, 6), default=0, nullable=False)
+    input_cost = Column(DECIMAL(16, 9), default=0, nullable=False)
+    output_cost = Column(DECIMAL(16, 9), default=0, nullable=False)
+    total_cost = Column(DECIMAL(16, 9), default=0, nullable=False)
 
     # Performance metrics
     response_time_ms = Column(Integer, nullable=True)  # Response time in milliseconds

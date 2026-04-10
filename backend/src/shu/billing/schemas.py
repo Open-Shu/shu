@@ -151,7 +151,7 @@ class UsageMeterEvent(BaseModel):
     """Data for reporting usage to Stripe Meters API."""
 
     # Event category (not a unique key — Stripe uses its own idempotency)
-    event_name: str  # e.g., "token_usage"
+    event_name: str  # e.g., "usage_cost"
 
     # Stripe customer ID
     stripe_customer_id: str

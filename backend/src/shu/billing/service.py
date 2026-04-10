@@ -9,6 +9,7 @@ For single-instance deployment, billing config is stored in system_settings.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
@@ -211,51 +212,39 @@ class BillingService:
     async def report_usage_to_stripe(
         self,
         stripe_customer_id: str,
-        delta_tokens: int,
+        delta_cost_microdollars: int,
         period_start: datetime,
         period_end: datetime,
-        input_tokens: int = 0,
-        output_tokens: int = 0,
     ) -> bool:
-        """Report a usage delta to Stripe Meters API for billing.
+        """Report a cost delta to Stripe Meters API for billing.
 
-        IMPORTANT: Stripe Meters aggregate event values with SUM by default.
-        The caller MUST pass the delta (new tokens since last report), NOT
-        cumulative totals for the period. Sending cumulative totals on each
-        call would over-bill the customer.
-
-        Expected calling pattern (SHU-671):
-            - Track a high-water mark of last-reported usage
-            - On each report interval: delta = current_total - last_reported
-            - Call this method with the delta
-            - Update the high-water mark on success
+        Value is cost in microdollars (1 microdollar = $0.000001). Stripe
+        Meters aggregate with SUM, so callers MUST send deltas — the
+        compare-and-correct reconciliation in report_and_reconcile_usage
+        handles this.
 
         Args:
             stripe_customer_id: The Stripe customer ID
-            delta_tokens: New tokens since last report (NOT cumulative total)
+            delta_cost_microdollars: Cost delta in microdollars (positive integer)
             period_start: Start of the reporting window
             period_end: End of the reporting window
-            input_tokens: Input tokens in this delta (for metadata)
-            output_tokens: Output tokens in this delta (for metadata)
 
         Returns:
             True if usage was reported successfully
 
         """
-        if delta_tokens == 0:
-            logger.debug("No usage to report")
+        if delta_cost_microdollars <= 0:
+            logger.debug("No usage cost to report")
             return True
 
         event = UsageMeterEvent(
-            event_name="token_usage",
+            event_name=self._settings.meter_event_name,
             stripe_customer_id=stripe_customer_id,
             timestamp=int(period_end.timestamp()),
-            value=delta_tokens,
+            value=delta_cost_microdollars,
             payload={
                 "period_start": period_start.isoformat(),
                 "period_end": period_end.isoformat(),
-                "input_tokens": str(input_tokens),
-                "output_tokens": str(output_tokens),
             },
         )
 
@@ -292,7 +281,7 @@ class BillingService:
         if not customer_id:
             return {"action": "skipped", "reason": "no_customer"}
 
-        if not self._settings.meter_id_tokens:
+        if not self._settings.meter_id_cost:
             return {"action": "skipped", "reason": "no_meter"}
 
         period_start_str = billing_config.get("current_period_start")
@@ -322,9 +311,9 @@ class BillingService:
         now = datetime.now(UTC)
         usage_provider = UsageProviderImpl(db)
         summary = await usage_provider.get_usage_summary(period_start, now)
-        our_total = summary.total_input_tokens + summary.total_output_tokens
+        our_total = math.ceil(summary.total_cost_usd * 1_000_000)  # microdollars
 
-        # Query Stripe's view
+        # Query Stripe's view (also in microdollars)
         stripe_total = self._client.get_meter_event_summary(
             customer_id,
             start_time=int(period_start.timestamp()),
@@ -348,11 +337,9 @@ class BillingService:
         # Report the delta
         reported = await self.report_usage_to_stripe(
             stripe_customer_id=customer_id,
-            delta_tokens=delta,
+            delta_cost_microdollars=delta,
             period_start=period_start,
             period_end=now,
-            input_tokens=summary.total_input_tokens,
-            output_tokens=summary.total_output_tokens,
         )
 
         if reported:
@@ -392,7 +379,7 @@ class BillingService:
 
         usage_provider = UsageProviderImpl(db)
         summary = await usage_provider.get_usage_summary(old_start, old_end)
-        old_total = summary.total_input_tokens + summary.total_output_tokens
+        old_total = math.ceil(summary.total_cost_usd * 1_000_000)  # microdollars
 
         old_stripe_total = self._client.get_meter_event_summary(
             customer_id,
@@ -404,11 +391,9 @@ class BillingService:
         if delta > 0:
             await self.report_usage_to_stripe(
                 stripe_customer_id=customer_id,
-                delta_tokens=delta,
+                delta_cost_microdollars=delta,
                 period_start=old_start,
                 period_end=old_end,
-                input_tokens=summary.total_input_tokens,
-                output_tokens=summary.total_output_tokens,
             )
             logger.info(
                 "Old period catchup reported",

@@ -30,8 +30,9 @@ class BillingSettings(BaseSettings):
     product_id: str | None = Field(None, alias="SHU_STRIPE_PRODUCT_ID")
     price_id_monthly: str | None = Field(None, alias="SHU_STRIPE_PRICE_ID_MONTHLY")
 
-    # Meter IDs for usage-based billing (created via Stripe Billing > Meters)
-    meter_id_tokens: str | None = Field(None, alias="SHU_STRIPE_METER_ID_TOKENS")
+    # Meter for usage-based billing (created via Stripe Billing > Meters)
+    meter_id_cost: str | None = Field(None, alias="SHU_STRIPE_METER_ID_COST")
+    meter_event_name: str = Field("usage_cost", alias="SHU_STRIPE_METER_EVENT_NAME")
 
     # Operational settings
     # test or live - used for validation and logging
