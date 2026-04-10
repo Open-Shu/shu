@@ -10,8 +10,10 @@ For single-instance deployment, billing config is stored in system_settings.
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.config import BillingSettings, get_billing_settings
 from shu.billing.schemas import (
@@ -259,6 +261,164 @@ class BillingService:
 
         result = self._client.report_usage(event)
         return result is not None
+
+    async def report_and_reconcile_usage(
+        self,
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        """Compare-and-correct usage reporting to Stripe Meters.
+
+        Queries both our llm_usage total and Stripe's meter summary for the
+        current billing period, then sends only the gap. Self-correcting:
+        any missed events from prior runs are caught automatically.
+
+        Handles:
+        - Stripe async processing lag (uses last_reported_total as floor)
+        - Period rollover (catchup for old period before switching)
+        - Crash recovery (Stripe summary eventually reflects sent events)
+
+        Args:
+            db: Database session for llm_usage queries and system_settings
+
+        Returns:
+            Status dict with keys: action, delta, our_total, stripe_total
+
+        """
+        from shu.billing.adapters import BILLING_SETTINGS_KEY, UsageProviderImpl, get_billing_config
+        from shu.services.system_settings_service import SystemSettingsService
+
+        billing_config = await get_billing_config(db)
+        customer_id = billing_config.get("stripe_customer_id")
+        if not customer_id:
+            return {"action": "skipped", "reason": "no_customer"}
+
+        if not self._settings.meter_id_tokens:
+            return {"action": "skipped", "reason": "no_meter"}
+
+        period_start_str = billing_config.get("current_period_start")
+
+        if period_start_str:
+            period_start = datetime.fromisoformat(period_start_str)
+        else:
+            # Fall back to start of current month
+            now = datetime.now(UTC)
+            period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        settings_service = SystemSettingsService(db)
+        last_reported_total = billing_config.get("last_reported_total", 0)
+        last_reported_period = billing_config.get("last_reported_period_start")
+
+        # Period rollover: catchup old period, then reset
+        if last_reported_period and last_reported_period != period_start_str:
+            old_start = datetime.fromisoformat(last_reported_period)
+            # Find old period end — use current period start as the boundary
+            old_end = period_start
+            await self._catchup_old_period(
+                db, customer_id, old_start, old_end, last_reported_total, billing_config, settings_service
+            )
+            last_reported_total = 0
+
+        # Query our cumulative total for current period
+        now = datetime.now(UTC)
+        usage_provider = UsageProviderImpl(db)
+        summary = await usage_provider.get_usage_summary(period_start, now)
+        our_total = summary.total_input_tokens + summary.total_output_tokens
+
+        # Query Stripe's view
+        stripe_total = self._client.get_meter_event_summary(
+            customer_id,
+            start_time=int(period_start.timestamp()),
+            end_time=int(now.timestamp()),
+        )
+
+        # Determine delta with async-lag protection.
+        # If Stripe's total >= our last report, Stripe caught up — use Stripe's actual state.
+        # Otherwise Stripe is still processing — use our bookkeeping to avoid double-counting.
+        baseline = stripe_total if stripe_total >= last_reported_total else last_reported_total
+        delta = our_total - baseline
+
+        if delta <= 0:
+            return {
+                "action": "no_delta",
+                "our_total": our_total,
+                "stripe_total": stripe_total,
+                "last_reported_total": last_reported_total,
+            }
+
+        # Report the delta
+        reported = await self.report_usage_to_stripe(
+            stripe_customer_id=customer_id,
+            delta_tokens=delta,
+            period_start=period_start,
+            period_end=now,
+            input_tokens=summary.total_input_tokens,
+            output_tokens=summary.total_output_tokens,
+        )
+
+        if reported:
+            billing_config["last_reported_total"] = our_total
+            billing_config["last_reported_period_start"] = period_start.isoformat()
+            await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
+
+            logger.info(
+                "Usage reported to Stripe",
+                extra={
+                    "delta": delta,
+                    "our_total": our_total,
+                    "stripe_total": stripe_total,
+                    "period_start": period_start.isoformat(),
+                },
+            )
+
+        return {
+            "action": "reported" if reported else "report_failed",
+            "delta": delta,
+            "our_total": our_total,
+            "stripe_total": stripe_total,
+        }
+
+    async def _catchup_old_period(
+        self,
+        db: AsyncSession,
+        customer_id: str,
+        old_start: datetime,
+        old_end: datetime,
+        last_reported_total: int,
+        billing_config: dict,
+        settings_service: Any,
+    ) -> None:
+        """Send any remaining usage for a completed billing period."""
+        from shu.billing.adapters import BILLING_SETTINGS_KEY, UsageProviderImpl
+
+        usage_provider = UsageProviderImpl(db)
+        summary = await usage_provider.get_usage_summary(old_start, old_end)
+        old_total = summary.total_input_tokens + summary.total_output_tokens
+
+        old_stripe_total = self._client.get_meter_event_summary(
+            customer_id,
+            start_time=int(old_start.timestamp()),
+            end_time=int(old_end.timestamp()),
+        )
+
+        delta = old_total - max(old_stripe_total, last_reported_total)
+        if delta > 0:
+            await self.report_usage_to_stripe(
+                stripe_customer_id=customer_id,
+                delta_tokens=delta,
+                period_start=old_start,
+                period_end=old_end,
+                input_tokens=summary.total_input_tokens,
+                output_tokens=summary.total_output_tokens,
+            )
+            logger.info(
+                "Old period catchup reported",
+                extra={"delta": delta, "old_period_start": old_start.isoformat()},
+            )
+
+        # Reset for new period
+        billing_config["last_reported_total"] = 0
+        billing_config["last_reported_period_start"] = None
+        await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
 
     # =========================================================================
     # Webhooks
