@@ -8,7 +8,6 @@ import pytest
 from shu.billing.adapters import (
     BILLING_SETTINGS_KEY,
     UsageProviderImpl,
-    UsageSummaryImpl,
     create_customer_link_callback,
     create_subscription_persistence_callback,
     get_billing_config,

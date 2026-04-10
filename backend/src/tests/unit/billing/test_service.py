@@ -261,3 +261,300 @@ class TestReportUsageToStripe:
         event_arg = client.report_usage.call_args[0][0]
         assert event_arg.value == 5000
         assert event_arg.stripe_customer_id == "cus_123"
+
+
+def _make_usage_summary(input_tokens=0, output_tokens=0):
+    """Create a mock UsageSummary."""
+    summary = MagicMock()
+    summary.total_input_tokens = input_tokens
+    summary.total_output_tokens = output_tokens
+    summary.total_cost_usd = 0.0
+    summary.by_model = {}
+    return summary
+
+
+class TestReportAndReconcileUsage:
+    """Tests for the compare-and-correct usage reconciliation algorithm."""
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_customer(self):
+        """Should skip when no Stripe customer is linked."""
+        client = _make_client()
+        service = BillingService(_make_settings(), stripe_client=client)
+        db = AsyncMock()
+
+        with patch("shu.billing.adapters.get_billing_config") as mock_config:
+            mock_config.return_value = {"stripe_subscription_id": "sub_123"}  # No customer_id
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "skipped"
+        assert result["reason"] == "no_customer"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_meter(self):
+        """Should skip when meter is not configured."""
+        settings = _make_settings()
+        settings.meter_id_tokens = None
+        client = _make_client()
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        with patch("shu.billing.adapters.get_billing_config") as mock_config:
+            mock_config.return_value = {"stripe_customer_id": "cus_123"}
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "skipped"
+        assert result["reason"] == "no_meter"
+
+    @pytest.mark.asyncio
+    async def test_reports_normal_delta(self):
+        """our=50k, stripe=45k → send 5k delta."""
+        client = _make_client()
+        client.get_meter_event_summary.return_value = 45000
+        client.report_usage.return_value = MagicMock()  # Success
+
+        settings = _make_settings()
+        settings.meter_id_tokens = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-04-01T00:00:00+00:00",
+            "current_period_end": "2026-05-01T00:00:00+00:00",
+            "last_reported_total": 45000,
+            "last_reported_period_start": "2026-04-01T00:00:00+00:00",
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(input_tokens=30000, output_tokens=20000)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            mock_ss = MagicMock()
+            mock_ss.upsert = AsyncMock()
+            mock_ss_cls.return_value = mock_ss
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "reported"
+        assert result["delta"] == 5000  # 50000 - 45000
+        assert result["our_total"] == 50000
+        assert result["stripe_total"] == 45000
+        client.report_usage.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_delta_when_totals_match(self):
+        """our=50k, stripe=50k → no delta needed."""
+        client = _make_client()
+        client.get_meter_event_summary.return_value = 50000
+
+        settings = _make_settings()
+        settings.meter_id_tokens = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-04-01T00:00:00+00:00",
+            "current_period_end": "2026-05-01T00:00:00+00:00",
+            "last_reported_total": 50000,
+            "last_reported_period_start": "2026-04-01T00:00:00+00:00",
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(input_tokens=30000, output_tokens=20000)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "no_delta"
+        client.report_usage.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_lag_uses_last_reported(self):
+        """our=53k, stripe=45k (lag), last_reported=50k → send 3k not 8k."""
+        client = _make_client()
+        client.get_meter_event_summary.return_value = 45000  # Stripe hasn't caught up
+        client.report_usage.return_value = MagicMock()
+
+        settings = _make_settings()
+        settings.meter_id_tokens = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-04-01T00:00:00+00:00",
+            "current_period_end": "2026-05-01T00:00:00+00:00",
+            "last_reported_total": 50000,  # We reported 50k last run
+            "last_reported_period_start": "2026-04-01T00:00:00+00:00",
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(input_tokens=33000, output_tokens=20000)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            mock_ss = MagicMock()
+            mock_ss.upsert = AsyncMock()
+            mock_ss_cls.return_value = mock_ss
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "reported"
+        assert result["delta"] == 3000  # 53000 - 50000 (not 53000 - 45000)
+
+    @pytest.mark.asyncio
+    async def test_first_report_no_last_reported(self):
+        """First run with no last_reported_total → reports full amount."""
+        client = _make_client()
+        client.get_meter_event_summary.return_value = 0  # Nothing in Stripe
+        client.report_usage.return_value = MagicMock()
+
+        settings = _make_settings()
+        settings.meter_id_tokens = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-04-01T00:00:00+00:00",
+            "current_period_end": "2026-05-01T00:00:00+00:00",
+            # No last_reported_total or last_reported_period_start
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(input_tokens=10000, output_tokens=5000)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            mock_ss = MagicMock()
+            mock_ss.upsert = AsyncMock()
+            mock_ss_cls.return_value = mock_ss
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "reported"
+        assert result["delta"] == 15000  # Full amount
+
+    @pytest.mark.asyncio
+    async def test_does_not_update_on_report_failure(self):
+        """Should not update last_reported_total if Stripe report fails."""
+        client = _make_client()
+        client.get_meter_event_summary.return_value = 0
+        client.report_usage.return_value = None  # Failed
+
+        settings = _make_settings()
+        settings.meter_id_tokens = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-04-01T00:00:00+00:00",
+            "current_period_end": "2026-05-01T00:00:00+00:00",
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(input_tokens=10000, output_tokens=5000)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            mock_ss = MagicMock()
+            mock_ss.upsert = AsyncMock()
+            mock_ss_cls.return_value = mock_ss
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "report_failed"
+        mock_ss.upsert.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_period_rollover_catchup(self):
+        """Should catchup old period gap before reporting new period usage."""
+        client = _make_client()
+        # Old period: DB has 50k tokens, Stripe has 40k, we last reported 45k.
+        # Gap = 50k - max(40k, 45k) = 50k - 45k = 5k catchup needed.
+        # New period: we have 3k, Stripe has 0.
+        client.get_meter_event_summary.side_effect = [
+            40000,  # Old period Stripe query
+            0,      # New period Stripe query
+        ]
+        client.report_usage.return_value = MagicMock()  # Success
+
+        settings = _make_settings()
+        settings.meter_id_tokens = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-05-01T00:00:00+00:00",
+            "current_period_end": "2026-06-01T00:00:00+00:00",
+            "last_reported_total": 45000,
+            "last_reported_period_start": "2026-04-01T00:00:00+00:00",
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                side_effect=[
+                    _make_usage_summary(input_tokens=30000, output_tokens=20000),  # Old: 50k (gap exists)
+                    _make_usage_summary(input_tokens=2000, output_tokens=1000),    # New: 3k
+                ]
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            mock_ss = MagicMock()
+            mock_ss.upsert = AsyncMock()
+            mock_ss_cls.return_value = mock_ss
+
+            result = await service.report_and_reconcile_usage(db)
+
+        assert result["action"] == "reported"
+        assert result["our_total"] == 3000
+        # report_usage called twice: 5k old period catchup + 3k new period
+        assert client.report_usage.call_count == 2

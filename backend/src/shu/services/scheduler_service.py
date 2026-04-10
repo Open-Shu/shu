@@ -576,9 +576,12 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     sources.append(AttachmentCleanupSource())
 
     # Billing quantity sync: daily reconciliation of Stripe seat count (skips if billing unconfigured)
-    from ..billing.sync import BillingQuantitySyncSource
+    from ..billing.sync import BillingQuantitySyncSource, UsageReportingSource
 
     sources.append(BillingQuantitySyncSource())
+
+    # Usage reporting: hourly compare-and-correct token metering to Stripe (skips if billing unconfigured)
+    sources.append(UsageReportingSource())
 
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",

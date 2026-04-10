@@ -399,6 +399,53 @@ class StripeClient:
             )
             return None
 
+    def get_meter_event_summary(
+        self,
+        customer_id: str,
+        start_time: int,
+        end_time: int,
+    ) -> int:
+        """Get aggregated meter event total for a customer in a time range.
+
+        Queries Stripe's Meter Event Summaries API to find out how much
+        usage Stripe has recorded. Used for compare-and-correct reconciliation.
+
+        Args:
+            customer_id: Stripe customer ID
+            start_time: Unix timestamp for range start
+            end_time: Unix timestamp for range end
+
+        Returns:
+            Aggregated token total from Stripe, or 0 if no data / meter not configured.
+
+        """
+        if not self._settings.meter_id_tokens:
+            return 0
+
+        try:
+            summaries = stripe.billing.Meter.list_event_summaries(
+                self._settings.meter_id_tokens,
+                customer=customer_id,
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+            total = 0
+            for summary in summaries.auto_paging_iter():
+                total += int(summary.aggregated_value)
+
+            return total
+
+        except stripe.StripeError as e:
+            logger.error(
+                "Failed to get meter event summary",
+                extra={
+                    "customer_id": customer_id,
+                    "error": str(e),
+                },
+            )
+            raise StripeClientError(f"Failed to get meter summary: {e}", e) from e
+
     # =========================================================================
     # Webhooks
     # =========================================================================

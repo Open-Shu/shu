@@ -1,6 +1,5 @@
 """Tests for StripeClient — focuses on parsing/mapping at the Stripe boundary."""
 
-from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,8 +21,7 @@ def _make_settings(**overrides):
         "is_configured": True,
     }
     defaults.update(overrides)
-    settings = MagicMock(**defaults)
-    return settings
+    return MagicMock(**defaults)
 
 
 def _make_subscription_data(*, quantity=5, items_quantity=None, include_items=True):

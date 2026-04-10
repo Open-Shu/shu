@@ -146,3 +146,55 @@ class BillingQuantitySyncSource:
 
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
         return {"enqueued": 0}
+
+
+class UsageReportingSource:
+    """Schedulable source for periodic usage reporting to Stripe Meters.
+
+    Runs at a configurable interval (default 1 hour). On each run, compares
+    our llm_usage totals against Stripe's meter summary and sends any gap.
+    Self-correcting: missed events from prior runs are caught automatically.
+    """
+
+    def __init__(self) -> None:
+        self._last_run: datetime | None = None
+
+    @property
+    def name(self) -> str:
+        return "usage_reporting"
+
+    async def cleanup_stale(self, db: AsyncSession) -> int:
+        settings = get_billing_settings()
+        if not settings.is_configured:
+            return 0
+
+        now = datetime.now(UTC)
+        interval = settings.usage_report_interval_seconds
+        if self._last_run is not None:
+            elapsed = (now - self._last_run).total_seconds()
+            if elapsed < interval:
+                return 0
+
+        from shu.billing.service import BillingService
+
+        try:
+            service = BillingService(settings)
+            result = await service.report_and_reconcile_usage(db)
+            self._last_run = now
+
+            if result.get("action") == "reported":
+                logger.info(
+                    "Usage reporting completed",
+                    extra={"delta": result.get("delta"), "our_total": result.get("our_total")},
+                )
+                return 1
+
+            return 0
+
+        except Exception:
+            logger.error("Usage reporting failed", exc_info=True)
+            self._last_run = now  # Don't retry immediately
+            return 0
+
+    async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
+        return {"enqueued": 0}
