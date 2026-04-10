@@ -182,6 +182,12 @@ class TestUsageRecording:
         svc._model_id = "model-456"
 
         mock_session = AsyncMock()
+        # begin_nested() is sync, returns an async context manager (AsyncSessionTransaction)
+        mock_savepoint = MagicMock()
+        mock_savepoint.__aenter__ = AsyncMock()
+        mock_savepoint.__aexit__ = AsyncMock(return_value=False)
+        mock_session.begin_nested = MagicMock(return_value=mock_savepoint)
+
         mock_session_factory = MagicMock()
         mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -189,13 +195,10 @@ class TestUsageRecording:
         with patch(
             "shu.core.database.get_async_session_local",
             return_value=mock_session_factory,
-        ), patch(
-            "shu.services.usage_recording.get_async_session_local",
-            return_value=mock_session_factory,
         ):
             await svc._record_usage(page_count=5)
 
-        assert mock_session.add.call_count == 1
+        mock_session.add.assert_called_once()
         record = mock_session.add.call_args[0][0]
         assert record.provider_id == "provider-123"
         assert record.model_id == "model-456"
@@ -208,11 +211,19 @@ class TestUsageRecording:
 
     @pytest.mark.asyncio
     async def test_record_usage_calls_ensure_provider(self):
-        """_record_usage should call _ensure_provider_and_model on first use."""
+        """_record_usage should call _resolve_provider_and_model on first use."""
         svc = _make_service()
         assert svc._provider_id is None
 
-        with patch.object(svc, "_ensure_provider_and_model", new_callable=AsyncMock) as mock_ensure:
+        mock_session = AsyncMock()
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "shu.core.database.get_async_session_local",
+            return_value=mock_session_factory,
+        ), patch.object(svc, "_resolve_provider_and_model", new_callable=AsyncMock) as mock_ensure:
             await svc._record_usage(page_count=1)
 
         mock_ensure.assert_called_once()
@@ -247,40 +258,49 @@ class TestUsageRecording:
         mock_record.assert_called_once_with(3)
 
 
-class TestEnsureProviderAndModel:
-    """Test _ensure_provider_and_model provider/model auto-provisioning."""
+class TestResolveProviderAndModel:
+    """Test _resolve_provider_and_model lookup-only behavior."""
 
     @pytest.mark.asyncio
-    async def test_creates_provider_and_model_when_missing(self):
-        """Should create both provider and model if neither exists."""
+    async def test_returns_false_when_provider_missing(self):
+        """Should return False and not cache IDs when provider not seeded."""
         svc = _make_service()
-        assert svc._provider_id is None
-
-        mock_provider = MagicMock()
-        mock_provider.id = "new-provider-id"
-        mock_provider.models = []
-
-        mock_model = MagicMock()
-        mock_model.id = "new-model-id"
 
         mock_llm_service = MagicMock()
         mock_llm_service.get_provider_by_name = AsyncMock(return_value=None)
-        mock_llm_service.create_provider = AsyncMock(return_value=mock_provider)
-        mock_llm_service.create_model = AsyncMock(return_value=mock_model)
 
         mock_session = AsyncMock()
 
         with patch("shu.services.external_ocr_service.LLMService", return_value=mock_llm_service):
-            await svc._ensure_provider_and_model(mock_session)
+            result = await svc._resolve_provider_and_model(mock_session)
 
-        assert svc._provider_id == "new-provider-id"
-        assert svc._model_id == "new-model-id"
-        mock_llm_service.create_provider.assert_called_once()
-        mock_llm_service.create_model.assert_called_once()
+        assert result is False
+        assert svc._provider_id is None
 
     @pytest.mark.asyncio
-    async def test_reuses_existing_provider_and_model(self):
-        """Should reuse existing provider and model if they already exist."""
+    async def test_returns_false_when_model_missing(self):
+        """Should return False when provider exists but model not seeded."""
+        svc = _make_service()
+
+        mock_provider = MagicMock()
+        mock_provider.id = "provider-id"
+        mock_provider.models = []
+
+        mock_llm_service = MagicMock()
+        mock_llm_service.get_provider_by_name = AsyncMock(return_value=mock_provider)
+
+        mock_session = AsyncMock()
+
+        with patch("shu.services.external_ocr_service.LLMService", return_value=mock_llm_service):
+            result = await svc._resolve_provider_and_model(mock_session)
+
+        assert result is False
+        assert svc._provider_id == "provider-id"
+        assert svc._model_id is None
+
+    @pytest.mark.asyncio
+    async def test_finds_existing_provider_and_model(self):
+        """Should cache IDs and return True when both are seeded."""
         svc = _make_service()
 
         mock_model = MagicMock()
@@ -303,7 +323,7 @@ class TestEnsureProviderAndModel:
         mock_session = AsyncMock()
 
         with patch("shu.services.external_ocr_service.LLMService", return_value=mock_llm_service):
-            await svc._ensure_provider_and_model(mock_session)
+            await svc._resolve_provider_and_model(mock_session)
 
         assert svc._provider_id == "existing-provider-id"
         assert svc._model_id == "existing-model-id"
@@ -320,7 +340,7 @@ class TestEnsureProviderAndModel:
         mock_session = AsyncMock()
 
         with patch("shu.services.external_ocr_service.LLMService") as mock_cls:
-            await svc._ensure_provider_and_model(mock_session)
+            await svc._resolve_provider_and_model(mock_session)
 
         mock_cls.assert_not_called()
         assert svc._provider_id == "cached-p"

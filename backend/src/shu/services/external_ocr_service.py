@@ -127,38 +127,39 @@ class ExternalOCRService:
             confidence=confidence,
         )
 
-    async def _ensure_provider_and_model(self, session) -> None:
-        """Find or create the Mistral OCR provider and model records for usage tracking."""
-        if self._provider_id is not None:
-            return
+    async def _resolve_provider_and_model(self, session) -> bool:
+        """Look up pre-seeded provider and model records for usage tracking.
+
+        Returns True if both were found and cached, False otherwise.
+        Provider/model rows must be created by the hosting seed script;
+        this method only performs lookups to avoid races under concurrency.
+        """
+        if self._provider_id is not None and self._model_id is not None:
+            return True
 
         llm_service = LLMService(session)
 
         provider = await llm_service.get_provider_by_name(_PROVIDER_NAME)
         if provider is None:
-            provider = await llm_service.create_provider(
-                name=_PROVIDER_NAME,
-                provider_type=_PROVIDER_TYPE_KEY,
-                api_endpoint=self._api_base_url,
+            logger.error(
+                "Mistral OCR provider %r not found — seed it via the hosting script",
+                _PROVIDER_NAME,
             )
+            return False
 
         self._provider_id = provider.id
 
-        existing_model = None
         for m in provider.models:
             if m.model_name == self._model_name and m.model_type == ModelType.OCR:
-                existing_model = m
-                break
+                self._model_id = m.id
+                return True
 
-        if existing_model is None:
-            existing_model = await llm_service.create_model(
-                provider_id=provider.id,
-                model_name=self._model_name,
-                display_name="Mistral OCR",
-                model_type=ModelType.OCR,
-            )
-
-        self._model_id = existing_model.id
+        logger.error(
+            "Mistral OCR model %r not found on provider %s — seed it via the hosting script",
+            self._model_name,
+            provider.id,
+        )
+        return False
 
     async def _record_usage(self, page_count: int) -> None:
         """Record OCR usage in llm_usage. Best-effort — failures are logged, not raised."""
@@ -168,7 +169,8 @@ class ExternalOCRService:
             total_cost = _COST_PER_PAGE * page_count
             session_factory = get_async_session_local()
             async with session_factory() as session:
-                await self._ensure_provider_and_model(session)
+                if not await self._resolve_provider_and_model(session):
+                    return
                 await record_llm_usage(
                     provider_id=self._provider_id,
                     model_id=self._model_id,
