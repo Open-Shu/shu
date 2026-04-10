@@ -108,30 +108,18 @@ class ExternalEmbeddingService:
         if not usage:
             return
 
-        try:
-            from ..core.database import get_async_session_local
-            from ..models.llm_provider import LLMUsage
+        from .usage_recording import record_llm_usage
 
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            total_tokens = usage.get("total_tokens", 0)
-            cost = usage.get("cost", 0)
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+        cost = usage.get("cost", 0)
 
-            record = LLMUsage(
-                provider_id=self._provider_id,
-                model_id=self._model_id,
-                request_type="embedding",
-                input_tokens=prompt_tokens,
-                output_tokens=0,
-                total_tokens=total_tokens,
-                input_cost=Decimal(str(cost)),
-                output_cost=Decimal("0"),
-                total_cost=Decimal(str(cost)),
-                success=True,
-            )
-
-            session_factory = get_async_session_local()
-            async with session_factory() as session:
-                session.add(record)
-                await session.commit()
-        except Exception as e:
-            logger.warning("Failed to record embedding usage: %s", e)
+        await record_llm_usage(
+            provider_id=self._provider_id,
+            model_id=self._model_id,
+            request_type="embedding",
+            input_tokens=prompt_tokens,
+            total_tokens=total_tokens,
+            input_cost=Decimal(str(cost)),
+            total_cost=Decimal(str(cost)),
+        )

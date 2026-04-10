@@ -1,8 +1,16 @@
-"""LocalOCRService — wraps existing EasyOCR/Tesseract via TextExtractor."""
+"""LocalOCRService — wraps existing EasyOCR/Tesseract via TextExtractor.
 
-from shu.core.config import ConfigurationManager, get_config_manager
-from shu.core.logging import get_logger
-from shu.core.ocr_service import OCRResult
+TODO: TextExtractor currently owns both text extraction AND OCR orchestration.
+LocalOCRService should own the local OCR path directly (EasyOCR/Tesseract),
+and TextExtractor should be reduced to non-OCR text extraction only.
+This avoids the round-trip where LocalOCRService calls TextExtractor with
+ocr_mode="auto", which re-enters the same OCR logic that should live here.
+"""
+
+from ..core.config import ConfigurationManager, get_config_manager
+from ..core.logging import get_logger
+from ..core.ocr_service import OCRResult
+from ..processors.text_extractor import TextExtractor
 
 logger = get_logger(__name__)
 
@@ -24,8 +32,6 @@ class LocalOCRService:
             OCRResult with extracted text and metadata.
 
         """
-        from shu.processors.text_extractor import TextExtractor
-
         extractor = TextExtractor(config_manager=self._config_manager)
         result = await extractor.extract_text(
             file_bytes=file_bytes,

@@ -853,9 +853,9 @@ class UnifiedLLMClient:
             True if error is a capability mismatch, False otherwise.
 
         """
-        provider_message = (details.get("provider_message") or "").lower()
-        provider_error_type = (details.get("provider_error_type") or "").lower()
-        provider_error_code = (details.get("provider_error_code") or "").lower()
+        provider_message = str(details.get("provider_message") or "").lower()
+        provider_error_type = str(details.get("provider_error_type") or "").lower()
+        provider_error_code = str(details.get("provider_error_code") or "").lower()
 
         # Common patterns for vision capability mismatches
         vision_patterns = [
