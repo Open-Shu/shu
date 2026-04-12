@@ -1,0 +1,198 @@
+graph TB
+    %% ─────────────────────────────────────────
+    %% EXTERNAL
+    %% ─────────────────────────────────────────
+    subgraph External["☁️ Stripe (External)"]
+        S_API["Stripe REST API\n• Customers\n• Subscriptions\n• Checkout Sessions\n• Customer Portal\n• Billing Meters"]
+        S_WH["Stripe Webhooks\n(POST /api/v1/billing/webhooks)"]
+        S_CHK["Hosted Checkout Page"]
+        S_PRT["Customer Portal"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% CONFIG LAYER
+    %% ─────────────────────────────────────────
+    subgraph Config["⚙️ Configuration (billing/config.py)"]
+        BCFG["BillingSettings\n• SHU_STRIPE_SECRET_KEY\n• SHU_STRIPE_PUBLISHABLE_KEY\n• SHU_STRIPE_WEBHOOK_SECRET\n• SHU_STRIPE_PRICE_ID_MONTHLY\n• SHU_STRIPE_METER_ID_COST\n• SHU_STRIPE_METER_EVENT_NAME\n• SHU_APP_BASE_URL"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% HTTP LAYER
+    %% ─────────────────────────────────────────
+    subgraph Router["🌐 API Router (billing/router.py)\nPrefix: /api/v1/billing"]
+        R_CHK["POST /checkout\n[Admin only]"]
+        R_PRT["GET /portal\n[Admin only]"]
+        R_SUB["GET /subscription\n[Authenticated]"]
+        R_USG["GET /usage\n[Authenticated]"]
+        R_WH["POST /webhooks\n[Public + Sig Verify]"]
+        R_CFG["GET /config\n[Public]"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% SERVICE LAYER
+    %% ─────────────────────────────────────────
+    subgraph Service["🧠 Billing Service (billing/service.py)"]
+        BS["BillingService\n• create_checkout_session()\n• create_portal_session()\n• sync_subscription_quantity()\n• create_stripe_customer()\n• report_usage_to_stripe()\n• report_and_reconcile_usage()\n• handle_webhook()"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% STRIPE CLIENT
+    %% ─────────────────────────────────────────
+    subgraph Client["🔌 Stripe SDK Wrapper (billing/stripe_client.py)"]
+        SC["StripeClient\n• create_customer()\n• get_customer()\n• update_customer()\n• create_checkout_session()\n• create_portal_session()\n• get_subscription()\n• update_subscription_quantity()\n• cancel_subscription()\n• report_usage()  →  Meters API\n• get_meter_event_summary()\n• construct_webhook_event()\n• parse_subscription_update()"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% WEBHOOK DISPATCHER
+    %% ─────────────────────────────────────────
+    subgraph Webhooks["📨 Webhook Handlers (billing/webhook_handlers.py)"]
+        WD["WebhookDispatcher\n(routes by event type)"]
+        WH1["CustomerCreatedHandler\ncustomer.created"]
+        WH2["SubscriptionCreatedHandler\ncustomer.subscription.created"]
+        WH3["SubscriptionUpdatedHandler\ncustomer.subscription.updated"]
+        WH4["SubscriptionDeletedHandler\ncustomer.subscription.deleted"]
+        WH5["InvoicePaidHandler\ninvoice.paid"]
+        WH6["InvoicePaymentFailedHandler\ninvoice.payment_failed"]
+        WH7["CheckoutSessionCompletedHandler\ncheckout.session.completed"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% ADAPTERS / PERSISTENCE
+    %% ─────────────────────────────────────────
+    subgraph Adapters["🗄️ Adapters (billing/adapters.py)"]
+        ADP_USG["UsageProviderImpl\nQueries llm_usage table\n→ get_usage_summary()\n→ get_usage_for_period()"]
+        ADP_SUB["create_subscription_persistence_callback()\nPersists subscription state\n→ system_settings[billing]"]
+        ADP_CUS["create_customer_link_callback()\nLinks Stripe customer ID\n→ system_settings[billing]"]
+        ADP_CFG["get_billing_config()\nReads system_settings[billing]"]
+        ADP_USR["get_user_count()\nCounts User rows"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% ENFORCEMENT
+    %% ─────────────────────────────────────────
+    subgraph Enforce["🛡️ Enforcement (billing/enforcement.py)"]
+        ENF["check_user_limit()\nReturns UserLimitStatus\n• enforcement: none / soft / hard\n• at_limit\n• current_count vs user_limit"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% SYNC / SCHEDULER SOURCES
+    %% ─────────────────────────────────────────
+    subgraph Sync["🔄 Sync & Metering (billing/sync.py)"]
+        SYNC_QTY["trigger_quantity_sync()\nFire-and-forget from\nuser create/delete endpoints"]
+        SYNC_SRC["BillingQuantitySyncSource\nScheduler source\n→ daily reconciliation of seat count"]
+        USG_SRC["UsageReportingSource\nScheduler source\n→ hourly compare-and-correct\n   to Stripe Meters"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% SCHEDULER (external to billing)
+    %% ─────────────────────────────────────────
+    SCH["⏱️ SchedulerService\n(services/scheduler_service.py)"]
+
+    %% ─────────────────────────────────────────
+    %% DATABASE MODELS
+    %% ─────────────────────────────────────────
+    subgraph DB["🗃️ Database"]
+        DB_SYS["system_settings table\nKey: 'billing'\nStores: customer_id, subscription_id,\nstatus, period dates, quantity,\nenforcement mode, last_reported_total"]
+        DB_USG["llm_usage table\nInput/output tokens, cost_usd\nper LLM request"]
+        DB_USR["users table"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% CONNECTIONS
+    %% ─────────────────────────────────────────
+
+    %% Router → Service
+    R_CHK --> BS
+    R_PRT --> BS
+    R_SUB --> ADP_CFG
+    R_USG --> ADP_USG
+    R_WH --> BS
+    R_CFG --> BCFG
+
+    %% Service → StripeClient
+    BS --> SC
+
+    %% Service → WebhookDispatcher
+    BS --> WD
+
+    %% Service → Adapters (for reconciliation)
+    BS --> ADP_USG
+    BS --> ADP_CFG
+
+    %% WebhookDispatcher → Handlers
+    WD --> WH1
+    WD --> WH2
+    WD --> WH3
+    WD --> WH4
+    WD --> WH5
+    WD --> WH6
+    WD --> WH7
+
+    %% Handlers call back into Adapters (injected callbacks)
+    WH1 -.->|on_customer_created callback| ADP_CUS
+    WH2 -.->|on_subscription_update callback| ADP_SUB
+    WH3 -.->|on_subscription_update callback| ADP_SUB
+    WH4 -.->|on_subscription_update callback| ADP_SUB
+    WH7 -.->|on_checkout_completed callback| ADP_CUS
+
+    %% StripeClient → Stripe API
+    SC -->|HTTPS| S_API
+
+    %% Stripe → Shu (inbound webhooks)
+    S_WH -->|Stripe-Signature header| R_WH
+
+    %% Checkout / Portal redirect flow
+    R_CHK -->|returns redirect URL| S_CHK
+    R_PRT -->|returns portal URL| S_PRT
+
+    %% Adapters → DB
+    ADP_USG -->|SELECT| DB_USG
+    ADP_SUB -->|UPSERT| DB_SYS
+    ADP_CUS -->|UPSERT| DB_SYS
+    ADP_CFG -->|SELECT| DB_SYS
+    ADP_USR -->|COUNT| DB_USR
+
+    %% Enforcement
+    ENF --> ADP_CFG
+    ENF --> ADP_USR
+
+    %% Sync sources
+    SYNC_QTY --> BS
+    SYNC_SRC --> BS
+    USG_SRC --> BS
+
+    %% Scheduler registers sources
+    SCH --> SYNC_SRC
+    SCH --> USG_SRC
+
+    %% Config used throughout
+    BCFG --> SC
+    BCFG --> BS
+    BCFG --> SYNC_QTY
+    BCFG --> SYNC_SRC
+    BCFG --> USG_SRC
+
+    %% ─────────────────────────────────────────
+    %% STYLES
+    %% ─────────────────────────────────────────
+    classDef stripe fill:#635BFF,color:#fff,stroke:#4B44CC
+    classDef router fill:#1A73E8,color:#fff,stroke:#1558B0
+    classDef service fill:#0F9D58,color:#fff,stroke:#0A7A43
+    classDef client fill:#F4B400,color:#000,stroke:#C48E00
+    classDef webhook fill:#DB4437,color:#fff,stroke:#A83329
+    classDef adapter fill:#9C27B0,color:#fff,stroke:#7B1FA2
+    classDef db fill:#37474F,color:#fff,stroke:#263238
+    classDef sync fill:#FF7043,color:#fff,stroke:#D84315
+    classDef config fill:#546E7A,color:#fff,stroke:#37474F
+    classDef enforce fill:#E91E63,color:#fff,stroke:#C2185B
+
+    class S_API,S_WH,S_CHK,S_PRT stripe
+    class R_CHK,R_PRT,R_SUB,R_USG,R_WH,R_CFG router
+    class BS service
+    class SC client
+    class WD,WH1,WH2,WH3,WH4,WH5,WH6,WH7 webhook
+    class ADP_USG,ADP_SUB,ADP_CUS,ADP_CFG,ADP_USR adapter
+    class DB_SYS,DB_USG,DB_USR db
+    class SYNC_QTY,SYNC_SRC,USG_SRC,SCH sync
+    class BCFG config
+    class ENF enforce

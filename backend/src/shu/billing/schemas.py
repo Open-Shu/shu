@@ -150,7 +150,7 @@ class StripeCustomerData(BaseModel):
 class UsageMeterEvent(BaseModel):
     """Data for reporting usage to Stripe Meters API."""
 
-    # Event category (not a unique key — Stripe uses its own idempotency)
+    # Event category — must match the event name configured on the Stripe meter
     event_name: str  # e.g., "usage_cost"
 
     # Stripe customer ID
@@ -159,8 +159,13 @@ class UsageMeterEvent(BaseModel):
     # Timestamp of the usage
     timestamp: int  # Unix timestamp
 
-    # Usage value (tokens, in our case)
+    # Usage value (cost in microdollars)
     value: int
+
+    # Deterministic identifier for Stripe-side deduplication.
+    # Two events with the same identifier within 24h are treated as duplicates,
+    # protecting against double-counting on retries (timeouts, network blips).
+    identifier: str
 
     # Additional context
     payload: dict[str, str] = Field(default_factory=dict)

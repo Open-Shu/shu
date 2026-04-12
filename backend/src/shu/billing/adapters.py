@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +37,7 @@ class UsageRecordImpl:
     model_id: str
     input_tokens: int
     output_tokens: int
-    cost_usd: float
+    cost_usd: Decimal
     usage_type: str
 
 
@@ -47,7 +48,7 @@ class ModelUsageImpl:
     model_id: str
     input_tokens: int
     output_tokens: int
-    cost_usd: float
+    cost_usd: Decimal
     request_count: int
 
 
@@ -57,7 +58,7 @@ class UsageSummaryImpl:
 
     total_input_tokens: int
     total_output_tokens: int
-    total_cost_usd: float
+    total_cost_usd: Decimal
     by_model: dict[str, ModelUsageImpl]
 
 
@@ -106,7 +107,7 @@ class UsageProviderImpl:
                     model_id=row.model_id or "unknown",
                     input_tokens=row.input_tokens or 0,
                     output_tokens=row.output_tokens or 0,
-                    cost_usd=float(row.total_cost or 0),
+                    cost_usd=row.total_cost if row.total_cost is not None else Decimal("0"),
                     usage_type=row.request_type or "unknown",
                 )
             )
@@ -140,13 +141,15 @@ class UsageProviderImpl:
         by_model: dict[str, ModelUsageImpl] = {}
         total_input = 0
         total_output = 0
-        total_cost = 0.0
+        total_cost = Decimal("0")
 
         for row in result:
             model_id = row.model_id or "unknown"
             input_tokens = int(row.input_tokens or 0)
             output_tokens = int(row.output_tokens or 0)
-            cost = float(row.total_cost or 0)
+            # Keep cost as Decimal — converting to float here loses precision
+            # and accumulates rounding error across thousands of rows.
+            cost = row.total_cost if row.total_cost is not None else Decimal("0")
             count = int(row.request_count or 0)
 
             by_model[model_id] = ModelUsageImpl(
@@ -229,6 +232,8 @@ async def create_customer_link_callback(
         })
         if subscription_id:
             current["stripe_subscription_id"] = subscription_id
+        # Clear the pending checkout claim now that the link is established.
+        current.pop("pending_checkout_session_id", None)
         await settings_service.upsert(BILLING_SETTINGS_KEY, current)
         return True
 

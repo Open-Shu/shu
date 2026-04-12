@@ -15,6 +15,7 @@ def _make_settings():
     settings.app_base_url = "http://localhost:3000"
     settings.meter_id_cost = None
     settings.meter_event_name = "usage_cost"
+    settings.price_id_monthly = "price_seat"
     return settings
 
 
@@ -40,7 +41,7 @@ class TestSyncSubscriptionQuantity:
         """Should call Stripe when user count differs from subscription quantity."""
         client = _make_client()
         client.get_subscription.return_value = {
-            "items": {"data": [{"id": "si_1", "quantity": 3}]},
+            "items": {"data": [{"id": "si_1", "quantity": 3, "price": {"id": "price_seat"}}]},
         }
         service = BillingService(_make_settings(), stripe_client=client)
 
@@ -56,7 +57,7 @@ class TestSyncSubscriptionQuantity:
         """Should not call Stripe when quantity already matches."""
         client = _make_client()
         client.get_subscription.return_value = {
-            "items": {"data": [{"id": "si_1", "quantity": 5}]},
+            "items": {"data": [{"id": "si_1", "quantity": 5, "price": {"id": "price_seat"}}]},
         }
         service = BillingService(_make_settings(), stripe_client=client)
 
@@ -78,16 +79,36 @@ class TestSyncSubscriptionQuantity:
         client.update_subscription_quantity.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handles_empty_items_data(self):
-        """Should treat empty items.data as quantity 0."""
+    async def test_returns_false_when_no_seat_item_found(self):
+        """Empty items, or items missing the configured seat price, should not call update."""
         client = _make_client()
-        client.get_subscription.return_value = {
-            "items": {"data": []},
-        }
+        # No items at all
+        client.get_subscription.return_value = {"items": {"data": []}}
         service = BillingService(_make_settings(), stripe_client=client)
 
         result = await service.sync_subscription_quantity("sub_123", user_count=3)
 
+        assert result is False
+        client.update_subscription_quantity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_picks_seat_item_among_multiple(self):
+        """With seat + metered items, should match by price ID, not pick index 0."""
+        client = _make_client()
+        client.get_subscription.return_value = {
+            "items": {
+                "data": [
+                    # Metered item first — quantity is meaningless here
+                    {"id": "si_meter", "quantity": 1, "price": {"id": "price_metered"}},
+                    {"id": "si_seat", "quantity": 3, "price": {"id": "price_seat"}},
+                ]
+            },
+        }
+        service = BillingService(_make_settings(), stripe_client=client)
+
+        result = await service.sync_subscription_quantity("sub_123", user_count=5)
+
+        # Should pick the seat item, see quantity 3 ≠ 5, and update
         assert result is True
         client.update_subscription_quantity.assert_called_once()
 
@@ -96,7 +117,7 @@ class TestSyncSubscriptionQuantity:
         """Should propagate StripeClientError from update call."""
         client = _make_client()
         client.get_subscription.return_value = {
-            "items": {"data": [{"id": "si_1", "quantity": 3}]},
+            "items": {"data": [{"id": "si_1", "quantity": 3, "price": {"id": "price_seat"}}]},
         }
         client.update_subscription_quantity.side_effect = StripeClientError("API error")
         service = BillingService(_make_settings(), stripe_client=client)
@@ -232,6 +253,7 @@ class TestReportUsageToStripe:
             delta_cost_microdollars=0,
             period_start=MagicMock(),
             period_end=MagicMock(),
+            cumulative_total_microdollars=0,
         )
 
         assert result is True
@@ -239,7 +261,7 @@ class TestReportUsageToStripe:
 
     @pytest.mark.asyncio
     async def test_reports_nonzero_cost_delta(self):
-        """Should call Stripe with cost in microdollars."""
+        """Should call Stripe with cost in microdollars and a deterministic identifier."""
         from datetime import UTC, datetime
 
         client = _make_client()
@@ -254,6 +276,7 @@ class TestReportUsageToStripe:
             delta_cost_microdollars=5000000,  # $5.00
             period_start=period_start,
             period_end=period_end,
+            cumulative_total_microdollars=5000000,
         )
 
         assert result is True
@@ -262,6 +285,72 @@ class TestReportUsageToStripe:
         assert event_arg.value == 5000000
         assert event_arg.stripe_customer_id == "cus_123"
         assert event_arg.event_name == "usage_cost"
+        # Identifier encodes the cumulative position so retries dedupe naturally
+        assert event_arg.identifier == f"shu-usage-cus_123-{int(period_start.timestamp())}-5000000"
+
+    @pytest.mark.asyncio
+    async def test_identifier_is_deterministic_for_same_cumulative(self):
+        """Two calls with the same cumulative position produce the same identifier."""
+        from datetime import UTC, datetime
+
+        client = _make_client()
+        client.report_usage.return_value = MagicMock()
+        service = BillingService(_make_settings(), stripe_client=client)
+
+        period_start = datetime(2026, 4, 1, tzinfo=UTC)
+        period_end = datetime(2026, 4, 2, tzinfo=UTC)
+
+        await service.report_usage_to_stripe(
+            stripe_customer_id="cus_123",
+            delta_cost_microdollars=1000,
+            period_start=period_start,
+            period_end=period_end,
+            cumulative_total_microdollars=10000,
+        )
+        first_id = client.report_usage.call_args[0][0].identifier
+
+        await service.report_usage_to_stripe(
+            stripe_customer_id="cus_123",
+            delta_cost_microdollars=1000,
+            period_start=period_start,
+            period_end=period_end,
+            cumulative_total_microdollars=10000,  # Same cumulative — retry scenario
+        )
+        second_id = client.report_usage.call_args[0][0].identifier
+
+        assert first_id == second_id
+
+    @pytest.mark.asyncio
+    async def test_identifier_changes_with_cumulative(self):
+        """New cumulative position produces a new identifier (genuinely new usage)."""
+        from datetime import UTC, datetime
+
+        client = _make_client()
+        client.report_usage.return_value = MagicMock()
+        service = BillingService(_make_settings(), stripe_client=client)
+
+        period_start = datetime(2026, 4, 1, tzinfo=UTC)
+        period_end = datetime(2026, 4, 2, tzinfo=UTC)
+
+        await service.report_usage_to_stripe(
+            stripe_customer_id="cus_123",
+            delta_cost_microdollars=1000,
+            period_start=period_start,
+            period_end=period_end,
+            cumulative_total_microdollars=10000,
+        )
+        first_id = client.report_usage.call_args[0][0].identifier
+
+        await service.report_usage_to_stripe(
+            stripe_customer_id="cus_123",
+            delta_cost_microdollars=500,
+            period_start=period_start,
+            period_end=period_end,
+            cumulative_total_microdollars=10500,  # New usage
+        )
+        second_id = client.report_usage.call_args[0][0].identifier
+
+        assert first_id != second_id
 
 
 def _make_usage_summary(total_cost_usd=0.0, input_tokens=0, output_tokens=0):
@@ -598,3 +687,134 @@ class TestReportAndReconcileUsage:
 
         assert result["action"] == "reported"
         assert result["our_total"] == 2  # ceil(1.5) = 2, not 1
+
+    @pytest.mark.asyncio
+    async def test_failed_catchup_preserves_old_period_marker(self):
+        """If old-period catchup fails, must NOT reset last_reported_period_start.
+
+        Otherwise future runs treat the new period as the only period and the
+        old period's unreported usage is dropped permanently.
+        """
+        client = _make_client()
+        # Old period: our=50000 microdollars, stripe=40000, last_reported=45000
+        # → catchup delta = 50000 - max(40000, 45000) = 5000. Report FAILS.
+        client.get_meter_event_summary.return_value = 40000
+        client.report_usage.return_value = None  # Stripe report fails
+
+        settings = _make_settings()
+        settings.meter_id_cost = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        billing_config = {
+            "stripe_customer_id": "cus_123",
+            "current_period_start": "2026-05-01T00:00:00+00:00",
+            "current_period_end": "2026-06-01T00:00:00+00:00",
+            "last_reported_total": 45000,
+            "last_reported_period_start": "2026-04-01T00:00:00+00:00",
+        }
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(total_cost_usd=0.05)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            mock_ss = MagicMock()
+            mock_ss.upsert = AsyncMock()
+            mock_ss_cls.return_value = mock_ss
+
+            result = await service.report_and_reconcile_usage(db)
+
+        # Caller should short-circuit — no new-period reporting
+        assert result["action"] == "catchup_failed"
+        # system_settings must NOT have been upserted (old period marker preserved)
+        mock_ss.upsert.assert_not_awaited()
+
+
+class TestWebhookInstanceBinding:
+    """Tests for C1 — fresh instances must not bind to other tenants' customers."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_instance_rejects_customer_created(self):
+        """Before first checkout, customer.created must NOT link this instance."""
+        client = _make_client()
+        event = MagicMock()
+        event.type = "customer.created"
+        event.id = "evt_123"
+        event.data.object = {"object": "customer", "id": "cus_other", "email": "other@tenant.com"}
+        client.construct_webhook_event.return_value = event
+
+        persist_link = AsyncMock()
+        service = BillingService(_make_settings(), stripe_client=client)
+
+        handled, event_type, _ = await service.handle_webhook(
+            payload=b"payload",
+            signature="sig",
+            persist_customer_link=persist_link,
+            expected_customer_id=None,  # Fresh instance
+            pending_checkout_session_id=None,
+        )
+
+        assert handled is False
+        persist_link.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fresh_instance_rejects_unmatched_checkout_session(self):
+        """checkout.session.completed for a different session must be ignored."""
+        client = _make_client()
+        event = MagicMock()
+        event.type = "checkout.session.completed"
+        event.id = "evt_456"
+        event.data.object = {"id": "cs_someone_else", "customer": "cus_other"}
+        client.construct_webhook_event.return_value = event
+
+        persist_link = AsyncMock()
+        service = BillingService(_make_settings(), stripe_client=client)
+
+        handled, _, _ = await service.handle_webhook(
+            payload=b"payload",
+            signature="sig",
+            persist_customer_link=persist_link,
+            expected_customer_id=None,
+            pending_checkout_session_id="cs_ours",
+        )
+
+        assert handled is False
+        persist_link.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fresh_instance_accepts_matching_checkout_session(self):
+        """checkout.session.completed matching our pending session SHOULD link."""
+        client = _make_client()
+        event = MagicMock()
+        event.type = "checkout.session.completed"
+        event.id = "evt_789"
+        event.data.object = {
+            "id": "cs_ours",
+            "customer": "cus_mine",
+            "subscription": "sub_123",
+            "customer_email": "billing@mine.com",
+            "metadata": {},
+        }
+        client.construct_webhook_event.return_value = event
+
+        persist_link = AsyncMock()
+        service = BillingService(_make_settings(), stripe_client=client)
+
+        handled, _, _ = await service.handle_webhook(
+            payload=b"payload",
+            signature="sig",
+            persist_customer_link=persist_link,
+            expected_customer_id=None,
+            pending_checkout_session_id="cs_ours",  # Match
+        )
+
+        assert handled is True
+        persist_link.assert_awaited_once()

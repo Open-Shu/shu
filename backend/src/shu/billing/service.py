@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,7 +124,7 @@ class BillingService:
         self,
         stripe_subscription_id: str,
         user_count: int,
-        proration: str = "create_prorations",
+        proration: Literal["create_prorations", "none", "always_invoice"] = "create_prorations",
     ) -> bool:
         """Sync the subscription quantity to match current user count.
 
@@ -144,8 +144,21 @@ class BillingService:
             if not subscription:
                 return False
 
+            # Subscriptions may carry multiple items (e.g., licensed seat + metered
+            # cost). Match the seat item by price ID instead of assuming index 0.
             items_data = subscription.get("items", {}).get("data", [])
-            current_quantity = items_data[0].get("quantity", 0) if items_data else 0
+            seat_item = self._find_seat_item(items_data)
+            if seat_item is None:
+                logger.error(
+                    "Subscription has no item matching the configured seat price",
+                    extra={
+                        "subscription_id": stripe_subscription_id,
+                        "configured_price": self._settings.price_id_monthly,
+                    },
+                )
+                return False
+
+            current_quantity = seat_item.get("quantity", 0)
 
             if current_quantity == user_count:
                 logger.debug(
@@ -215,6 +228,7 @@ class BillingService:
         delta_cost_microdollars: int,
         period_start: datetime,
         period_end: datetime,
+        cumulative_total_microdollars: int,
     ) -> bool:
         """Report a cost delta to Stripe Meters API for billing.
 
@@ -223,11 +237,18 @@ class BillingService:
         compare-and-correct reconciliation in report_and_reconcile_usage
         handles this.
 
+        Idempotency: the event identifier is derived from
+        (customer, period_start, cumulative_total). On retry of the same
+        cumulative position, Stripe dedupes via the identifier. New usage
+        produces a new identifier and is counted.
+
         Args:
             stripe_customer_id: The Stripe customer ID
             delta_cost_microdollars: Cost delta in microdollars (positive integer)
             period_start: Start of the reporting window
             period_end: End of the reporting window
+            cumulative_total_microdollars: Cumulative period total after this delta;
+                used to construct the deterministic idempotency identifier.
 
         Returns:
             True if usage was reported successfully
@@ -237,11 +258,20 @@ class BillingService:
             logger.debug("No usage cost to report")
             return True
 
+        # Deterministic identifier — same cumulative position → same identifier
+        # → Stripe dedupes. Different cumulative position → different identifier
+        # → counted as new usage.
+        identifier = (
+            f"shu-usage-{stripe_customer_id}-"
+            f"{int(period_start.timestamp())}-{cumulative_total_microdollars}"
+        )
+
         event = UsageMeterEvent(
             event_name=self._settings.meter_event_name,
             stripe_customer_id=stripe_customer_id,
             timestamp=int(period_end.timestamp()),
             value=delta_cost_microdollars,
+            identifier=identifier,
             payload={
                 "period_start": period_start.isoformat(),
                 "period_end": period_end.isoformat(),
@@ -302,9 +332,16 @@ class BillingService:
             old_start = datetime.fromisoformat(last_reported_period)
             # Find old period end — use current period start as the boundary
             old_end = period_start
-            await self._catchup_old_period(
+            catchup_ok = await self._catchup_old_period(
                 db, customer_id, old_start, old_end, last_reported_total, billing_config, settings_service
             )
+            if not catchup_ok:
+                # Don't proceed to new-period reporting; that would overwrite
+                # the old-period marker in system_settings and drop the gap.
+                return {
+                    "action": "catchup_failed",
+                    "old_period_start": last_reported_period,
+                }
             last_reported_total = 0
 
         # Query our cumulative total for current period
@@ -334,12 +371,14 @@ class BillingService:
                 "last_reported_total": last_reported_total,
             }
 
-        # Report the delta
+        # Report the delta. Pass our_total so the idempotency identifier
+        # encodes the post-delta cumulative position.
         reported = await self.report_usage_to_stripe(
             stripe_customer_id=customer_id,
             delta_cost_microdollars=delta,
             period_start=period_start,
             period_end=now,
+            cumulative_total_microdollars=our_total,
         )
 
         if reported:
@@ -373,8 +412,15 @@ class BillingService:
         last_reported_total: int,
         billing_config: dict,
         settings_service: Any,
-    ) -> None:
-        """Send any remaining usage for a completed billing period."""
+    ) -> bool:
+        """Send any remaining usage for a completed billing period.
+
+        Returns:
+            True if catchup succeeded (or no gap existed); caller may proceed
+            to new-period reporting. False if the Stripe report failed; caller
+            must short-circuit so the next run retries the old-period catchup.
+
+        """
         from shu.billing.adapters import BILLING_SETTINGS_KEY, UsageProviderImpl
 
         usage_provider = UsageProviderImpl(db)
@@ -389,21 +435,31 @@ class BillingService:
 
         delta = old_total - max(old_stripe_total, last_reported_total)
         if delta > 0:
-            await self.report_usage_to_stripe(
+            reported = await self.report_usage_to_stripe(
                 stripe_customer_id=customer_id,
                 delta_cost_microdollars=delta,
                 period_start=old_start,
                 period_end=old_end,
+                cumulative_total_microdollars=old_total,
             )
+            if not reported:
+                # Leave last_reported_period_start intact so the next run
+                # retries the old-period catchup instead of dropping the gap.
+                logger.warning(
+                    "Old period catchup report failed; will retry next run",
+                    extra={"delta": delta, "old_period_start": old_start.isoformat()},
+                )
+                return False
             logger.info(
                 "Old period catchup reported",
                 extra={"delta": delta, "old_period_start": old_start.isoformat()},
             )
 
-        # Reset for new period
+        # Reset for new period (only reached when catchup succeeded or no delta was needed)
         billing_config["last_reported_total"] = 0
         billing_config["last_reported_period_start"] = None
         await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
+        return True
 
     # =========================================================================
     # Webhooks
@@ -416,6 +472,7 @@ class BillingService:
         persist_subscription: PersistSubscriptionFn | None = None,
         persist_customer_link: PersistCustomerLinkFn | None = None,
         expected_customer_id: str | None = None,
+        pending_checkout_session_id: str | None = None,
     ) -> tuple[bool, str, str | None]:
         """Process a Stripe webhook event.
 
@@ -430,9 +487,12 @@ class BillingService:
             expected_customer_id: If set, reject events for other customers.
                 When multiple Shu instances share a Stripe account, each
                 endpoint receives ALL events. This filter ensures an instance
-                only processes events for its own customer. Events that
-                establish the initial link (checkout.session.completed,
-                customer.created) are allowed when no customer is linked yet.
+                only processes events for its own customer after the initial
+                link has been established.
+            pending_checkout_session_id: If set, only accept
+                checkout.session.completed events for this session ID. This
+                prevents a fresh instance (no expected_customer_id yet) from
+                binding itself to another tenant's customer.
 
         Returns:
             Tuple of (handled: bool, event_type: str, event_id: str | None)
@@ -449,10 +509,38 @@ class BillingService:
             extra={"event_type": event.type, "event_id": event.id},
         )
 
+        # Instance-binding safety for fresh (unlinked) instances.
+        # Before a customer is linked (expected_customer_id is None), any
+        # customer.created or checkout.session.completed on the shared Stripe
+        # account could bind this instance to the wrong tenant. Only accept
+        # checkout.session.completed matching our pending session claim; drop
+        # customer.created and rely on the verified checkout event to link.
+        if expected_customer_id is None:
+            if event.type == "checkout.session.completed":
+                data_obj = getattr(event.data, "object", None) or {}
+                session_id = data_obj.get("id") if isinstance(data_obj, dict) else getattr(data_obj, "id", None)
+                if not pending_checkout_session_id or session_id != pending_checkout_session_id:
+                    logger.info(
+                        "Ignoring checkout.session.completed — no matching pending session",
+                        extra={
+                            "event_session_id": session_id,
+                            "pending_session_id": pending_checkout_session_id,
+                        },
+                    )
+                    return False, event.type, event.id
+            elif event.type == "customer.created":
+                # customer.created has no session context; unsafe to act on
+                # before we've verified a checkout session. The matching
+                # checkout.session.completed is the authoritative linker.
+                logger.info(
+                    "Ignoring customer.created — instance not yet linked",
+                    extra={"event_id": event.id},
+                )
+                return False, event.type, event.id
+
         # Scope check: reject events for other customers (multi-instance safety).
-        # When a Stripe account serves multiple Shu instances, each webhook
-        # endpoint receives ALL account events. Without this check an event
-        # for customer B would overwrite instance A's billing config.
+        # Applies once a customer is linked — then we only process events
+        # matching that customer.
         if expected_customer_id:
             event_customer = self._extract_customer_id(event)
             if event_customer and event_customer != expected_customer_id:
@@ -493,6 +581,22 @@ class BillingService:
         handled = await self._dispatcher.dispatch(event, **callbacks)
 
         return handled, event.type, event.id
+
+    def _find_seat_item(self, items_data: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Find the subscription item that matches the configured seat price.
+
+        Subscriptions may carry multiple items (e.g., licensed seat price plus
+        a metered cost price). Quantity sync only applies to the seat item.
+        """
+        seat_price_id = self._settings.price_id_monthly
+        if not seat_price_id:
+            return items_data[0] if items_data else None
+        for item in items_data:
+            price = item.get("price")
+            price_id = price.get("id") if isinstance(price, dict) else None
+            if price_id == seat_price_id:
+                return item
+        return None
 
     @staticmethod
     def _extract_customer_id(event: Any) -> str | None:

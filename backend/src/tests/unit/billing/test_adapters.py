@@ -194,22 +194,24 @@ class TestUsageProviderImpl:
 
     @pytest.mark.asyncio
     async def test_get_usage_summary_aggregates_by_model(self):
-        """Should aggregate usage by model and compute totals."""
+        """Should aggregate usage by model and compute totals as Decimal."""
+        from decimal import Decimal
+
         mock_db = AsyncMock()
 
-        # Simulate two rows from the GROUP BY query
+        # DB returns Decimal for DECIMAL(16,9) columns; preserve that all the way through.
         row1 = MagicMock()
         row1.model_id = "claude-haiku-4-5"
         row1.input_tokens = 1000
         row1.output_tokens = 200
-        row1.total_cost = 1.50
+        row1.total_cost = Decimal("1.500000000")
         row1.request_count = 10
 
         row2 = MagicMock()
         row2.model_id = "gpt-5.4"
         row2.input_tokens = 500
         row2.output_tokens = 100
-        row2.total_cost = 0.75
+        row2.total_cost = Decimal("0.750000000")
         row2.request_count = 5
 
         mock_result = MagicMock()
@@ -224,10 +226,12 @@ class TestUsageProviderImpl:
 
         assert summary.total_input_tokens == 1500
         assert summary.total_output_tokens == 300
-        assert summary.total_cost_usd == 2.25
+        assert summary.total_cost_usd == Decimal("2.250000000")
+        # Verify Decimal type is preserved (not silently converted to float)
+        assert isinstance(summary.total_cost_usd, Decimal)
+        assert isinstance(summary.by_model["claude-haiku-4-5"].cost_usd, Decimal)
         assert len(summary.by_model) == 2
         assert summary.by_model["claude-haiku-4-5"].request_count == 10
-        assert summary.by_model["gpt-5.4"].cost_usd == 0.75
 
     @pytest.mark.asyncio
     async def test_get_usage_summary_handles_empty_period(self):
@@ -251,13 +255,15 @@ class TestUsageProviderImpl:
     @pytest.mark.asyncio
     async def test_handles_null_model_id(self):
         """Should map null model_id to 'unknown'."""
+        from decimal import Decimal
+
         mock_db = AsyncMock()
 
         row = MagicMock()
         row.model_id = None
         row.input_tokens = 100
         row.output_tokens = 50
-        row.total_cost = 0.10
+        row.total_cost = Decimal("0.100000000")
         row.request_count = 1
 
         mock_result = MagicMock()

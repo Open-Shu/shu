@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shu × Stripe — Integration Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --stripe:   #635BFF;
+    --router:   #2563EB;
+    --service:  #059669;
+    --client:   #D97706;
+    --webhook:  #DC2626;
+    --adapter:  #7C3AED;
+    --db:       #334155;
+    --sync:     #EA580C;
+    --config:   #475569;
+    --enforce:  #DB2777;
+    --bg:       #0F172A;
+    --surface:  #1E293B;
+    --border:   #334155;
+    --text:     #F1F5F9;
+    --muted:    #94A3B8;
+    --arrow:    #475569;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    padding: 40px 48px 60px;
+    min-width: 1200px;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 40px;
+  }
+  header .logo {
+    width: 44px; height: 44px;
+    background: var(--stripe);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+  }
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+  header p  { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin-bottom: 36px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px; font-weight: 500;
+  }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Main grid: two column ── */
+  .diagram {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+    align-items: start;
+  }
+
+  /* ── Left column: swim-lanes ── */
+  .lanes {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* ── Lane ── */
+  .lane {
+    position: relative;
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 0;
+  }
+  .lane + .lane {
+    margin-top: -1px; /* collapse borders */
+  }
+
+  .lane-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 14px 14px 14px 16px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 10px 0 0 10px;
+    gap: 4px;
+    min-height: 80px;
+  }
+  .lane-label .layer-tag {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    opacity: .6;
+  }
+  .lane-label .layer-name {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .lane-label .layer-file {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .lane-label .layer-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-bottom: 2px;
+    flex-shrink: 0;
+  }
+
+  .lane-content {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-left: none;
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    border-radius: 0 10px 10px 0;
+    min-height: 80px;
+  }
+
+  /* ── Cards ── */
+  .card {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 10px 13px;
+    background: var(--bg);
+    position: relative;
+    transition: transform .15s, box-shadow .15s;
+    cursor: default;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(0,0,0,.4);
+    z-index: 10;
+  }
+  .card .card-title {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 5px;
+    white-space: nowrap;
+  }
+  .card .card-detail {
+    font-size: 10.5px;
+    color: var(--muted);
+    line-height: 1.5;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .card .card-badge {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-top: 4px;
+  }
+
+  /* color variants */
+  .c-stripe  { border-color: color-mix(in srgb, var(--stripe) 40%, transparent);  background: color-mix(in srgb, var(--stripe) 8%, var(--bg)); }
+  .c-router  { border-color: color-mix(in srgb, var(--router) 40%, transparent);  background: color-mix(in srgb, var(--router) 8%, var(--bg)); }
+  .c-service { border-color: color-mix(in srgb, var(--service) 40%, transparent); background: color-mix(in srgb, var(--service) 8%, var(--bg)); }
+  .c-client  { border-color: color-mix(in srgb, var(--client) 40%, transparent);  background: color-mix(in srgb, var(--client) 8%, var(--bg)); }
+  .c-webhook { border-color: color-mix(in srgb, var(--webhook) 40%, transparent); background: color-mix(in srgb, var(--webhook) 8%, var(--bg)); }
+  .c-adapter { border-color: color-mix(in srgb, var(--adapter) 40%, transparent); background: color-mix(in srgb, var(--adapter) 8%, var(--bg)); }
+  .c-db      { border-color: color-mix(in srgb, var(--db) 60%, transparent);      background: color-mix(in srgb, var(--db) 15%, var(--bg)); }
+  .c-sync    { border-color: color-mix(in srgb, var(--sync) 40%, transparent);    background: color-mix(in srgb, var(--sync) 8%, var(--bg)); }
+  .c-config  { border-color: color-mix(in srgb, var(--config) 60%, transparent);  background: color-mix(in srgb, var(--config) 12%, var(--bg)); }
+  .c-enforce { border-color: color-mix(in srgb, var(--enforce) 40%, transparent); background: color-mix(in srgb, var(--enforce) 8%, var(--bg)); }
+
+  /* badge colors */
+  .b-admin   { background: color-mix(in srgb, var(--router) 20%, transparent); color: #93C5FD; }
+  .b-auth    { background: color-mix(in srgb, var(--service) 20%, transparent); color: #6EE7B7; }
+  .b-public  { background: #1E293B; color: var(--muted); border: 1px solid var(--border); }
+
+  /* ── Flow arrows between lanes ── */
+  .arrow-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    color: var(--arrow);
+    font-size: 11px;
+    gap: 8px;
+    padding-left: 130px;
+  }
+  .arrow-row svg { opacity: .6; }
+  .arrow-row span { font-size: 10px; color: var(--muted); font-style: italic; }
+
+  /* ── Right column: sidebar panels ── */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .2px;
+  }
+  .panel-header .panel-icon { font-size: 14px; }
+  .panel-body { padding: 12px 14px; }
+
+  /* Webhook event list */
+  .event-list { display: flex; flex-direction: column; gap: 6px; }
+  .event-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 9px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .event-item .event-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    flex-shrink: 0; margin-top: 3px;
+  }
+  .event-item .event-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 500;
+    color: #F8FAFC;
+    margin-bottom: 1px;
+  }
+  .event-item .event-desc { color: var(--muted); font-size: 10px; }
+
+  /* Config env vars */
+  .env-list { display: flex; flex-direction: column; gap: 4px; }
+  .env-var {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    padding: 5px 8px;
+    background: var(--bg);
+    border-radius: 5px;
+    border: 1px solid var(--border);
+  }
+  .env-var .req { color: #FCA5A5; font-size: 9px; font-weight: 700; flex-shrink: 0; }
+  .env-var .opt { color: var(--muted); font-size: 9px; font-weight: 700; flex-shrink: 0; }
+
+  /* Data flow panel */
+  .flow-steps { display: flex; flex-direction: column; gap: 0; }
+  .flow-step {
+    display: flex;
+    gap: 10px;
+    position: relative;
+    padding-bottom: 12px;
+  }
+  .flow-step:last-child { padding-bottom: 0; }
+  .flow-step-num {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .flow-step-line {
+    position: absolute;
+    left: 11px; top: 22px;
+    width: 1px;
+    height: calc(100% - 10px);
+    background: var(--border);
+  }
+  .flow-step-last .flow-step-line { display: none; }
+  .flow-step-content { padding-top: 2px; }
+  .flow-step-content strong { font-size: 11.5px; display: block; margin-bottom: 2px; }
+  .flow-step-content p { font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+
+  /* ── Divider ── */
+  .section-divider {
+    grid-column: 1 / -1;
+    height: 1px;
+    background: var(--border);
+    margin: 12px 0;
+  }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 36px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  footer code { font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⚡</div>
+  <div>
+    <h1>Shu × Stripe — Integration Architecture</h1>
+    <p>backend/src/shu/billing/ &nbsp;·&nbsp; 7 layers &nbsp;·&nbsp; per-seat + usage-based billing</p>
+  </div>
+</header>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--config)"></div>Config</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--router)"></div>API Router</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--service)"></div>Service</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--client)"></div>Stripe Client</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--webhook)"></div>Webhook Handlers</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--adapter)"></div>Adapters / DB</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--sync)"></div>Scheduler / Sync</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--stripe)"></div>Stripe External</div>
+</div>
+
+<div class="diagram">
+
+  <!-- ══════════════════ LEFT COLUMN ══════════════════ -->
+  <div class="lanes">
+
+    <!-- Lane 1: Config -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--config);">
+        <div class="layer-dot" style="background:var(--config)"></div>
+        <div class="layer-tag">Layer 1</div>
+        <div class="layer-name">Config</div>
+        <div class="layer-file">billing/config.py</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-config" style="min-width:100%">
+          <div class="card-title" style="color:#94A3B8">BillingSettings &nbsp;<span style="font-weight:400;opacity:.6">(pydantic-settings · lru_cache)</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px">
+            <div class="card-detail">
+              <span style="color:#F8FAFC">Required</span><br>
+              SHU_STRIPE_SECRET_KEY<br>
+              SHU_STRIPE_WEBHOOK_SECRET<br>
+              SHU_STRIPE_PRICE_ID_MONTHLY
+            </div>
+            <div class="card-detail">
+              <span style="color:#F8FAFC">Optional</span><br>
+              SHU_STRIPE_PUBLISHABLE_KEY<br>
+              SHU_STRIPE_METER_ID_COST<br>
+              SHU_STRIPE_METER_EVENT_NAME
+            </div>
+            <div class="card-detail">
+              <span style="color:#F8FAFC">Operational</span><br>
+              SHU_STRIPE_MODE (test|live)<br>
+              SHU_APP_BASE_URL<br>
+              SHU_STRIPE_USAGE_REPORT_INTERVAL
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <svg width="12" height="16" viewBox="0 0 12 16"><path d="M6 0v12M2 8l4 7 4-7" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>injected via FastAPI dependency</span>
+    </div>
+
+    <!-- Lane 2: API Router -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--router);">
+        <div class="layer-dot" style="background:var(--router)"></div>
+        <div class="layer-tag">Layer 2</div>
+        <div class="layer-name">API Router</div>
+        <div class="layer-file">billing/router.py</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-router">
+          <div class="card-title" style="color:#93C5FD">POST /checkout</div>
+          <div class="card-detail">Create Checkout session<br>→ returns redirect URL</div>
+          <div class="card-badge b-admin">Admin</div>
+        </div>
+        <div class="card c-router">
+          <div class="card-title" style="color:#93C5FD">GET /portal</div>
+          <div class="card-detail">Customer Portal URL<br>manage payments &amp; invoices</div>
+          <div class="card-badge b-admin">Admin</div>
+        </div>
+        <div class="card c-router">
+          <div class="card-title" style="color:#93C5FD">GET /subscription</div>
+          <div class="card-detail">Subscription status<br>period, seats, enforcement</div>
+          <div class="card-badge b-auth">Auth</div>
+        </div>
+        <div class="card c-router">
+          <div class="card-title" style="color:#93C5FD">GET /usage</div>
+          <div class="card-detail">Token usage &amp; cost<br>current billing period</div>
+          <div class="card-badge b-auth">Auth</div>
+        </div>
+        <div class="card c-router">
+          <div class="card-title" style="color:#93C5FD">POST /webhooks</div>
+          <div class="card-detail">Stripe-Signature verified<br>hidden from OpenAPI docs</div>
+          <div class="card-badge b-public">Public + Sig</div>
+        </div>
+        <div class="card c-router">
+          <div class="card-title" style="color:#93C5FD">GET /config</div>
+          <div class="card-detail">Publishable key, mode<br>safe for frontend</div>
+          <div class="card-badge b-public">Public</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <svg width="12" height="16" viewBox="0 0 12 16"><path d="M6 0v12M2 8l4 7 4-7" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>delegates business logic</span>
+    </div>
+
+    <!-- Lane 3: Service -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--service);">
+        <div class="layer-dot" style="background:var(--service)"></div>
+        <div class="layer-tag">Layer 3</div>
+        <div class="layer-name">Billing Service</div>
+        <div class="layer-file">billing/service.py</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-service" style="flex:1;min-width:0">
+          <div class="card-title" style="color:#6EE7B7">BillingService</div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:4px">
+            <div class="card-detail">
+              <span style="color:#D1FAE5">Checkout &amp; Portal</span><br>
+              create_checkout_session()<br>
+              create_portal_session()<br>
+              create_stripe_customer()
+            </div>
+            <div class="card-detail">
+              <span style="color:#D1FAE5">Seat Sync</span><br>
+              sync_subscription_quantity()<br>
+              <br>
+            </div>
+            <div class="card-detail">
+              <span style="color:#D1FAE5">Usage Metering</span><br>
+              report_usage_to_stripe()<br>
+              report_and_reconcile_usage()<br>
+              _catchup_old_period()
+            </div>
+            <div class="card-detail">
+              <span style="color:#D1FAE5">Webhooks</span><br>
+              handle_webhook()<br>
+              Multi-instance safety<br>
+              Session ID claim guard
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <svg width="12" height="16" viewBox="0 0 12 16"><path d="M6 0v12M2 8l4 7 4-7" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>all Stripe API calls flow through</span>
+    </div>
+
+    <!-- Lane 4: Stripe Client -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--client);">
+        <div class="layer-dot" style="background:var(--client)"></div>
+        <div class="layer-tag">Layer 4</div>
+        <div class="layer-name">Stripe Client</div>
+        <div class="layer-file">billing/stripe_client.py</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-client">
+          <div class="card-title" style="color:#FDE68A">Customers</div>
+          <div class="card-detail">create_customer()<br>get_customer()<br>update_customer()</div>
+        </div>
+        <div class="card c-client">
+          <div class="card-title" style="color:#FDE68A">Checkout &amp; Portal</div>
+          <div class="card-detail">create_checkout_session()<br>create_portal_session()</div>
+        </div>
+        <div class="card c-client">
+          <div class="card-title" style="color:#FDE68A">Subscriptions</div>
+          <div class="card-detail">get_subscription()<br>update_quantity()<br>cancel_subscription()</div>
+        </div>
+        <div class="card c-client">
+          <div class="card-title" style="color:#FDE68A">Usage Meters</div>
+          <div class="card-detail">report_usage()<br>get_meter_event_summary()<br><span style="color:#6EE7B7">→ Meters API</span></div>
+        </div>
+        <div class="card c-client">
+          <div class="card-title" style="color:#FDE68A">Webhooks</div>
+          <div class="card-detail">construct_webhook_event()<br>parse_subscription_update()<br>Sig verification</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <svg width="12" height="16" viewBox="0 0 12 16"><path d="M6 0v12M2 8l4 7 4-7" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>HTTPS to Stripe API &nbsp;/&nbsp; inbound webhooks from Stripe</span>
+    </div>
+
+    <!-- Lane 5: Stripe External -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--stripe);">
+        <div class="layer-dot" style="background:var(--stripe)"></div>
+        <div class="layer-tag">External</div>
+        <div class="layer-name">Stripe</div>
+        <div class="layer-file">stripe.com</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-stripe">
+          <div class="card-title" style="color:#C4B5FD">REST API</div>
+          <div class="card-detail">Customers<br>Subscriptions<br>Billing Meters</div>
+        </div>
+        <div class="card c-stripe">
+          <div class="card-title" style="color:#C4B5FD">Hosted Checkout</div>
+          <div class="card-detail">Stripe-hosted payment<br>page → success/cancel<br>redirect</div>
+        </div>
+        <div class="card c-stripe">
+          <div class="card-title" style="color:#C4B5FD">Customer Portal</div>
+          <div class="card-detail">Self-service billing<br>manage payment methods<br>view invoices</div>
+        </div>
+        <div class="card c-stripe">
+          <div class="card-title" style="color:#C4B5FD">Webhook Events</div>
+          <div class="card-detail">POST /billing/webhooks<br>Stripe-Signature header<br>retries on failure</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Adapter + Enforcement row -->
+    <div class="arrow-row" style="margin-top:8px">
+      <svg width="12" height="16" viewBox="0 0 12 16"><path d="M6 0v12M2 8l4 7 4-7" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>webhook callbacks &amp; DB queries</span>
+    </div>
+
+    <!-- Lane 6: Adapters -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--adapter);">
+        <div class="layer-dot" style="background:var(--adapter)"></div>
+        <div class="layer-tag">Layer 5</div>
+        <div class="layer-name">Adapters</div>
+        <div class="layer-file">billing/adapters.py</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-adapter">
+          <div class="card-title" style="color:#DDD6FE">UsageProviderImpl</div>
+          <div class="card-detail">Queries llm_usage table<br>get_usage_summary()<br>get_usage_for_period()</div>
+        </div>
+        <div class="card c-adapter">
+          <div class="card-title" style="color:#DDD6FE">Subscription Callback</div>
+          <div class="card-detail">create_subscription_<br>persistence_callback()<br>→ system_settings[billing]</div>
+        </div>
+        <div class="card c-adapter">
+          <div class="card-title" style="color:#DDD6FE">Customer Link Callback</div>
+          <div class="card-detail">create_customer_<br>link_callback()<br>→ links Stripe customer ID</div>
+        </div>
+        <div class="card c-adapter">
+          <div class="card-title" style="color:#DDD6FE">Helpers</div>
+          <div class="card-detail">get_billing_config()<br>get_user_count()<br>BILLING_SETTINGS_KEY</div>
+        </div>
+        <div class="card c-enforce">
+          <div class="card-title" style="color:#FBCFE8">Enforcement</div>
+          <div class="card-detail">check_user_limit()<br>→ none / soft / hard<br>billing/enforcement.py</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <svg width="12" height="16" viewBox="0 0 12 16"><path d="M6 0v12M2 8l4 7 4-7" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>reads/writes via SQLAlchemy async</span>
+    </div>
+
+    <!-- Lane 7: Database -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--db);">
+        <div class="layer-dot" style="background:var(--db)"></div>
+        <div class="layer-tag">Layer 6</div>
+        <div class="layer-name">Database</div>
+        <div class="layer-file">PostgreSQL</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-db" style="flex:1">
+          <div class="card-title" style="color:#CBD5E1">system_settings <span style="opacity:.6;font-weight:400">key: "billing"</span></div>
+          <div class="card-detail">stripe_customer_id &nbsp;·&nbsp; stripe_subscription_id &nbsp;·&nbsp; subscription_status<br>current_period_start/end &nbsp;·&nbsp; quantity &nbsp;·&nbsp; user_limit_enforcement<br>last_reported_total &nbsp;·&nbsp; last_reported_period_start &nbsp;·&nbsp; pending_checkout_session_id</div>
+        </div>
+        <div class="card c-db">
+          <div class="card-title" style="color:#CBD5E1">llm_usage</div>
+          <div class="card-detail">model_id<br>input/output_tokens<br>total_cost (microdollars)</div>
+        </div>
+        <div class="card c-db">
+          <div class="card-title" style="color:#CBD5E1">users</div>
+          <div class="card-detail">COUNT(*) used for<br>seat enforcement<br>and sync</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scheduler row -->
+    <div style="height:20px"></div>
+
+    <!-- Lane 8: Scheduler -->
+    <div class="lane">
+      <div class="lane-label" style="border-left: 3px solid var(--sync);">
+        <div class="layer-dot" style="background:var(--sync)"></div>
+        <div class="layer-tag">Layer 7</div>
+        <div class="layer-name">Scheduler</div>
+        <div class="layer-file">billing/sync.py</div>
+      </div>
+      <div class="lane-content">
+        <div class="card c-sync">
+          <div class="card-title" style="color:#FDBA74">BillingQuantitySyncSource</div>
+          <div class="card-detail">Scheduler source<br>Daily reconciliation<br>seat count ↔ Stripe qty</div>
+        </div>
+        <div class="card c-sync">
+          <div class="card-title" style="color:#FDBA74">UsageReportingSource</div>
+          <div class="card-detail">Scheduler source<br>Hourly compare-and-correct<br>to Stripe Meters API</div>
+        </div>
+        <div class="card c-sync">
+          <div class="card-title" style="color:#FDBA74">trigger_quantity_sync()</div>
+          <div class="card-detail">Fire-and-forget<br>Called on user<br>create / delete</div>
+        </div>
+        <div class="card" style="background:color-mix(in srgb,#1E293B 80%,transparent);border-color:#334155;flex:1">
+          <div class="card-title" style="color:#94A3B8">SchedulerService</div>
+          <div class="card-detail" style="color:#64748B">services/scheduler_service.py<br>Registers both billing sources<br>Drives cleanup_stale() ticks</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /lanes -->
+
+  <!-- ══════════════════ RIGHT COLUMN ══════════════════ -->
+  <div class="sidebar">
+
+    <!-- Webhook Events -->
+    <div class="panel">
+      <div class="panel-header" style="color:#FCA5A5">
+        <span class="panel-icon">📨</span> Webhook Events Handled
+      </div>
+      <div class="panel-body">
+        <div class="event-list">
+          <div class="event-item">
+            <div class="event-dot" style="background:#7C3AED"></div>
+            <div>
+              <div class="event-name">checkout.session.completed</div>
+              <div class="event-desc">Links Stripe customer + subscription to this instance. Session ID claim prevents multi-tenant cross-binding.</div>
+            </div>
+          </div>
+          <div class="event-item">
+            <div class="event-dot" style="background:var(--webhook)"></div>
+            <div>
+              <div class="event-name">customer.created</div>
+              <div class="event-desc">Ignored until a checkout session is verified. Prevents binding to another tenant's customer.</div>
+            </div>
+          </div>
+          <div class="event-item">
+            <div class="event-dot" style="background:var(--webhook)"></div>
+            <div>
+              <div class="event-name">customer.subscription.created</div>
+              <div class="event-desc">Persists subscription ID, status, quantity, period dates to system_settings.</div>
+            </div>
+          </div>
+          <div class="event-item">
+            <div class="event-dot" style="background:var(--webhook)"></div>
+            <div>
+              <div class="event-name">customer.subscription.updated</div>
+              <div class="event-desc">Syncs status changes, quantity updates, cancellation schedule.</div>
+            </div>
+          </div>
+          <div class="event-item">
+            <div class="event-dot" style="background:var(--webhook)"></div>
+            <div>
+              <div class="event-name">customer.subscription.deleted</div>
+              <div class="event-desc">Marks subscription as cancelled, triggers deprovisioning.</div>
+            </div>
+          </div>
+          <div class="event-item">
+            <div class="event-dot" style="background:#059669"></div>
+            <div>
+              <div class="event-name">invoice.paid</div>
+              <div class="event-desc">Confirms payment. Stripe handles receipts; logged for audit.</div>
+            </div>
+          </div>
+          <div class="event-item">
+            <div class="event-dot" style="background:#D97706"></div>
+            <div>
+              <div class="event-name">invoice.payment_failed</div>
+              <div class="event-desc">Logs failure. Grace period: 7 days before service suspension (configurable).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Checkout Flow -->
+    <div class="panel">
+      <div class="panel-header" style="color:#93C5FD">
+        <span class="panel-icon">🛒</span> Checkout Flow
+      </div>
+      <div class="panel-body">
+        <div class="flow-steps">
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--router)">1</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Admin → POST /billing/checkout</strong>
+              <p>Sends seat count + optional email. Session ID saved to system_settings as pending claim.</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--service)">2</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>BillingService → StripeClient</strong>
+              <p>Creates Checkout Session via Stripe API. Returns session ID + redirect URL.</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--stripe)">3</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>User → Stripe Hosted Checkout</strong>
+              <p>User enters payment details on Stripe's page. On success, redirected to success_url.</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--webhook)">4</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Stripe → POST /billing/webhooks</strong>
+              <p>checkout.session.completed fires. Signature verified, session ID matched to pending claim.</p>
+            </div>
+          </div>
+          <div class="flow-step flow-step-last">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--adapter)">5</div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Customer ID linked</strong>
+              <p>Stripe customer + subscription IDs written to system_settings. Pending claim cleared.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Usage Metering -->
+    <div class="panel">
+      <div class="panel-header" style="color:#6EE7B7">
+        <span class="panel-icon">📊</span> Usage Metering (Hourly)
+      </div>
+      <div class="panel-body">
+        <div class="flow-steps">
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--sync)">1</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>UsageReportingSource fires</strong>
+              <p>SchedulerService calls cleanup_stale() every hour (configurable via SHU_STRIPE_USAGE_REPORT_INTERVAL).</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--adapter)">2</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Query our total</strong>
+              <p>UsageProviderImpl aggregates llm_usage.total_cost for the current billing period → microdollars.</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--client)">3</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Query Stripe's total</strong>
+              <p>get_meter_event_summary() fetches Stripe's aggregated view for the same window.</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--service)">4</div>
+              <div class="flow-step-line"></div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Compare-and-correct</strong>
+              <p>delta = our_total − max(stripe_total, last_reported_total). Async-lag protection prevents double-counting.</p>
+            </div>
+          </div>
+          <div class="flow-step flow-step-last">
+            <div style="position:relative">
+              <div class="flow-step-num" style="background:var(--stripe)">5</div>
+            </div>
+            <div class="flow-step-content">
+              <strong>Report delta</strong>
+              <p>MeterEvent sent to Stripe. last_reported_total + period saved to system_settings for next run.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Multi-instance safety -->
+    <div class="panel">
+      <div class="panel-header" style="color:#FBCFE8">
+        <span class="panel-icon">🛡️</span> Multi-Instance Safety
+      </div>
+      <div class="panel-body" style="font-size:11.5px;color:var(--muted);line-height:1.6">
+        <p>Multiple Shu instances can share one Stripe account. The billing module prevents cross-tenant binding:</p>
+        <br>
+        <ul style="padding-left:16px;display:flex;flex-direction:column;gap:6px">
+          <li><strong style="color:var(--text)">Pending session claim</strong> — checkout creates a pending_checkout_session_id; only the matching checkout.session.completed can link the customer.</li>
+          <li><strong style="color:var(--text)">customer.created ignored</strong> — until a checkout session is verified, customer.created events are dropped.</li>
+          <li><strong style="color:var(--text)">expected_customer_id filter</strong> — once linked, all webhook events for other customers are silently rejected.</li>
+        </ul>
+      </div>
+    </div>
+
+  </div><!-- /sidebar -->
+
+</div><!-- /diagram -->
+
+<footer>
+  <div>Shu Billing Module &nbsp;·&nbsp; <code>backend/src/shu/billing/</code> &nbsp;·&nbsp; FastAPI + Stripe Python SDK + asyncpg</div>
+  <div>Generated April 2026</div>
+</footer>
+
+</body>
+</html>

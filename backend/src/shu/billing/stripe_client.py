@@ -7,7 +7,7 @@ module uses this client rather than importing stripe directly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import stripe
 from stripe import Customer, Subscription
@@ -257,7 +257,7 @@ class StripeClient:
         self,
         subscription_id: str,
         quantity: int,
-        proration_behavior: str = "create_prorations",
+        proration_behavior: Literal["create_prorations", "none", "always_invoice"] = "create_prorations",
     ) -> Subscription:
         """Update the quantity (seats) on a subscription.
 
@@ -276,15 +276,30 @@ class StripeClient:
         try:
             subscription = stripe.Subscription.retrieve(subscription_id)
 
-            # Get the subscription item ID (assuming single line item)
-            if not subscription.get("items", {}).get("data"):
+            # Find the seat item by price ID — subscriptions may carry multiple
+            # items (e.g., licensed seat + metered cost) and quantity only
+            # applies to the seat item.
+            items_data = subscription.get("items", {}).get("data", [])
+            if not items_data:
                 raise StripeClientError("Subscription has no items")
 
-            item_id = subscription["items"]["data"][0]["id"]
+            seat_price_id = self._settings.price_id_monthly
+            seat_item = None
+            for item in items_data:
+                price = item.get("price")
+                price_id = price.get("id") if isinstance(price, dict) else None
+                if price_id == seat_price_id:
+                    seat_item = item
+                    break
+
+            if seat_item is None:
+                raise StripeClientError(
+                    f"Subscription has no item matching configured seat price {seat_price_id}"
+                )
 
             updated = stripe.Subscription.modify(
                 subscription_id,
-                items=[{"id": item_id, "quantity": quantity}],
+                items=[{"id": seat_item["id"], "quantity": quantity}],
                 proration_behavior=proration_behavior,
             )
 
@@ -368,6 +383,7 @@ class StripeClient:
         try:
             meter_event = stripe.billing.MeterEvent.create(
                 event_name=event.event_name,
+                identifier=event.identifier,
                 payload={
                     "stripe_customer_id": event.stripe_customer_id,
                     "value": str(event.value),

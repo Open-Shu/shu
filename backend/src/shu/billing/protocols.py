@@ -6,6 +6,7 @@ These protocols define the data structures used by the billing module.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 
@@ -34,7 +35,7 @@ class UsageRecord(Protocol):
         ...
 
     @property
-    def cost_usd(self) -> float:
+    def cost_usd(self) -> Decimal:
         """Calculated cost in USD based on model pricing."""
         ...
 
@@ -58,7 +59,7 @@ class UsageSummary(Protocol):
         ...
 
     @property
-    def total_cost_usd(self) -> float:
+    def total_cost_usd(self) -> Decimal:
         """Total cost in USD."""
         ...
 
@@ -84,7 +85,7 @@ class ModelUsage(Protocol):
         ...
 
     @property
-    def cost_usd(self) -> float:
+    def cost_usd(self) -> Decimal:
         ...
 
     @property

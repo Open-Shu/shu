@@ -249,6 +249,8 @@ async def register_user(
             }
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -672,6 +674,8 @@ async def create_user(
         asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
         return SuccessResponse(data=user.to_dict())
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:

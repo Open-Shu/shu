@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.api.dependencies import get_db
 from shu.auth.rbac import get_current_user, require_admin
 from shu.billing.adapters import (
+    BILLING_SETTINGS_KEY,
     UsageProviderImpl,
     create_customer_link_callback,
     create_subscription_persistence_callback,
@@ -33,6 +34,7 @@ from shu.billing.service import BillingService
 from shu.billing.stripe_client import StripeClientError, StripeConfigurationError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
+from shu.services.system_settings_service import SystemSettingsService
 
 logger = get_logger(__name__)
 
@@ -84,6 +86,15 @@ async def create_checkout_session(
             customer_email=request.customer_email,
             stripe_customer_id=billing_config.get("stripe_customer_id"),
         )
+
+        # Record this session's ID so the webhook handler can verify that
+        # a future checkout.session.completed event belongs to us (multi-instance
+        # safety: another tenant's checkout on the same Stripe account must not
+        # bind this instance to their customer).
+        settings_service = SystemSettingsService(db)
+        billing_config["pending_checkout_session_id"] = session.session_id
+        await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
+
         return ShuResponse.success(session.model_dump())
     except StripeConfigurationError as e:
         logger.error("Stripe configuration error", extra={"error": str(e)})
@@ -228,18 +239,20 @@ async def get_current_usage(
 
     summary = await usage_provider.get_usage_summary(period_start, period_end)
 
+    # Convert Decimal to float at the API boundary — JSON has no Decimal type.
+    # Display precision is fine; billing precision is preserved internally.
     return ShuResponse.success({
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
         "total_input_tokens": summary.total_input_tokens,
         "total_output_tokens": summary.total_output_tokens,
-        "total_cost_usd": summary.total_cost_usd,
+        "total_cost_usd": float(summary.total_cost_usd),
         "by_model": [
             {
                 "model_id": m.model_id,
                 "input_tokens": m.input_tokens,
                 "output_tokens": m.output_tokens,
-                "cost_usd": m.cost_usd,
+                "cost_usd": float(m.cost_usd),
                 "request_count": m.request_count,
             }
             for m in summary.by_model.values()
@@ -280,9 +293,12 @@ async def handle_webhook(
         persist_customer_link = await create_customer_link_callback(db)
 
         # Pass current customer_id so the service can reject events
-        # for other customers (multi-instance safety).
+        # for other customers (multi-instance safety). Also pass the
+        # pending checkout session ID so a fresh instance only accepts
+        # the checkout.session.completed it initiated.
         billing_config = await get_billing_config(db)
         expected_customer_id = billing_config.get("stripe_customer_id")
+        pending_checkout_session_id = billing_config.get("pending_checkout_session_id")
 
         handled, event_type, event_id = await service.handle_webhook(
             payload=payload,
@@ -290,6 +306,7 @@ async def handle_webhook(
             persist_subscription=persist_subscription,
             persist_customer_link=persist_customer_link,
             expected_customer_id=expected_customer_id,
+            pending_checkout_session_id=pending_checkout_session_id,
         )
 
         return ShuResponse.success(
