@@ -13,6 +13,7 @@ Environment variables:
     SHU_SEED_SIDE_CALLER       Model ID to designate as the side caller
     SHU_SEED_PROFILING_MODEL   Model ID to designate for document profiling
     SHU_SEED_EMBEDDING_MODEL   Embedding model ID and dimension, e.g. "qwen/qwen3-embedding-8b:4096"
+    SHU_SEED_OCR_MODEL         OCR model name (default: "mistral-ocr-latest")
     SHU_DATABASE_URL           PostgreSQL connection URL
 
 Usage:
@@ -330,6 +331,40 @@ def _seed_embedding_model(
     print(f"{LOG_PREFIX} Created embedding model '{model_id}' (dimension={dimension})", flush=True)
 
 
+def _seed_ocr_model(cur, model_id: str, provider_ids: dict[str, str]) -> None:
+    """Seed an OCR model row in llm_models.
+
+    Uses the OpenAI provider since the Mistral OCR API key is routed
+    through the same OpenRouter account.
+    """
+    provider_id = provider_ids.get("openai")
+    if not provider_id:
+        print(f"{LOG_PREFIX} OpenAI provider not found, cannot seed OCR model", flush=True)
+        return
+
+    cur.execute(
+        "SELECT id FROM llm_models WHERE model_name = %s AND provider_id = %s",
+        (model_id, provider_id),
+    )
+    if cur.fetchone():
+        print(f"{LOG_PREFIX} OCR model '{model_id}' already exists, skipping", flush=True)
+        return
+
+    display_name = "Mistral OCR"
+    model_row_id = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO llm_models
+            (id, provider_id, model_name, display_name, model_type,
+             supports_streaming, supports_functions, supports_vision,
+             is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, 'ocr', false, false, false, true, now(), now())
+        """,
+        (model_row_id, provider_id, model_id, display_name),
+    )
+    print(f"{LOG_PREFIX} Created OCR model '{model_id}'", flush=True)
+
+
 def run(url: str) -> bool:
     """Seed OpenRouter providers, models, side caller, and profiling model. Idempotent."""
     api_key = os.getenv("SHU_OPENROUTER_API_KEY")
@@ -340,6 +375,7 @@ def run(url: str) -> bool:
     embedding_model = os.getenv("SHU_SEED_EMBEDDING_MODEL", "")
     embedding_query_prefix = os.getenv("SHU_SEED_EMBEDDING_QUERY_PREFIX", "")
     embedding_document_prefix = os.getenv("SHU_SEED_EMBEDDING_DOCUMENT_PREFIX", "")
+    ocr_model = os.getenv("SHU_SEED_OCR_MODEL", "mistral-ocr-latest")
 
     if not api_key:
         print(f"{LOG_PREFIX} SHU_OPENROUTER_API_KEY not set, skipping", flush=True)
@@ -397,6 +433,9 @@ def run(url: str) -> bool:
                     document_prefix=embedding_document_prefix,
                 )
 
+            if ocr_model:
+                _seed_ocr_model(cur, ocr_model, provider_ids)
+
         conn.commit()
         print(f"{LOG_PREFIX} Hosting deployment seed complete", flush=True)
         return True
@@ -428,6 +467,7 @@ Environment variables (for seed):
   SHU_SEED_SIDE_CALLER       Model ID for the side caller
   SHU_SEED_PROFILING_MODEL   Model ID for document profiling
   SHU_SEED_EMBEDDING_MODEL   Embedding model as "model_id:dimension" (e.g. "qwen/qwen3-embedding-8b:4096")
+  SHU_SEED_OCR_MODEL         OCR model name (default: "mistral-ocr-latest")
   SHU_DATABASE_URL           PostgreSQL connection URL
 
 Examples:
