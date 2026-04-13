@@ -58,12 +58,13 @@ async def trigger_quantity_sync() -> None:
         service = BillingService(settings)
         updated = await service.sync_subscription_quantity(subscription_id, user_count)
         if updated:
-            # Persist the new quantity locally
-            from shu.services.system_settings_service import SystemSettingsService
+            from shu.billing.state_service import BillingStateService
 
-            settings_service = SystemSettingsService(db)
-            billing_config["quantity"] = user_count
-            await settings_service.upsert("billing", billing_config)
+            await BillingStateService.update(
+                db,
+                updates={"quantity": user_count},
+                source="scheduler:quantity_sync",
+            )
 
             logger.info(
                 "Quantity sync completed",
@@ -125,11 +126,13 @@ class BillingQuantitySyncSource:
             self._last_run = now
 
             if updated:
-                from shu.services.system_settings_service import SystemSettingsService
+                from shu.billing.state_service import BillingStateService
 
-                settings_service = SystemSettingsService(db)
-                billing_config["quantity"] = user_count
-                await settings_service.upsert("billing", billing_config)
+                await BillingStateService.update(
+                    db,
+                    updates={"quantity": user_count},
+                    source="scheduler:daily_quantity_reconciliation",
+                )
 
                 logger.info(
                     "Daily quantity reconciliation synced",

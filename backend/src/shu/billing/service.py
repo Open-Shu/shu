@@ -32,10 +32,11 @@ from shu.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Type aliases for persistence callbacks
-PersistSubscriptionFn = Callable[[SubscriptionUpdate], Coroutine[Any, Any, None]]
-PersistCustomerLinkFn = Callable[[str, str, str | None], Coroutine[Any, Any, bool]]
-# (stripe_customer_id, email, subscription_id) -> success
+# Type aliases for persistence callbacks.
+# Both accept an optional stripe_event_id keyword argument so audit rows
+# can record which Stripe event triggered the mutation.
+PersistSubscriptionFn = Callable[..., Coroutine[Any, Any, None]]
+PersistCustomerLinkFn = Callable[..., Coroutine[Any, Any, bool]]
 
 
 class BillingService:
@@ -303,8 +304,7 @@ class BillingService:
             Status dict with keys: action, delta, our_total, stripe_total
 
         """
-        from shu.billing.adapters import BILLING_SETTINGS_KEY, UsageProviderImpl, get_billing_config
-        from shu.services.system_settings_service import SystemSettingsService
+        from shu.billing.adapters import UsageProviderImpl, get_billing_config
 
         billing_config = await get_billing_config(db)
         customer_id = billing_config.get("stripe_customer_id")
@@ -323,7 +323,6 @@ class BillingService:
             now = datetime.now(UTC)
             period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        settings_service = SystemSettingsService(db)
         last_reported_total = billing_config.get("last_reported_total", 0)
         last_reported_period = billing_config.get("last_reported_period_start")
 
@@ -333,11 +332,11 @@ class BillingService:
             # Find old period end — use current period start as the boundary
             old_end = period_start
             catchup_ok = await self._catchup_old_period(
-                db, customer_id, old_start, old_end, last_reported_total, billing_config, settings_service
+                db, customer_id, old_start, old_end, last_reported_total
             )
             if not catchup_ok:
                 # Don't proceed to new-period reporting; that would overwrite
-                # the old-period marker in system_settings and drop the gap.
+                # the old-period marker and drop the gap.
                 return {
                     "action": "catchup_failed",
                     "old_period_start": last_reported_period,
@@ -382,9 +381,16 @@ class BillingService:
         )
 
         if reported:
-            billing_config["last_reported_total"] = our_total
-            billing_config["last_reported_period_start"] = period_start.isoformat()
-            await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
+            from shu.billing.state_service import BillingStateService
+
+            await BillingStateService.update(
+                db,
+                updates={
+                    "last_reported_total": our_total,
+                    "last_reported_period_start": period_start,
+                },
+                source="scheduler:usage_reporting",
+            )
 
             logger.info(
                 "Usage reported to Stripe",
@@ -410,8 +416,6 @@ class BillingService:
         old_start: datetime,
         old_end: datetime,
         last_reported_total: int,
-        billing_config: dict,
-        settings_service: Any,
     ) -> bool:
         """Send any remaining usage for a completed billing period.
 
@@ -421,7 +425,7 @@ class BillingService:
             must short-circuit so the next run retries the old-period catchup.
 
         """
-        from shu.billing.adapters import BILLING_SETTINGS_KEY, UsageProviderImpl
+        from shu.billing.adapters import UsageProviderImpl
 
         usage_provider = UsageProviderImpl(db)
         summary = await usage_provider.get_usage_summary(old_start, old_end)
@@ -456,9 +460,16 @@ class BillingService:
             )
 
         # Reset for new period (only reached when catchup succeeded or no delta was needed)
-        billing_config["last_reported_total"] = 0
-        billing_config["last_reported_period_start"] = None
-        await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
+        from shu.billing.state_service import BillingStateService
+
+        await BillingStateService.update(
+            db,
+            updates={
+                "last_reported_total": 0,
+                "last_reported_period_start": None,
+            },
+            source="scheduler:usage_reporting_period_reset",
+        )
         return True
 
     # =========================================================================
@@ -559,7 +570,7 @@ class BillingService:
 
         if persist_subscription:
             async def on_subscription_update(update: SubscriptionUpdate) -> None:
-                await persist_subscription(update)
+                await persist_subscription(update, stripe_event_id=event.id)
 
             callbacks["on_subscription_update"] = on_subscription_update
 
@@ -569,12 +580,12 @@ class BillingService:
                 email = data.get("customer_email")
                 subscription_id = data.get("subscription_id")
                 if customer_id and email:
-                    await persist_customer_link(customer_id, email, subscription_id)
+                    await persist_customer_link(customer_id, email, subscription_id, stripe_event_id=event.id)
 
             callbacks["on_checkout_completed"] = on_checkout_completed
 
             async def on_customer_created(customer_id: str, email: str) -> None:
-                await persist_customer_link(customer_id, email, None)
+                await persist_customer_link(customer_id, email, None, stripe_event_id=event.id)
 
             callbacks["on_customer_created"] = on_customer_created
 

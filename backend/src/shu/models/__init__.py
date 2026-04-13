@@ -50,12 +50,15 @@ from .rbac import (
     UserGroup,
     UserGroupMembership,
 )
+from .billing_state import BillingState, BillingStateAudit
 from .system_setting import SystemSetting
 from .user_preferences import UserPreferences
 
 # Note: User model is in auth.models to avoid circular imports
 
 __all__ = [
+    "BillingState",
+    "BillingStateAudit",
     "ENTITY_TYPE_EMAIL_ADDRESS",
     "ENTITY_TYPE_ORGANIZATION",
     "ENTITY_TYPE_PERSON",

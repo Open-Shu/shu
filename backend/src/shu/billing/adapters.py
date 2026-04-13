@@ -2,7 +2,7 @@
 
 Provides:
 - UsageProviderImpl: queries llm_usage table for billing
-- Persistence callbacks for webhooks (update system_settings)
+- Persistence callbacks for webhooks (update billing_state)
 """
 
 from __future__ import annotations
@@ -16,13 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.protocols import UsageRecord, UsageSummary
 from shu.models.llm_provider import LLMUsage
-
-# =============================================================================
-# Billing Settings Key
-# =============================================================================
-
-BILLING_SETTINGS_KEY = "billing"
-
 
 # =============================================================================
 # UsageRecord / UsageSummary Implementations
@@ -182,29 +175,33 @@ async def create_subscription_persistence_callback(
 ):
     """Create callback for persisting subscription updates from Stripe webhooks.
 
-    Stores subscription state in system_settings under the 'billing' key.
+    Stores subscription state in billing_state under a row-level lock.
 
     Usage in webhook handler:
         persist_fn = await create_subscription_persistence_callback(db)
         await persist_fn(update)
     """
     from shu.billing.schemas import SubscriptionUpdate
-    from shu.services.system_settings_service import SystemSettingsService
+    from shu.billing.state_service import BillingStateService
 
-    settings_service = SystemSettingsService(db)
-
-    async def persist_subscription(update: SubscriptionUpdate) -> None:
-        current = await settings_service.get_value(BILLING_SETTINGS_KEY, {}) or {}
-        current.update({
-            "stripe_subscription_id": update.stripe_subscription_id,
-            "stripe_customer_id": update.stripe_customer_id,
-            "subscription_status": update.status,
-            "current_period_start": update.current_period_start.isoformat() if update.current_period_start else None,
-            "current_period_end": update.current_period_end.isoformat() if update.current_period_end else None,
-            "quantity": update.quantity,
-            "cancel_at_period_end": update.cancel_at_period_end,
-        })
-        await settings_service.upsert(BILLING_SETTINGS_KEY, current)
+    async def persist_subscription(
+        update: SubscriptionUpdate,
+        stripe_event_id: str | None = None,
+    ) -> None:
+        await BillingStateService.update(
+            db,
+            updates={
+                "stripe_subscription_id": update.stripe_subscription_id,
+                "stripe_customer_id": update.stripe_customer_id,
+                "subscription_status": update.status,
+                "current_period_start": update.current_period_start,
+                "current_period_end": update.current_period_end,
+                "quantity": update.quantity,
+                "cancel_at_period_end": update.cancel_at_period_end,
+            },
+            source="webhook:subscription_update",
+            stripe_event_id=stripe_event_id,
+        )
 
     return persist_subscription
 
@@ -214,47 +211,60 @@ async def create_customer_link_callback(
 ):
     """Create callback for linking Stripe customers from checkout completion.
 
-    Stores the Stripe customer ID in system_settings.
+    Stores the Stripe customer ID in billing_state.
     """
-    from shu.services.system_settings_service import SystemSettingsService
-
-    settings_service = SystemSettingsService(db)
+    from shu.billing.state_service import BillingStateService
 
     async def persist_customer_link(
         stripe_customer_id: str,
         email: str,
         subscription_id: str | None,
+        stripe_event_id: str | None = None,
     ) -> bool:
-        current = await settings_service.get_value(BILLING_SETTINGS_KEY, {}) or {}
-        current.update({
+        state_updates: dict = {
             "stripe_customer_id": stripe_customer_id,
             "billing_email": email,
-        })
+            "pending_checkout_session_id": None,
+        }
         if subscription_id:
-            current["stripe_subscription_id"] = subscription_id
-        # Clear the pending checkout claim now that the link is established.
-        current.pop("pending_checkout_session_id", None)
-        await settings_service.upsert(BILLING_SETTINGS_KEY, current)
+            state_updates["stripe_subscription_id"] = subscription_id
+        await BillingStateService.update(
+            db,
+            updates=state_updates,
+            source="webhook:customer_link",
+            stripe_event_id=stripe_event_id,
+        )
         return True
 
     return persist_customer_link
 
 
 async def get_billing_config(db: AsyncSession) -> dict:
-    """Get current billing configuration from system_settings.
+    """Get current billing configuration from billing_state.
 
-    Returns dict with keys:
-        - stripe_customer_id
-        - stripe_subscription_id
-        - subscription_status
-        - current_period_start
-        - current_period_end
-        - user_limit
+    Returns dict with keys matching the previous system_settings["billing"]
+    schema so all callers continue to work without change. Datetime fields
+    are serialised as ISO strings.
     """
-    from shu.services.system_settings_service import SystemSettingsService
+    from shu.billing.state_service import BillingStateService
 
-    settings_service = SystemSettingsService(db)
-    return await settings_service.get_value(BILLING_SETTINGS_KEY, {}) or {}
+    state = await BillingStateService.get(db)
+    if state is None:
+        return {}
+    return {
+        "stripe_customer_id": state.stripe_customer_id,
+        "stripe_subscription_id": state.stripe_subscription_id,
+        "billing_email": state.billing_email,
+        "subscription_status": state.subscription_status,
+        "current_period_start": state.current_period_start.isoformat() if state.current_period_start else None,
+        "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
+        "quantity": state.quantity,
+        "cancel_at_period_end": state.cancel_at_period_end,
+        "last_reported_total": state.last_reported_total,
+        "last_reported_period_start": state.last_reported_period_start.isoformat() if state.last_reported_period_start else None,
+        "pending_checkout_session_id": state.pending_checkout_session_id,
+        "user_limit_enforcement": state.user_limit_enforcement,
+    }
 
 
 async def get_user_count(db: AsyncSession) -> int:

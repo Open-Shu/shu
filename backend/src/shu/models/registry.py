@@ -21,6 +21,8 @@ def register_all_models():
         AccessPolicyStatement,
         AgentMemory,
         Base,
+        BillingState,
+        BillingStateAudit,
         Conversation,
         Document,
         DocumentChunk,
@@ -43,6 +45,8 @@ def register_all_models():
 
     # Return all model classes for reference if needed
     return {
+        "BillingState": BillingState,
+        "BillingStateAudit": BillingStateAudit,
         "AccessPolicy": AccessPolicy,
         "AccessPolicyBinding": AccessPolicyBinding,
         "AccessPolicyStatement": AccessPolicyStatement,

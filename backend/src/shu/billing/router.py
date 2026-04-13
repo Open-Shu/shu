@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.api.dependencies import get_db
 from shu.auth.rbac import get_current_user, require_admin
 from shu.billing.adapters import (
-    BILLING_SETTINGS_KEY,
     UsageProviderImpl,
     create_customer_link_callback,
     create_subscription_persistence_callback,
@@ -34,7 +33,6 @@ from shu.billing.service import BillingService
 from shu.billing.stripe_client import StripeClientError, StripeConfigurationError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
-from shu.services.system_settings_service import SystemSettingsService
 
 logger = get_logger(__name__)
 
@@ -91,9 +89,13 @@ async def create_checkout_session(
         # a future checkout.session.completed event belongs to us (multi-instance
         # safety: another tenant's checkout on the same Stripe account must not
         # bind this instance to their customer).
-        settings_service = SystemSettingsService(db)
-        billing_config["pending_checkout_session_id"] = session.session_id
-        await settings_service.upsert(BILLING_SETTINGS_KEY, billing_config)
+        from shu.billing.state_service import BillingStateService
+
+        await BillingStateService.update(
+            db,
+            updates={"pending_checkout_session_id": session.session_id},
+            source="api:checkout_session_create",
+        )
 
         return ShuResponse.success(session.model_dump())
     except StripeConfigurationError as e:
@@ -282,7 +284,7 @@ async def handle_webhook(
     This endpoint:
     1. Verifies the webhook signature
     2. Dispatches to appropriate handler
-    3. Updates billing config in system_settings
+    3. Updates billing_state under a row-level lock
 
     Stripe will retry failed webhooks, so handlers must be idempotent.
     """

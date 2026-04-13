@@ -239,6 +239,18 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Model pricing sync failed: {e}")
 
+    # Ensure the billing_state singleton row exists before any webhook handlers run
+    try:
+        from .billing.state_service import BillingStateService
+        from .core.database import get_async_session_local
+
+        session_maker = get_async_session_local()
+        async with session_maker() as session:
+            async with session.begin():
+                await BillingStateService.ensure_singleton(session)
+    except Exception as e:
+        logger.warning(f"billing_state singleton init failed: {e}")
+
     # Preload the default embedding model to avoid lazy loading
     try:
         from .core.embedding_service import initialize_embedding_service

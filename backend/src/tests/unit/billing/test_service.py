@@ -421,7 +421,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -429,10 +429,6 @@ class TestReportAndReconcileUsage:
                 return_value=_make_usage_summary(total_cost_usd=0.05)  # $0.05 = 50000 microdollars
             )
             mock_provider_cls.return_value = mock_provider
-
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
 
             result = await service.report_and_reconcile_usage(db)
 
@@ -500,7 +496,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -508,10 +504,6 @@ class TestReportAndReconcileUsage:
                 return_value=_make_usage_summary(total_cost_usd=0.053)  # 53000 microdollars
             )
             mock_provider_cls.return_value = mock_provider
-
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
 
             result = await service.report_and_reconcile_usage(db)
 
@@ -539,7 +531,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -547,10 +539,6 @@ class TestReportAndReconcileUsage:
                 return_value=_make_usage_summary(total_cost_usd=0.015)  # 15000 microdollars
             )
             mock_provider_cls.return_value = mock_provider
-
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
 
             result = await service.report_and_reconcile_usage(db)
 
@@ -578,7 +566,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_billing_update,
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -587,14 +575,10 @@ class TestReportAndReconcileUsage:
             )
             mock_provider_cls.return_value = mock_provider
 
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
-
             result = await service.report_and_reconcile_usage(db)
 
         assert result["action"] == "report_failed"
-        mock_ss.upsert.assert_not_awaited()
+        mock_billing_update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_period_rollover_catchup(self):
@@ -625,7 +609,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -636,10 +620,6 @@ class TestReportAndReconcileUsage:
                 ]
             )
             mock_provider_cls.return_value = mock_provider
-
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
 
             result = await service.report_and_reconcile_usage(db)
 
@@ -669,7 +649,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -678,10 +658,6 @@ class TestReportAndReconcileUsage:
                 return_value=_make_usage_summary(total_cost_usd=0.0000015)
             )
             mock_provider_cls.return_value = mock_provider
-
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
 
             result = await service.report_and_reconcile_usage(db)
 

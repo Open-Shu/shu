@@ -89,7 +89,7 @@ class TestTriggerQuantitySync:
         mock_db.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch(_P_SS_SERVICE)
+    @patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock)
     @patch(_P_SERVICE)
     @patch(_P_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
@@ -97,32 +97,29 @@ class TestTriggerQuantitySync:
     @patch(_P_SETTINGS)
     async def test_persists_quantity_on_update(
         self, mock_get_settings, mock_get_db, mock_get_config, mock_get_count,
-        mock_svc_cls, mock_ss_cls
+        mock_svc_cls, mock_billing_update
     ):
-        """Should update system_settings when Stripe quantity changes."""
+        """Should write updated quantity to billing_state when Stripe quantity changes."""
         mock_get_settings.return_value = _make_configured_settings()
         mock_db = AsyncMock()
         mock_get_db.return_value = mock_db
-        billing_config = {
+        mock_get_config.return_value = {
             "stripe_customer_id": "cus_123",
             "stripe_subscription_id": "sub_456",
             "quantity": 3,
         }
-        mock_get_config.return_value = billing_config
         mock_get_count.return_value = 5
 
         mock_service = MagicMock()
         mock_service.sync_subscription_quantity = AsyncMock(return_value=True)
         mock_svc_cls.return_value = mock_service
 
-        mock_ss = MagicMock()
-        mock_ss.upsert = AsyncMock()
-        mock_ss_cls.return_value = mock_ss
-
         await trigger_quantity_sync()
 
-        mock_ss.upsert.assert_awaited_once()
-        assert billing_config["quantity"] == 5
+        mock_billing_update.assert_awaited_once()
+        _, kwargs = mock_billing_update.call_args
+        assert kwargs["updates"] == {"quantity": 5}
+        assert kwargs["source"] == "scheduler:quantity_sync"
 
     @pytest.mark.asyncio
     @patch(_P_BILLING_CONFIG)
