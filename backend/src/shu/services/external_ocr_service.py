@@ -40,6 +40,22 @@ _PROVIDER_TYPE_KEY = "generic_completions"
 _PROVIDER_NAME = "Mistral OCR (auto-provisioned)"
 
 
+def _coerce_non_negative_int(value: Any, fallback: int) -> int:
+    """Coerce an untrusted external value to a non-negative int, or use fallback.
+
+    The Mistral API's pages_processed field is user-facing billing data — we
+    can't assume it's always a well-formed int. Negative, missing, or
+    non-numeric values fall back to our own observed page count.
+    """
+    if value is None:
+        return fallback
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return coerced if coerced >= 0 else fallback
+
+
 class ExternalOCRService:
     """Calls Mistral OCR via Mistral's native /ocr API endpoint."""
 
@@ -115,10 +131,13 @@ class ExternalOCRService:
                 page_confidences.append(avg)
         confidence = sum(page_confidences) / len(page_confidences) if page_confidences else None
 
-        # Get pages processed from the reported usage stats so we record the usage correctly.
+        # pages_processed comes from the API — normalize it before cost math.
         usage_info = result.get("usage_info") or {}
-        pages_processed = usage_info.get("pages_processed", len(pages))
-        await self._record_usage(pages_processed)
+        pages_processed = _coerce_non_negative_int(
+            usage_info.get("pages_processed"),
+            fallback=len(pages),
+        )
+        await self._record_usage(pages_processed, usage_info=usage_info, observed_page_count=len(pages))
 
         return OCRResult(
             text="\n\n".join(page_texts),
@@ -161,12 +180,34 @@ class ExternalOCRService:
         )
         return False
 
-    async def _record_usage(self, page_count: int) -> None:
-        """Record OCR usage in llm_usage. Best-effort — failures are logged, not raised."""
+    async def _record_usage(
+        self,
+        page_count: int,
+        *,
+        usage_info: dict[str, Any] | None = None,
+        observed_page_count: int | None = None,
+    ) -> None:
+        """Record OCR usage in llm_usage. Best-effort — failures are logged, not raised.
+
+        Always logs the raw usage payload alongside the computed cost so costs
+        can be reconstructed from logs if DB recording ever fails.
+        """
+        total_cost = _COST_PER_PAGE * page_count
+
+        logger.info(
+            "Mistral OCR usage",
+            extra={
+                "model": self._model_name,
+                "raw_usage_info": usage_info or {},
+                "observed_page_count": observed_page_count,
+                "pages_billed": page_count,
+                "total_cost": str(total_cost),
+            },
+        )
+
         try:
             from ..core.database import get_async_session_local
 
-            total_cost = _COST_PER_PAGE * page_count
             session_factory = get_async_session_local()
             async with session_factory() as session:
                 if not await self._resolve_provider_and_model(session):

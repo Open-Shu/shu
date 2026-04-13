@@ -255,7 +255,7 @@ class TestUsageRecording:
             with patch.object(svc, "_record_usage", new_callable=AsyncMock) as mock_record:
                 await svc.extract_text(b"%PDF-content", "application/pdf")
 
-        mock_record.assert_called_once_with(3)
+        mock_record.assert_called_once_with(3, usage_info={}, observed_page_count=3)
 
 
 class TestResolveProviderAndModel:

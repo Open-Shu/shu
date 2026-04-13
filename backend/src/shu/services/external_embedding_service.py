@@ -115,6 +115,16 @@ class ExternalEmbeddingService:
 
         from .usage_recording import record_llm_usage
 
+        # Always log the raw usage payload so costs can be reconstructed
+        # from logs if DB recording ever fails.
+        logger.info(
+            "Embedding API usage",
+            extra={
+                "model": self._model_name,
+                "raw_usage": usage,
+            },
+        )
+
         prompt_tokens = usage.get("prompt_tokens", 0)
         total_tokens = usage.get("total_tokens", 0)
         cost = usage.get("cost")
