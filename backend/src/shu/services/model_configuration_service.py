@@ -22,7 +22,7 @@ from ..core.exceptions import ShuException, ValidationError
 from ..core.logging import get_logger
 from ..llm.param_mapping import build_provider_params
 from ..models.knowledge_base import KnowledgeBase
-from ..models.llm_provider import LLMModel, LLMProvider
+from ..models.llm_provider import LLMModel, LLMProvider, ModelType
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from ..models.prompt import Prompt
@@ -74,6 +74,15 @@ class ModelConfigurationService:
                 raise ShuException(
                     f"Model {config_data.model_name} not found for provider {config_data.llm_provider_id}",
                     "MODEL_NOT_FOUND",
+                )
+
+            # TODO: We need to support creation of other model types on the frontend in the future
+            if model.model_type != ModelType.CHAT:
+                raise ShuException(
+                    f"Model {config_data.model_name} has type '{model.model_type}' which cannot be used "
+                    f"for chat configurations. Only '{ModelType.CHAT}' models are allowed.",
+                    "INVALID_MODEL_TYPE",
+                    status_code=400,
                 )
 
             # Validate prompt if provided

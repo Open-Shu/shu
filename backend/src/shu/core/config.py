@@ -512,6 +512,13 @@ class Settings(BaseSettings):
     )
     # Note: No page limits - OCR processes all pages in document
 
+    # Service backend configuration
+    # Controls whether local OCR/embedding models are loaded into memory.
+    # Set to false for hosted deployments that use external API providers,
+    # avoiding the memory overhead of EasyOCR and sentence-transformers.
+    local_ocr_enabled: bool = Field(True, alias="SHU_LOCAL_OCR_ENABLED")
+    local_embedding_enabled: bool = Field(True, alias="SHU_LOCAL_EMBEDDING_ENABLED")
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:
