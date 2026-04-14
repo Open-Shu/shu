@@ -218,6 +218,105 @@ class TestExtractTextAutoFallbackMode:
         assert result["text"] == "OCR text"
 
 
+class TestOCRMimeTypeGate:
+    """Non-OCR-eligible types (txt, docx, etc.) must never reach the OCR service."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["auto", "fallback"])
+    async def test_short_text_file_skips_ocr(self, mode):
+        """A short .txt should return the fast result, not fall through to OCR."""
+        mock_cls, _ = _mock_text_extractor("hi")
+        mock_settings = _mock_settings(min_text_length=50)
+
+        with (
+            patch("shu.core.ocr_service.TextExtractor", mock_cls),
+            patch("shu.core.ocr_service.get_settings_instance", return_value=mock_settings),
+            patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
+        ):
+            result = await extract_text_with_ocr_fallback(
+                b"hi", "text/plain", MagicMock(), ocr_mode=mode,
+            )
+
+        assert result["text"] == "hi"
+        mock_get_ocr.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_short_docx_skips_ocr(self):
+        """A short .docx should return the fast result, not fall through to OCR."""
+        docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        mock_cls, _ = _mock_text_extractor("short")
+        mock_settings = _mock_settings(min_text_length=50)
+
+        with (
+            patch("shu.core.ocr_service.TextExtractor", mock_cls),
+            patch("shu.core.ocr_service.get_settings_instance", return_value=mock_settings),
+            patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
+        ):
+            result = await extract_text_with_ocr_fallback(
+                b"short", docx_mime, MagicMock(), ocr_mode="auto",
+            )
+
+        assert result["text"] == "short"
+        mock_get_ocr.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_short_pdf_still_falls_through_to_ocr(self):
+        """A short PDF IS OCR-eligible and should still fall through."""
+        mock_cls, _ = _mock_text_extractor("x")
+        mock_settings = _mock_settings(min_text_length=50)
+        ocr_svc = _mock_ocr_service("OCR text from scanned PDF")
+
+        with (
+            patch("shu.core.ocr_service.TextExtractor", mock_cls),
+            patch("shu.core.ocr_service.get_settings_instance", return_value=mock_settings),
+            patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
+        ):
+            result = await extract_text_with_ocr_fallback(
+                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode="auto",
+            )
+
+        assert result["text"] == "OCR text from scanned PDF"
+        assert result["metadata"]["method"] == "ocr"
+
+    @pytest.mark.asyncio
+    async def test_always_mode_non_ocr_type_falls_back_to_text_extraction(self):
+        """ocr_mode='always' with a non-OCR type should use text extraction, not crash."""
+        mock_cls, _ = _mock_text_extractor("text content")
+        mock_settings = _mock_settings()
+
+        with (
+            patch("shu.core.ocr_service.TextExtractor", mock_cls),
+            patch("shu.core.ocr_service.get_settings_instance", return_value=mock_settings),
+            patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
+        ):
+            result = await extract_text_with_ocr_fallback(
+                b"text", "text/plain", MagicMock(), ocr_mode="always",
+            )
+
+        assert result["text"] == "text content"
+        mock_get_ocr.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_ocr_type_extraction_exception_propagates(self):
+        """Parser failure for a non-OCR type must raise, not return empty text."""
+        mock_instance = MagicMock()
+        mock_instance.extract_text = AsyncMock(side_effect=RuntimeError("docx parser broke"))
+        mock_cls = MagicMock(return_value=mock_instance)
+        mock_settings = _mock_settings()
+
+        with (
+            patch("shu.core.ocr_service.TextExtractor", mock_cls),
+            patch("shu.core.ocr_service.get_settings_instance", return_value=mock_settings),
+        ):
+            with pytest.raises(RuntimeError, match="docx parser broke"):
+                await extract_text_with_ocr_fallback(
+                    b"docx-bytes",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    MagicMock(),
+                    ocr_mode="auto",
+                )
+
+
 class TestRunOCRService:
     """Test _run_ocr_service timing and metadata shape."""
 

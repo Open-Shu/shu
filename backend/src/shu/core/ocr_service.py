@@ -23,6 +23,22 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Maps OCR-eligible MIME types to their data-URL encoding prefix.
+# Used both as the eligibility gate (formats where OCR can extract text
+# that fast text extraction can't) and for encoding payloads to the
+# external OCR API. Non-OCR formats (docx, txt, html) are fully
+# handled by TextExtractor and should never be sent to an OCR provider.
+OCR_ELIGIBLE_MIME_PREFIXES: dict[str, str] = {
+    "application/pdf": "data:application/pdf;base64,",
+    "image/png": "data:image/png;base64,",
+    "image/jpeg": "data:image/jpeg;base64,",
+    "image/jpg": "data:image/jpeg;base64,",
+    "image/gif": "data:image/gif;base64,",
+    "image/tiff": "data:image/tiff;base64,",
+    "image/bmp": "data:image/bmp;base64,",
+    "image/webp": "data:image/webp;base64,",
+}
+
 
 @dataclass
 class OCRResult:
@@ -141,6 +157,17 @@ async def extract_text_with_ocr_fallback(
         )
 
     if effective_mode == "always":
+        if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
+            logger.warning(
+                "ocr_mode='always' requested for non-OCR-eligible type %s, using text extraction",
+                mime_type,
+            )
+            return await TextExtractor(config_manager=config_manager).extract_text(
+                file_bytes=file_bytes,
+                mime_type=mime_type,
+                ocr_mode="text_only",
+                **({"file_path": filename} if filename else {}),
+            )
         return await _run_ocr_service(file_bytes, mime_type, effective_mode)
 
     # auto / fallback: try cheap text extraction, fall back to OCR if
@@ -154,10 +181,15 @@ async def extract_text_with_ocr_fallback(
         )
         extracted_text = result.get("text", "")
     except Exception:
+        if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
+            raise
         extracted_text = ""
         result = {"text": "", "metadata": {}}
 
     if len(extracted_text.strip()) >= settings.ocr_fallback_min_text_length:
+        return result
+
+    if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
         return result
 
     return await _run_ocr_service(file_bytes, mime_type, effective_mode)

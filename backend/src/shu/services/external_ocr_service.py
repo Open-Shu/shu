@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from ..core.logging import get_logger
-from ..core.ocr_service import OCRResult
+from ..core.ocr_service import OCR_ELIGIBLE_MIME_PREFIXES, OCRResult
 from ..llm.service import LLMService
 from ..models.llm_provider import ModelType
 from .usage_recording import record_llm_usage
@@ -24,17 +24,6 @@ logger = get_logger(__name__)
 
 # $1 per 1000 pages
 _COST_PER_PAGE = Decimal("0.001")
-
-_MIME_TO_DATA_URL_PREFIX: dict[str, str] = {
-    "application/pdf": "data:application/pdf;base64,",
-    "image/png": "data:image/png;base64,",
-    "image/jpeg": "data:image/jpeg;base64,",
-    "image/jpg": "data:image/jpeg;base64,",
-    "image/gif": "data:image/gif;base64,",
-    "image/tiff": "data:image/tiff;base64,",
-    "image/bmp": "data:image/bmp;base64,",
-    "image/webp": "data:image/webp;base64,",
-}
 
 _PROVIDER_TYPE_KEY = "generic_completions"
 _PROVIDER_NAME = "Mistral OCR (auto-provisioned)"
@@ -85,11 +74,11 @@ class ExternalOCRService:
             ValueError: On unsupported mime types.
 
         """
-        prefix = _MIME_TO_DATA_URL_PREFIX.get(mime_type)
+        prefix = OCR_ELIGIBLE_MIME_PREFIXES.get(mime_type)
         if prefix is None:
             raise ValueError(
                 f"ExternalOCRService does not support mime type {mime_type!r}. "
-                f"Supported: {sorted(_MIME_TO_DATA_URL_PREFIX.keys())}"
+                f"Supported: {sorted(OCR_ELIGIBLE_MIME_PREFIXES.keys())}"
             )
 
         b64 = base64.b64encode(file_bytes).decode("ascii")
