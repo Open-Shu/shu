@@ -23,7 +23,7 @@ from .usage_recording import record_llm_usage
 logger = get_logger(__name__)
 
 # $1 per 1000 pages
-_COST_PER_PAGE = Decimal("0.001")
+_COST_PER_PAGE = Decimal("0.002")
 
 _PROVIDER_TYPE_KEY = "generic_completions"
 _PROVIDER_NAME = "Mistral OCR (auto-provisioned)"
