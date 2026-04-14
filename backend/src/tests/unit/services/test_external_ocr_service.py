@@ -208,6 +208,7 @@ class TestUsageRecording:
         assert record.output_cost == Decimal("0")
         assert record.request_metadata == {"page_count": 5}
         assert record.success is True
+        mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_record_usage_calls_ensure_provider(self):

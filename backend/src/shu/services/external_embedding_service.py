@@ -147,4 +147,5 @@ def _safe_decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value))
     except Exception:
+        logger.warning("Malformed cost value, defaulting to 0: %r", value)
         return Decimal("0")

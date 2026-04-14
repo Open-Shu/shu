@@ -221,5 +221,6 @@ class ExternalOCRService:
                     request_metadata={"page_count": page_count},
                     session=session,
                 )
+                await session.commit()
         except Exception as e:
             logger.warning("Failed to record OCR usage: %s", e)
