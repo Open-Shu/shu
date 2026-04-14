@@ -6,6 +6,9 @@ class CapabilityDenied(Exception):
     """Raised when a plugin tries to access a host capability it did not declare."""
 
     def __init__(self, capability: str) -> None:
+        # Stored so the capability name round-trips through sandbox IPC
+        # without parsing the formatted message.
+        self.capability = capability
         super().__init__(f"Host capability '{capability}' not declared in plugin manifest")
 
 

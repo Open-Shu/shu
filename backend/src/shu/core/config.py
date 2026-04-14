@@ -234,6 +234,11 @@ class Settings(BaseSettings):
     plugin_exec_input_max_bytes: int = Field(256 * 1024, alias="SHU_PLUGIN_EXEC_INPUT_MAX_BYTES")
     plugin_exec_output_max_bytes: int = Field(1 * 1024 * 1024, alias="SHU_PLUGIN_EXEC_OUTPUT_MAX_BYTES")
 
+    # Plugin sandbox (subprocess isolation): global worst-case wall-clock timeout
+    # enforced by the sandbox launcher. On expiry the child is SIGTERM'd, given a
+    # short grace window, then SIGKILL'd.
+    plugin_sandbox_timeout_seconds: int = Field(300, alias="SHU_PLUGIN_SANDBOX_TIMEOUT_SECONDS")
+
     # Chat attachments
     chat_attachment_max_size: int = Field(20 * 1024 * 1024, alias="SHU_CHAT_ATTACHMENT_MAX_SIZE")  # 20MB
     chat_attachment_allowed_types: list[str] = Field(
