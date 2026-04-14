@@ -94,7 +94,7 @@ class BillingService:
 
         metadata = dict(request.metadata or {})
 
-        return self._client.create_checkout_session(
+        return await self._client.create_checkout_session(
             customer_id=stripe_customer_id,
             customer_email=customer_email or request.customer_email,
             quantity=request.quantity,
@@ -119,7 +119,7 @@ class BillingService:
 
         """
         url = return_url or f"{self._settings.app_base_url}/billing"
-        return self._client.create_portal_session(stripe_customer_id, url)
+        return await self._client.create_portal_session(stripe_customer_id, url)
 
     async def sync_subscription_quantity(
         self,
@@ -141,7 +141,7 @@ class BillingService:
 
         """
         try:
-            subscription = self._client.get_subscription(stripe_subscription_id)
+            subscription = await self._client.get_subscription(stripe_subscription_id)
             if not subscription:
                 return False
 
@@ -168,7 +168,7 @@ class BillingService:
                 )
                 return False
 
-            self._client.update_subscription_quantity(
+            await self._client.update_subscription_quantity(
                 stripe_subscription_id,
                 user_count,
                 proration,
@@ -210,7 +210,7 @@ class BillingService:
             Stripe customer ID
 
         """
-        stripe_customer = self._client.create_customer(
+        stripe_customer = await self._client.create_customer(
             StripeCustomerData(
                 email=email,
                 name=name,
@@ -279,7 +279,7 @@ class BillingService:
             },
         )
 
-        result = self._client.report_usage(event)
+        result = await self._client.report_usage(event)
         return result is not None
 
     async def report_and_reconcile_usage(
@@ -350,7 +350,7 @@ class BillingService:
         our_total = math.ceil(summary.total_cost_usd * 1_000_000)  # microdollars
 
         # Query Stripe's view (also in microdollars)
-        stripe_total = self._client.get_meter_event_summary(
+        stripe_total = await self._client.get_meter_event_summary(
             customer_id,
             start_time=int(period_start.timestamp()),
             end_time=int(now.timestamp()),
@@ -431,7 +431,7 @@ class BillingService:
         summary = await usage_provider.get_usage_summary(old_start, old_end)
         old_total = math.ceil(summary.total_cost_usd * 1_000_000)  # microdollars
 
-        old_stripe_total = self._client.get_meter_event_summary(
+        old_stripe_total = await self._client.get_meter_event_summary(
             customer_id,
             start_time=int(old_start.timestamp()),
             end_time=int(old_end.timestamp()),

@@ -75,7 +75,7 @@ class StripeClient:
     # Customers
     # =========================================================================
 
-    def create_customer(self, data: StripeCustomerData) -> Customer:
+    async def create_customer(self, data: StripeCustomerData) -> Customer:
         """Create a new Stripe customer.
 
         Args:
@@ -86,7 +86,7 @@ class StripeClient:
 
         """
         try:
-            customer = stripe.Customer.create(
+            customer = await stripe.Customer.create_async(
                 email=data.email,
                 name=data.name,
                 metadata=data.metadata,
@@ -103,13 +103,13 @@ class StripeClient:
             )
             raise StripeClientError(f"Failed to create customer: {e}", e) from e
 
-    def get_customer(self, customer_id: str) -> Customer | None:
+    async def get_customer(self, customer_id: str) -> Customer | None:
         """Retrieve a Stripe customer by ID.
 
         Returns None if customer doesn't exist.
         """
         try:
-            return stripe.Customer.retrieve(customer_id)
+            return await stripe.Customer.retrieve_async(customer_id)
         except stripe.InvalidRequestError as e:
             if "No such customer" in str(e):
                 return None
@@ -117,10 +117,10 @@ class StripeClient:
         except stripe.StripeError as e:
             raise StripeClientError(f"Failed to retrieve customer: {e}", e) from e
 
-    def update_customer(self, customer_id: str, **kwargs: Any) -> Customer:
+    async def update_customer(self, customer_id: str, **kwargs: Any) -> Customer:
         """Update a Stripe customer."""
         try:
-            return stripe.Customer.modify(customer_id, **kwargs)
+            return await stripe.Customer.modify_async(customer_id, **kwargs)
         except stripe.StripeError as e:
             raise StripeClientError(f"Failed to update customer: {e}", e) from e
 
@@ -128,7 +128,7 @@ class StripeClient:
     # Checkout Sessions
     # =========================================================================
 
-    def create_checkout_session(
+    async def create_checkout_session(
         self,
         customer_id: str | None,
         customer_email: str | None,
@@ -176,7 +176,7 @@ class StripeClient:
             elif customer_email:
                 params["customer_email"] = customer_email
 
-            session = stripe.checkout.Session.create(**params)
+            session = await stripe.checkout.Session.create_async(**params)
 
             logger.info(
                 "Created checkout session",
@@ -200,7 +200,7 @@ class StripeClient:
     # Customer Portal
     # =========================================================================
 
-    def create_portal_session(
+    async def create_portal_session(
         self,
         customer_id: str,
         return_url: str,
@@ -219,7 +219,7 @@ class StripeClient:
 
         """
         try:
-            session = stripe.billing_portal.Session.create(
+            session = await stripe.billing_portal.Session.create_async(
                 customer=customer_id,
                 return_url=return_url,
             )
@@ -242,10 +242,10 @@ class StripeClient:
     # Subscriptions
     # =========================================================================
 
-    def get_subscription(self, subscription_id: str) -> Subscription | None:
+    async def get_subscription(self, subscription_id: str) -> Subscription | None:
         """Retrieve a subscription by ID."""
         try:
-            return stripe.Subscription.retrieve(subscription_id)
+            return await stripe.Subscription.retrieve_async(subscription_id)
         except stripe.InvalidRequestError as e:
             if "No such subscription" in str(e):
                 return None
@@ -253,7 +253,7 @@ class StripeClient:
         except stripe.StripeError as e:
             raise StripeClientError(f"Failed to retrieve subscription: {e}", e) from e
 
-    def update_subscription_quantity(
+    async def update_subscription_quantity(
         self,
         subscription_id: str,
         quantity: int,
@@ -274,7 +274,7 @@ class StripeClient:
 
         """
         try:
-            subscription = stripe.Subscription.retrieve(subscription_id)
+            subscription = await stripe.Subscription.retrieve_async(subscription_id)
 
             # Find the seat item by price ID — subscriptions may carry multiple
             # items (e.g., licensed seat + metered cost) and quantity only
@@ -297,7 +297,7 @@ class StripeClient:
                     f"Subscription has no item matching configured seat price {seat_price_id}"
                 )
 
-            updated = stripe.Subscription.modify(
+            updated = await stripe.Subscription.modify_async(
                 subscription_id,
                 items=[{"id": seat_item["id"], "quantity": quantity}],
                 proration_behavior=proration_behavior,
@@ -321,7 +321,7 @@ class StripeClient:
             )
             raise StripeClientError(f"Failed to update subscription: {e}", e) from e
 
-    def cancel_subscription(
+    async def cancel_subscription(
         self,
         subscription_id: str,
         at_period_end: bool = True,
@@ -336,12 +336,12 @@ class StripeClient:
         """
         try:
             if at_period_end:
-                subscription = stripe.Subscription.modify(
+                subscription = await stripe.Subscription.modify_async(
                     subscription_id,
                     cancel_at_period_end=True,
                 )
             else:
-                subscription = stripe.Subscription.cancel(subscription_id)
+                subscription = await stripe.Subscription.cancel_async(subscription_id)
 
             logger.info(
                 "Canceled subscription",
@@ -364,7 +364,7 @@ class StripeClient:
     # Usage Metering (Stripe Billing Meters)
     # =========================================================================
 
-    def report_usage(self, event: UsageMeterEvent) -> Any:
+    async def report_usage(self, event: UsageMeterEvent) -> Any:
         """Report usage to Stripe Meters API.
 
         This is used for usage-based billing (token overage).
@@ -381,7 +381,7 @@ class StripeClient:
             return None
 
         try:
-            meter_event = stripe.billing.MeterEvent.create(
+            meter_event = await stripe.billing.MeterEvent.create_async(
                 event_name=event.event_name,
                 identifier=event.identifier,
                 payload={
@@ -415,7 +415,7 @@ class StripeClient:
             )
             return None
 
-    def get_meter_event_summary(
+    async def get_meter_event_summary(
         self,
         customer_id: str,
         start_time: int,
@@ -439,7 +439,7 @@ class StripeClient:
             return 0
 
         try:
-            summaries = stripe.billing.Meter.list_event_summaries(
+            summaries = await stripe.billing.Meter.list_event_summaries_async(
                 self._settings.meter_id_cost,
                 customer=customer_id,
                 start_time=start_time,
@@ -447,7 +447,7 @@ class StripeClient:
             )
 
             total = 0
-            for summary in summaries.auto_paging_iter():
+            async for summary in summaries.auto_paging_iter_async():
                 total += int(summary.aggregated_value)
 
             return total

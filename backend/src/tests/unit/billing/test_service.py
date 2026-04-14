@@ -21,13 +21,15 @@ def _make_settings():
 
 def _make_client():
     client = MagicMock()
-    # Sync methods (StripeClient methods are sync)
-    client.get_subscription = MagicMock()
-    client.update_subscription_quantity = MagicMock()
-    client.create_checkout_session = MagicMock()
-    client.create_portal_session = MagicMock()
-    client.create_customer = MagicMock()
-    client.report_usage = MagicMock()
+    # Async I/O methods
+    client.get_subscription = AsyncMock()
+    client.update_subscription_quantity = AsyncMock()
+    client.create_checkout_session = AsyncMock()
+    client.create_portal_session = AsyncMock()
+    client.create_customer = AsyncMock()
+    client.report_usage = AsyncMock()
+    client.get_meter_event_summary = AsyncMock()
+    # Sync methods (no network I/O)
     client.construct_webhook_event = MagicMock()
     client.parse_subscription_update = MagicMock()
     return client
