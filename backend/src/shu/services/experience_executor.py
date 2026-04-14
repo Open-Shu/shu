@@ -19,7 +19,7 @@ from typing import Any
 
 from jinja2 import DebugUndefined, TemplateSyntaxError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
@@ -28,7 +28,7 @@ from ..core.exceptions import ModelConfigurationError
 from ..core.logging import get_logger
 from ..experiences.steps.decision_control import DecisionControlStep
 from ..llm.service import LLMService
-from ..models.experience import Experience, ExperienceRun, ExperienceStep
+from ..models.experience import Experience, ExperienceDependency, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
 from ..schemas.experience import ExperienceScope
@@ -175,6 +175,8 @@ class ExperienceExecutor:
 
                 run = await self._create_or_resume_run(experience, user_id, input_params, run_id=run_id)
                 await self._finalize_run(run, "failed", {}, {}, error_message=error_message, model_config=None)
+                # Failed: model config invalid, but run is recorded — notify aggregates
+                await self._notify_downstream_aggregates(experience)
                 yield ExperienceEvent(
                     ExperienceEventType.ERROR,
                     {
@@ -224,6 +226,8 @@ class ExperienceExecutor:
                         error_message=error_msg,
                         model_config=model_config,
                     )
+                    # Failed: all steps failed, no synthesis possible — notify aggregates
+                    await self._notify_downstream_aggregates(experience)
                     yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
                     return
 
@@ -247,6 +251,8 @@ class ExperienceExecutor:
                     result_metadata=result_metadata,
                     model_config=model_config,
                 )
+                # Success: run completed with synthesized output — notify aggregates
+                await self._notify_downstream_aggregates(experience)
                 yield ExperienceEvent(
                     ExperienceEventType.RUN_COMPLETED,
                     {"run_id": run.id, "result_content": final_content},
@@ -262,6 +268,8 @@ class ExperienceExecutor:
                 error_message=error_msg,
                 model_config=model_config,
             )
+            # Failed: execution exceeded time limit — notify aggregates
+            await self._notify_downstream_aggregates(experience)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
 
         except Exception as e:
@@ -275,6 +283,8 @@ class ExperienceExecutor:
                 error_message=error_msg,
                 model_config=model_config,
             )
+            # Failed: unhandled exception — notify aggregates
+            await self._notify_downstream_aggregates(experience)
             yield ExperienceEvent(ExperienceEventType.ERROR, {"message": error_msg})
 
     async def execute(
@@ -343,7 +353,7 @@ class ExperienceExecutor:
                 continue
 
             try:
-                output = await self._execute_step(step, context, user_id, current_user, knowledge_base_ids)
+                output = await self._execute_step(step, context, user_id, current_user, knowledge_base_ids, experience)
                 step_end = datetime.now(UTC)
 
                 # Update context
@@ -502,6 +512,113 @@ class ExperienceExecutor:
         await self.db.commit()
         await self.db.refresh(run)
         return run
+
+    async def _notify_downstream_aggregates(self, experience: Experience) -> None:
+        """Update last_run_at and evaluate/trigger downstream aggregates after a run completes.
+
+        Called on both success and failure. A failed dependency still counts as
+        "completed" for ALL-mode evaluation so it doesn't block the aggregate
+        chain — the aggregate runs normally and its step for the failed dep
+        uses stale data or fails individually.
+        """
+        try:
+            # Wait until all user runs finish before evaluating downstream
+            # aggregates — the scheduler fans out one run per user, and we
+            # don't want each completion to re-trigger the aggregate.
+            # Note: concurrent completions can both pass this check and set
+            # last_run_at, but _atomic_set_next_run's WHERE next_run_at IS NULL
+            # guard prevents duplicate aggregate triggers.
+            pending = await self.db.execute(
+                select(func.count())
+                .select_from(ExperienceRun)
+                .where(
+                    ExperienceRun.experience_id == str(experience.id),
+                    ExperienceRun.status.in_(["queued", "running"]),
+                )
+            )
+            if pending.scalar() > 0:
+                return
+
+            now = datetime.now(UTC)
+            await self.db.execute(update(Experience).where(Experience.id == str(experience.id)).values(last_run_at=now))
+            await self.db.commit()
+
+            agg_alias = (
+                select(
+                    ExperienceDependency.aggregate_experience_id,
+                )
+                .where(
+                    ExperienceDependency.dependency_experience_id == str(experience.id),
+                )
+                .subquery()
+            )
+
+            result = await self.db.execute(
+                select(Experience).where(
+                    Experience.id == agg_alias.c.aggregate_experience_id,
+                    Experience.trigger_type == "on_linked_experiences_complete",
+                )
+            )
+            aggregates = result.scalars().all()
+
+            for aggregate in aggregates:
+                await self._evaluate_aggregate_trigger(aggregate)
+
+            await self.db.commit()
+        except Exception:
+            # Roll back so the caller doesn't inherit a failed transaction
+            await self.db.rollback()
+            logger.exception(
+                "Failed to notify downstream aggregates | experience_id=%s",
+                experience.id,
+            )
+
+    async def _evaluate_aggregate_trigger(self, aggregate: Experience) -> None:
+        """Evaluate whether an aggregate experience should be triggered."""
+        trigger_config = aggregate.trigger_config or {}
+        completion_mode = trigger_config.get("completion_mode", "all")
+
+        if completion_mode == "any":
+            await self._atomic_set_next_run(aggregate)
+            return
+
+        dep_result = await self.db.execute(
+            select(Experience.last_run_at)
+            .join(
+                ExperienceDependency,
+                ExperienceDependency.dependency_experience_id == Experience.id,
+            )
+            .where(
+                ExperienceDependency.aggregate_experience_id == str(aggregate.id),
+            )
+        )
+        dep_last_run_ats = dep_result.scalars().all()
+
+        if aggregate.last_run_at is None:
+            all_satisfied = all(dep_ran_at is not None for dep_ran_at in dep_last_run_ats)
+        else:
+            all_satisfied = all(
+                dep_ran_at is not None and dep_ran_at >= aggregate.last_run_at for dep_ran_at in dep_last_run_ats
+            )
+
+        if all_satisfied:
+            await self._atomic_set_next_run(aggregate)
+
+    async def _atomic_set_next_run(self, aggregate: Experience) -> None:
+        """Atomically set next_run_at if not already scheduled."""
+        result = await self.db.execute(
+            update(Experience)
+            .where(
+                Experience.id == str(aggregate.id),
+                Experience.next_run_at.is_(None),
+            )
+            .values(next_run_at=datetime.now(UTC))
+        )
+        if result.rowcount:
+            logger.info(
+                "Triggered downstream aggregate | aggregate_id=%s",
+                aggregate.id,
+            )
 
     async def _finalize_run(
         self,
@@ -677,8 +794,9 @@ class ExperienceExecutor:
         user_id: str | None,
         current_user: User,
         knowledge_base_ids: list[str] | None = None,
+        experience: Experience | None = None,
     ) -> dict[str, Any]:
-        """Execute a single step (plugin, KB, or decision_control)."""
+        """Execute a single step (plugin, KB, decision_control, or experience_run)."""
         if step.step_type == "plugin":
             # For shared runs user_id is None (run ownership), but plugins need a
             # real user ID for auth/identity. Use current_user (the creator for shared runs).
@@ -688,6 +806,8 @@ class ExperienceExecutor:
             return await self._execute_kb_step(step, context, current_user)
         if step.step_type == "decision_control":
             return await self._execute_decision_control_step(step, context)
+        if step.step_type == "experience_run":
+            return await self._execute_experience_run_step(step, context, experience)
         raise ValueError(f"Unknown step type: {step.step_type}")
 
     def _build_auth_overlay(self, step: ExperienceStep, context: dict[str, Any]) -> dict | None:
@@ -854,6 +974,100 @@ class ExperienceExecutor:
         )
 
         return result
+
+    async def _fetch_users(self, user_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch user info by ID list, returning a dict keyed by user ID."""
+        if not user_ids:
+            return {}
+        result = await self.db.execute(select(User).where(User.id.in_(user_ids)))
+        return {
+            str(u.id): {"id": str(u.id), "email": u.email, "display_name": u.name or u.email}
+            for u in result.scalars().all()
+        }
+
+    @staticmethod
+    def _format_run_entry(run: ExperienceRun, users_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Format a single run into the step output shape."""
+        user_info = users_by_id.get(run.user_id, {}) if run.user_id else {}
+        return {
+            "user_email": user_info.get("email"),
+            "user_display_name": user_info.get("display_name"),
+            "result_content": run.result_content,
+            "status": run.status,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        }
+
+    async def _execute_experience_run_step(
+        self,
+        step: ExperienceStep,
+        context: dict[str, Any],
+        experience: Experience | None,
+    ) -> dict[str, Any]:
+        """Execute an experience_run step that aggregates runs from a source experience."""
+        params = self._render_params(step.params_template, context)
+        source_id = params.get("source_experience_id")
+        if not source_id:
+            raise ValueError(f"Step {step.step_key} missing source_experience_id in params_template")
+
+        source_result = await self.db.execute(select(Experience).where(Experience.id == source_id))
+        source = source_result.scalars().first()
+        if not source:
+            raise ValueError(f"Source experience '{source_id}' not found")
+
+        # Disabled: cycle_boundary filtered to only runs newer than the aggregate's
+        # last execution. This caused empty results when last_run_at was stale.
+        # Currently we always return the latest run per user — ANY mode accepts
+        # potentially stale data from non-triggering sources, ALL mode guarantees
+        # all sources are fresh via the trigger gate. Revisit if aggregates should
+        # only see runs from the current cycle.
+        #
+        # cycle_boundary = experience.last_run_at if experience else None
+        #
+        # if cycle_boundary:
+        #     base = base.where(ExperienceRun.finished_at > cycle_boundary)
+
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=ExperienceRun.user_id,
+                order_by=ExperienceRun.finished_at.desc(),
+            )
+            .label("rn")
+        )
+
+        base = select(ExperienceRun, row_num).where(
+            ExperienceRun.experience_id == source_id,
+            ExperienceRun.status.in_(["succeeded", "failed", "cancelled"]),
+        )
+        # if cycle_boundary:
+        #     base = base.where(ExperienceRun.finished_at > cycle_boundary)
+
+        subq = base.subquery()
+        stmt = select(ExperienceRun).join(subq, ExperienceRun.id == subq.c.id).where(subq.c.rn == 1)
+
+        result = await self.db.execute(stmt)
+        runs = result.scalars().all()
+
+        user_ids = [r.user_id for r in runs if r.user_id]
+        users_by_id = await self._fetch_users(user_ids)
+
+        source_ref = {
+            "experience_id": str(source.id),
+            "experience_name": source.name,
+            "run_ids": [str(r.id) for r in runs],
+        }
+
+        if source.scope == "shared":
+            run = runs[0] if runs else None
+            return {
+                "runs": [self._format_run_entry(run, users_by_id)] if run else [],
+                "count": 1 if run else 0,
+                "scope": "shared",
+                "source": source_ref,
+            }
+
+        entries = [self._format_run_entry(r, users_by_id) for r in runs]
+        return {"runs": entries, "count": len(entries), "scope": "user", "source": source_ref}
 
     async def _synthesize_with_llm_streaming(
         self,

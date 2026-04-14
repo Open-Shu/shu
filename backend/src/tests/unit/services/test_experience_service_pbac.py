@@ -220,7 +220,12 @@ def db():
     session.refresh = AsyncMock()
     session.add = MagicMock()
     session.delete = AsyncMock()
+    session.flush = AsyncMock()
     session.execute = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute.return_value = mock_result
     return session
 
 

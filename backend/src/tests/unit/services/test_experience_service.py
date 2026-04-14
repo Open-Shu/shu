@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.core.exceptions import ValidationError
+from shu.models.experience import ExperienceDependency
 from shu.schemas.experience import (
+    DependencyReference,
     ExperienceCreate,
     ExperienceList,
     ExperienceResponse,
@@ -37,7 +39,13 @@ def mock_db_session():
     session.refresh = AsyncMock()
     session.add = MagicMock()
     session.delete = AsyncMock()
+    session.flush = AsyncMock()
     session.execute = AsyncMock()
+    # execute() returns a sync result proxy, so scalars().all() must be sync
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute.return_value = mock_result
     return session
 
 
@@ -1191,7 +1199,7 @@ class TestGetRunSharedAccess:
         assert result.user_id is None
 
 
-def _make_mock_step(
+def _make_mock_plugin_step(
     step_type="plugin",
     plugin_name="gmail",
     plugin_op="digest",
@@ -1223,7 +1231,7 @@ class TestCheckCanRunDwd:
     @pytest.mark.asyncio
     async def test_dwd_step_always_can_run(self, service):
         """A step with domain_delegate override is always runnable (no user auth required)."""
-        step = _make_mock_step(
+        step = _make_mock_plugin_step(
             auth_override={"mode": "domain_delegate", "provider": "google"},
         )
         plugin_records = {
@@ -1236,3 +1244,260 @@ class TestCheckCanRunDwd:
 
         assert can_run is True
         assert missing == []
+
+
+
+class TestValidateTriggerConfigCompletionMode:
+    """Tests for completion_mode validation on linked-experience triggers."""
+
+    def test_accepts_all(self, mock_db_session):
+        service = ExperienceService(mock_db_session)
+        service._validate_trigger_config(TriggerType.ON_LINKED_EXPERIENCES_COMPLETE, {"completion_mode": "all"})
+
+    def test_accepts_any(self, mock_db_session):
+        service = ExperienceService(mock_db_session)
+        service._validate_trigger_config(TriggerType.ON_LINKED_EXPERIENCES_COMPLETE, {"completion_mode": "any"})
+
+    def test_accepts_missing_completion_mode(self, mock_db_session):
+        """Omitted completion_mode is fine — defaults to 'all' at runtime."""
+        service = ExperienceService(mock_db_session)
+        service._validate_trigger_config(TriggerType.ON_LINKED_EXPERIENCES_COMPLETE, {})
+
+    def test_accepts_none_config(self, mock_db_session):
+        service = ExperienceService(mock_db_session)
+        service._validate_trigger_config(TriggerType.ON_LINKED_EXPERIENCES_COMPLETE, None)
+
+    def test_rejects_invalid_completion_mode(self, mock_db_session):
+        service = ExperienceService(mock_db_session)
+        with pytest.raises(ValidationError, match="completion_mode must be"):
+            service._validate_trigger_config(
+                TriggerType.ON_LINKED_EXPERIENCES_COMPLETE, {"completion_mode": "first"}
+            )
+
+
+def _make_mock_step(step_type: str, params_template: dict | None = None) -> MagicMock:
+    """Build a minimal mock ExperienceStep for _sync_dependencies tests."""
+    step = MagicMock()
+    step.step_type = step_type
+    step.params_template = params_template
+    return step
+
+
+class TestSyncDependencies:
+    """Tests for _sync_dependencies — manages experience_dependencies rows."""
+
+    @pytest.mark.asyncio
+    async def test_inserts_deps_for_experience_run_steps(self, mock_db_session):
+        """Creates ExperienceDependency rows for each experience_run step."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        steps = [
+            _make_mock_step("experience_run", {"source_experience_id": "dep-1"}),
+            _make_mock_step("experience_run", {"source_experience_id": "dep-2"}),
+        ]
+
+        await service._sync_dependencies("agg-1", steps)
+
+        added_objects = [call[0][0] for call in mock_db_session.add.call_args_list]
+        dep_objects = [obj for obj in added_objects if isinstance(obj, ExperienceDependency)]
+        assert len(dep_objects) == 2
+
+        dep_source_ids = {d.dependency_experience_id for d in dep_objects}
+        assert dep_source_ids == {"dep-1", "dep-2"}
+        for d in dep_objects:
+            assert d.aggregate_experience_id == "agg-1"
+
+        mock_db_session.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_replaces_existing_rows_on_update(self, mock_db_session):
+        """Deletes old dependency rows before inserting new ones."""
+        old_dep = ExperienceDependency(
+            aggregate_experience_id="agg-1",
+            dependency_experience_id="old-dep",
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [old_dep]
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        steps = [
+            _make_mock_step("experience_run", {"source_experience_id": "new-dep"}),
+        ]
+
+        await service._sync_dependencies("agg-1", steps)
+
+        mock_db_session.delete.assert_called_once_with(old_dep)
+
+        added_objects = [call[0][0] for call in mock_db_session.add.call_args_list]
+        dep_objects = [obj for obj in added_objects if isinstance(obj, ExperienceDependency)]
+        assert len(dep_objects) == 1
+        assert dep_objects[0].dependency_experience_id == "new-dep"
+
+    @pytest.mark.asyncio
+    async def test_no_rows_when_no_experience_run_steps(self, mock_db_session):
+        """Non-experience_run steps produce no dependency rows."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        steps = [
+            _make_mock_step("plugin", {"plugin_name": "gmail"}),
+            _make_mock_step("knowledge_base", {"kb_id": "kb-1"}),
+        ]
+
+        await service._sync_dependencies("agg-1", steps)
+
+        added_objects = [call[0][0] for call in mock_db_session.add.call_args_list]
+        dep_objects = [obj for obj in added_objects if isinstance(obj, ExperienceDependency)]
+        assert len(dep_objects) == 0
+        mock_db_session.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_same_source_experience(self, mock_db_session):
+        """Two steps referencing the same source produce only one row."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        steps = [
+            _make_mock_step("experience_run", {"source_experience_id": "dep-1"}),
+            _make_mock_step("experience_run", {"source_experience_id": "dep-1"}),
+        ]
+
+        await service._sync_dependencies("agg-1", steps)
+
+        added_objects = [call[0][0] for call in mock_db_session.add.call_args_list]
+        dep_objects = [obj for obj in added_objects if isinstance(obj, ExperienceDependency)]
+        assert len(dep_objects) == 1
+        assert dep_objects[0].dependency_experience_id == "dep-1"
+
+    @pytest.mark.asyncio
+    async def test_skips_step_with_no_source_experience_id(self, mock_db_session):
+        """experience_run step without source_experience_id in params is skipped."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute.return_value = mock_result
+
+        service = ExperienceService(mock_db_session)
+        steps = [
+            _make_mock_step("experience_run", {"other_param": "value"}),
+            _make_mock_step("experience_run", None),
+        ]
+
+        await service._sync_dependencies("agg-1", steps)
+
+        added_objects = [call[0][0] for call in mock_db_session.add.call_args_list]
+        dep_objects = [obj for obj in added_objects if isinstance(obj, ExperienceDependency)]
+        assert len(dep_objects) == 0
+
+
+def _make_mock_experience(**overrides) -> MagicMock:
+    """Build a mock Experience with sensible defaults for _experience_to_response."""
+    now = datetime.now()
+    exp = MagicMock()
+    exp.id = overrides.get("id", "exp-1")
+    exp.name = overrides.get("name", "Test Experience")
+    exp.slug = overrides.get("slug", "test-experience")
+    exp.description = overrides.get("description", "A test experience")
+    exp.created_by = overrides.get("created_by", "user-1")
+    exp.visibility = overrides.get("visibility", "draft")
+    exp.scope = overrides.get("scope", "user")
+    exp.trigger_type = overrides.get("trigger_type", "manual")
+    exp.trigger_config = overrides.get("trigger_config", None)
+    exp.include_previous_run = overrides.get("include_previous_run", False)
+    exp.model_configuration_id = overrides.get("model_configuration_id", None)
+    exp.model_configuration = overrides.get("model_configuration", None)
+    exp.prompt_id = overrides.get("prompt_id", None)
+    exp.prompt = overrides.get("prompt", None)
+    exp.inline_prompt_template = overrides.get("inline_prompt_template", None)
+    exp.max_run_seconds = overrides.get("max_run_seconds", 120)
+    exp.token_budget = overrides.get("token_budget", None)
+    exp.version = overrides.get("version", 1)
+    exp.is_active_version = overrides.get("is_active_version", True)
+    exp.parent_version_id = overrides.get("parent_version_id", None)
+    exp.steps = overrides.get("steps", [])
+    exp.runs = overrides.get("runs", [])
+    exp.last_run_at = overrides.get("last_run_at", None)
+    exp.created_at = overrides.get("created_at", now)
+    exp.updated_at = overrides.get("updated_at", now)
+    exp.dependencies = overrides.get("dependencies", [])
+    return exp
+
+
+def _make_mock_dep_link(dep_exp_id: str, dep_name: str, dep_slug: str, visibility: str = "published") -> MagicMock:
+    """Build a mock ExperienceDependency with its .dependency populated."""
+    link = MagicMock()
+    dep_exp = MagicMock()
+    dep_exp.id = dep_exp_id
+    dep_exp.name = dep_name
+    dep_exp.slug = dep_slug
+    dep_exp.visibility = visibility
+    link.dependency = dep_exp
+    return link
+
+
+class TestExperienceToResponseDependencies:
+    """Tests for the dependencies field in _experience_to_response."""
+
+    def test_dependencies_populated_when_present(self, mock_db_session):
+        """Returns DependencyReference list for experience with deps."""
+        dep_links = [
+            _make_mock_dep_link("dep-1", "Email Digest", "email-digest"),
+            _make_mock_dep_link("dep-2", "Calendar Sync", "calendar-sync"),
+        ]
+        experience = _make_mock_experience(dependencies=dep_links)
+
+        service = ExperienceService(mock_db_session)
+        response = service._experience_to_response(experience)
+
+        assert len(response.dependencies) == 2
+        dep_ids = {d.id for d in response.dependencies}
+        assert dep_ids == {"dep-1", "dep-2"}
+        dep_names = {d.name for d in response.dependencies}
+        assert dep_names == {"Email Digest", "Calendar Sync"}
+        dep_slugs = {d.slug for d in response.dependencies}
+        assert dep_slugs == {"email-digest", "calendar-sync"}
+
+    def test_dependencies_empty_when_none(self, mock_db_session):
+        """Returns empty list when experience has no dependency links."""
+        experience = _make_mock_experience(dependencies=[])
+
+        service = ExperienceService(mock_db_session)
+        response = service._experience_to_response(experience)
+
+        assert response.dependencies == []
+
+    def test_skips_dep_with_none_dependency(self, mock_db_session):
+        """Filters out links where .dependency is None (orphaned row)."""
+        good_link = _make_mock_dep_link("dep-1", "Email Digest", "email-digest")
+        bad_link = MagicMock()
+        bad_link.dependency = None
+
+        experience = _make_mock_experience(dependencies=[good_link, bad_link])
+
+        service = ExperienceService(mock_db_session)
+        response = service._experience_to_response(experience)
+
+        assert len(response.dependencies) == 1
+        assert response.dependencies[0].id == "dep-1"
+
+    def test_skips_non_published_dependencies(self, mock_db_session):
+        """Only published dependencies are included in the response."""
+        dep_links = [
+            _make_mock_dep_link("dep-1", "Public", "public", visibility="published"),
+            _make_mock_dep_link("dep-2", "Draft", "draft", visibility="draft"),
+            _make_mock_dep_link("dep-3", "Admin Only", "admin-only", visibility="admin_only"),
+        ]
+        experience = _make_mock_experience(dependencies=dep_links)
+
+        service = ExperienceService(mock_db_session)
+        response = service._experience_to_response(experience)
+
+        assert len(response.dependencies) == 1
+        assert response.dependencies[0].id == "dep-1"

@@ -32,11 +32,12 @@ from ..core.config import get_config_manager
 from ..core.exceptions import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..core.text import slugify
-from ..models.experience import Experience, ExperienceRun, ExperienceStep
+from ..models.experience import Experience, ExperienceDependency, ExperienceRun, ExperienceStep
 from ..models.model_configuration import ModelConfiguration
 from ..models.user_preferences import UserPreferences
 from ..plugins.loader import PluginLoader
 from ..schemas.experience import (
+    DependencyReference,
     ExperienceCreate,
     ExperienceList,
     ExperienceResponse,
@@ -106,12 +107,60 @@ class ExperienceService:
             else:
                 logger.warning("croniter not installed, skipping strict cron validation")
 
+        elif trigger_type == TriggerType.ON_LINKED_EXPERIENCES_COMPLETE:
+            # Dependencies are derived from experience_run steps; step-presence
+            # validation is handled separately in create/update experience.
+            if (
+                trigger_config
+                and "completion_mode" in trigger_config
+                and trigger_config["completion_mode"] not in ("any", "all")
+            ):
+                raise ValidationError(
+                    f"completion_mode must be 'any' or 'all', got '{trigger_config['completion_mode']}'"
+                )
+
         # Validate timezone if provided (for both scheduled and cron)
         if trigger_config and trigger_config.get("timezone"):
             try:
                 zoneinfo.ZoneInfo(trigger_config["timezone"])
             except Exception:
                 raise ValidationError(f"Invalid timezone: {trigger_config['timezone']}")
+
+    async def _sync_dependencies(self, experience_id: str, steps: list[ExperienceStep]) -> None:
+        """Replace experience_dependencies rows to match current experience_run steps."""
+        result = await self.db.execute(
+            select(ExperienceDependency).where(ExperienceDependency.aggregate_experience_id == experience_id)
+        )
+        for row in result.scalars().all():
+            await self.db.delete(row)
+
+        seen_source_ids: set[str] = set()
+        for step in steps:
+            if step.step_type != "experience_run":
+                continue
+            params = step.params_template or {}
+            source_id = params.get("source_experience_id")
+            if not source_id or source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            self.db.add(
+                ExperienceDependency(
+                    aggregate_experience_id=experience_id,
+                    dependency_experience_id=source_id,
+                )
+            )
+
+        await self.db.flush()
+
+    async def _load_dependency_references(self, experience: Experience) -> None:
+        """Eagerly load the .dependency relationship on each ExperienceDependency row.
+
+        db.refresh(experience, ["dependencies"]) loads the join-table rows but not
+        the referenced Experience on each row. Without this, accessing dep.dependency
+        in _experience_to_response() would trigger a lazy load that fails in async mode.
+        """
+        for dep in experience.dependencies:
+            await self.db.refresh(dep, ["dependency"])
 
     async def _validate_model_configuration(
         self, model_configuration_id: str, current_user: Optional["User"] = None
@@ -176,6 +225,13 @@ class ExperienceService:
         # Validate trigger config
         self._validate_trigger_config(experience_data.trigger_type, experience_data.trigger_config)
 
+        if experience_data.trigger_type == TriggerType.ON_LINKED_EXPERIENCES_COMPLETE and not any(
+            s.step_type == StepType.EXPERIENCE_RUN for s in experience_data.steps
+        ):
+            raise ValidationError(
+                "Trigger type 'on_linked_experiences_complete' requires at least one 'experience_run' step"
+            )
+
         # Validate model configuration if provided (with user access check)
         if experience_data.model_configuration_id:
             await self._validate_model_configuration(experience_data.model_configuration_id, current_user)
@@ -211,12 +267,17 @@ class ExperienceService:
         self.db.add(experience)
 
         # Create steps
+        steps = []
         for step_data in experience_data.steps:
             step = await self._create_step(experience.id, step_data)
             self.db.add(step)
+            steps.append(step)
+
+        await self._sync_dependencies(experience.id, steps)
 
         await self.db.commit()
-        await self.db.refresh(experience, ["steps", "model_configuration", "prompt"])
+        await self.db.refresh(experience, ["steps", "model_configuration", "prompt", "dependencies"])
+        await self._load_dependency_references(experience)
 
         logger.info(f"Created experience '{experience.name}' with {len(experience_data.steps)} steps")
         return self._experience_to_response(experience)
@@ -489,6 +550,7 @@ class ExperienceService:
             experience.schedule_next(user_timezone=user_tz)
 
         # Replace steps if provided
+        new_steps: list[ExperienceStep] | None = None
         if update_data.steps is not None:
             # Validate new steps
             await self._validate_steps(update_data.steps)
@@ -501,12 +563,21 @@ class ExperienceService:
             await self.db.flush()
 
             # Create new steps
+            new_steps = []
             for step_data in update_data.steps:
                 step = await self._create_step(experience.id, step_data)
                 self.db.add(step)
+                new_steps.append(step)
+
+        if new_steps is not None:
+            await self._sync_dependencies(experience.id, new_steps)
+            # Dep graph changed — clear stale schedule so the hook re-evaluates
+            if experience.trigger_type == "on_linked_experiences_complete":
+                experience.next_run_at = None
 
         await self.db.commit()
-        await self.db.refresh(experience, ["steps", "model_configuration", "prompt"])
+        await self.db.refresh(experience, ["steps", "model_configuration", "prompt", "dependencies"])
+        await self._load_dependency_references(experience)
 
         logger.info(f"Updated experience '{experience.name}' (ID: {experience_id})")
         return self._experience_to_response(experience)
@@ -754,6 +825,11 @@ class ExperienceService:
             elif step.step_type == StepType.KNOWLEDGE_BASE:
                 if not step.knowledge_base_id:
                     raise ValidationError(f"Step '{step.step_key}' requires knowledge_base_id for knowledge_base type")
+            elif step.step_type == StepType.EXPERIENCE_RUN:
+                if not step.params_template or not step.params_template.get("source_experience_id"):
+                    raise ValidationError(
+                        f"Step '{step.step_key}' requires source_experience_id in params_template for experience_run type"
+                    )
 
             # Validate templates in params_template
             if step.params_template:
@@ -773,6 +849,21 @@ class ExperienceService:
             # Validate KB query template
             if step.kb_query_template:
                 self._validate_template_syntax(step.kb_query_template, f"step '{step.step_key}' kb_query_template")
+
+        source_ids = {
+            step.params_template["source_experience_id"]
+            for step in steps
+            if (step.step_type == "experience_run" or getattr(step.step_type, "value", None) == "experience_run")
+            and step.params_template
+            and step.params_template.get("source_experience_id")
+        }
+        if source_ids:
+            result = await self.db.execute(select(Experience.id).where(Experience.id.in_(source_ids)))
+            missing = source_ids - set(result.scalars().all())
+            if missing:
+                raise ValidationError(
+                    f"experience_run steps reference non-existent experiences: {', '.join(sorted(missing))}"
+                )
 
     def _validate_auth_override_against_manifest(
         self,
@@ -843,6 +934,7 @@ class ExperienceService:
         user_id: str,
         limit: int = 50,
         offset: int = 0,
+        mine_only: bool = False,
     ) -> ExperienceRunList:
         """List runs for an experience.
 
@@ -851,6 +943,7 @@ class ExperienceService:
             user_id: Current user ID
             limit: Maximum number of results
             offset: Number of results to skip
+            mine_only: If True, only return runs for the current user (even for admins)
 
         Returns:
             Paginated list of runs
@@ -873,8 +966,8 @@ class ExperienceService:
 
         stmt = select(ExperienceRun).where(ExperienceRun.experience_id == experience_id)
 
-        # Non-admins see their own runs and shared runs (user_id IS NULL)
-        if not await POLICY_CACHE.is_admin(user_id, self.db):
+        # Filter to current user's runs + shared runs
+        if mine_only or not await POLICY_CACHE.is_admin(user_id, self.db):
             stmt = stmt.where(or_(ExperienceRun.user_id == user_id, ExperienceRun.user_id.is_(None)))
 
         # Execute with pagination
@@ -1294,6 +1387,7 @@ class ExperienceService:
         options = [
             selectinload(Experience.steps),
             selectinload(Experience.model_configuration),
+            selectinload(Experience.dependencies).joinedload(ExperienceDependency.dependency),
         ]
         if include_prompt:
             options.append(selectinload(Experience.prompt))
@@ -1451,6 +1545,12 @@ class ExperienceService:
             # Fallback to the column value if runs are not loaded or empty
             last_run_at = experience.last_run_at
 
+        dep_refs = [
+            DependencyReference(id=dep.dependency.id, name=dep.dependency.name, slug=dep.dependency.slug)
+            for dep in experience.dependencies
+            if dep.dependency is not None and dep.dependency.visibility == "published"
+        ]
+
         return ExperienceResponse(
             id=experience.id,
             name=experience.name,
@@ -1475,6 +1575,7 @@ class ExperienceService:
             if experience.model_configuration
             else None,
             prompt=experience.prompt.to_dict() if experience.prompt else None,
+            dependencies=dep_refs,
             step_count=len(steps),
             last_run_at=last_run_at,
             created_at=experience.created_at,
