@@ -71,9 +71,6 @@ bandit==1.8.0  # Security linter for Python
 coverage[toml]==7.6.9  # Code coverage measurement
 pytest-cov==6.0.0  # Pytest plugin for coverage
 
-# Benchmark evaluation (IR metrics: precision, recall, MRR, NDCG, MAP + statistical tests)
-ranx>=0.3.20
-
 # Plugin SDK
 shu-plugin-sdk @ git+https://github.com/Open-Shu/shu-plugin-sdk@v0.0.1
 

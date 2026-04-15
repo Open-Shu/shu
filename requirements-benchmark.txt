@@ -1,0 +1,5 @@
+# Benchmark tooling extends the runtime app environment.
+-r requirements.txt
+
+# Benchmark evaluation (IR metrics: precision, recall, MRR, NDCG, MAP + statistical tests)
+ranx>=0.3.20
