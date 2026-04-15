@@ -342,10 +342,12 @@ class TestReportUsageToStripe:
 
 def _make_usage_summary(total_cost_usd=0.0, input_tokens=0, output_tokens=0):
     """Create a mock UsageSummary."""
+    from decimal import Decimal
+
     summary = MagicMock()
     summary.total_input_tokens = input_tokens
     summary.total_output_tokens = output_tokens
-    summary.total_cost_usd = total_cost_usd
+    summary.total_cost_usd = Decimal(str(total_cost_usd))
     summary.by_model = {}
     return summary
 

@@ -458,7 +458,7 @@ class StripeClient:
         elif items_data:
             # No seat price configured — fall back to first item (single-price subscription)
             seat_item = items_data[0]
-        quantity = seat_item.get("quantity", 1) if seat_item else 1
+        quantity = (seat_item.get("quantity") or 1) if seat_item else 1
 
         return SubscriptionUpdate(
             stripe_subscription_id=subscription_data["id"],

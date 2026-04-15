@@ -13,7 +13,7 @@ for per-seat billing. Two mechanisms:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,7 +146,9 @@ class BillingQuantitySyncSource:
 
         except Exception:
             logger.error("Daily quantity reconciliation failed", exc_info=True)
-            self._last_run = now  # Don't retry immediately on failure
+            # Retry in 5 minutes rather than the full 24-hour interval so transient
+            # failures (Stripe outage, DB hiccup) recover quickly.
+            self._last_run = now - timedelta(seconds=_RECONCILIATION_INTERVAL_SECONDS - 300)
             return 0
 
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
@@ -198,7 +200,8 @@ class UsageReportingSource:
 
         except Exception:
             logger.error("Usage reporting failed", exc_info=True)
-            self._last_run = now  # Don't retry immediately
+            # Retry in 5 minutes rather than waiting the full configured interval.
+            self._last_run = now - timedelta(seconds=interval - 300)
             return 0
 
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:

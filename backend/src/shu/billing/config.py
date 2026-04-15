@@ -110,6 +110,12 @@ class BillingSettings(BaseSettings):
         if not self.price_id_monthly:
             issues.append("SHU_STRIPE_PRICE_ID_MONTHLY is required for subscriptions")
 
+        if self.usage_report_interval_seconds <= 0:
+            issues.append("SHU_STRIPE_USAGE_REPORT_INTERVAL must be > 0")
+
+        if self.payment_grace_period_days <= 0:
+            issues.append("SHU_STRIPE_PAYMENT_GRACE_DAYS must be > 0")
+
         return issues
 
 
