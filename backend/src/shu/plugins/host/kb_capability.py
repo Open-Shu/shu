@@ -19,10 +19,12 @@ from .base import ImmutableCapabilityMixin
 logger = logging.getLogger(__name__)
 
 # Dispatch table for KB search operations.  Populated lazily on first call to
-# _with_search_service to avoid the circular import chain that arises when
-# kb_capability is imported via shu.plugins.host.__init__ before
-# kb_search_service is fully initialised.  Only methods explicitly listed here
-# are callable — getattr is never used for dispatch.
+# _with_search_service to avoid the circular import chain
+# kb_capability → services.kb_search_service → ... → plugins.executor →
+# host_builder → kb_capability, which triggers whenever host_builder is
+# loaded (i.e. every normal app startup path that reaches the executor).
+# Only methods explicitly listed here are callable — getattr is never
+# used for dispatch.
 _SEARCH_OPS: dict[str, Any] = {}
 
 
@@ -349,8 +351,9 @@ class KbCapability(ImmutableCapabilityMixin):
                 },
             }
 
-        # Deferred import: avoids circular import when kb_capability is loaded
-        # through shu.plugins.host.__init__ before kb_search_service is ready.
+        # Deferred import: avoids the circular chain through
+        # services.kb_search_service → ... → plugins.executor → host_builder,
+        # which would reenter kb_capability before it finishes initialising.
         from ...services.kb_search_service import KbSearchService
 
         if not _SEARCH_OPS:

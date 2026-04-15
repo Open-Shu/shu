@@ -92,14 +92,19 @@ class ChildMessage:
     @staticmethod
     def final_error(
         exc_type: str,
-        exc_args: dict[str, Any],
+        payload: dict[str, Any],
         traceback_text: str,
     ) -> dict[str, Any]:
-        """plugin.execute() raised an exception."""
+        """plugin.execute() raised an exception.
+
+        The ``payload`` key mirrors the shape used by ``MSG_ERROR`` (via
+        :meth:`ParentMessage.error`) so both error paths share one wire
+        contract and :func:`deserialize_exc` can consume frames directly.
+        """
         return {
             "type": MSG_FINAL_ERROR,
             "exc_type": exc_type,
-            "exc_args": exc_args,
+            "payload": payload,
             "traceback": traceback_text,
         }
 

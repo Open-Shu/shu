@@ -8,6 +8,16 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+# Capability names that require explicit declaration before access.
+# Canonical source of truth — both the parent-side ``Host`` and the
+# child-side ``ProxyHost`` import this to enforce the same declared-
+# capabilities check, so the two can never drift. ``log`` and ``utils``
+# are NOT in this set: they are always available on every host.
+CAP_NAMES: frozenset[str] = frozenset((
+    "http", "identity", "auth", "kb", "secrets",
+    "storage", "cursor", "cache", "ocr", "ingest",
+))
+
 
 class StorageScope(str, Enum):
     """Storage scope for plugin data.

@@ -259,13 +259,13 @@ class TestChildMessage:
     def test_final_error(self):
         msg = ChildMessage.final_error(
             exc_type="ValueError",
-            exc_args={"message": "bad"},
+            payload={"message": "bad"},
             traceback_text="Traceback...\nValueError: bad",
         )
         assert msg == {
             "type": MSG_FINAL_ERROR,
             "exc_type": "ValueError",
-            "exc_args": {"message": "bad"},
+            "payload": {"message": "bad"},
             "traceback": "Traceback...\nValueError: bad",
         }
 

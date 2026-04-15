@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .auth_capability import AuthCapability
+from .base import CAP_NAMES
 from .cache_capability import CacheCapability
 from .cursor_capability import CursorCapability
 from .exceptions import CapabilityDenied
@@ -113,14 +114,10 @@ class Host:
         """Delete attribute on object."""
         raise AttributeError(f"Host attribute '{name}' cannot be deleted")
 
-    # Capability names that require declaration before access
-    # Note: 'log' and 'utils' are NOT in this set - they are always available
-    _CAP_NAMES = frozenset(("http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr"))
-
     def __getattribute__(self, name: str) -> Any:
         """Get attribute on object."""
         # For capability attributes, check if declared before returning
-        if name in Host._CAP_NAMES:
+        if name in CAP_NAMES:
             declared = object.__getattribute__(self, "_declared_caps")
             if name not in declared:
                 raise CapabilityDenied(name)
