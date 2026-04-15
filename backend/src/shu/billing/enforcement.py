@@ -67,6 +67,7 @@ async def check_user_limit(db: AsyncSession) -> UserLimitStatus:
         # here until the first has committed its INSERT, so both cannot pass
         # the limit check simultaneously with the same user count.
         from shu.billing.state_service import BillingStateService
+
         await BillingStateService.get_for_update(db)
 
     current_count = await get_user_count(db)
