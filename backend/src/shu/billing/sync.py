@@ -42,8 +42,9 @@ async def trigger_quantity_sync() -> None:
     from shu.billing.service import BillingService
     from shu.core.database import get_db_session
 
-    db = await get_db_session()
+    db: AsyncSession | None = None
     try:
+        db = await get_db_session()
         billing_config = await get_billing_config(db)
         subscription_id = billing_config.get("stripe_subscription_id")
         if not subscription_id:
@@ -72,7 +73,8 @@ async def trigger_quantity_sync() -> None:
     except Exception:
         logger.error("Quantity sync failed", exc_info=True)
     finally:
-        await db.close()
+        if db is not None:
+            await db.close()
 
 
 # =============================================================================

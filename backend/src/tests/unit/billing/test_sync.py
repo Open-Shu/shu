@@ -137,6 +137,18 @@ class TestTriggerQuantitySync:
         mock_db.close.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @patch(_P_DB_SESSION)
+    @patch(_P_SETTINGS)
+    async def test_swallows_session_creation_exceptions(self, mock_get_settings, mock_get_db):
+        """Should catch session acquisition errors and never raise."""
+        mock_get_settings.return_value = _make_configured_settings()
+        mock_get_db.side_effect = RuntimeError("Session factory exploded")
+
+        await trigger_quantity_sync()
+
+        mock_get_db.assert_awaited_once()
+
+    @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
     @patch(_P_DB_SESSION)
