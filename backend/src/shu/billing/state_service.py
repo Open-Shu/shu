@@ -48,6 +48,17 @@ class BillingStateService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_for_update(db: AsyncSession) -> BillingState | None:
+        """Acquire a row-level write lock on the singleton, then return it.
+
+        Use this to serialise operations that must check-then-write atomically
+        (e.g., user-limit enforcement + user INSERT). The lock is held until
+        the caller's transaction commits or rolls back.
+        """
+        result = await db.execute(select(BillingState).where(BillingState.id == 1).with_for_update())
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def ensure_singleton(db: AsyncSession) -> BillingState:
         """Create the singleton row if it doesn't exist, then return it.
 

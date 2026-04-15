@@ -60,6 +60,15 @@ async def check_user_limit(db: AsyncSession) -> UserLimitStatus:
         return _NO_LIMIT
 
     enforcement = billing_config.get("user_limit_enforcement", "soft")
+
+    if enforcement == "hard":
+        # Serialise concurrent user-creation requests at the DB level.
+        # Acquiring billing_state FOR UPDATE means the second request blocks
+        # here until the first has committed its INSERT, so both cannot pass
+        # the limit check simultaneously with the same user count.
+        from shu.billing.state_service import BillingStateService
+        await BillingStateService.get_for_update(db)
+
     current_count = await get_user_count(db)
     at_limit = current_count >= user_limit
 

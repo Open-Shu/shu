@@ -239,12 +239,9 @@ class BillingService:
 
         period_start_str = billing_config.get("current_period_start")
 
-        if period_start_str:
-            period_start = datetime.fromisoformat(period_start_str)
-        else:
-            # Fall back to start of current month
-            now = datetime.now(UTC)
-            period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if not period_start_str:
+            return {"action": "skipped", "reason": "no_period"}
+        period_start = datetime.fromisoformat(period_start_str)
 
         last_reported_total = billing_config.get("last_reported_total", 0)
         last_reported_period = billing_config.get("last_reported_period_start")

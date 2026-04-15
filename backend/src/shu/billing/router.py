@@ -157,7 +157,7 @@ async def get_subscription_status(
     "/usage",
     summary="Get current usage",
     description="Get token usage for the current billing period.",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_admin)],
 )
 async def get_current_usage(
     db: Annotated[AsyncSession, Depends(get_db)],

@@ -190,7 +190,7 @@ SHU_STRIPE_INCLUDED_TOKENS_PER_USER=0
 **Dashboard > Developers > Webhooks > Add endpoint**
 
 - **Endpoint URL**: `https://<customer-instance-domain>/api/v1/billing/webhooks`
-- **API version**: Latest
+- **API version**: `2025-05-28.basil` (pinned by stripe SDK 12.2.0 — update when upgrading)
 - **Events to send** (select exactly these — handlers exist for all of them):
   - `customer.subscription.created`
   - `customer.subscription.updated`
@@ -285,7 +285,7 @@ Confirm that startup seeding wrote the tenant identifiers correctly.
 
 Create a second user via `/api/v1/auth/users`. Within a few seconds, server logs should show:
 
-```
+```text
 Quantity sync completed { subscription_id: "sub_...", user_count: 2 }
 ```
 
