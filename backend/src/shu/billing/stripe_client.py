@@ -14,9 +14,7 @@ from stripe import Customer, Subscription
 
 from shu.billing.config import BillingSettings, get_billing_settings
 from shu.billing.schemas import (
-    CheckoutSessionResponse,
     PortalSessionResponse,
-    StripeCustomerData,
     SubscriptionUpdate,
     UsageMeterEvent,
 )
@@ -39,6 +37,17 @@ class StripeConfigurationError(StripeClientError):
     pass
 
 
+class StripeSignatureError(StripeClientError):
+    """Raised when webhook signature verification fails.
+
+    Distinct from StripeClientError so callers can differentiate signature
+    failures (bad secret / replay attack → 400) from other Stripe errors
+    (subscription shape mismatch → 500) without inspecting error messages.
+    """
+
+    pass
+
+
 class StripeClient:
     """Wrapper around the Stripe SDK.
 
@@ -57,9 +66,7 @@ class StripeClient:
     def _validate_config(self) -> None:
         """Validate that required configuration is present."""
         if not self._settings.secret_key:
-            raise StripeConfigurationError(
-                "Stripe secret key not configured. Set SHU_STRIPE_SECRET_KEY."
-            )
+            raise StripeConfigurationError("Stripe secret key not configured. Set SHU_STRIPE_SECRET_KEY.")
 
     def _configure_stripe(self) -> None:
         """Configure the Stripe SDK with our settings."""
@@ -74,34 +81,6 @@ class StripeClient:
     # =========================================================================
     # Customers
     # =========================================================================
-
-    async def create_customer(self, data: StripeCustomerData) -> Customer:
-        """Create a new Stripe customer.
-
-        Args:
-            data: Customer data including email, name, metadata
-
-        Returns:
-            Created Stripe Customer object
-
-        """
-        try:
-            customer = await stripe.Customer.create_async(
-                email=data.email,
-                name=data.name,
-                metadata=data.metadata,
-            )
-            logger.info(
-                "Created Stripe customer",
-                extra={"stripe_customer_id": customer.id, "email": data.email},
-            )
-            return customer
-        except stripe.StripeError as e:
-            logger.error(
-                "Failed to create Stripe customer",
-                extra={"email": data.email, "error": str(e)},
-            )
-            raise StripeClientError(f"Failed to create customer: {e}", e) from e
 
     async def get_customer(self, customer_id: str) -> Customer | None:
         """Retrieve a Stripe customer by ID.
@@ -123,78 +102,6 @@ class StripeClient:
             return await stripe.Customer.modify_async(customer_id, **kwargs)
         except stripe.StripeError as e:
             raise StripeClientError(f"Failed to update customer: {e}", e) from e
-
-    # =========================================================================
-    # Checkout Sessions
-    # =========================================================================
-
-    async def create_checkout_session(
-        self,
-        customer_id: str | None,
-        customer_email: str | None,
-        quantity: int,
-        success_url: str,
-        cancel_url: str,
-        metadata: dict[str, str] | None = None,
-    ) -> CheckoutSessionResponse:
-        """Create a Stripe Checkout session for subscription signup.
-
-        Args:
-            customer_id: Existing Stripe customer ID (if any)
-            customer_email: Email to pre-fill (if no customer_id)
-            quantity: Number of seats
-            success_url: Redirect URL after successful payment
-            cancel_url: Redirect URL if user cancels
-            metadata: Additional metadata for the subscription
-
-        Returns:
-            CheckoutSessionResponse with session ID and URL
-
-        """
-        if not self._settings.price_id_monthly:
-            raise StripeConfigurationError("Price ID not configured")
-
-        try:
-            params: dict[str, Any] = {
-                "mode": "subscription",
-                "line_items": [
-                    {
-                        "price": self._settings.price_id_monthly,
-                        "quantity": quantity,
-                    }
-                ],
-                "success_url": success_url,
-                "cancel_url": cancel_url,
-                "subscription_data": {
-                    "metadata": metadata or {},
-                },
-            }
-
-            # Link to existing customer or create new
-            if customer_id:
-                params["customer"] = customer_id
-            elif customer_email:
-                params["customer_email"] = customer_email
-
-            session = await stripe.checkout.Session.create_async(**params)
-
-            logger.info(
-                "Created checkout session",
-                extra={
-                    "session_id": session.id,
-                    "customer_id": customer_id,
-                    "quantity": quantity,
-                },
-            )
-
-            return CheckoutSessionResponse(
-                session_id=session.id,
-                url=session.url or "",
-            )
-
-        except stripe.StripeError as e:
-            logger.error("Failed to create checkout session", extra={"error": str(e)})
-            raise StripeClientError(f"Failed to create checkout session: {e}", e) from e
 
     # =========================================================================
     # Customer Portal
@@ -293,9 +200,7 @@ class StripeClient:
                     break
 
             if seat_item is None:
-                raise StripeClientError(
-                    f"Subscription has no item matching configured seat price {seat_price_id}"
-                )
+                raise StripeClientError(f"Subscription has no item matching configured seat price {seat_price_id}")
 
             updated = await stripe.Subscription.modify_async(
                 subscription_id,
@@ -385,9 +290,10 @@ class StripeClient:
                 event_name=event.event_name,
                 identifier=event.identifier,
                 payload={
+                    **event.payload,
+                    # Canonical fields must win over any same-key entries in payload.
                     "stripe_customer_id": event.stripe_customer_id,
                     "value": str(event.value),
-                    **event.payload,
                 },
                 timestamp=event.timestamp,
             )
@@ -439,16 +345,33 @@ class StripeClient:
             return 0
 
         try:
-            summaries = await stripe.billing.Meter.list_event_summaries_async(
-                self._settings.meter_id_cost,
-                customer=customer_id,
-                start_time=start_time,
-                end_time=end_time,
-            )
-
+            # Explicit cursor pagination over the public API avoids the private
+            # _auto_paging_iter_async() method. For a single customer/period the
+            # result is almost always one page, but we paginate correctly in case
+            # Stripe adds granularity that increases the result set in future.
             total = 0
-            async for summary in summaries.auto_paging_iter_async():
-                total += int(summary.aggregated_value)
+            last_id: str | None = None
+            while True:
+                kwargs: dict[str, Any] = {
+                    "customer": customer_id,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                }
+                if last_id is not None:
+                    kwargs["starting_after"] = last_id
+
+                page = await stripe.billing.Meter.list_event_summaries_async(
+                    self._settings.meter_id_cost,
+                    **kwargs,
+                )
+
+                for summary in page.data:
+                    total += int(summary.aggregated_value)
+
+                if not page.has_more or not page.data:
+                    break
+
+                last_id = page.data[-1].id
 
             return total
 
@@ -498,13 +421,13 @@ class StripeClient:
                 "Webhook signature verification failed",
                 extra={"error": str(e)},
             )
-            raise StripeClientError("Invalid webhook signature", e) from e
+            raise StripeSignatureError("Invalid webhook signature", e) from e
         except ValueError as e:
             logger.warning(
                 "Invalid webhook payload",
                 extra={"error": str(e)},
             )
-            raise StripeClientError("Invalid webhook payload") from e
+            raise StripeSignatureError("Invalid webhook payload") from e
 
     def parse_subscription_update(self, subscription_data: dict[str, Any]) -> SubscriptionUpdate:
         """Parse subscription data from a webhook event into our DTO.
@@ -516,22 +439,34 @@ class StripeClient:
             SubscriptionUpdate DTO
 
         """
-        # Quantity lives on items.data[0].quantity, not the subscription root.
-        # Stripe's Subscription object has no top-level "quantity" field.
+        # Quantity lives in items.data[N].quantity, not the subscription root.
+        # Subscriptions may have multiple items (e.g., seat price + usage meter).
+        # Look up the configured seat price ID to pick the right item.
         items_data = subscription_data.get("items", {}).get("data", [])
-        quantity = items_data[0].get("quantity", 1) if items_data else 1
+        seat_price_id = self._settings.price_id_monthly
+        seat_item: dict | None = None
+        if seat_price_id and items_data:
+            seat_item = next(
+                (i for i in items_data if (i.get("price") or {}).get("id") == seat_price_id),
+                None,
+            )
+            if seat_item is None:
+                raise StripeClientError(
+                    f"Webhook subscription has no item matching configured seat price {seat_price_id!r}; "
+                    "refusing to persist quantity from an unrelated item"
+                )
+        elif items_data:
+            # No seat price configured — fall back to first item (single-price subscription)
+            seat_item = items_data[0]
+        quantity = seat_item.get("quantity", 1) if seat_item else 1
 
         return SubscriptionUpdate(
             stripe_subscription_id=subscription_data["id"],
             stripe_customer_id=subscription_data["customer"],
             status=subscription_data["status"],
             quantity=quantity,
-            current_period_start=datetime.fromtimestamp(
-                subscription_data["current_period_start"], tz=UTC
-            ),
-            current_period_end=datetime.fromtimestamp(
-                subscription_data["current_period_end"], tz=UTC
-            ),
+            current_period_start=datetime.fromtimestamp(subscription_data["current_period_start"], tz=UTC),
+            current_period_end=datetime.fromtimestamp(subscription_data["current_period_end"], tz=UTC),
             cancel_at_period_end=subscription_data.get("cancel_at_period_end", False),
             canceled_at=(
                 datetime.fromtimestamp(subscription_data["canceled_at"], tz=UTC)

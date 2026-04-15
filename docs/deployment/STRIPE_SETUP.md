@@ -137,7 +137,7 @@ These come from Stripe Dashboard Part 1 and are identical for every customer bil
 
 ```bash
 # Stripe API keys (from Part 1.1)
-SHU_STRIPE_SECRET_KEY="sk_test_..."
+SHU_STRIPE_SECRET_KEY="sk_test_..."  # pragma: allowlist secret
 SHU_STRIPE_PUBLISHABLE_KEY="pk_test_..."
 
 # Product and per-seat price (from Parts 1.2 and 1.3)
@@ -155,14 +155,21 @@ SHU_STRIPE_MODE="test"  # or "live"
 ### 2.2 Variables that differ per instance
 
 ```bash
-# Base URL for Stripe redirects (success/cancel after Checkout, portal return)
+# Tenant identifiers — obtained from the Stripe Dashboard after the customer's
+# subscription is created externally (e.g., via the onboarding portal).
+# These are seeded into billing_state on first boot so webhook handlers and
+# scheduler jobs work immediately.
+SHU_STRIPE_CUSTOMER_ID="cus_..."
+SHU_STRIPE_SUBSCRIPTION_ID="sub_..."
+
+# Base URL for Customer Portal return redirect
 # This is the customer-facing URL of THEIR Shu instance
 SHU_APP_BASE_URL="https://acme.shu.example.com"
 
 # Webhook signing secret — UNIQUE PER WEBHOOK ENDPOINT
 # Local dev: value from `stripe listen`
 # Deployed: value from the Dashboard webhook endpoint you create in 2.4
-SHU_STRIPE_WEBHOOK_SECRET="whsec_..."
+SHU_STRIPE_WEBHOOK_SECRET="whsec_..."  # pragma: allowlist secret
 ```
 
 ### 2.3 Optional / operational variables
@@ -185,8 +192,6 @@ SHU_STRIPE_INCLUDED_TOKENS_PER_USER=0
 - **Endpoint URL**: `https://<customer-instance-domain>/api/v1/billing/webhooks`
 - **API version**: Latest
 - **Events to send** (select exactly these — handlers exist for all of them):
-  - `checkout.session.completed`
-  - `customer.created`
   - `customer.subscription.created`
   - `customer.subscription.updated`
   - `customer.subscription.deleted`
@@ -236,13 +241,13 @@ If `configured` is `false`, the backend didn't read the env vars — check for t
 curl -H "Authorization: Bearer <admin-jwt>" http://localhost:8000/api/v1/billing/subscription
 ```
 
-Expected for a fresh instance:
+Expected after startup with `SHU_STRIPE_CUSTOMER_ID` and `SHU_STRIPE_SUBSCRIPTION_ID` set:
 
 ```json
 {
   "data": {
-    "stripe_customer_id": null,
-    "stripe_subscription_id": null,
+    "stripe_customer_id": "cus_...",
+    "stripe_subscription_id": "sub_...",
     "subscription_status": "pending",
     "user_count": 1,
     "user_limit": 0,
@@ -253,20 +258,28 @@ Expected for a fresh instance:
 }
 ```
 
-### 3.3 Checkout flow end-to-end
+`stripe_customer_id` and `stripe_subscription_id` are populated from the env vars at startup.
+`subscription_status` stays `"pending"` until the first `customer.subscription.created` webhook
+arrives from Stripe.
 
-1. As the instance admin, POST to `/api/v1/billing/checkout` with `{"quantity": 1}`. You'll get back a Stripe Checkout URL.
-2. Open the URL in a browser. Pay with `4242 4242 4242 4242`.
-3. After redirect to success URL, the server logs should show (in order):
-   - `Received webhook { event_type: "customer.created" }` → **ignored** (instance not yet linked; this is correct)
-   - `Received webhook { event_type: "checkout.session.completed" }` → processed (session ID matches the pending claim from checkout creation)
-   - `Received webhook { event_type: "customer.subscription.created" }` → processed
-4. Call `/api/v1/billing/subscription` again. Now `stripe_customer_id`, `stripe_subscription_id`, and `subscription_status: "active"` should be populated.
+### 3.3 Env seeding verification
 
-If the `checkout.session.completed` event is logged as ignored, it means either:
+Confirm that startup seeding wrote the tenant identifiers correctly.
 
-- Stripe delivered it before the local upsert of `pending_checkout_session_id` finished (shouldn't happen in practice — the upsert completes before returning the URL)
-- The customer completed a checkout session that wasn't initiated by this instance (multi-instance safety: working as designed)
+1. Set `SHU_STRIPE_CUSTOMER_ID` and `SHU_STRIPE_SUBSCRIPTION_ID` in the instance env.
+2. Start (or restart) the instance.
+3. Check the startup logs for:
+
+   ```text
+   Seeded billing_state from env config {"fields": ["stripe_customer_id", "stripe_subscription_id"]}
+   ```
+
+   If this line is absent, either the env vars were not set or the row was already populated
+   (normal on restart — seeding only writes NULL fields).
+4. Call `/api/v1/billing/subscription` (admin JWT). Confirm `stripe_customer_id` and
+   `stripe_subscription_id` match the values from the env vars.
+5. Trigger a test webhook from the Stripe Dashboard (or Stripe CLI) to confirm the customer
+   scoping guard accepts events for this customer ID and drops events for others.
 
 ### 3.4 Quantity sync
 
@@ -284,7 +297,10 @@ Usage reporting runs on the scheduler's hourly interval. For testing, you can ei
 
 **Option A: Wait for the schedule.** Generate some LLM activity (chat, profiling), wait up to an hour, then check the Stripe Dashboard: **Customers > [Your customer] > Billing meters**. The `usage_cost` meter should show a non-zero total.
 
-**Option B: Force a run.** Restart the backend — the scheduler runs sources on startup after their interval elapses. Or reach into `system_settings` and unset `pending_checkout_session_id` and any `last_reported_*` keys to force a fresh reconciliation on next tick.
+**Option B: Force a run.** Restart the backend — the scheduler runs sources on startup after their
+interval elapses. Or reset `last_reported_total` and `last_reported_period_start` in `billing_state`
+(via `psql -d shu -c "UPDATE billing_state SET last_reported_total=0, last_reported_period_start=NULL WHERE id=1;"`)
+to force a fresh reconciliation on next tick.
 
 ### 3.6 Customer portal
 
@@ -315,35 +331,63 @@ Shu validates the key prefix against `SHU_STRIPE_MODE` at startup — a live key
 
 ## Troubleshooting
 
-### "Billing is not configured" (503 response on /billing/checkout)
+### "Billing is not configured" (503 on billing endpoints)
 
-Cause: `SHU_STRIPE_SECRET_KEY` is missing or empty. The endpoint refuses to return when billing isn't set up.
+Cause: `SHU_STRIPE_SECRET_KEY` is missing or empty. All billing endpoints refuse to operate when
+the secret key is absent.
+
+### Seeding didn't populate stripe_customer_id / stripe_subscription_id
+
+Causes to check in order:
+
+1. Are `SHU_STRIPE_CUSTOMER_ID` and `SHU_STRIPE_SUBSCRIPTION_ID` set in the instance env? Check
+   with `printenv | grep SHU_STRIPE_CUSTOMER`.
+2. Was the row already populated from a previous boot? Seeding only writes NULL fields — it will
+   not overwrite existing values. Inspect with
+   `psql -d shu -c "SELECT stripe_customer_id, stripe_subscription_id FROM billing_state WHERE id=1;"`.
+3. Did startup log `"billing_state init failed"`? An exception during seeding is swallowed with a
+   warning. Check the full log for the error details.
 
 ### Webhook signature verification fails
 
-Cause: `SHU_STRIPE_WEBHOOK_SECRET` doesn't match the endpoint. For local dev, the `stripe listen` command prints a fresh secret each time — copy that to `.env` and restart. For deployed instances, the secret is per-endpoint; copy it from the Dashboard webhook page.
+Cause: `SHU_STRIPE_WEBHOOK_SECRET` doesn't match the endpoint. For local dev, the `stripe listen`
+command prints a fresh secret each time — copy that to `.env` and restart. For deployed instances,
+the secret is per-endpoint; copy it from the Dashboard webhook page.
 
-### `checkout.session.completed` logged as "no matching pending session"
+### Webhook logged as "Ignoring webhook — SHU_STRIPE_CUSTOMER_ID not configured"
 
-Cause: The webhook is for a different instance's checkout. This is the multi-instance safety check working correctly — another tenant on the same Stripe account completed their checkout and Stripe fan-outs the event to all webhook endpoints. No action needed.
+Cause: `billing_state.stripe_customer_id` is NULL. Set `SHU_STRIPE_CUSTOMER_ID` and restart so
+seeding populates the field. All webhooks are dropped until the instance has a known customer ID.
+
+### Webhook logged as "Ignoring webhook for different customer"
+
+Cause: The event is for a different Stripe customer. Multi-instance safety working correctly —
+all instances on the same Stripe account receive all events; each instance only processes its own.
+No action needed.
 
 ### Usage meter shows 0 after hours of activity
 
 Causes to check in order:
 
 1. Is `SHU_STRIPE_METER_ID_COST` set? If blank, reporting is skipped.
-2. Is there a `stripe_customer_id` in `system_settings[billing]`? Without it, reporting is skipped.
-3. Does `llm_usage.total_cost` show non-zero values for the period? If zero, no cost was recorded upstream.
-4. Check server logs for `"Usage reporting failed"` — may indicate Stripe API issues or malformed meter configuration.
+2. Is `billing_state.stripe_customer_id` populated? Without it, reporting is skipped.
+3. Does `llm_usage.total_cost` show non-zero values for the period? If zero, no cost was recorded
+   upstream.
+4. Check server logs for `"Usage reporting failed"` — may indicate Stripe API issues or malformed
+   meter configuration.
 
 ### Quantity out of sync with actual user count
 
-The hourly scheduler job reconciles any drift. For immediate sync, restart the backend — the scheduler source will run on the next tick. If quantity still diverges, check Stripe API key permissions (the key must have write access to subscriptions).
+The daily scheduler job reconciles any drift. For immediate sync, restart the backend — the
+scheduler source will run on the next tick. If quantity still diverges, check Stripe API key
+permissions (the key must have write access to subscriptions).
 
-### Subscription stays "pending" after checkout
+### Subscription stays "pending" after instance setup
 
 Causes:
 
-1. Webhook endpoint not receiving events — verify the endpoint URL is reachable from Stripe and appears in **Developers > Webhooks** with recent successful deliveries.
-2. Webhook secret mismatch — signature verification failures log a warning; check logs.
-3. Instance-binding rejected the event — if another tenant's checkout webhook arrived first, only the checkout our instance initiated will be accepted. Try the checkout flow again from the Shu admin UI.
+1. `SHU_STRIPE_CUSTOMER_ID` / `SHU_STRIPE_SUBSCRIPTION_ID` not set — without these Shu ignores
+   all webhooks. Set them and restart.
+2. Webhook endpoint not receiving events — verify the endpoint URL is reachable from Stripe and
+   appears in **Developers > Webhooks** with recent successful deliveries.
+3. Webhook secret mismatch — signature verification failures log a warning; check logs.

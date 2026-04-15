@@ -30,7 +30,7 @@ def _make_state(**kwargs) -> BillingState:
     state.cancel_at_period_end = kwargs.get("cancel_at_period_end", False)
     state.last_reported_total = kwargs.get("last_reported_total", 0)
     state.last_reported_period_start = kwargs.get("last_reported_period_start", None)
-    state.pending_checkout_session_id = kwargs.get("pending_checkout_session_id", None)
+    state.payment_failed_at = kwargs.get("payment_failed_at", None)
     state.user_limit_enforcement = kwargs.get("user_limit_enforcement", "soft")
     state.version = kwargs.get("version", 0)
     state.updated_at = kwargs.get("updated_at", datetime(2026, 4, 1, tzinfo=UTC))
@@ -329,3 +329,88 @@ class TestConcurrentUpdates:
         # Both fields should reflect their respective updates
         assert state.quantity == 10
         assert state.subscription_status == "active"
+
+
+# ---------------------------------------------------------------------------
+# BillingStateService.seed_from_config
+# ---------------------------------------------------------------------------
+
+
+class _FakeSettings:
+    """Minimal settings stub for seed_from_config tests."""
+
+    def __init__(self, customer_id: str | None = None, subscription_id: str | None = None) -> None:
+        self.customer_id = customer_id
+        self.subscription_id = subscription_id
+
+
+class TestSeedFromConfig:
+    @pytest.mark.asyncio
+    async def test_seeds_both_fields_when_both_null(self):
+        state = _make_state(stripe_customer_id=None, stripe_subscription_id=None)
+        db = _make_db(state)
+        settings = _FakeSettings(customer_id="cus_abc", subscription_id="sub_xyz")
+
+        await BillingStateService.seed_from_config(db, settings)
+
+        assert state.stripe_customer_id == "cus_abc"
+        assert state.stripe_subscription_id == "sub_xyz"
+
+    @pytest.mark.asyncio
+    async def test_does_not_overwrite_existing_customer_id(self):
+        state = _make_state(stripe_customer_id="cus_existing", stripe_subscription_id=None)
+        db = _make_db(state)
+        settings = _FakeSettings(customer_id="cus_new", subscription_id="sub_xyz")
+
+        await BillingStateService.seed_from_config(db, settings)
+
+        # customer_id must not be overwritten; subscription_id should be written
+        assert state.stripe_customer_id == "cus_existing"
+        assert state.stripe_subscription_id == "sub_xyz"
+
+    @pytest.mark.asyncio
+    async def test_does_not_overwrite_existing_subscription_id(self):
+        state = _make_state(stripe_customer_id=None, stripe_subscription_id="sub_existing")
+        db = _make_db(state)
+        settings = _FakeSettings(customer_id="cus_abc", subscription_id="sub_new")
+
+        await BillingStateService.seed_from_config(db, settings)
+
+        assert state.stripe_customer_id == "cus_abc"
+        assert state.stripe_subscription_id == "sub_existing"
+
+    @pytest.mark.asyncio
+    async def test_noop_when_both_fields_already_set(self):
+        state = _make_state(stripe_customer_id="cus_existing", stripe_subscription_id="sub_existing")
+        db = _make_db(state)
+        settings = _FakeSettings(customer_id="cus_new", subscription_id="sub_new")
+
+        await BillingStateService.seed_from_config(db, settings)
+
+        assert state.stripe_customer_id == "cus_existing"
+        assert state.stripe_subscription_id == "sub_existing"
+        db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_env_vars_set(self):
+        state = _make_state(stripe_customer_id=None, stripe_subscription_id=None)
+        db = _make_db(state)
+        settings = _FakeSettings(customer_id=None, subscription_id=None)
+
+        await BillingStateService.seed_from_config(db, settings)
+
+        # Nothing to seed — no commit should happen
+        assert state.stripe_customer_id is None
+        assert state.stripe_subscription_id is None
+        db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_singleton_row_missing(self):
+        """seed_from_config silently skips if billing_state not yet created."""
+        db = _make_db(None)
+        settings = _FakeSettings(customer_id="cus_abc", subscription_id="sub_xyz")
+
+        # Should not raise, even with a missing row
+        await BillingStateService.seed_from_config(db, settings)
+
+        db.commit.assert_not_awaited()

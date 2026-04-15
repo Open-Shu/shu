@@ -3,8 +3,6 @@
 This service coordinates between:
 - StripeClient for Stripe API calls
 - Webhook handlers for event processing
-
-For single-instance deployment, billing config is stored in system_settings.
 """
 
 from __future__ import annotations
@@ -18,10 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.config import BillingSettings, get_billing_settings
 from shu.billing.schemas import (
-    CheckoutSessionCreate,
-    CheckoutSessionResponse,
     PortalSessionResponse,
-    StripeCustomerData,
     SubscriptionUpdate,
     UsageMeterEvent,
 )
@@ -32,26 +27,13 @@ from shu.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Type aliases for persistence callbacks.
-# Both accept an optional stripe_event_id keyword argument so audit rows
-# can record which Stripe event triggered the mutation.
 PersistSubscriptionFn = Callable[..., Coroutine[Any, Any, None]]
-PersistCustomerLinkFn = Callable[..., Coroutine[Any, Any, bool]]
 
 
 class BillingService:
     """Main billing service interface.
 
     Provides high-level billing operations coordinating with Stripe.
-
-    Example usage:
-        settings = get_billing_settings()
-        service = BillingService(settings)
-
-        session = await service.create_checkout_session(
-            request=CheckoutSessionCreate(quantity=5),
-            customer_email="user@example.com",
-        )
     """
 
     def __init__(
@@ -69,39 +51,8 @@ class BillingService:
         return self._settings.is_configured
 
     # =========================================================================
-    # Checkout & Subscriptions
+    # Portal
     # =========================================================================
-
-    async def create_checkout_session(
-        self,
-        request: CheckoutSessionCreate,
-        customer_email: str | None = None,
-        stripe_customer_id: str | None = None,
-    ) -> CheckoutSessionResponse:
-        """Create a Stripe Checkout session for new subscription.
-
-        Args:
-            request: Checkout request with quantity and optional metadata
-            customer_email: Email to pre-fill in Checkout
-            stripe_customer_id: Existing Stripe customer ID (if known)
-
-        Returns:
-            CheckoutSessionResponse with redirect URL
-
-        """
-        success_url = request.success_url or f"{self._settings.app_base_url}/billing/success"
-        cancel_url = request.cancel_url or f"{self._settings.app_base_url}/billing/cancel"
-
-        metadata = dict(request.metadata or {})
-
-        return await self._client.create_checkout_session(
-            customer_id=stripe_customer_id,
-            customer_email=customer_email or request.customer_email,
-            quantity=request.quantity,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata=metadata,
-        )
 
     async def create_portal_session(
         self,
@@ -137,27 +88,28 @@ class BillingService:
             proration: How to handle proration
 
         Returns:
-            True if quantity was updated, False if no update needed
+            True if Stripe was updated, False if quantity already matched.
+
+        Raises:
+            StripeClientError: If the subscription is not found in Stripe,
+                no item matches the configured seat price, or a Stripe API
+                call fails. Callers must not persist local quantity on raise.
 
         """
         try:
             subscription = await self._client.get_subscription(stripe_subscription_id)
             if not subscription:
-                return False
+                raise StripeClientError(f"Subscription {stripe_subscription_id!r} not found in Stripe")
 
             # Subscriptions may carry multiple items (e.g., licensed seat + metered
             # cost). Match the seat item by price ID instead of assuming index 0.
             items_data = subscription.get("items", {}).get("data", [])
             seat_item = self._find_seat_item(items_data)
             if seat_item is None:
-                logger.error(
+                raise StripeClientError(
                     "Subscription has no item matching the configured seat price",
-                    extra={
-                        "subscription_id": stripe_subscription_id,
-                        "configured_price": self._settings.price_id_monthly,
-                    },
+                    # Not a Stripe API error — no underlying stripe_error to attach
                 )
-                return False
 
             current_quantity = seat_item.get("quantity", 0)
 
@@ -190,34 +142,6 @@ class BillingService:
                 extra={"subscription_id": stripe_subscription_id, "error": str(e)},
             )
             raise
-
-    # =========================================================================
-    # Customer Management
-    # =========================================================================
-
-    async def create_stripe_customer(
-        self,
-        email: str,
-        name: str,
-    ) -> str:
-        """Create a new Stripe customer.
-
-        Args:
-            email: Customer email
-            name: Customer/company name
-
-        Returns:
-            Stripe customer ID
-
-        """
-        stripe_customer = await self._client.create_customer(
-            StripeCustomerData(
-                email=email,
-                name=name,
-                metadata={},
-            )
-        )
-        return stripe_customer.id
 
     # =========================================================================
     # Usage Reporting
@@ -263,8 +187,7 @@ class BillingService:
         # → Stripe dedupes. Different cumulative position → different identifier
         # → counted as new usage.
         identifier = (
-            f"shu-usage-{stripe_customer_id}-"
-            f"{int(period_start.timestamp())}-{cumulative_total_microdollars}"
+            f"shu-usage-{stripe_customer_id}-" f"{int(period_start.timestamp())}-{cumulative_total_microdollars}"
         )
 
         event = UsageMeterEvent(
@@ -331,9 +254,7 @@ class BillingService:
             old_start = datetime.fromisoformat(last_reported_period)
             # Find old period end — use current period start as the boundary
             old_end = period_start
-            catchup_ok = await self._catchup_old_period(
-                db, customer_id, old_start, old_end, last_reported_total
-            )
+            catchup_ok = await self._catchup_old_period(db, customer_id, old_start, old_end, last_reported_total)
             if not catchup_ok:
                 # Don't proceed to new-period reporting; that would overwrite
                 # the old-period marker and drop the gap.
@@ -481,29 +402,26 @@ class BillingService:
         payload: bytes,
         signature: str,
         persist_subscription: PersistSubscriptionFn | None = None,
-        persist_customer_link: PersistCustomerLinkFn | None = None,
+        on_payment_failed: Any | None = None,
+        on_payment_recovered: Any | None = None,
         expected_customer_id: str | None = None,
-        pending_checkout_session_id: str | None = None,
     ) -> tuple[bool, str, str | None]:
         """Process a Stripe webhook event.
 
         This verifies the webhook signature, dispatches to handlers, and
-        uses the provided callbacks to persist changes.
+        uses the provided callbacks to persist state changes.
 
         Args:
             payload: Raw request body
             signature: Stripe-Signature header
             persist_subscription: Callback to save subscription changes
-            persist_customer_link: Callback to link Stripe customer
-            expected_customer_id: If set, reject events for other customers.
-                When multiple Shu instances share a Stripe account, each
-                endpoint receives ALL events. This filter ensures an instance
-                only processes events for its own customer after the initial
-                link has been established.
-            pending_checkout_session_id: If set, only accept
-                checkout.session.completed events for this session ID. This
-                prevents a fresh instance (no expected_customer_id yet) from
-                binding itself to another tenant's customer.
+            on_payment_failed: Callback to set payment_failed_at on invoice failure
+            on_payment_recovered: Callback to clear payment_failed_at on invoice paid
+            expected_customer_id: Customer ID from billing_state. When set,
+                events for other customers are silently dropped (multi-instance
+                safety: all instances on a shared Stripe account receive all
+                events). When None the instance is misconfigured — all events
+                are dropped with a warning.
 
         Returns:
             Tuple of (handled: bool, event_type: str, event_id: str | None)
@@ -520,74 +438,43 @@ class BillingService:
             extra={"event_type": event.type, "event_id": event.id},
         )
 
-        # Instance-binding safety for fresh (unlinked) instances.
-        # Before a customer is linked (expected_customer_id is None), any
-        # customer.created or checkout.session.completed on the shared Stripe
-        # account could bind this instance to the wrong tenant. Only accept
-        # checkout.session.completed matching our pending session claim; drop
-        # customer.created and rely on the verified checkout event to link.
+        # Guard: SHU_STRIPE_CUSTOMER_ID must be configured before webhooks
+        # can be processed. Without it this instance has no tenant identity.
         if expected_customer_id is None:
-            if event.type == "checkout.session.completed":
-                data_obj = getattr(event.data, "object", None) or {}
-                session_id = data_obj.get("id") if isinstance(data_obj, dict) else getattr(data_obj, "id", None)
-                if not pending_checkout_session_id or session_id != pending_checkout_session_id:
-                    logger.info(
-                        "Ignoring checkout.session.completed — no matching pending session",
-                        extra={
-                            "event_session_id": session_id,
-                            "pending_session_id": pending_checkout_session_id,
-                        },
-                    )
-                    return False, event.type, event.id
-            elif event.type == "customer.created":
-                # customer.created has no session context; unsafe to act on
-                # before we've verified a checkout session. The matching
-                # checkout.session.completed is the authoritative linker.
-                logger.info(
-                    "Ignoring customer.created — instance not yet linked",
-                    extra={"event_id": event.id},
-                )
-                return False, event.type, event.id
+            logger.warning(
+                "Ignoring webhook — SHU_STRIPE_CUSTOMER_ID not configured",
+                extra={"event_type": event.type, "event_id": event.id},
+            )
+            return False, event.type, event.id
 
-        # Scope check: reject events for other customers (multi-instance safety).
-        # Applies once a customer is linked — then we only process events
-        # matching that customer.
-        if expected_customer_id:
-            event_customer = self._extract_customer_id(event)
-            if event_customer and event_customer != expected_customer_id:
-                logger.info(
-                    "Ignoring webhook for different customer",
-                    extra={
-                        "event_type": event.type,
-                        "event_customer": event_customer,
-                        "expected_customer": expected_customer_id,
-                    },
-                )
-                return False, event.type, event.id
+        # Multi-instance safety: all instances on a shared Stripe account
+        # receive all events. Only process events for our own customer.
+        event_customer = self._extract_customer_id(event)
+        if event_customer and event_customer != expected_customer_id:
+            logger.info(
+                "Ignoring webhook for different customer",
+                extra={
+                    "event_type": event.type,
+                    "event_customer": event_customer,
+                    "expected_customer": expected_customer_id,
+                },
+            )
+            return False, event.type, event.id
 
-        # Build callback wrappers
         callbacks: dict[str, Any] = {}
 
         if persist_subscription:
+
             async def on_subscription_update(update: SubscriptionUpdate) -> None:
                 await persist_subscription(update, stripe_event_id=event.id)
 
             callbacks["on_subscription_update"] = on_subscription_update
 
-        if persist_customer_link:
-            async def on_checkout_completed(data: dict[str, Any]) -> None:
-                customer_id = data.get("customer_id")
-                email = data.get("customer_email")
-                subscription_id = data.get("subscription_id")
-                if customer_id and email:
-                    await persist_customer_link(customer_id, email, subscription_id, stripe_event_id=event.id)
+        if on_payment_failed:
+            callbacks["on_payment_failed"] = on_payment_failed
 
-            callbacks["on_checkout_completed"] = on_checkout_completed
-
-            async def on_customer_created(customer_id: str, email: str) -> None:
-                await persist_customer_link(customer_id, email, None, stripe_event_id=event.id)
-
-            callbacks["on_customer_created"] = on_customer_created
+        if on_payment_recovered:
+            callbacks["on_payment_recovered"] = on_payment_recovered
 
         handled = await self._dispatcher.dispatch(event, **callbacks)
 

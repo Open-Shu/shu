@@ -56,8 +56,8 @@ class BillingState(Base):
     last_reported_total = Column(BigInteger, nullable=False, default=0)
     last_reported_period_start = Column(TIMESTAMP(timezone=True), nullable=True)
 
-    # Onboarding / instance binding
-    pending_checkout_session_id = Column(Text, nullable=True)
+    # Payment lifecycle
+    payment_failed_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # User limit enforcement
     user_limit_enforcement = Column(Text, nullable=False, default="soft")
@@ -71,7 +71,7 @@ class BillingState(Base):
         default=lambda: datetime.now(UTC),
     )
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # noqa: D105
         return (
             f"<BillingState(status={self.subscription_status!r}, "
             f"customer={self.stripe_customer_id!r}, version={self.version})>"
@@ -100,8 +100,5 @@ class BillingStateAudit(Base):
     new_value = Column(JSONB, nullable=True)
     stripe_event_id = Column(Text, nullable=True)
 
-    def __repr__(self) -> str:
-        return (
-            f"<BillingStateAudit(field={self.field_name!r}, "
-            f"by={self.changed_by!r}, at={self.changed_at})>"
-        )
+    def __repr__(self) -> str:  # noqa: D105
+        return f"<BillingStateAudit(field={self.field_name!r}, " f"by={self.changed_by!r}, at={self.changed_at})>"

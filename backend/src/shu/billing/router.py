@@ -1,7 +1,6 @@
 """FastAPI router for billing endpoints.
 
 These endpoints handle:
-- Checkout session creation
 - Customer portal access
 - Usage queries
 - Webhook processing
@@ -19,18 +18,20 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.api.dependencies import get_db
+from shu.auth.models import User
 from shu.auth.rbac import get_current_user, require_admin
 from shu.billing.adapters import (
     UsageProviderImpl,
-    create_customer_link_callback,
+    create_payment_failed_callback,
+    create_payment_recovered_callback,
     create_subscription_persistence_callback,
     get_billing_config,
     get_user_count,
 )
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
-from shu.billing.schemas import CheckoutSessionCreate, WebhookEventResponse
+from shu.billing.schemas import WebhookEventResponse
 from shu.billing.service import BillingService
-from shu.billing.stripe_client import StripeClientError, StripeConfigurationError
+from shu.billing.stripe_client import StripeClientError, StripeSignatureError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
 
@@ -54,62 +55,6 @@ def get_billing_service(
             detail="Billing is not configured",
         )
     return BillingService(settings)
-
-
-# =============================================================================
-# Checkout Endpoints
-# =============================================================================
-
-
-@router.post(
-    "/checkout",
-    summary="Create checkout session",
-    description="Create a Stripe Checkout session for new subscription signup.",
-    dependencies=[Depends(require_admin)],
-)
-async def create_checkout_session(
-    request: CheckoutSessionCreate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    service: Annotated[BillingService, Depends(get_billing_service)],
-) -> JSONResponse:
-    """Create a Stripe Checkout session.
-
-    This redirects the user to Stripe's hosted checkout page.
-    After completion, they're redirected back to success_url or cancel_url.
-    """
-    try:
-        billing_config = await get_billing_config(db)
-        session = await service.create_checkout_session(
-            request=request,
-            customer_email=request.customer_email,
-            stripe_customer_id=billing_config.get("stripe_customer_id"),
-        )
-
-        # Record this session's ID so the webhook handler can verify that
-        # a future checkout.session.completed event belongs to us (multi-instance
-        # safety: another tenant's checkout on the same Stripe account must not
-        # bind this instance to their customer).
-        from shu.billing.state_service import BillingStateService
-
-        await BillingStateService.update(
-            db,
-            updates={"pending_checkout_session_id": session.session_id},
-            source="api:checkout_session_create",
-        )
-
-        return ShuResponse.success(session.model_dump())
-    except StripeConfigurationError as e:
-        logger.error("Stripe configuration error", extra={"error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
-    except StripeClientError as e:
-        logger.error("Stripe API error", extra={"error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to create checkout session",
-        )
 
 
 # =============================================================================
@@ -142,7 +87,7 @@ async def get_portal_session(
     if not stripe_customer_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No billing account linked. Complete checkout first.",
+            detail="No billing customer configured. Set SHU_STRIPE_CUSTOMER_ID.",
         )
 
     try:
@@ -165,35 +110,42 @@ async def get_portal_session(
     "/subscription",
     summary="Get subscription status",
     description="Get the current subscription status.",
-    dependencies=[Depends(get_current_user)],
 )
 async def get_subscription_status(
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
     """Get current subscription status.
 
-    Returns subscription details including:
-    - Status (active, past_due, canceled, etc.)
-    - Current billing period
-    - User count
+    Non-admin users receive quota fields only (user_count, user_limit,
+    at_user_limit, user_limit_enforcement). Admin users additionally receive
+    sensitive Stripe identifiers and billing period details.
     """
     billing_config = await get_billing_config(db)
     user_count = await get_user_count(db)
     user_limit = billing_config.get("quantity", 0)
     enforcement = billing_config.get("user_limit_enforcement", "soft")
 
-    return ShuResponse.success({
-        "stripe_customer_id": billing_config.get("stripe_customer_id"),
-        "stripe_subscription_id": billing_config.get("stripe_subscription_id"),
-        "subscription_status": billing_config.get("subscription_status", "pending"),
-        "current_period_start": billing_config.get("current_period_start"),
-        "current_period_end": billing_config.get("current_period_end"),
+    payload: dict = {
         "user_count": user_count,
         "user_limit": user_limit,
         "user_limit_enforcement": enforcement,
         "at_user_limit": user_count >= user_limit > 0,
-        "cancel_at_period_end": billing_config.get("cancel_at_period_end", False),
-    })
+    }
+
+    if user.can_manage_users():
+        payload.update(
+            {
+                "stripe_customer_id": billing_config.get("stripe_customer_id"),
+                "stripe_subscription_id": billing_config.get("stripe_subscription_id"),
+                "subscription_status": billing_config.get("subscription_status", "pending"),
+                "current_period_start": billing_config.get("current_period_start"),
+                "current_period_end": billing_config.get("current_period_end"),
+                "cancel_at_period_end": billing_config.get("cancel_at_period_end", False),
+            }
+        )
+
+    return ShuResponse.success(payload)
 
 
 # =============================================================================
@@ -243,23 +195,25 @@ async def get_current_usage(
 
     # Convert Decimal to float at the API boundary — JSON has no Decimal type.
     # Display precision is fine; billing precision is preserved internally.
-    return ShuResponse.success({
-        "period_start": period_start.isoformat(),
-        "period_end": period_end.isoformat(),
-        "total_input_tokens": summary.total_input_tokens,
-        "total_output_tokens": summary.total_output_tokens,
-        "total_cost_usd": float(summary.total_cost_usd),
-        "by_model": [
-            {
-                "model_id": m.model_id,
-                "input_tokens": m.input_tokens,
-                "output_tokens": m.output_tokens,
-                "cost_usd": float(m.cost_usd),
-                "request_count": m.request_count,
-            }
-            for m in summary.by_model.values()
-        ],
-    })
+    return ShuResponse.success(
+        {
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "total_input_tokens": summary.total_input_tokens,
+            "total_output_tokens": summary.total_output_tokens,
+            "total_cost_usd": float(summary.total_cost_usd),
+            "by_model": [
+                {
+                    "model_id": m.model_id,
+                    "input_tokens": m.input_tokens,
+                    "output_tokens": m.output_tokens,
+                    "cost_usd": float(m.cost_usd),
+                    "request_count": m.request_count,
+                }
+                for m in summary.by_model.values()
+            ],
+        }
+    )
 
 
 # =============================================================================
@@ -292,23 +246,18 @@ async def handle_webhook(
 
     try:
         persist_subscription = await create_subscription_persistence_callback(db)
-        persist_customer_link = await create_customer_link_callback(db)
-
-        # Pass current customer_id so the service can reject events
-        # for other customers (multi-instance safety). Also pass the
-        # pending checkout session ID so a fresh instance only accepts
-        # the checkout.session.completed it initiated.
+        on_payment_failed = await create_payment_failed_callback(db)
+        on_payment_recovered = await create_payment_recovered_callback(db)
         billing_config = await get_billing_config(db)
         expected_customer_id = billing_config.get("stripe_customer_id")
-        pending_checkout_session_id = billing_config.get("pending_checkout_session_id")
 
         handled, event_type, event_id = await service.handle_webhook(
             payload=payload,
             signature=stripe_signature,
             persist_subscription=persist_subscription,
-            persist_customer_link=persist_customer_link,
+            on_payment_failed=on_payment_failed,
+            on_payment_recovered=on_payment_recovered,
             expected_customer_id=expected_customer_id,
-            pending_checkout_session_id=pending_checkout_session_id,
         )
 
         return ShuResponse.success(
@@ -319,14 +268,14 @@ async def handle_webhook(
             ).model_dump()
         )
 
-    except StripeClientError as e:
+    except StripeSignatureError as e:
         logger.warning(
-            "Webhook verification failed",
+            "Webhook request rejected",
             extra={"error": str(e)},
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid webhook signature",
+            detail="Invalid webhook request",
         )
     except Exception as e:
         logger.error(
@@ -358,8 +307,10 @@ async def get_billing_config_endpoint(
     Returns configuration that's safe to expose to the frontend,
     such as the Stripe publishable key.
     """
-    return ShuResponse.success({
-        "configured": settings.is_configured,
-        "publishable_key": settings.publishable_key,
-        "mode": settings.mode,
-    })
+    return ShuResponse.success(
+        {
+            "configured": settings.is_configured,
+            "publishable_key": settings.publishable_key,
+            "mode": settings.mode,
+        }
+    )

@@ -1,12 +1,14 @@
 """Stripe billing integration module.
 
 This module handles:
-- Checkout session creation
 - Customer portal access
-- Subscription management via webhooks
+- Subscription lifecycle via webhooks
 - Usage reporting to Stripe Meters API
+- Seat quantity sync
 
-Billing configuration is stored in system_settings under the 'billing' key.
+Billing state is persisted in the ``billing_state`` table (singleton row) and
+audited in ``billing_state_audit``; all mutations go through
+``BillingStateService``.
 """
 
 from shu.billing.service import BillingService

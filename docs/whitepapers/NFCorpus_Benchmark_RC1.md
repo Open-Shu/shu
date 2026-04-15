@@ -178,7 +178,7 @@ Understanding the methodology of each system contextualizes Shu's approach:
 
 **Query vocabulary gap:** NFCorpus queries are expert-authored topic phrases that closely match document vocabulary. This underrepresents the query synthesis surface's primary value proposition: bridging the gap between layperson questions and expert documents.
 
-**Weight tuning:** Current results use equal weights across active surfaces. Data-driven weight optimization would likely improve fusion performance further. The Query Pattern Analysis above suggests a specific hypothesis: dynamically increasing query_match weight for natural language questions (detected via "how to", "is X good", interrogative patterns) could yield significant gains, given the +40% improvement observed on "how to" queries. Conversely, reducing query_match weight for comparative queries ("X vs Y") may prevent the -20% degradation observed on that pattern. 
+**Weight tuning:** Current results use equal weights across active surfaces. Data-driven weight optimization would likely improve fusion performance further. The Query Pattern Analysis above suggests a specific hypothesis: dynamically increasing query_match weight for natural language questions (detected via "how to", "is X good", interrogative patterns) could yield significant gains, given the +40% improvement observed on "how to" queries. Conversely, reducing query_match weight for comparative queries ("X vs Y") may prevent the -20% degradation observed on that pattern.
 
 ## Citations
 

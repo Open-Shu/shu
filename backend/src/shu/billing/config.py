@@ -25,6 +25,12 @@ class BillingSettings(BaseSettings):
     publishable_key: str | None = Field(None, alias="SHU_STRIPE_PUBLISHABLE_KEY")
     webhook_secret: str | None = Field(None, alias="SHU_STRIPE_WEBHOOK_SECRET")
 
+    # Tenant identifiers — set by the operator at deploy time.
+    # These seed billing_state on first boot so webhook handlers and
+    # scheduler jobs have a customer/subscription to work with immediately.
+    customer_id: str | None = Field(None, alias="SHU_STRIPE_CUSTOMER_ID")
+    subscription_id: str | None = Field(None, alias="SHU_STRIPE_SUBSCRIPTION_ID")
+
     # Stripe product/price configuration
     # These should be created in Stripe Dashboard first
     product_id: str | None = Field(None, alias="SHU_STRIPE_PRODUCT_ID")
@@ -38,7 +44,7 @@ class BillingSettings(BaseSettings):
     # test or live - used for validation and logging
     mode: Literal["test", "live"] = Field("test", alias="SHU_STRIPE_MODE")
 
-    # Base URL for redirects after checkout/portal (e.g., https://app.shu.ai)
+    # Base URL for Customer Portal return redirect (e.g., https://app.shu.ai)
     app_base_url: str = Field("http://localhost:3000", alias="SHU_APP_BASE_URL")
 
     # Usage reporting interval in seconds (default: 1 hour)
@@ -62,8 +68,16 @@ class BillingSettings(BaseSettings):
 
     @property
     def is_configured(self) -> bool:
-        """Check if minimum Stripe configuration is present."""
-        return bool(self.secret_key)
+        """Check if billing is fully configured for this instance.
+
+        Requires Stripe API credentials AND the tenant's pre-provisioned
+        identifiers. Without customer_id, webhooks are intentionally dropped
+        and the portal is unusable. Without subscription_id, usage reporting
+        and seat sync have no subscription to work against. Both are always
+        set at deploy time — their absence is a misconfiguration, not a
+        valid intermediate state.
+        """
+        return bool(self.secret_key and self.customer_id and self.subscription_id)
 
     @property
     def is_production(self) -> bool:
@@ -83,6 +97,12 @@ class BillingSettings(BaseSettings):
             issues.append("SHU_STRIPE_MODE is 'live' but secret_key is not a live key")
         elif self.mode == "test" and not self.secret_key.startswith("sk_test_"):
             issues.append("SHU_STRIPE_MODE is 'test' but secret_key is not a test key")
+
+        if not self.customer_id:
+            issues.append("SHU_STRIPE_CUSTOMER_ID is required (set at deploy time by the operator)")
+
+        if not self.subscription_id:
+            issues.append("SHU_STRIPE_SUBSCRIPTION_ID is required (set at deploy time by the operator)")
 
         if not self.webhook_secret:
             issues.append("SHU_STRIPE_WEBHOOK_SECRET is required for webhook verification")

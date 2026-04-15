@@ -44,9 +44,7 @@ class BillingStateService:
     @staticmethod
     async def get(db: AsyncSession) -> BillingState | None:
         """Return the singleton billing state row, or None if not yet created."""
-        result = await db.execute(
-            select(BillingState).where(BillingState.id == 1)
-        )
+        result = await db.execute(select(BillingState).where(BillingState.id == 1))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -71,6 +69,40 @@ class BillingStateService:
                 # Another worker won the race — fetch the row it inserted.
                 state = await BillingStateService.get(db)
         return state
+
+    @staticmethod
+    async def seed_from_config(db: AsyncSession, settings: Any) -> None:
+        """Seed billing_state from deploy-time env vars if fields are not yet set.
+
+        Called once at startup after ``ensure_singleton()``. Only writes fields
+        that are currently NULL — never overwrites values already set by webhooks
+        or a previous seed. Safe to call on every restart.
+
+        Args:
+            db: Async session in an active transaction.
+            settings: ``BillingSettings`` instance with ``customer_id`` and
+                ``subscription_id`` values read from env.
+
+        """
+        customer_id = getattr(settings, "customer_id", None)
+        subscription_id = getattr(settings, "subscription_id", None)
+        if not customer_id and not subscription_id:
+            return
+
+        result = await db.execute(select(BillingState).where(BillingState.id == 1))
+        state = result.scalar_one_or_none()
+        if state is None:
+            return
+
+        updates: dict[str, Any] = {}
+        if customer_id and state.stripe_customer_id is None:
+            updates["stripe_customer_id"] = customer_id
+        if subscription_id and state.stripe_subscription_id is None:
+            updates["stripe_subscription_id"] = subscription_id
+
+        if updates:
+            await BillingStateService.update(db, updates=updates, source="startup:seed_from_config")
+            logger.info("Seeded billing_state from env config", extra={"fields": list(updates.keys())})
 
     @staticmethod
     async def update(
@@ -101,15 +133,10 @@ class BillingStateService:
                 error — ensure_singleton() must be called before any updates).
 
         """
-        result = await db.execute(
-            select(BillingState).where(BillingState.id == 1).with_for_update()
-        )
+        result = await db.execute(select(BillingState).where(BillingState.id == 1).with_for_update())
         state = result.scalar_one_or_none()
         if state is None:
-            raise RuntimeError(
-                "billing_state singleton row missing — "
-                "call ensure_singleton() at startup"
-            )
+            raise RuntimeError("billing_state singleton row missing — " "call ensure_singleton() at startup")
 
         now = datetime.now(UTC)
 
@@ -132,7 +159,7 @@ class BillingStateService:
                         changed_at=now,
                     )
                 )
-            setattr(state, field, new_v)
+                setattr(state, field, new_v)
 
         state.version += 1
         state.updated_at = now

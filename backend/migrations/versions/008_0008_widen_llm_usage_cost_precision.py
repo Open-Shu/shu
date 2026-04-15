@@ -147,8 +147,12 @@ def upgrade() -> None:
                 sa.TIMESTAMP(timezone=True),
                 nullable=True,
             ),
-            # Onboarding / instance binding
-            sa.Column("pending_checkout_session_id", sa.Text(), nullable=True),
+            # Payment lifecycle
+            sa.Column(
+                "payment_failed_at",
+                sa.TIMESTAMP(timezone=True),
+                nullable=True,
+            ),
             # User limit enforcement
             sa.Column(
                 "user_limit_enforcement",

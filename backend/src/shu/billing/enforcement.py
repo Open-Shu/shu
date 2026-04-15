@@ -63,9 +63,14 @@ async def check_user_limit(db: AsyncSession) -> UserLimitStatus:
     current_count = await get_user_count(db)
     at_limit = current_count >= user_limit
 
-    return UserLimitStatus(
+    result = UserLimitStatus(
         enforcement=enforcement,
         at_limit=at_limit,
         current_count=current_count,
         user_limit=user_limit,
     )
+    logger.debug(
+        "User limit check",
+        extra={"enforcement": enforcement, "at_limit": at_limit, "count": current_count, "limit": user_limit},
+    )
+    return result

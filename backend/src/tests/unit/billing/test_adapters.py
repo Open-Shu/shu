@@ -7,7 +7,7 @@ import pytest
 
 from shu.billing.adapters import (
     UsageProviderImpl,
-    create_customer_link_callback,
+    create_payment_failed_callback,
     create_subscription_persistence_callback,
     get_billing_config,
     get_user_count,
@@ -29,7 +29,7 @@ def _make_billing_state(**kwargs) -> BillingState:
     state.cancel_at_period_end = kwargs.get("cancel_at_period_end", False)
     state.last_reported_total = kwargs.get("last_reported_total", 0)
     state.last_reported_period_start = kwargs.get("last_reported_period_start", None)
-    state.pending_checkout_session_id = kwargs.get("pending_checkout_session_id", None)
+    state.payment_failed_at = kwargs.get("payment_failed_at", None)
     state.user_limit_enforcement = kwargs.get("user_limit_enforcement", "soft")
     return state
 
@@ -169,40 +169,47 @@ class TestSubscriptionPersistenceCallback:
         assert kwargs["stripe_event_id"] == "evt_xyz"
 
 
-class TestCustomerLinkCallback:
-    """Tests for create_customer_link_callback."""
+class TestPaymentFailedCallback:
+    """Tests for create_payment_failed_callback — grace-period idempotency."""
 
     @pytest.mark.asyncio
-    async def test_links_customer_with_subscription(self):
-        """Should write customer ID, email, subscription ID and clear pending session."""
+    async def test_sets_payment_failed_at_on_first_failure(self):
+        """First invoice.payment_failed must write payment_failed_at."""
+        state = _make_billing_state(payment_failed_at=None)
         mock_db = AsyncMock()
 
-        with patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_update:
-            link_fn = await create_customer_link_callback(mock_db)
-            result = await link_fn("cus_123", "billing@test.com", "sub_456")
+        with (
+            patch("shu.billing.state_service.BillingStateService.get", new_callable=AsyncMock, return_value=state),
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_update,
+        ):
+            cb = await create_payment_failed_callback(mock_db)
+            await cb("cus_123", "sub_456", "in_789", stripe_event_id="evt_abc")
 
-        assert result is True
-        _, kwargs = mock_update.call_args
-        updates = kwargs["updates"]
-        assert updates["stripe_customer_id"] == "cus_123"
-        assert updates["billing_email"] == "billing@test.com"
-        assert updates["stripe_subscription_id"] == "sub_456"
-        assert updates["pending_checkout_session_id"] is None
+        mock_update.assert_awaited_once()
+        updates = mock_update.call_args.kwargs["updates"]
+        assert updates["payment_failed_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_links_customer_without_subscription(self):
-        """Should not include stripe_subscription_id when subscription_id is None."""
+    async def test_preserves_first_timestamp_on_dunning_retry(self):
+        """Subsequent invoice.payment_failed events must not overwrite payment_failed_at.
+
+        Stripe sends one event per dunning retry (e.g. day 1, day 4, day 7).
+        Each retry must preserve the original grace-period start so enforcement
+        is not postponed indefinitely.
+        """
+        first_failure = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
+        state = _make_billing_state(payment_failed_at=first_failure)
         mock_db = AsyncMock()
 
-        with patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_update:
-            link_fn = await create_customer_link_callback(mock_db)
-            result = await link_fn("cus_123", "billing@test.com", None)
+        with (
+            patch("shu.billing.state_service.BillingStateService.get", new_callable=AsyncMock, return_value=state),
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_update,
+        ):
+            cb = await create_payment_failed_callback(mock_db)
+            # Simulate a second dunning retry firing days later
+            await cb("cus_123", "sub_456", "in_789_retry2", stripe_event_id="evt_retry2")
 
-        assert result is True
-        _, kwargs = mock_update.call_args
-        updates = kwargs["updates"]
-        assert updates["stripe_customer_id"] == "cus_123"
-        assert "stripe_subscription_id" not in updates
+        mock_update.assert_not_awaited()
 
 
 class TestUsageProviderImpl:
@@ -252,6 +259,8 @@ class TestUsageProviderImpl:
     @pytest.mark.asyncio
     async def test_get_usage_summary_handles_empty_period(self):
         """Should return zeros when no usage exists in the period."""
+        from decimal import Decimal
+
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_result.__iter__ = MagicMock(return_value=iter([]))
@@ -265,7 +274,7 @@ class TestUsageProviderImpl:
 
         assert summary.total_input_tokens == 0
         assert summary.total_output_tokens == 0
-        assert summary.total_cost_usd == 0.0
+        assert summary.total_cost_usd == Decimal("0")
         assert len(summary.by_model) == 0
 
     @pytest.mark.asyncio

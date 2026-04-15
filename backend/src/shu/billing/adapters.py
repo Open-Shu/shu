@@ -206,37 +206,60 @@ async def create_subscription_persistence_callback(
     return persist_subscription
 
 
-async def create_customer_link_callback(
-    db: AsyncSession,
-):
-    """Create callback for linking Stripe customers from checkout completion.
+async def create_payment_failed_callback(db: AsyncSession):
+    """Create callback for persisting invoice.payment_failed events.
 
-    Stores the Stripe customer ID in billing_state.
+    Sets payment_failed_at to now so grace-period enforcement can compute
+    whether the payment window has elapsed. The timestamp is only written
+    when the field is currently NULL — Stripe emits multiple
+    invoice.payment_failed events per delinquency cycle (dunning retries),
+    and each retry must not reset the countdown start.
+    """
+    from datetime import UTC, datetime
+
+    from shu.billing.state_service import BillingStateService
+
+    async def on_payment_failed(
+        stripe_customer_id: str,
+        subscription_id: str,
+        invoice_id: str,
+        stripe_event_id: str | None = None,
+    ) -> None:
+        state = await BillingStateService.get(db)
+        if state is None or state.payment_failed_at is not None:
+            # Grace period already started; preserve the first failure timestamp.
+            return
+        await BillingStateService.update(
+            db,
+            updates={"payment_failed_at": datetime.now(UTC)},
+            source="webhook:invoice.payment_failed",
+            stripe_event_id=stripe_event_id,
+        )
+
+    return on_payment_failed
+
+
+async def create_payment_recovered_callback(db: AsyncSession):
+    """Create callback for persisting invoice.paid events.
+
+    Clears payment_failed_at, confirming the customer's account is current.
     """
     from shu.billing.state_service import BillingStateService
 
-    async def persist_customer_link(
+    async def on_payment_recovered(
         stripe_customer_id: str,
-        email: str,
-        subscription_id: str | None,
+        subscription_id: str,
+        invoice_id: str,
         stripe_event_id: str | None = None,
-    ) -> bool:
-        state_updates: dict = {
-            "stripe_customer_id": stripe_customer_id,
-            "billing_email": email,
-            "pending_checkout_session_id": None,
-        }
-        if subscription_id:
-            state_updates["stripe_subscription_id"] = subscription_id
+    ) -> None:
         await BillingStateService.update(
             db,
-            updates=state_updates,
-            source="webhook:customer_link",
+            updates={"payment_failed_at": None},
+            source="webhook:invoice.paid",
             stripe_event_id=stripe_event_id,
         )
-        return True
 
-    return persist_customer_link
+    return on_payment_recovered
 
 
 async def get_billing_config(db: AsyncSession) -> dict:
@@ -261,8 +284,9 @@ async def get_billing_config(db: AsyncSession) -> dict:
         "quantity": state.quantity,
         "cancel_at_period_end": state.cancel_at_period_end,
         "last_reported_total": state.last_reported_total,
-        "last_reported_period_start": state.last_reported_period_start.isoformat() if state.last_reported_period_start else None,
-        "pending_checkout_session_id": state.pending_checkout_session_id,
+        "last_reported_period_start": state.last_reported_period_start.isoformat()
+        if state.last_reported_period_start
+        else None,
         "user_limit_enforcement": state.user_limit_enforcement,
     }
 

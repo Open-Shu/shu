@@ -412,11 +412,6 @@
       </div>
       <div class="lane-content">
         <div class="card c-router">
-          <div class="card-title" style="color:#93C5FD">POST /checkout</div>
-          <div class="card-detail">Create Checkout session<br>→ returns redirect URL</div>
-          <div class="card-badge b-admin">Admin</div>
-        </div>
-        <div class="card c-router">
           <div class="card-title" style="color:#93C5FD">GET /portal</div>
           <div class="card-detail">Customer Portal URL<br>manage payments &amp; invoices</div>
           <div class="card-badge b-admin">Admin</div>
@@ -462,27 +457,21 @@
           <div class="card-title" style="color:#6EE7B7">BillingService</div>
           <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:4px">
             <div class="card-detail">
-              <span style="color:#D1FAE5">Checkout &amp; Portal</span><br>
-              create_checkout_session()<br>
-              create_portal_session()<br>
-              create_stripe_customer()
+              <span style="color:#D1FAE5">Portal</span><br>
+              create_portal_session()
             </div>
             <div class="card-detail">
               <span style="color:#D1FAE5">Seat Sync</span><br>
-              sync_subscription_quantity()<br>
-              <br>
+              sync_subscription_quantity()
             </div>
             <div class="card-detail">
               <span style="color:#D1FAE5">Usage Metering</span><br>
-              report_usage_to_stripe()<br>
-              report_and_reconcile_usage()<br>
-              _catchup_old_period()
+              report_and_reconcile_usage()
             </div>
             <div class="card-detail">
               <span style="color:#D1FAE5">Webhooks</span><br>
               handle_webhook()<br>
-              Multi-instance safety<br>
-              Session ID claim guard
+              Multi-instance safety
             </div>
           </div>
         </div>
@@ -505,11 +494,11 @@
       <div class="lane-content">
         <div class="card c-client">
           <div class="card-title" style="color:#FDE68A">Customers</div>
-          <div class="card-detail">create_customer()<br>get_customer()<br>update_customer()</div>
+          <div class="card-detail">get_customer()<br>update_customer()</div>
         </div>
         <div class="card c-client">
-          <div class="card-title" style="color:#FDE68A">Checkout &amp; Portal</div>
-          <div class="card-detail">create_checkout_session()<br>create_portal_session()</div>
+          <div class="card-title" style="color:#FDE68A">Portal</div>
+          <div class="card-detail">create_portal_session()</div>
         </div>
         <div class="card c-client">
           <div class="card-title" style="color:#FDE68A">Subscriptions</div>
@@ -545,10 +534,6 @@
           <div class="card-detail">Customers<br>Subscriptions<br>Billing Meters</div>
         </div>
         <div class="card c-stripe">
-          <div class="card-title" style="color:#C4B5FD">Hosted Checkout</div>
-          <div class="card-detail">Stripe-hosted payment<br>page → success/cancel<br>redirect</div>
-        </div>
-        <div class="card c-stripe">
           <div class="card-title" style="color:#C4B5FD">Customer Portal</div>
           <div class="card-detail">Self-service billing<br>manage payment methods<br>view invoices</div>
         </div>
@@ -580,15 +565,15 @@
         </div>
         <div class="card c-adapter">
           <div class="card-title" style="color:#DDD6FE">Subscription Callback</div>
-          <div class="card-detail">create_subscription_<br>persistence_callback()<br>→ system_settings[billing]</div>
+          <div class="card-detail">create_subscription_<br>persistence_callback()<br>→ billing_state</div>
         </div>
         <div class="card c-adapter">
-          <div class="card-title" style="color:#DDD6FE">Customer Link Callback</div>
-          <div class="card-detail">create_customer_<br>link_callback()<br>→ links Stripe customer ID</div>
+          <div class="card-title" style="color:#DDD6FE">Payment Callbacks</div>
+          <div class="card-detail">create_payment_failed_callback()<br>create_payment_recovered_callback()<br>→ billing_state.payment_failed_at</div>
         </div>
         <div class="card c-adapter">
           <div class="card-title" style="color:#DDD6FE">Helpers</div>
-          <div class="card-detail">get_billing_config()<br>get_user_count()<br>BILLING_SETTINGS_KEY</div>
+          <div class="card-detail">get_billing_config()<br>get_user_count()</div>
         </div>
         <div class="card c-enforce">
           <div class="card-title" style="color:#FBCFE8">Enforcement</div>
@@ -612,8 +597,12 @@
       </div>
       <div class="lane-content">
         <div class="card c-db" style="flex:1">
-          <div class="card-title" style="color:#CBD5E1">system_settings <span style="opacity:.6;font-weight:400">key: "billing"</span></div>
-          <div class="card-detail">stripe_customer_id &nbsp;·&nbsp; stripe_subscription_id &nbsp;·&nbsp; subscription_status<br>current_period_start/end &nbsp;·&nbsp; quantity &nbsp;·&nbsp; user_limit_enforcement<br>last_reported_total &nbsp;·&nbsp; last_reported_period_start &nbsp;·&nbsp; pending_checkout_session_id</div>
+          <div class="card-title" style="color:#CBD5E1">billing_state <span style="opacity:.6;font-weight:400">singleton (id=1)</span></div>
+          <div class="card-detail">stripe_customer_id &nbsp;·&nbsp; stripe_subscription_id &nbsp;·&nbsp; subscription_status<br>current_period_start/end &nbsp;·&nbsp; quantity &nbsp;·&nbsp; user_limit_enforcement<br>last_reported_total &nbsp;·&nbsp; last_reported_period_start &nbsp;·&nbsp; payment_failed_at</div>
+        </div>
+        <div class="card c-db">
+          <div class="card-title" style="color:#CBD5E1">billing_state_audit</div>
+          <div class="card-detail">Append-only field-change log<br>One row per changed field<br>stripe_event_id, changed_by</div>
         </div>
         <div class="card c-db">
           <div class="card-title" style="color:#CBD5E1">llm_usage</div>
@@ -670,24 +659,10 @@
       <div class="panel-body">
         <div class="event-list">
           <div class="event-item">
-            <div class="event-dot" style="background:#7C3AED"></div>
-            <div>
-              <div class="event-name">checkout.session.completed</div>
-              <div class="event-desc">Links Stripe customer + subscription to this instance. Session ID claim prevents multi-tenant cross-binding.</div>
-            </div>
-          </div>
-          <div class="event-item">
-            <div class="event-dot" style="background:var(--webhook)"></div>
-            <div>
-              <div class="event-name">customer.created</div>
-              <div class="event-desc">Ignored until a checkout session is verified. Prevents binding to another tenant's customer.</div>
-            </div>
-          </div>
-          <div class="event-item">
             <div class="event-dot" style="background:var(--webhook)"></div>
             <div>
               <div class="event-name">customer.subscription.created</div>
-              <div class="event-desc">Persists subscription ID, status, quantity, period dates to system_settings.</div>
+              <div class="event-desc">Persists subscription ID, status, quantity, and period dates to billing_state.</div>
             </div>
           </div>
           <div class="event-item">
@@ -708,24 +683,24 @@
             <div class="event-dot" style="background:#059669"></div>
             <div>
               <div class="event-name">invoice.paid</div>
-              <div class="event-desc">Confirms payment. Stripe handles receipts; logged for audit.</div>
+              <div class="event-desc">Clears billing_state.payment_failed_at, confirming the account is current.</div>
             </div>
           </div>
           <div class="event-item">
             <div class="event-dot" style="background:#D97706"></div>
             <div>
               <div class="event-name">invoice.payment_failed</div>
-              <div class="event-desc">Logs failure. Grace period: 7 days before service suspension (configurable).</div>
+              <div class="event-desc">Sets billing_state.payment_failed_at. Grace period before suspension is SHU_STRIPE_PAYMENT_GRACE_DAYS.</div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Checkout Flow -->
+    <!-- Startup Seeding -->
     <div class="panel">
       <div class="panel-header" style="color:#93C5FD">
-        <span class="panel-icon">🛒</span> Checkout Flow
+        <span class="panel-icon">🌱</span> Startup Seeding
       </div>
       <div class="panel-body">
         <div class="flow-steps">
@@ -735,8 +710,8 @@
               <div class="flow-step-line"></div>
             </div>
             <div class="flow-step-content">
-              <strong>Admin → POST /billing/checkout</strong>
-              <p>Sends seat count + optional email. Session ID saved to system_settings as pending claim.</p>
+              <strong>Operator sets env vars</strong>
+              <p>SHU_STRIPE_CUSTOMER_ID and SHU_STRIPE_SUBSCRIPTION_ID are set at deploy time for this instance's tenant.</p>
             </div>
           </div>
           <div class="flow-step">
@@ -745,37 +720,17 @@
               <div class="flow-step-line"></div>
             </div>
             <div class="flow-step-content">
-              <strong>BillingService → StripeClient</strong>
-              <p>Creates Checkout Session via Stripe API. Returns session ID + redirect URL.</p>
-            </div>
-          </div>
-          <div class="flow-step">
-            <div style="position:relative">
-              <div class="flow-step-num" style="background:var(--stripe)">3</div>
-              <div class="flow-step-line"></div>
-            </div>
-            <div class="flow-step-content">
-              <strong>User → Stripe Hosted Checkout</strong>
-              <p>User enters payment details on Stripe's page. On success, redirected to success_url.</p>
-            </div>
-          </div>
-          <div class="flow-step">
-            <div style="position:relative">
-              <div class="flow-step-num" style="background:var(--webhook)">4</div>
-              <div class="flow-step-line"></div>
-            </div>
-            <div class="flow-step-content">
-              <strong>Stripe → POST /billing/webhooks</strong>
-              <p>checkout.session.completed fires. Signature verified, session ID matched to pending claim.</p>
+              <strong>ensure_singleton() on startup</strong>
+              <p>Creates billing_state row (id=1) if absent. Safe under concurrent multi-worker startup via SAVEPOINT.</p>
             </div>
           </div>
           <div class="flow-step flow-step-last">
             <div style="position:relative">
-              <div class="flow-step-num" style="background:var(--adapter)">5</div>
+              <div class="flow-step-num" style="background:var(--adapter)">3</div>
             </div>
             <div class="flow-step-content">
-              <strong>Customer ID linked</strong>
-              <p>Stripe customer + subscription IDs written to system_settings. Pending claim cleared.</p>
+              <strong>seed_from_config() writes NULL fields only</strong>
+              <p>Writes customer_id + subscription_id from env into billing_state. Never overwrites values already set by webhooks or a previous seed.</p>
             </div>
           </div>
         </div>
@@ -835,7 +790,7 @@
             </div>
             <div class="flow-step-content">
               <strong>Report delta</strong>
-              <p>MeterEvent sent to Stripe. last_reported_total + period saved to system_settings for next run.</p>
+              <p>MeterEvent sent to Stripe. last_reported_total + period saved to billing_state for next run.</p>
             </div>
           </div>
         </div>
@@ -848,12 +803,12 @@
         <span class="panel-icon">🛡️</span> Multi-Instance Safety
       </div>
       <div class="panel-body" style="font-size:11.5px;color:var(--muted);line-height:1.6">
-        <p>Multiple Shu instances can share one Stripe account. The billing module prevents cross-tenant binding:</p>
+        <p>Multiple Shu instances can share one Stripe account. Each instance only processes events for its own tenant:</p>
         <br>
         <ul style="padding-left:16px;display:flex;flex-direction:column;gap:6px">
-          <li><strong style="color:var(--text)">Pending session claim</strong> — checkout creates a pending_checkout_session_id; only the matching checkout.session.completed can link the customer.</li>
-          <li><strong style="color:var(--text)">customer.created ignored</strong> — until a checkout session is verified, customer.created events are dropped.</li>
-          <li><strong style="color:var(--text)">expected_customer_id filter</strong> — once linked, all webhook events for other customers are silently rejected.</li>
+          <li><strong style="color:var(--text)">expected_customer_id guard</strong> — if SHU_STRIPE_CUSTOMER_ID is not configured, all webhook events are dropped with a warning. Once configured, events for other customers are silently rejected.</li>
+          <li><strong style="color:var(--text)">Operator-provisioned identity</strong> — the Stripe customer and subscription IDs are set by the operator at deploy time; Shu never creates them itself.</li>
+          <li><strong style="color:var(--text)">Row-level locking</strong> — billing_state mutations use SELECT ... FOR UPDATE so concurrent webhook handlers serialise at the DB level without lost updates.</li>
         </ul>
       </div>
     </div>

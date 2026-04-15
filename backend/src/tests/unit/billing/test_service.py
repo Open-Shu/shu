@@ -24,7 +24,6 @@ def _make_client():
     # Async I/O methods
     client.get_subscription = AsyncMock()
     client.update_subscription_quantity = AsyncMock()
-    client.create_checkout_session = AsyncMock()
     client.create_portal_session = AsyncMock()
     client.create_customer = AsyncMock()
     client.report_usage = AsyncMock()
@@ -69,28 +68,36 @@ class TestSyncSubscriptionQuantity:
         client.update_subscription_quantity.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_subscription_not_found(self):
-        """Should return False when Stripe subscription doesn't exist."""
+    async def test_raises_when_subscription_not_found(self):
+        """Should raise StripeClientError when Stripe subscription doesn't exist.
+
+        Callers must not persist local quantity on raise — the subscription
+        state is unknown and writing user_count would produce wrong quota data.
+        """
         client = _make_client()
         client.get_subscription.return_value = None
         service = BillingService(_make_settings(), stripe_client=client)
 
-        result = await service.sync_subscription_quantity("sub_gone", user_count=5)
+        with pytest.raises(StripeClientError):
+            await service.sync_subscription_quantity("sub_gone", user_count=5)
 
-        assert result is False
         client.update_subscription_quantity.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_no_seat_item_found(self):
-        """Empty items, or items missing the configured seat price, should not call update."""
+    async def test_raises_when_no_seat_item_found(self):
+        """Should raise StripeClientError when no item matches the configured seat price.
+
+        Falling back to items[0] on a mixed subscription (seat + metered) would
+        persist the metered item's quantity, which is wrong.
+        """
         client = _make_client()
         # No items at all
         client.get_subscription.return_value = {"items": {"data": []}}
         service = BillingService(_make_settings(), stripe_client=client)
 
-        result = await service.sync_subscription_quantity("sub_123", user_count=3)
+        with pytest.raises(StripeClientError):
+            await service.sync_subscription_quantity("sub_123", user_count=3)
 
-        assert result is False
         client.update_subscription_quantity.assert_not_called()
 
     @pytest.mark.asyncio
@@ -218,28 +225,6 @@ class TestWebhookCustomerScoping:
 
         assert handled is True
         persist_sub.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_allows_event_when_no_expected_customer(self):
-        """When no customer is linked yet, all events should be allowed."""
-        client = _make_client()
-        event = MagicMock()
-        event.type = "checkout.session.completed"
-        event.id = "evt_new"
-        event.data.object = {"customer": "cus_new", "id": "cs_123"}
-        client.construct_webhook_event.return_value = event
-
-        service = BillingService(_make_settings(), stripe_client=client)
-
-        handled, event_type, event_id = await service.handle_webhook(
-            payload=b"payload",
-            signature="sig",
-            expected_customer_id=None,  # No customer linked yet
-        )
-
-        # Should process (not reject) — handled depends on dispatcher having a handler
-        assert event_type == "checkout.session.completed"
-
 
 class TestReportUsageToStripe:
     """Tests for cost delta reporting contract."""
@@ -695,7 +680,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
-            patch("shu.services.system_settings_service.SystemSettingsService") as mock_ss_cls,
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_bss_update,
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -704,95 +689,36 @@ class TestReportAndReconcileUsage:
             )
             mock_provider_cls.return_value = mock_provider
 
-            mock_ss = MagicMock()
-            mock_ss.upsert = AsyncMock()
-            mock_ss_cls.return_value = mock_ss
-
             result = await service.report_and_reconcile_usage(db)
 
         # Caller should short-circuit — no new-period reporting
         assert result["action"] == "catchup_failed"
-        # system_settings must NOT have been upserted (old period marker preserved)
-        mock_ss.upsert.assert_not_awaited()
+        # BillingStateService.update must NOT have been called (old period marker preserved)
+        mock_bss_update.assert_not_awaited()
 
 
-class TestWebhookInstanceBinding:
-    """Tests for C1 — fresh instances must not bind to other tenants' customers."""
+class TestWebhookGuard:
+    """Webhook guard: misconfigured instances must drop all events."""
 
     @pytest.mark.asyncio
-    async def test_fresh_instance_rejects_customer_created(self):
-        """Before first checkout, customer.created must NOT link this instance."""
+    async def test_missing_customer_id_drops_all_events(self):
+        """When SHU_STRIPE_CUSTOMER_ID is not configured, all events must be dropped."""
         client = _make_client()
         event = MagicMock()
-        event.type = "customer.created"
+        event.type = "customer.subscription.updated"
         event.id = "evt_123"
-        event.data.object = {"object": "customer", "id": "cus_other", "email": "other@tenant.com"}
         client.construct_webhook_event.return_value = event
 
-        persist_link = AsyncMock()
+        persist_sub = AsyncMock()
         service = BillingService(_make_settings(), stripe_client=client)
 
         handled, event_type, _ = await service.handle_webhook(
             payload=b"payload",
             signature="sig",
-            persist_customer_link=persist_link,
-            expected_customer_id=None,  # Fresh instance
-            pending_checkout_session_id=None,
+            persist_subscription=persist_sub,
+            expected_customer_id=None,  # misconfigured — SHU_STRIPE_CUSTOMER_ID not set
         )
 
         assert handled is False
-        persist_link.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_fresh_instance_rejects_unmatched_checkout_session(self):
-        """checkout.session.completed for a different session must be ignored."""
-        client = _make_client()
-        event = MagicMock()
-        event.type = "checkout.session.completed"
-        event.id = "evt_456"
-        event.data.object = {"id": "cs_someone_else", "customer": "cus_other"}
-        client.construct_webhook_event.return_value = event
-
-        persist_link = AsyncMock()
-        service = BillingService(_make_settings(), stripe_client=client)
-
-        handled, _, _ = await service.handle_webhook(
-            payload=b"payload",
-            signature="sig",
-            persist_customer_link=persist_link,
-            expected_customer_id=None,
-            pending_checkout_session_id="cs_ours",
-        )
-
-        assert handled is False
-        persist_link.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_fresh_instance_accepts_matching_checkout_session(self):
-        """checkout.session.completed matching our pending session SHOULD link."""
-        client = _make_client()
-        event = MagicMock()
-        event.type = "checkout.session.completed"
-        event.id = "evt_789"
-        event.data.object = {
-            "id": "cs_ours",
-            "customer": "cus_mine",
-            "subscription": "sub_123",
-            "customer_email": "billing@mine.com",
-            "metadata": {},
-        }
-        client.construct_webhook_event.return_value = event
-
-        persist_link = AsyncMock()
-        service = BillingService(_make_settings(), stripe_client=client)
-
-        handled, _, _ = await service.handle_webhook(
-            payload=b"payload",
-            signature="sig",
-            persist_customer_link=persist_link,
-            expected_customer_id=None,
-            pending_checkout_session_id="cs_ours",  # Match
-        )
-
-        assert handled is True
-        persist_link.assert_awaited_once()
+        assert event_type == "customer.subscription.updated"
+        persist_sub.assert_not_awaited()

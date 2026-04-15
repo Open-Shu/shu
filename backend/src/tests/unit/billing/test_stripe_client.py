@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shu.billing.schemas import SubscriptionUpdate
-from shu.billing.stripe_client import StripeClient, StripeClientError, StripeConfigurationError
+from shu.billing.stripe_client import StripeClient, StripeClientError, StripeConfigurationError, StripeSignatureError
 
 
 def _make_settings(**overrides):
@@ -180,7 +180,7 @@ class TestConstructWebhookEvent:
 
     @patch("shu.billing.stripe_client.stripe")
     def test_raises_on_invalid_signature(self, mock_stripe):
-        """Must raise StripeClientError on signature verification failure."""
+        """Must raise StripeSignatureError on signature verification failure."""
         import stripe as real_stripe
 
         mock_stripe.SignatureVerificationError = real_stripe.SignatureVerificationError
@@ -190,5 +190,22 @@ class TestConstructWebhookEvent:
 
         client = StripeClient(_make_settings())
 
-        with pytest.raises(StripeClientError, match="Invalid webhook signature"):
+        with pytest.raises(StripeSignatureError, match="Invalid webhook signature"):
             client.construct_webhook_event(b"payload", "bad_sig")
+
+    @patch("shu.billing.stripe_client.stripe")
+    def test_raises_signature_error_on_malformed_payload(self, mock_stripe):
+        """Malformed payload (ValueError from Stripe SDK) must raise StripeSignatureError.
+
+        This ensures the router maps it to HTTP 400, not 500. Stripe retries
+        on 5xx; returning 400 stops retries for bad requests.
+        """
+        import stripe as real_stripe
+
+        mock_stripe.SignatureVerificationError = real_stripe.SignatureVerificationError
+        mock_stripe.Webhook.construct_event.side_effect = ValueError("payload is not valid JSON")
+
+        client = StripeClient(_make_settings())
+
+        with pytest.raises(StripeSignatureError, match="Invalid webhook payload"):
+            client.construct_webhook_event(b"not-json", "sig")

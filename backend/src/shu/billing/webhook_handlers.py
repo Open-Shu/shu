@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 import stripe
 
@@ -19,11 +19,23 @@ from shu.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Type alias for the callback that persists subscription changes
-# This is injected by the service layer to decouple from the data layer
-SubscriptionCallback = Callable[[SubscriptionUpdate], Any]
-CustomerCallback = Callable[[str, str], Any]  # (stripe_customer_id, email)
-PaymentFailedCallback = Callable[[str, str, str], Any]  # (stripe_customer_id, subscription_id, invoice_id)
+class SubscriptionCallback(Protocol):
+    """Callback injected by the service layer to persist subscription changes.
+
+    Handlers call it with the parsed SubscriptionUpdate. The service layer
+    wraps the underlying persist function in a closure that captures the
+    stripe_event_id from the outer webhook event, so handlers never need to
+    pass it directly.
+    """
+
+    async def __call__(self, update: SubscriptionUpdate) -> None:
+        """Persist a subscription state change."""
+        ...
+
+
+# (stripe_customer_id, subscription_id, invoice_id, stripe_event_id)
+PaymentFailedCallback = Callable[[str, str, str, str | None], Any]
+PaymentRecoveredCallback = Callable[[str, str, str, str | None], Any]
 
 
 class WebhookHandler(ABC):
@@ -41,34 +53,6 @@ class WebhookHandler(ABC):
 
         """
         pass
-
-
-class CustomerCreatedHandler(WebhookHandler):
-    """Handle customer.created events.
-
-    This fires when a new customer is created via Checkout or API.
-    We use this to link the Stripe customer to our organization.
-    """
-
-    event_type = "customer.created"
-
-    async def handle(
-        self,
-        event: stripe.Event,
-        on_customer_created: CustomerCallback | None = None,
-        **kwargs: Any,
-    ) -> None:
-        customer = event.data.object
-        customer_id = customer.get("id")
-        email = customer.get("email")
-
-        logger.info(
-            "Processing customer.created",
-            extra={"stripe_customer_id": customer_id, "email": email},
-        )
-
-        if on_customer_created and email:
-            await on_customer_created(customer_id, email)
 
 
 class SubscriptionCreatedHandler(WebhookHandler):
@@ -186,30 +170,36 @@ class SubscriptionDeletedHandler(WebhookHandler):
 class InvoicePaidHandler(WebhookHandler):
     """Handle invoice.paid events.
 
-    This confirms successful payment. For usage-based billing, this is when
-    we know the customer has paid for their usage.
+    Confirms successful payment and clears any outstanding payment failure
+    marker so grace-period enforcement reflects the recovered account status.
     """
 
     event_type = "invoice.paid"
 
-    async def handle(self, event: stripe.Event, **kwargs: Any) -> None:
+    async def handle(
+        self,
+        event: stripe.Event,
+        on_payment_recovered: PaymentRecoveredCallback | None = None,
+        **kwargs: Any,
+    ) -> None:
         invoice = event.data.object
         customer_id = invoice.get("customer")
         subscription_id = invoice.get("subscription")
+        invoice_id = invoice.get("id")
         amount_paid = invoice.get("amount_paid", 0) / 100  # cents to dollars
 
         logger.info(
             "Processing invoice.paid",
             extra={
-                "invoice_id": invoice.get("id"),
+                "invoice_id": invoice_id,
                 "customer_id": customer_id,
                 "subscription_id": subscription_id,
                 "amount_paid": amount_paid,
             },
         )
 
-        # Invoice paid - no action needed unless we want to send a receipt
-        # Stripe handles receipts automatically if configured
+        if on_payment_recovered and customer_id and subscription_id and invoice_id:
+            await on_payment_recovered(customer_id, subscription_id, invoice_id, event.id)
 
 
 class InvoicePaymentFailedHandler(WebhookHandler):
@@ -246,49 +236,7 @@ class InvoicePaymentFailedHandler(WebhookHandler):
         )
 
         if on_payment_failed and customer_id and subscription_id and invoice_id:
-            await on_payment_failed(customer_id, subscription_id, invoice_id)
-
-
-class CheckoutSessionCompletedHandler(WebhookHandler):
-    """Handle checkout.session.completed events.
-
-    This fires when a customer completes Checkout. For subscription mode,
-    the subscription is already created, but we can use this to:
-    1. Link the organization to Stripe customer/subscription
-    2. Trigger any welcome/onboarding flows
-    """
-
-    event_type = "checkout.session.completed"
-
-    async def handle(
-        self,
-        event: stripe.Event,
-        on_checkout_completed: Callable[[dict[str, Any]], Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        session = event.data.object
-        customer_id = session.get("customer")
-        subscription_id = session.get("subscription")
-        metadata = session.get("metadata", {})
-
-        logger.info(
-            "Processing checkout.session.completed",
-            extra={
-                "session_id": session.get("id"),
-                "customer_id": customer_id,
-                "subscription_id": subscription_id,
-                "mode": session.get("mode"),
-            },
-        )
-
-        if on_checkout_completed:
-            await on_checkout_completed({
-                "session_id": session.get("id"),
-                "customer_id": customer_id,
-                "subscription_id": subscription_id,
-                "customer_email": session.get("customer_email"),
-                "metadata": metadata,
-            })
+            await on_payment_failed(customer_id, subscription_id, invoice_id, event.id)
 
 
 class WebhookDispatcher:
@@ -307,13 +255,11 @@ class WebhookDispatcher:
     def _register_handlers(self) -> None:
         """Register all webhook handlers."""
         handlers: list[WebhookHandler] = [
-            CustomerCreatedHandler(),
             SubscriptionCreatedHandler(self._client),
             SubscriptionUpdatedHandler(self._client),
             SubscriptionDeletedHandler(self._client),
             InvoicePaidHandler(),
             InvoicePaymentFailedHandler(),
-            CheckoutSessionCompletedHandler(),
         ]
         for handler in handlers:
             self._handlers[handler.event_type] = handler

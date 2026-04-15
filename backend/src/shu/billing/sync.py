@@ -51,21 +51,20 @@ async def trigger_quantity_sync() -> None:
             return
 
         user_count = await get_user_count(db)
-        if user_count == 0:
-            logger.debug("No users, skipping quantity sync")
-            return
-
         service = BillingService(settings)
         updated = await service.sync_subscription_quantity(subscription_id, user_count)
+
+        # Always persist the local quantity so billing_state stays in sync
+        # even when Stripe already had the right value (updated=False).
+        from shu.billing.state_service import BillingStateService
+
+        await BillingStateService.update(
+            db,
+            updates={"quantity": user_count},
+            source="scheduler:quantity_sync",
+        )
+
         if updated:
-            from shu.billing.state_service import BillingStateService
-
-            await BillingStateService.update(
-                db,
-                updates={"quantity": user_count},
-                source="scheduler:quantity_sync",
-            )
-
             logger.info(
                 "Quantity sync completed",
                 extra={"subscription_id": subscription_id, "user_count": user_count},
@@ -117,23 +116,26 @@ class BillingQuantitySyncSource:
                 return 0
 
             user_count = await get_user_count(db)
-            if user_count == 0:
-                self._last_run = now
-                return 0
-
             service = BillingService(settings)
             updated = await service.sync_subscription_quantity(subscription_id, user_count)
+
+            # Always persist the local quantity so billing_state stays current
+            # even when Stripe already had the right value (updated=False).
+            # sync_subscription_quantity raises on error (not-found, no seat item),
+            # so reaching here means Stripe confirmed the subscription is healthy.
+            # _last_run is advanced only after the DB write succeeds so that a
+            # DB failure after a successful Stripe update does not silence the
+            # discrepancy for the full reconciliation interval.
+            from shu.billing.state_service import BillingStateService
+
+            await BillingStateService.update(
+                db,
+                updates={"quantity": user_count},
+                source="scheduler:daily_quantity_reconciliation",
+            )
             self._last_run = now
 
             if updated:
-                from shu.billing.state_service import BillingStateService
-
-                await BillingStateService.update(
-                    db,
-                    updates={"quantity": user_count},
-                    source="scheduler:daily_quantity_reconciliation",
-                )
-
                 logger.info(
                     "Daily quantity reconciliation synced",
                     extra={"subscription_id": subscription_id, "user_count": user_count},

@@ -239,17 +239,23 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Model pricing sync failed: {e}")
 
-    # Ensure the billing_state singleton row exists before any webhook handlers run
+    # Ensure the billing_state singleton row exists, then seed from env vars.
+    # These run in separate transaction scopes: ensure_singleton commits via
+    # session.begin() context exit; seed_from_config → BillingStateService.update()
+    # always commits its own transaction and must not run inside an outer begin().
     try:
+        from .billing.config import get_billing_settings
         from .billing.state_service import BillingStateService
         from .core.database import get_async_session_local
 
         session_maker = get_async_session_local()
+        billing_settings = get_billing_settings()
         async with session_maker() as session:
             async with session.begin():
                 await BillingStateService.ensure_singleton(session)
+            await BillingStateService.seed_from_config(session, billing_settings)
     except Exception as e:
-        logger.warning(f"billing_state singleton init failed: {e}")
+        logger.warning(f"billing_state init failed: {e}")
 
     # Preload the default embedding model to avoid lazy loading
     try:
