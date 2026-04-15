@@ -78,7 +78,7 @@ services:
 
   # Shu Postgres
   shu-postgres:
-    image: paradedb/paradedb:pg15
+    image: paradedb/paradedb:latest-pg18
     environment:
       POSTGRES_USER: shu
       POSTGRES_PASSWORD: password  # pragma: allowlist secret
@@ -86,7 +86,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - shu-postgres-data:/var/lib/postgresql/data
+      - shu-postgres-data:/var/lib/postgresql
       - ../../init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     networks:
       - shu-network
