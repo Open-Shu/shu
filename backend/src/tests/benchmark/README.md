@@ -7,7 +7,7 @@ Measures multi-surface retrieval accuracy against standard IR benchmarks (BEIR) 
 - Shu backend running with worker (`make up-dev` or equivalent)
 - `SHU_ENABLE_DOCUMENT_PROFILING=true` for multi-surface evaluation
 - A configured profiling model (LM Studio local or cloud API)
-- Python dependencies: `pip install ranx rank-bm25`
+- Python dependencies: `pip install -r requirements-benchmark.txt rank-bm25`
 
 ## Quick Start
 
