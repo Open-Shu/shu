@@ -298,6 +298,13 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     });
   });
 
+  afterEach(async () => {
+    const featureFlags = await import('../../config/featureFlags');
+    featureFlags.PLUGINS_ENABLED = true;
+    featureFlags.MCP_ENABLED = true;
+    featureFlags.EXPERIENCES_ENABLED = true;
+  });
+
   test('hides Plugins and Plugin Feeds cards when PLUGINS_ENABLED is false', async () => {
     const featureFlags = await import('../../config/featureFlags');
     featureFlags.PLUGINS_ENABLED = false;
@@ -317,9 +324,6 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     // Other cards should still be present
     expect(screen.getByText('LLM Providers')).toBeInTheDocument();
     expect(screen.getByText('Knowledge Bases')).toBeInTheDocument();
-
-    // Restore for other tests
-    featureFlags.PLUGINS_ENABLED = true;
   });
 
   test('hides Experiences card when EXPERIENCES_ENABLED is false', async () => {
@@ -339,8 +343,6 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     expect(screen.queryByText('Experiences')).not.toBeInTheDocument();
     // Other cards should still be present
     expect(screen.getByText('LLM Providers')).toBeInTheDocument();
-
-    featureFlags.EXPERIENCES_ENABLED = true;
   });
 
   test('progress counter adjusts when cards are filtered out', async () => {
@@ -360,9 +362,6 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     await waitFor(() => {
       expect(screen.getByText('4 of 4 complete')).toBeInTheDocument();
     });
-
-    featureFlags.PLUGINS_ENABLED = true;
-    featureFlags.EXPERIENCES_ENABLED = true;
   });
 
   test('hides Plugin and Feed key concepts when PLUGINS_ENABLED is false', async () => {
@@ -384,8 +383,6 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     // Plugin and Feed concepts should be hidden
     expect(screen.queryByText('Plugin')).not.toBeInTheDocument();
     expect(screen.queryByText('Feed')).not.toBeInTheDocument();
-
-    featureFlags.PLUGINS_ENABLED = true;
   });
 
   test('shows all cards and concepts when all flags are enabled', async () => {
