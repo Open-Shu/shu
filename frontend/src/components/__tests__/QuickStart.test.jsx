@@ -3,7 +3,6 @@ import '@testing-library/jest-dom';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { vi } from 'vitest';
-import QuickStart from '../QuickStart';
 import * as api from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
 import { getBrandingAppName } from '../../utils/constants';
@@ -21,6 +20,15 @@ vi.mock('../../contexts/ThemeContext', () => ({
 vi.mock('../../utils/constants', () => ({
   getBrandingAppName: vi.fn(),
 }));
+
+// Default: all feature flags enabled (matching production defaults)
+vi.mock('../../config/featureFlags', () => ({
+  PLUGINS_ENABLED: true,
+  MCP_ENABLED: true,
+  EXPERIENCES_ENABLED: true,
+}));
+
+import QuickStart from '../QuickStart';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -268,5 +276,132 @@ describe('QuickStart Component - Experiences Card', () => {
     // The card should be in a container with proper spacing
     const gridContainer = experiencesCard.parentElement;
     expect(gridContainer).toHaveClass('MuiGrid-container');
+  });
+});
+
+describe('QuickStart Component - Feature Flag Filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppTheme.mockReturnValue({ branding: { app_name: 'Test App' } });
+    getBrandingAppName.mockReturnValue('Test App');
+    api.extractDataFromResponse.mockImplementation((response) => response.data);
+    api.setupAPI.getStatus.mockResolvedValue({
+      data: {
+        llm_provider_configured: true,
+        model_configuration_created: true,
+        knowledge_base_created: true,
+        documents_added: true,
+        plugins_enabled: true,
+        plugin_feed_created: true,
+        experience_created: true,
+      },
+    });
+  });
+
+  test('hides Plugins and Plugin Feeds cards when PLUGINS_ENABLED is false', async () => {
+    const featureFlags = await import('../../config/featureFlags');
+    featureFlags.PLUGINS_ENABLED = false;
+
+    render(
+      <TestWrapper>
+        <QuickStart />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Getting Started')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Plugins')).not.toBeInTheDocument();
+    expect(screen.queryByText('Plugin Feeds')).not.toBeInTheDocument();
+    // Other cards should still be present
+    expect(screen.getByText('LLM Providers')).toBeInTheDocument();
+    expect(screen.getByText('Knowledge Bases')).toBeInTheDocument();
+
+    // Restore for other tests
+    featureFlags.PLUGINS_ENABLED = true;
+  });
+
+  test('hides Experiences card when EXPERIENCES_ENABLED is false', async () => {
+    const featureFlags = await import('../../config/featureFlags');
+    featureFlags.EXPERIENCES_ENABLED = false;
+
+    render(
+      <TestWrapper>
+        <QuickStart />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Getting Started')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Experiences')).not.toBeInTheDocument();
+    // Other cards should still be present
+    expect(screen.getByText('LLM Providers')).toBeInTheDocument();
+
+    featureFlags.EXPERIENCES_ENABLED = true;
+  });
+
+  test('progress counter adjusts when cards are filtered out', async () => {
+    const featureFlags = await import('../../config/featureFlags');
+    featureFlags.PLUGINS_ENABLED = false;
+    featureFlags.EXPERIENCES_ENABLED = false;
+
+    render(
+      <TestWrapper>
+        <QuickStart />
+      </TestWrapper>
+    );
+
+    // With plugins and experiences disabled, 3 cards are removed (Plugins, Plugin Feeds, Experiences)
+    // Remaining: LLM Providers, Model Configs, Knowledge Bases, Add Documents = 4 cards
+    // All 4 have their status keys set to true in the mock
+    await waitFor(() => {
+      expect(screen.getByText('4 of 4 complete')).toBeInTheDocument();
+    });
+
+    featureFlags.PLUGINS_ENABLED = true;
+    featureFlags.EXPERIENCES_ENABLED = true;
+  });
+
+  test('hides Plugin and Feed key concepts when PLUGINS_ENABLED is false', async () => {
+    const featureFlags = await import('../../config/featureFlags');
+    featureFlags.PLUGINS_ENABLED = false;
+
+    render(
+      <TestWrapper>
+        <QuickStart />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Key Concepts')).toBeInTheDocument();
+    });
+
+    // Knowledge Base concept should still be present
+    expect(screen.getByText('Knowledge Base (KB)')).toBeInTheDocument();
+    // Plugin and Feed concepts should be hidden
+    expect(screen.queryByText('Plugin')).not.toBeInTheDocument();
+    expect(screen.queryByText('Feed')).not.toBeInTheDocument();
+
+    featureFlags.PLUGINS_ENABLED = true;
+  });
+
+  test('shows all cards and concepts when all flags are enabled', async () => {
+    render(
+      <TestWrapper>
+        <QuickStart />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Getting Started')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Plugins')).toBeInTheDocument();
+    expect(screen.getByText('Plugin Feeds')).toBeInTheDocument();
+    expect(screen.getByText('Experiences')).toBeInTheDocument();
+    expect(screen.getByText('Knowledge Base (KB)')).toBeInTheDocument();
   });
 });

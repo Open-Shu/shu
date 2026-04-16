@@ -5,6 +5,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import { EXPERIENCES_ENABLED } from '../../../config/featureFlags';
 
 const AutomationMenu = React.memo(function AutomationMenu({
   anchorEl,
@@ -30,13 +31,15 @@ const AutomationMenu = React.memo(function AutomationMenu({
       anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       transformOrigin={{ vertical: 'top', horizontal: 'left' }}
     >
-      <MenuItem onClick={handleDashboardClick}>
-        <ListItemIcon>
-          <DashboardIcon fontSize="small" />
-        </ListItemIcon>
-        Dashboard
-      </MenuItem>
-      <Divider />
+      {EXPERIENCES_ENABLED && (
+        <MenuItem onClick={handleDashboardClick}>
+          <ListItemIcon>
+            <DashboardIcon fontSize="small" />
+          </ListItemIcon>
+          Dashboard
+        </MenuItem>
+      )}
+      {EXPERIENCES_ENABLED && <Divider />}
       {isTitleLocked ? (
         <MenuItem onClick={onUnlock} disabled={disableUnlock}>
           <ListItemIcon>

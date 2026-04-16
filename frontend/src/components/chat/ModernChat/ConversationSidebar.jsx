@@ -28,6 +28,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import ClearIcon from '@mui/icons-material/Clear';
 import MarkdownRenderer from '../../shared/MarkdownRenderer';
+import { EXPERIENCES_ENABLED } from '../../../config/featureFlags';
 
 const ConversationSidebar = React.memo(function ConversationSidebar({
   conversations,
@@ -72,15 +73,17 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
           gap: 2,
         }}
       >
-        <Button
-          fullWidth
-          variant="outlined"
-          startIcon={<DashboardIcon />}
-          onClick={() => navigate('/dashboard')}
-          sx={{ minHeight: 44 }}
-        >
-          Dashboard
-        </Button>
+        {EXPERIENCES_ENABLED && (
+          <Button
+            fullWidth
+            variant="outlined"
+            startIcon={<DashboardIcon />}
+            onClick={() => navigate('/dashboard')}
+            sx={{ minHeight: 44 }}
+          >
+            Dashboard
+          </Button>
+        )}
         <Button
           fullWidth
           variant="contained"

@@ -6,6 +6,7 @@ import {
   ManageAccounts as AccountsIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';
+import { PLUGINS_ENABLED } from '../config/featureFlags';
 
 /**
  * UserMenuCommonItems
@@ -29,12 +30,14 @@ export default function UserMenuCommonItems({ onNavigate }) {
         </ListItemIcon>
         My Permissions
       </MenuItem>
-      <MenuItem onClick={go('/settings/connected-accounts')}>
-        <ListItemIcon>
-          <AccountsIcon fontSize="small" />
-        </ListItemIcon>
-        Plugin Subscriptions
-      </MenuItem>
+      {PLUGINS_ENABLED && (
+        <MenuItem onClick={go('/settings/connected-accounts')}>
+          <ListItemIcon>
+            <AccountsIcon fontSize="small" />
+          </ListItemIcon>
+          Plugin Subscriptions
+        </MenuItem>
+      )}
       <MenuItem onClick={go('/settings/preferences')}>
         <ListItemIcon>
           <SettingsIcon fontSize="small" />
