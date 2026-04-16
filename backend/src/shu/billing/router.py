@@ -10,7 +10,6 @@ The router is designed to be mounted at /api/v1/billing.
 
 from __future__ import annotations
 
-from datetime import UTC
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -164,33 +163,33 @@ async def get_current_usage(
 ) -> JSONResponse:
     """Get usage for the current billing period.
 
-    Returns:
-    - Total tokens used
-    - Breakdown by model
-    - Estimated cost
-
+    Returns an unknown-period response with empty totals when the billing
+    period hasn't been populated yet (no subscription webhook received yet).
+    Otherwise returns total tokens used, breakdown by model, and estimated
+    cost for the active subscription period.
     """
     from datetime import datetime
 
     billing_config = await get_billing_config(db)
-    usage_provider = UsageProviderImpl(db)
-
-    # Determine billing period
     period_start_str = billing_config.get("current_period_start")
     period_end_str = billing_config.get("current_period_end")
 
-    if period_start_str and period_end_str:
-        period_start = datetime.fromisoformat(period_start_str)
-        period_end = datetime.fromisoformat(period_end_str)
-    else:
-        # Default to current month
-        now = datetime.now(UTC)
-        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        if now.month == 12:
-            period_end = period_start.replace(year=now.year + 1, month=1)
-        else:
-            period_end = period_start.replace(month=now.month + 1)
+    if not (period_start_str and period_end_str):
+        return ShuResponse.success(
+            {
+                "current_period_unknown": True,
+                "period_start": None,
+                "period_end": None,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cost_usd": 0.0,
+                "by_model": [],
+            }
+        )
 
+    period_start = datetime.fromisoformat(period_start_str)
+    period_end = datetime.fromisoformat(period_end_str)
+    usage_provider = UsageProviderImpl(db)
     summary = await usage_provider.get_usage_summary(period_start, period_end)
 
     # Convert Decimal to float at the API boundary — JSON has no Decimal type.

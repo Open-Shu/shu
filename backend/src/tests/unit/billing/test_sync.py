@@ -149,22 +149,33 @@ class TestTriggerQuantitySync:
         mock_get_db.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @patch(_P_SERVICE)
     @patch(_P_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
     @patch(_P_DB_SESSION)
     @patch(_P_SETTINGS)
-    async def test_skips_when_zero_users(
-        self, mock_get_settings, mock_get_db, mock_get_config, mock_get_count
+    async def test_syncs_zero_when_all_users_deleted(
+        self, mock_get_settings, mock_get_db, mock_get_config, mock_get_count, mock_svc_cls
     ):
-        """Should skip sync when user count is 0."""
+        """Should forward user_count=0 to Stripe so the seat quantity drops to 0.
+
+        An empty tenant (all users deleted) must be able to drive the subscription
+        quantity to 0 — there's no short-circuit. This test guards against a
+        regression that would silently retain stale seat counts on Stripe.
+        """
         mock_get_settings.return_value = _make_configured_settings()
         mock_db = AsyncMock()
         mock_get_db.return_value = mock_db
         mock_get_config.return_value = {"stripe_subscription_id": "sub_456"}
         mock_get_count.return_value = 0
 
+        mock_service = MagicMock()
+        mock_service.sync_subscription_quantity = AsyncMock(return_value=True)
+        mock_svc_cls.return_value = mock_service
+
         await trigger_quantity_sync()
 
+        mock_service.sync_subscription_quantity.assert_awaited_once_with("sub_456", 0)
         mock_db.close.assert_awaited_once()
 
 

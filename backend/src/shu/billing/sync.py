@@ -203,7 +203,11 @@ class UsageReportingSource:
         except Exception:
             logger.error("Usage reporting failed", exc_info=True)
             # Retry in 5 minutes rather than waiting the full configured interval.
-            self._last_run = now - timedelta(seconds=interval - 300)
+            # Clamp to 0 so an operator-configured interval < 300s (e.g. during
+            # testing) doesn't push _last_run into the future and silently
+            # disable the job forever.
+            backoff = max(interval - 300, 0)
+            self._last_run = now - timedelta(seconds=backoff)
             return 0
 
     async def enqueue_due(self, db: AsyncSession, queue: QueueBackend, *, limit: int) -> dict[str, int]:
