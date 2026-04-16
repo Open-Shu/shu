@@ -10,6 +10,7 @@ from .cursor_capability import CursorCapability
 from .exceptions import CapabilityDenied
 from .http_capability import HttpCapability
 from .identity_capability import IdentityCapability
+from .ingest_capability import IngestCapability
 from .kb_capability import KbCapability
 from .log_capability import LogCapability
 from .ocr_capability import OcrCapability
@@ -85,6 +86,7 @@ class Host:
         "cursor",
         "http",
         "identity",
+        "ingest",
         "kb",
         "log",
         "ocr",
@@ -96,8 +98,11 @@ class Host:
     def __init__(self, declared_caps: list[str] | None = None) -> None:
         object.__setattr__(self, "_declared_caps", set(declared_caps or []))
         object.__setattr__(self, "_frozen", False)
-        # Initialize capability slots to None
-        for cap in ("http", "identity", "auth", "kb", "secrets", "storage", "cursor", "cache", "ocr", "log", "utils"):
+        # Initialize every capability slot to None. Derive the list from
+        # CAP_NAMES (plus the two always-available caps) so adding a new
+        # capability in base.py cannot leave Host with a dangling slot
+        # that __getattribute__ can't resolve.
+        for cap in (*CAP_NAMES, "log", "utils"):
             object.__setattr__(self, cap, None)
 
     def _freeze(self) -> None:
@@ -202,6 +207,16 @@ def make_host(
 
     if "cache" in caps:
         h.cache = CacheCapability(plugin_name=plugin_name, user_id=user_id)
+
+    if "ingest" in caps:
+        if http_cap is None or "kb" not in caps:
+            raise ValueError("ingest capability requires http and kb")
+        h.ingest = IngestCapability(
+            plugin_name=plugin_name,
+            user_id=user_id,
+            http=http_cap,
+            kb=h.kb,
+        )
 
     # Always-available capabilities (no declaration required)
     # These encourage proper logging and reduce boilerplate

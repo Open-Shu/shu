@@ -11,7 +11,7 @@ PLUGIN_MANIFEST = {
     # - kb: write Knowledge Objects into a knowledge base
     # - ocr: text extraction/OCR via host capability (policy enforced by host.kb)
     # Note: 'cursor' is auto-included when 'kb' is declared
-    "capabilities": ["http", "identity", "auth", "storage", "kb", "ocr"],
+    "capabilities": ["http", "identity", "auth", "storage", "kb", "ocr", "ingest"],
     # Feeds policy
     "default_feed_op": "ingest",
     "allowed_feed_ops": ["ingest"],

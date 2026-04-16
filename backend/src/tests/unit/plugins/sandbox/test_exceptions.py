@@ -9,28 +9,17 @@ plugin executor. Mirrors the pattern used in
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from _module_loader import load_module as _load_module
+
 
 _HOST_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "host"
 _SANDBOX_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "sandbox"
-
-
-def _load_module(module_name: str, file_path: Path):
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load {module_name!r} from {file_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # Stub the package containers so the child modules can be registered without

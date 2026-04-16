@@ -109,9 +109,17 @@ class ChildMessage:
         }
 
     @staticmethod
-    def log(record_b64: str) -> dict[str, Any]:
-        """Pickled log record (fire-and-forget)."""
-        return {"type": MSG_LOG, "record": record_b64}
+    def log(record: dict[str, Any]) -> dict[str, Any]:
+        """Log record serialized as JSON-safe fields (fire-and-forget).
+
+        *record* is a dict produced by the child-side logging ferry with
+        the keys the parent needs to reconstruct a ``logging.LogRecord``
+        (``name``, ``levelno``, ``msg``, ``pathname``, ``lineno``,
+        ``funcName``, ``created``, ``exc_text``, ``extras``). Pickling is
+        deliberately NOT used — a malicious child could otherwise craft
+        a pickle payload that executes code in the parent on unpickle.
+        """
+        return {"type": MSG_LOG, "record": record}
 
 MAX_FRAME_BYTES: int = 64 * 1024 * 1024  # 64 MiB
 

@@ -2,34 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import importlib.machinery
-import importlib.util
 import io
 import os
 import pathlib
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from _module_loader import load_module as _load_module
+
 _SANDBOX_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "sandbox"
-
-
-def _load_module(module_name: str, file_path: Path):
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load {module_name!r} from {file_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
 _HOST_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "host"
 
 if "shu" not in sys.modules:
@@ -230,6 +219,7 @@ class TestDenyListCompleteness:
         required = {
             "ctypes", "socket", "ssl", "subprocess", "shutil",
             "requests", "httpx", "urllib", "urllib3", "http.client", "shu",
+            "sqlite3",
         }
         assert required == _DENIED_MODULES
 
@@ -563,6 +553,333 @@ class TestInstallAsyncioGuard:
             "subprocess_exec", "subprocess_shell",
         }
         assert required == set(_ASYNCIO_LOOP_METHODS)
+
+
+_BACKEND_SRC = str(Path(__file__).resolve().parents[4])
+_SUBPROCESS_TIMEOUT = 5.0
+
+
+def _write_test_plugin(tmp_path: Path, execute_body: str) -> tuple[str, str, str]:
+    """Write a minimal adversarial plugin to *tmp_path* and return import info.
+
+    Returns ``(tmp_dir_str, module_name, class_name)`` where *tmp_dir_str*
+    must be added to ``PYTHONPATH`` for the subprocess to find the module.
+    """
+    pkg_dir = tmp_path / "adversarial_plugin"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    # The plugin cannot import from shu.* (the import guard blocks it).
+    # It satisfies the Plugin Protocol structurally via duck-typing.
+    # _FakeResult provides a .model_dump() compatible with PluginResult
+    # for tests that need to return a result.
+    plugin_src = (
+        "\n"
+        "class _FakeResult:\n"
+        "    def __init__(self, status, data=None, error=None,\n"
+        "                 warnings=None, citations=None):\n"
+        "        self.status = status\n"
+        "        self.data = data\n"
+        "        self.error = error\n"
+        "        self.warnings = warnings\n"
+        "        self.citations = citations\n"
+        "\n"
+        "    def model_dump(self):\n"
+        "        return {\n"
+        "            'status': self.status,\n"
+        "            'data': self.data,\n"
+        "            'error': self.error,\n"
+        "            'warnings': self.warnings,\n"
+        "            'citations': self.citations,\n"
+        "        }\n"
+        "\n"
+        "\n"
+        "class AdversarialPlugin:\n"
+        "    name = 'adversarial'\n"
+        "    version = '0.0.1'\n"
+        "\n"
+        "    def get_schema(self):\n"
+        "        return None\n"
+        "\n"
+        "    def get_schema_for_op(self, op):\n"
+        "        return None\n"
+        "\n"
+        "    def get_output_schema(self):\n"
+        "        return None\n"
+        "\n"
+        "    async def execute(self, params, context, host):\n"
+    )
+    for line in execute_body.strip().splitlines():
+        plugin_src += "        " + line + "\n"
+
+    (pkg_dir / "plugin.py").write_text(plugin_src)
+    (pkg_dir / "__init__.py").write_text(
+        "from adversarial_plugin.plugin import AdversarialPlugin\n"
+    )
+
+    return str(tmp_path), "adversarial_plugin.plugin", "AdversarialPlugin"
+
+
+async def _run_adversarial_plugin(
+    execute_body: str,
+    tmp_path: Path,
+    extra_env: dict[str, str] | None = None,
+    timeout: float = _SUBPROCESS_TIMEOUT,
+) -> dict[str, Any]:
+    """Spawn a real child_bootstrap subprocess against an adversarial plugin.
+
+    Acts as a fake parent: accepts the UDS connection from the child,
+    sends a handshake pointing to the adversarial plugin, waits for
+    MSG_READY, sends MSG_EXECUTE, and collects the final message.
+
+    Returns the final frame dict (``MSG_FINAL_RESULT`` or ``MSG_FINAL_ERROR``).
+    Raises ``asyncio.TimeoutError`` if the child does not send a final
+    message within *timeout* seconds.
+    """
+    from shu.plugins.sandbox.rpc import (
+        MSG_FINAL_ERROR,
+        MSG_FINAL_RESULT,
+        MSG_HANDSHAKE,
+        MSG_LOG,
+        MSG_READY,
+        ParentMessage,
+        read_frame,
+        write_frame,
+    )
+
+    tmp_dir_str, plugin_module, plugin_class = _write_test_plugin(tmp_path, execute_body)
+
+    sock_dir = tempfile.mkdtemp(prefix="shu_adv_")
+    uds_path = os.path.join(sock_dir, "p.sock")
+
+    final_frame: dict[str, Any] | None = None
+    child_connected = asyncio.Event()
+
+    async def _handle_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        nonlocal final_frame
+        try:
+            handshake_payload = {
+                "plugin_module": plugin_module,
+                "plugin_class": plugin_class,
+                "user_id": "test-user",
+                "user_email": "test@example.com",
+                "providers": {},
+                "capabilities": [],
+            }
+            await write_frame(writer, ParentMessage.handshake(handshake_payload))
+
+            child_connected.set()
+
+            # Drain frames until we get a final message. Ignore MSG_LOG
+            # and MSG_READY frames; MSG_CALL gets a stub error response.
+            while True:
+                frame = await read_frame(reader)
+                msg_type = frame.get("type")
+                if msg_type == MSG_READY:
+                    await write_frame(
+                        writer,
+                        ParentMessage.execute(vparams={}),
+                    )
+                elif msg_type in (MSG_FINAL_RESULT, MSG_FINAL_ERROR):
+                    final_frame = frame
+                    return
+                elif msg_type == MSG_LOG:
+                    pass
+                elif msg_type == "call":
+                    # Stub: respond with an error so the child doesn't hang
+                    await write_frame(
+                        writer,
+                        ParentMessage.error(
+                            id=frame.get("id", 0),
+                            exc_payload={
+                                "exc_type": "PluginError",
+                                "payload": {"message": "stub"},
+                            },
+                        ),
+                    )
+        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_unix_server(_handle_client, path=uds_path)
+
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+        "PYTHONPATH": f"{_BACKEND_SRC}:{tmp_dir_str}",
+    }
+    if extra_env:
+        env.update(extra_env)
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "shu.plugins.sandbox.child_bootstrap", uds_path,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        async def _wait_for_final() -> dict[str, Any]:
+            # The server callback populates final_frame when it arrives
+            await proc.wait()
+            # Give the handler a moment to finish if the process exited
+            # after writing the final frame
+            await asyncio.sleep(0.1)
+            if final_frame is not None:
+                return final_frame
+            raise RuntimeError(
+                f"Child exited (rc={proc.returncode}) without sending a final message"
+            )
+
+        return await asyncio.wait_for(_wait_for_final(), timeout=timeout)
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+        server.close()
+        await server.wait_closed()
+        try:
+            os.unlink(uds_path)
+        except FileNotFoundError:
+            pass
+        try:
+            os.rmdir(sock_dir)
+        except OSError:
+            pass
+
+
+class TestAdversarialPlugins:
+    """Real-subprocess adversarial tests for child_bootstrap.
+
+    Each test spawns ``python -m shu.plugins.sandbox.child_bootstrap``
+    against a tiny test plugin that attempts a specific sandbox bypass.
+    A fake parent on the other side of the UDS collects the final
+    message and the tests assert the expected sandbox denial or
+    exception-type preservation.
+
+    These tests are slow (0.5-3 s each) because each spawns a real
+    Python subprocess.
+    """
+
+    @pytest.mark.asyncio
+    async def test_scrubbed_environment_hides_secrets(self, tmp_path: Path) -> None:
+        """Environment variables not explicitly passed are invisible to the plugin."""
+        execute_body = """\
+import os
+val = os.environ.get("SHU_DATABASE_URL")
+return _FakeResult(status="success", data={"db_url": val})
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_result"
+        assert result["value"]["data"]["db_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_open_dotenv_blocked(self, tmp_path: Path) -> None:
+        """``open('.env')`` is blocked by the filesystem guard."""
+        execute_body = """\
+open(".env").read()
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_error"
+        # PermissionError is not in SERIALIZABLE, so it collapses to PluginError
+        assert result["exc_type"] == "PluginError"
+        assert result["payload"]["original_type"] == "PermissionError"
+        assert "Sandbox blocks filesystem access" in result["traceback"]
+
+    @pytest.mark.asyncio
+    async def test_open_etc_passwd_blocked(self, tmp_path: Path) -> None:
+        """``open('/etc/passwd')`` is blocked by the filesystem guard."""
+        execute_body = """\
+open("/etc/passwd").read()
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_error"
+        assert result["exc_type"] == "PluginError"
+        assert result["payload"]["original_type"] == "PermissionError"
+        assert "Sandbox blocks filesystem access" in result["traceback"]
+
+    @pytest.mark.asyncio
+    async def test_os_open_proc_environ_blocked(self, tmp_path: Path) -> None:
+        """``os.open('/proc/self/environ', ...)`` is blocked by the filesystem guard.
+
+        On macOS ``/proc`` does not exist, but the fs guard fires before
+        the syscall reaches the kernel — ``os.open`` is replaced with a
+        raising stub — so this works portably.
+        """
+        execute_body = """\
+import os
+os.open("/proc/self/environ", os.O_RDONLY)
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_error"
+        assert result["exc_type"] == "PluginError"
+        assert result["payload"]["original_type"] == "PermissionError"
+        assert "Sandbox blocks filesystem access" in result["traceback"]
+
+    @pytest.mark.asyncio
+    async def test_import_ctypes_blocked(self, tmp_path: Path) -> None:
+        """``import ctypes`` inside execute is blocked by the import guard.
+
+        The import is placed inside execute (not at module top level) so
+        the import guard is already installed when it fires.
+        """
+        execute_body = """\
+import ctypes
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_error"
+        # ImportError is not in SERIALIZABLE, so it collapses to PluginError
+        assert result["exc_type"] == "PluginError"
+        assert result["payload"]["original_type"] == "ImportError"
+        assert "blocked in the plugin sandbox" in result["traceback"]
+
+    @pytest.mark.asyncio
+    async def test_os_system_blocked(self, tmp_path: Path) -> None:
+        """``os.system('id')`` is blocked by the spawn guard."""
+        execute_body = """\
+import os
+os.system("id")
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_error"
+        assert result["exc_type"] == "PluginError"
+        assert result["payload"]["original_type"] == "PermissionError"
+        assert "Sandbox blocks process spawning" in result["traceback"]
+
+    @pytest.mark.asyncio
+    async def test_infinite_loop_killed_by_timeout(self, tmp_path: Path) -> None:
+        """A plugin that loops forever is killed by the test-level timeout.
+
+        The launcher (task 23) enforces timeouts in production; this test
+        verifies the subprocess can be terminated externally when it hangs.
+        """
+        execute_body = """\
+while True:
+    pass
+"""
+        with pytest.raises((asyncio.TimeoutError, RuntimeError)):
+            await _run_adversarial_plugin(execute_body, tmp_path, timeout=3.0)
+
+    @pytest.mark.asyncio
+    async def test_value_error_roundtrips_as_value_error(self, tmp_path: Path) -> None:
+        """``ValueError`` IS in SERIALIZABLE, so it round-trips with its
+        original type preserved (not collapsed to PluginError).
+        """
+        execute_body = """\
+raise ValueError("boom")
+"""
+        result = await _run_adversarial_plugin(execute_body, tmp_path)
+        assert result["type"] == "final_error"
+        assert result["exc_type"] == "ValueError"
+        assert result["payload"]["message"] == "boom"
 
 
 if __name__ == "__main__":

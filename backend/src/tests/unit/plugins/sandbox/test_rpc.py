@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import struct
 import sys
@@ -12,19 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from _module_loader import load_module as _load_module
+
 _SANDBOX_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "sandbox"
-
-
-def _load_module(module_name: str, file_path: Path):
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load {module_name!r} from {file_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 if "shu" not in sys.modules:
@@ -270,8 +259,19 @@ class TestChildMessage:
         }
 
     def test_log(self):
-        msg = ChildMessage.log(record_b64="c29tZSBiYXNlNjQ=")
-        assert msg == {"type": MSG_LOG, "record": "c29tZSBiYXNlNjQ="}
+        payload = {
+            "name": "plugin.x",
+            "levelno": 20,
+            "msg": "hello",
+            "pathname": "p.py",
+            "lineno": 1,
+            "funcName": "f",
+            "created": 123.0,
+            "exc_text": None,
+            "extras": {"k": "v"},
+        }
+        msg = ChildMessage.log(payload)
+        assert msg == {"type": MSG_LOG, "record": payload}
 
 
 class TestAllBuildersJsonSerializable:

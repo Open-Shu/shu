@@ -16,36 +16,17 @@ dependencies. KbSearchService is imported lazily inside _with_search_service
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from _module_loader import load_module as _load_module
 
-# ---------------------------------------------------------------------------
-# Direct module loading helpers (avoids circular import via package __init__)
-# ---------------------------------------------------------------------------
 
 _HOST_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "host"
 _SERVICES_DIR = Path(__file__).resolve().parents[4] / "shu" / "services"
-
-
-def _load_module(module_name: str, file_path: Path):
-    """Load a module directly from its file path, registering it in sys.modules."""
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
-    if spec is None or spec.loader is None:
-        raise ImportError(
-            f"Cannot load module '{module_name}' from '{file_path}': "
-            "spec_from_file_location returned None spec or loader"
-        )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # Load base (needed by kb_capability and host_builder)

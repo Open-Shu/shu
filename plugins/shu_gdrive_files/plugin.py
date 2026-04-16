@@ -272,31 +272,26 @@ class GoogleDriveFilesPlugin:
 
         # Process files
 
-        async def _download_file(file: dict[str, Any]) -> tuple[bytes, str]:
+        def _download_target(file: dict[str, Any]) -> tuple[str, dict[str, str], str]:
+            """Compute the download URL, query params, and content type for a Drive file.
+
+            Google Docs/Sheets/Slides require an export endpoint with a
+            conversion mimeType; regular files use the files/{id}?alt=media
+            download endpoint.
+            """
             file_id = file["id"]
             mime = file.get("mimeType") or ""
-            # Google Docs types: export
             if mime == "application/vnd.google-apps.document":
                 url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
-                params_d = {"mimeType": "text/plain"}
-                data = await self._http_bytes(host, "GET", url, headers, params=params_d)
-                return data, "text/plain"
+                return url, {"mimeType": "text/plain"}, "text/plain"
             if mime == "application/vnd.google-apps.spreadsheet":
                 url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
-                params_d = {"mimeType": "text/csv"}
-                data = await self._http_bytes(host, "GET", url, headers, params=params_d)
-                return data, "text/csv"
+                return url, {"mimeType": "text/csv"}, "text/csv"
             if mime == "application/vnd.google-apps.presentation":
-                # No good text export; fallback to PDF and OCR
                 url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
-                params_d = {"mimeType": "application/pdf"}
-                data = await self._http_bytes(host, "GET", url, headers, params=params_d)
-                return data, "application/pdf"
-            # Binary files: download
+                return url, {"mimeType": "application/pdf"}, "application/pdf"
             url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
-            params_d = {"alt": "media"}
-            data = await self._http_bytes(host, "GET", url, headers, params=params_d)
-            return data, (mime or "application/octet-stream")
+            return url, {"alt": "media"}, (mime or "application/octet-stream")
 
         # If requested, reset cursor by clearing stored token
         reset_cursor = bool(params.get("reset_cursor"))
@@ -393,25 +388,21 @@ class GoogleDriveFilesPlugin:
                             except Exception:
                                 pass
                             continue
-                    blob, content_type = await _download_file(f)
+                    url, params_d, content_type = _download_target(f)
+                    res_ing = await self._ingest_drive_file(
+                        host,
+                        kb_id=kb_id,
+                        url=url,
+                        headers=headers,
+                        params=params_d,
+                        filename=name,
+                        content_type=content_type,
+                        file=f,
+                    )
                 except Exception as e:
                     user_warnings.append(f"{f.get('id')}: {e}")
                     processed_count += 1
                     continue
-
-                res_ing = await host.kb.ingest_document(
-                    kb_id,
-                    file_bytes=blob,
-                    filename=name,
-                    mime_type=content_type,
-                    source_id=f.get("id"),
-                    source_url=f.get("webViewLink"),
-                    attributes={
-                        "mimeType": mt,
-                        "source_hash": f.get("md5Checksum"),
-                        "modified_at": f.get("modifiedTime"),
-                    },
-                )
                 # ingest_document returns immediately with status=PENDING (async processing)
                 # Only count as skipped if explicitly marked as skipped (hash match)
                 ing, skp = self._tally_ingest_result(res_ing, f, name, mt, content_type, user_warnings)
@@ -466,26 +457,21 @@ class GoogleDriveFilesPlugin:
                         except Exception:
                             pass
                         continue
-                # Download/export
-                blob, content_type = await _download_file(f)
+                url, params_d, content_type = _download_target(f)
+                res_ing = await self._ingest_drive_file(
+                    host,
+                    kb_id=kb_id,
+                    url=url,
+                    headers=headers,
+                    params=params_d,
+                    filename=name,
+                    content_type=content_type,
+                    file=f,
+                )
             except Exception as e:
                 user_warnings.append(f"{f.get('id')}: {e}")
                 processed_count += 1
                 continue
-            # Ingest via host.kb to handle OCR, metadata, and indexing
-            res_ing = await host.kb.ingest_document(
-                kb_id,
-                file_bytes=blob,
-                filename=name,
-                mime_type=content_type,
-                source_id=f.get("id"),
-                source_url=f.get("webViewLink"),
-                attributes={
-                    "mimeType": mt,
-                    "source_hash": f.get("md5Checksum"),
-                    "modified_at": f.get("modifiedTime"),
-                },
-            )
             # ingest_document returns immediately with status=PENDING (async processing)
             # Only count as skipped if explicitly marked as skipped (hash match)
             ing, skp = self._tally_ingest_result(res_ing, f, name, mt, content_type, user_warnings)
@@ -534,6 +520,42 @@ class GoogleDriveFilesPlugin:
                 pass
             return 0, 1  # ingested, skipped
         return 1, 0
+
+    @staticmethod
+    async def _ingest_drive_file(
+        host: Any,
+        *,
+        kb_id: str,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+        filename: str,
+        content_type: str,
+        file: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch a Drive file via host.http and ingest it into the KB.
+
+        Extracted because the incremental-sync and initial-scan paths were
+        both calling ``host.ingest.from_http`` with identical argument
+        shapes; keeping two copies meant every tweak (new attribute,
+        renamed param) risked drifting between paths.
+        """
+        return await host.ingest.from_http(
+            kb_id,
+            method="GET",
+            url=url,
+            headers=headers,
+            params=params,
+            filename=filename,
+            mime_type=content_type,
+            source_id=file.get("id"),
+            source_url=file.get("webViewLink"),
+            attributes={
+                "mimeType": file.get("mimeType") or "application/octet-stream",
+                "source_hash": file.get("md5Checksum"),
+                "modified_at": file.get("modifiedTime"),
+            },
+        )
 
     async def _is_shared_drive(self, host: Any, headers: dict[str, str], drive_id: str) -> bool:
         try:
@@ -693,23 +715,3 @@ class GoogleDriveFilesPlugin:
         resp = await host.http.fetch(method, url, **kwargs)
         body = resp.get("body") if isinstance(resp, dict) else None
         return body
-
-    async def _http_bytes(
-        self, host: Any, method: str, url: str, headers: dict[str, str], params: dict[str, Any] | None = None
-    ) -> bytes:
-        kwargs: dict[str, Any] = {"headers": headers}
-        if params:
-            kwargs["params"] = params
-        if hasattr(host.http, "fetch_bytes"):
-            resp = await host.http.fetch_bytes(method, url, **kwargs)
-            content = resp.get("content") if isinstance(resp, dict) else None
-            if content is not None:
-                return content
-        # Fallback: use text body
-        resp = await host.http.fetch(method, url, **kwargs)
-        body = resp.get("body") if isinstance(resp, dict) else None
-        if isinstance(body, (bytes, bytearray)):
-            return bytes(body)
-        if isinstance(body, str):
-            return body.encode("utf-8")
-        raise RuntimeError("Failed to download bytes from Drive API response")

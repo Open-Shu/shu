@@ -8,18 +8,16 @@ specific error conditions appropriately.
 
 from __future__ import annotations
 
-import importlib
 import logging
-import sys
 from datetime import UTC, datetime
-from importlib.abc import MetaPathFinder
-from typing import Any, ClassVar, Self
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .host.exceptions import HttpRequestFailed
 from .host.host_builder import make_host
+from .sandbox.launcher import SandboxLauncher
 
 # Optional JSON Schema validation support
 try:
@@ -33,165 +31,6 @@ from .base import ExecuteContext, Plugin, PluginResult
 from .schema import resolve_op_schema
 
 logger = logging.getLogger(__name__)
-
-
-# Trusted module prefixes that are allowed to import shu.* even during plugin execution.
-# These are host capabilities and core services that plugins call through the host API.
-_TRUSTED_MODULE_PREFIXES = (
-    "shu.plugins.host.",  # Host capabilities (kb, http, auth, etc.)
-    "shu.services.",  # Core services called by host capabilities
-    "shu.core.",  # Core infrastructure (database, config, logging)
-    "shu.processors.",  # Text extraction, etc.
-    "shu.knowledge.",  # Knowledge base utilities
-    "shu.models.",  # SQLAlchemy models
-)
-
-
-def _is_called_from_trusted_code(frame_offset: int = 2) -> bool:
-    """Check if the import is being called from trusted host code.
-
-    Walks the call stack to find the module that initiated the import.
-    If any frame in the stack is from a trusted module prefix, allow the import.
-
-    Args:
-        frame_offset: Number of frames to skip from the current frame.
-            Default is 2 (skip this function and the immediate caller).
-
-    Performance: Uses sys._getframe() for efficiency instead of traceback.extract_stack().
-    Short-circuits as soon as a trusted frame is found.
-
-    """
-    try:
-        frame = sys._getframe(frame_offset)
-    except ValueError:
-        return False
-
-    while frame is not None:
-        filename = frame.f_code.co_filename
-        # Quick check: only inspect frames from shu modules
-        if "/shu/" in filename:
-            for prefix in _TRUSTED_MODULE_PREFIXES:
-                # Convert prefix to path fragment: "shu.services." -> "/shu/services/"
-                path_fragment = "/" + prefix.replace(".", "/").rstrip("/") + "/"
-                if path_fragment in filename:
-                    return True
-                # Also check for exact module file matches
-                path_fragment_exact = "/" + prefix.replace(".", "/").rstrip("/")
-                if filename.endswith(path_fragment_exact + ".py"):
-                    return True
-        frame = frame.f_back
-    return False
-
-
-class _DenyImportsFinder(MetaPathFinder):
-    """Import finder that blocks certain imports during plugin execution.
-
-    This finder is installed into sys.meta_path during plugin execution to prevent
-    plugins from importing:
-    - Direct HTTP clients (requests, httpx, urllib3) - must use host.http
-    - Internal shu.* modules - must use host capabilities
-
-    However, trusted host code (host capabilities, services, etc.) IS allowed to
-    import shu.* modules. This is determined by inspecting the call stack.
-    """
-
-    # Deny direct HTTP clients from plugins at runtime.
-    deny_always: ClassVar[set[str]] = {"requests", "httpx", "urllib3", "urllib.request"}
-    # Deny shu.* imports only from untrusted (plugin) code
-    deny_from_plugins: ClassVar[set[str]] = {"shu"}
-
-    def find_spec(self, fullname, path, target=None):  # type: ignore[override]
-        # Block exact and submodule imports under denylisted packages
-        name = str(fullname)
-
-        # Always block HTTP clients - no exceptions
-        for p in self.deny_always:
-            if name == p or name.startswith(p + "."):
-                raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
-
-        # Block shu.* imports only from plugin code, not from trusted host code
-        for p in self.deny_from_plugins:
-            # frame_offset=2: Frame 0 is _is_called_from_trusted_code, Frame 1 is find_spec,
-            # Frame 2 is the actual caller where we start walking the stack
-            if (name == p or name.startswith(p + ".")) and not _is_called_from_trusted_code(frame_offset=2):
-                raise ImportError(f"Import of '{fullname}' is denied by host policy. Use host.http instead.")
-
-
-class _DenyHttpImportsCtx:
-    """Context manager to install/remove the deny-imports finder safely.
-    Also patches importlib.import_module to deny disallowed names even if preloaded in sys.modules.
-
-    The deny policy allows trusted host code (host capabilities, services, etc.) to import
-    shu.* modules while blocking plugin code from doing so. HTTP client imports are always
-    blocked regardless of caller.
-    """
-
-    def __init__(self) -> None:
-        self._finder: _DenyImportsFinder | None = None
-        self._orig_import_module = None
-
-    @staticmethod
-    def _is_denied(name: str) -> bool:
-        """Check if an import should be denied.
-
-        HTTP clients are always denied. shu.* imports are denied only from plugin code.
-        """
-        try:
-            n = str(name)
-        except Exception:
-            n = ""
-
-        # Always deny HTTP clients
-        for p in _DenyImportsFinder.deny_always:
-            if n == p or n.startswith(p + "."):
-                return True
-
-        # Deny shu.* only from plugin code
-        for p in _DenyImportsFinder.deny_from_plugins:
-            # frame_offset=3: skip _is_denied -> _is_called_from_trusted_code -> sys._getframe
-            if (n == p or n.startswith(p + ".")) and not _is_called_from_trusted_code(frame_offset=3):
-                return True
-
-        return False
-
-    def __enter__(self) -> Self:
-        self._finder = _DenyImportsFinder()
-        sys.meta_path.insert(0, self._finder)
-        # Patch importlib.import_module to catch explicit dynamic imports
-        try:
-            self._orig_import_module = importlib.import_module
-            # Capture in local variable to avoid closure referencing self._orig_import_module
-            # which gets set to None in __exit__
-            orig_import = self._orig_import_module
-
-            def _guard(name, package=None):  # type: ignore[no-redef]
-                if _DenyHttpImportsCtx._is_denied(name):
-                    raise ImportError(f"Import of '{name}' is denied by host policy. Use host.http instead.")
-                return orig_import(name, package)
-
-            importlib.import_module = _guard  # type: ignore[assignment]
-        except Exception:
-            self._orig_import_module = None
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> bool:
-        try:
-            # Restore importlib.import_module
-            if self._orig_import_module is not None:
-                importlib.import_module = self._orig_import_module  # type: ignore[assignment]
-        except Exception:
-            pass
-        try:
-            if self._finder is not None:
-                if sys.meta_path and sys.meta_path[0] is self._finder:
-                    sys.meta_path.pop(0)
-                elif self._finder in sys.meta_path:
-                    sys.meta_path.remove(self._finder)
-        except Exception:
-            pass
-        self._finder = None
-        self._orig_import_module = None
-        return False
 
 
 class Executor:
@@ -668,43 +507,56 @@ class Executor:
                 provider_identities=(provider_identities or {}),
                 host_context=host_overlay,
             )
-            # Execute under import deny-hook for HTTP clients and host internals
+            # Dispatch through sandbox subprocess
+            settings = get_settings_instance()
+            launcher = SandboxLauncher(
+                timeout_seconds=settings.plugin_sandbox_timeout_seconds,
+                settings=settings,
+            )
             ctx = ExecuteContext(user_id=user_id, agent_key=agent_key)
-            with _DenyHttpImportsCtx():
+            try:
+                result = await launcher.run(
+                    plugin_module=plugin.__module__,
+                    plugin_class=type(plugin).__name__,
+                    vparams=vparams,
+                    exec_ctx=ctx,
+                    host=host,
+                    user_id=user_id,
+                    user_email=user_email,
+                    provider_identities=provider_identities,
+                )
+                # Validate output schema only on success payloads
                 try:
-                    result = await plugin.execute(vparams, ctx, host)
-                    # Validate output schema only on success payloads
-                    try:
-                        status = getattr(result, "status", None)
-                    except Exception:
-                        status = None
-                    if status == "success":
-                        self._validate_output(plugin, getattr(result, "data", None))
-                    return result
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    # Map host.http failures to a structured provider_error so callers get clear surfaces
-                    if isinstance(e, HttpRequestFailed):
-                        details = {
-                            "status_code": e.status_code,
-                            "url": e.url,
-                            "provider_message": e.provider_message,
-                            "is_retryable": e.is_retryable,
-                        }
-                        if e.provider_error_code:
-                            details["provider_error_code"] = e.provider_error_code
-                        if e.retry_after_seconds is not None:
-                            details["retry_after_seconds"] = e.retry_after_seconds
-                        return PluginResult.err(
-                            message=f"Provider HTTP error ({e.status_code}): {e.provider_message}"
-                            if e.provider_message
-                            else f"Provider HTTP error ({e.status_code})",
-                            code=e.error_category,
-                            details=details,
-                        )
-                    logger.exception("Plugin '%s' failed: %s", plugin.name, e)
-                    return PluginResult.err(message=str(e), code="plugin_execute_error")
+                    status = getattr(result, "status", None)
+                except Exception:
+                    status = None
+                if status == "success":
+                    self._validate_output(plugin, getattr(result, "data", None))
+                return result
+            except HTTPException:
+                raise
+            except Exception as e:
+                # Map host.http failures to a structured provider_error so callers get clear surfaces
+                if isinstance(e, HttpRequestFailed):
+                    details = {
+                        "status_code": e.status_code,
+                        "url": e.url,
+                        "provider_message": e.provider_message,
+                        "is_retryable": e.is_retryable,
+                    }
+                    if e.provider_error_code:
+                        details["provider_error_code"] = e.provider_error_code
+                    if e.retry_after_seconds is not None:
+                        details["retry_after_seconds"] = e.retry_after_seconds
+                    return PluginResult.err(
+                        message=f"Provider HTTP error ({e.status_code}): {e.provider_message}"
+                        if e.provider_message
+                        else f"Provider HTTP error ({e.status_code})",
+                        code=e.error_category,
+                        details=details,
+                    )
+                logger.exception("Plugin '%s' failed: %s", plugin.name, e)
+                return PluginResult.err(message=str(e), code="plugin_execute_error")
         finally:
             # Release provider concurrency if acquired
             try:

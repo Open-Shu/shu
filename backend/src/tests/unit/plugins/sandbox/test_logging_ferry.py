@@ -3,32 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import importlib.util
 import json
 import logging
-import pickle
 import queue
 import struct
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from _module_loader import load_module as _load_module
+
 _SANDBOX_DIR = Path(__file__).resolve().parents[4] / "shu" / "plugins" / "sandbox"
-
-
-def _load_module(module_name: str, file_path: Path):
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load {module_name!r} from {file_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 if "shu" not in sys.modules:
@@ -59,10 +47,17 @@ def _make_writer() -> tuple[asyncio.StreamWriter, MagicMock]:
     return writer, transport
 
 
-def _decode_log_frames(transport: MagicMock) -> list[logging.LogRecord]:
-    """Extract LogRecord objects from captured transport.write calls."""
+def _decode_log_frames(transport: MagicMock) -> list[dict[str, Any]]:
+    """Extract serialized log-record dicts from captured transport.write calls.
+
+    The ferry now ships structured JSON (not pickle) so the payload is
+    a dict. Each dict has the shape produced by
+    ``logging_ferry._record_to_dict``: ``name``, ``levelno``, ``msg``,
+    ``pathname``, ``lineno``, ``funcName``, ``created``, ``exc_text``,
+    and an ``extras`` dict for any non-base LogRecord attributes.
+    """
     raw = b"".join(call.args[0] for call in transport.write.call_args_list)
-    records: list[logging.LogRecord] = []
+    records: list[dict[str, Any]] = []
     offset = 0
     while offset < len(raw):
         (length,) = struct.unpack("!I", raw[offset : offset + 4])
@@ -70,50 +65,48 @@ def _decode_log_frames(transport: MagicMock) -> list[logging.LogRecord]:
         frame = json.loads(raw[offset : offset + length])
         offset += length
         assert frame["type"] == MSG_LOG
-        record = pickle.loads(base64.b64decode(frame["record"]))
-        records.append(record)
+        records.append(frame["record"])
     return records
 
 
 class TestInstallQueueHandler:
+    # install_queue_handler() mutates the root logger's level to DEBUG;
+    # tests that don't restore it leak that state into every subsequent
+    # test in the session, which previously surfaced unrelated bugs
+    # whose log() calls would otherwise have been filtered out.
+    @pytest.fixture(autouse=True)
+    def _restore_root_logger(self):
+        root = logging.getLogger()
+        orig_handlers = list(root.handlers)
+        orig_level = root.level
+        try:
+            yield
+        finally:
+            root.handlers.clear()
+            root.handlers.extend(orig_handlers)
+            root.setLevel(orig_level)
+
     def test_clears_existing_handlers(self):
         root = logging.getLogger()
-        orig_handlers = list(root.handlers)
-        try:
-            root.addHandler(logging.StreamHandler())
-            assert len(root.handlers) >= 1
-            q, handler = install_queue_handler()
-            assert len(root.handlers) == 1
-            assert root.handlers[0] is handler
-        finally:
-            root.handlers.clear()
-            root.handlers.extend(orig_handlers)
+        root.addHandler(logging.StreamHandler())
+        assert len(root.handlers) >= 1
+        q, handler = install_queue_handler()
+        assert len(root.handlers) == 1
+        assert root.handlers[0] is handler
 
     def test_returns_queue_and_handler(self):
-        root = logging.getLogger()
-        orig_handlers = list(root.handlers)
-        try:
-            q, handler = install_queue_handler()
-            assert isinstance(q, queue.Queue)
-            assert isinstance(handler, _DropOldestQueueHandler)
-            assert q.maxsize == _QUEUE_MAX_SIZE
-        finally:
-            root.handlers.clear()
-            root.handlers.extend(orig_handlers)
+        q, handler = install_queue_handler()
+        assert isinstance(q, queue.Queue)
+        assert isinstance(handler, _DropOldestQueueHandler)
+        assert q.maxsize == _QUEUE_MAX_SIZE
 
     def test_logger_info_produces_record_on_queue(self):
-        root = logging.getLogger()
-        orig_handlers = list(root.handlers)
-        try:
-            q, handler = install_queue_handler()
-            logger = logging.getLogger("test.plugin")
-            logger.info("hello %s", "world", extra={"k": "v"})
-            record = q.get_nowait()
-            assert record.getMessage() == "hello world"
-            assert record.k == "v"
-        finally:
-            root.handlers.clear()
-            root.handlers.extend(orig_handlers)
+        q, handler = install_queue_handler()
+        logger = logging.getLogger("test.plugin")
+        logger.info("hello %s", "world", extra={"k": "v"})
+        record = q.get_nowait()
+        assert record.getMessage() == "hello world"
+        assert record.k == "v"
 
 
 class TestDropOldestOverflow:
@@ -167,8 +160,8 @@ class TestDrainLoop:
 
         records = _decode_log_frames(transport)
         assert len(records) == 1
-        # prepare() should have formatted msg % args
-        assert records[0].message == "hello world"
+        # prepare() should have formatted msg % args before serialization
+        assert records[0]["msg"] == "hello world"
 
     @pytest.mark.asyncio
     async def test_exc_info_rendered_to_exc_text(self):
@@ -192,10 +185,10 @@ class TestDrainLoop:
 
         records = _decode_log_frames(transport)
         assert len(records) == 1
-        # prepare() renders exc_info into exc_text and clears exc_info
-        assert records[0].exc_text is not None
-        assert "ValueError: boom" in records[0].exc_text
-        assert records[0].exc_info is None
+        # prepare() renders exc_info into exc_text; exc_info is not shipped
+        assert records[0]["exc_text"] is not None
+        assert "ValueError: boom" in records[0]["exc_text"]
+        assert "exc_info" not in records[0]
 
     @pytest.mark.asyncio
     async def test_overflow_warning_emitted_when_queue_saturated(self):
@@ -223,10 +216,10 @@ class TestDrainLoop:
             await task
 
         records = _decode_log_frames(transport)
-        warnings = [r for r in records if r.levelno == logging.WARNING
-                    and "overflow" in r.getMessage()]
+        warnings = [r for r in records if r["levelno"] == logging.WARNING
+                    and "overflow" in r["msg"]]
         assert len(warnings) >= 1, "drop warning not emitted under saturation"
-        assert f"dropped {_DROP_WARN_INTERVAL} records" in warnings[0].getMessage()
+        assert f"dropped {_DROP_WARN_INTERVAL} records" in warnings[0]["msg"]
 
     @pytest.mark.asyncio
     async def test_extra_fields_preserved(self):
@@ -248,8 +241,8 @@ class TestDrainLoop:
             await task
 
         records = _decode_log_frames(transport)
-        assert records[0].plugin_name == "my_plugin"
-        assert records[0].custom_key == "custom_val"
+        assert records[0]["extras"]["plugin_name"] == "my_plugin"
+        assert records[0]["extras"]["custom_key"] == "custom_val"
 
 
 if __name__ == "__main__":

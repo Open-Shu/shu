@@ -34,8 +34,8 @@ class RpcClient:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
-        self._reader = reader
-        self._writer = writer
+        self.reader = reader
+        self.writer = writer
         self._next_id: int = 1
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._reader_task: asyncio.Task[None] | None = None
@@ -52,7 +52,7 @@ class RpcClient:
                 await self._reader_task
             except asyncio.CancelledError:
                 pass
-        self._writer.close()
+        self.writer.close()
 
     async def call(self, cap: str, method: str, args: list[Any], kwargs: dict[str, Any]) -> Any:
         """Send a capability call and wait for the parent's response.
@@ -67,7 +67,7 @@ class RpcClient:
         future: asyncio.Future[Any] = loop.create_future()
         self._pending[call_id] = future
 
-        await write_frame(self._writer, ChildMessage.call(call_id, cap, method, args, kwargs))
+        await write_frame(self.writer, ChildMessage.call(call_id, cap, method, args, kwargs))
 
         try:
             return await future
@@ -79,7 +79,7 @@ class RpcClient:
 
         Must be called exactly once, before :meth:`start_reader`.
         """
-        frame = await read_frame(self._reader)
+        frame = await read_frame(self.reader)
         if frame.get("type") != MSG_HANDSHAKE:
             raise RuntimeError(f"Expected handshake, got {frame.get('type')!r}")
         return frame["payload"]
@@ -88,7 +88,7 @@ class RpcClient:
         """Read frames from the parent and resolve pending futures."""
         try:
             while True:
-                frame = await read_frame(self._reader)
+                frame = await read_frame(self.reader)
                 msg_type = frame.get("type")
                 if msg_type == MSG_RESULT:
                     self._resolve(frame["id"], frame["value"])

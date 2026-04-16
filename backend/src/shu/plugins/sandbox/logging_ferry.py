@@ -13,7 +13,10 @@ still flush before the child exits.
 
 The drain task prepares each record (formats ``msg % args``, renders
 ``exc_info`` to ``exc_text``, clears unpicklable fields like live frame
-references), pickles it, and base64-encodes before writing.
+references) and serializes a JSON-safe field dict. Pickling is
+deliberately avoided: ``pickle.loads`` in the parent on attacker-
+controlled bytes is remote code execution, so the wire format is a
+structured dict the parent can use to rebuild a ``LogRecord`` safely.
 
 Overflow policy: when the queue is full the **oldest** record is dropped
 and a counter is incremented. Every 1 000 drops a synthetic warning is
@@ -23,11 +26,10 @@ emitted through the queue so loss is visible in the parent logs.
 from __future__ import annotations
 
 import asyncio
-import base64
 import copy
+import json
 import logging
 import logging.handlers
-import pickle
 import queue
 from typing import Any
 
@@ -36,11 +38,20 @@ from shu.plugins.sandbox.rpc import ChildMessage, write_frame
 _QUEUE_MAX_SIZE: int = 1000
 _DROP_WARN_INTERVAL: int = 1000
 
-# Formatter used to render exc_info → exc_text before pickling.
+# Formatter used to render exc_info → exc_text before serialization.
 # The parent re-formats with its own pipeline, but exc_info contains
-# live frame references that can't be pickled — rendering here ensures
-# the traceback text survives the boundary.
+# live frame references that can't be serialized — rendering here
+# ensures the traceback text survives the boundary.
 _FORMATTER = logging.Formatter()
+
+# The set of attributes every LogRecord starts with. Anything beyond
+# these came from ``extra=`` (or was set by user/library code) and is
+# what the parent needs to re-attach after reconstruction.
+_BASE_LOGRECORD_ATTRS: frozenset[str] = frozenset(
+    logging.LogRecord(
+        name="", level=0, pathname="", lineno=0, msg="", args=None, exc_info=None,
+    ).__dict__.keys()
+) | {"message"}
 
 
 class _DropOldestQueueHandler(logging.handlers.QueueHandler):
@@ -83,12 +94,12 @@ def install_queue_handler() -> tuple[queue.Queue[logging.LogRecord], _DropOldest
 
 
 def _prepare_record(record: logging.LogRecord) -> logging.LogRecord:
-    """Make *record* safe for pickling while preserving ``exc_text``.
+    """Make *record* safe for JSON serialization while preserving ``exc_text``.
 
     stdlib ``QueueHandler.prepare()`` zeroes ``exc_text`` — we need it
     to survive so the parent can re-emit the traceback. This function
     does the same work (format ``msg % args``, render ``exc_info``
-    → ``exc_text``, clear unpicklable fields) but keeps ``exc_text``.
+    → ``exc_text``, clear non-serializable fields) but keeps ``exc_text``.
     """
     # Shallow-copy before mutating: the caller (third-party libs,
     # pytest caplog, plugin code that inspects records post-emit)
@@ -107,6 +118,46 @@ def _prepare_record(record: logging.LogRecord) -> logging.LogRecord:
     return record
 
 
+def _json_safe(value: Any) -> Any:
+    """Coerce *value* to a JSON-serializable form, falling back to ``repr``.
+
+    Extra fields on a LogRecord can be any Python object (plugins set
+    them freely via ``extra=``). We must not crash the ferry because
+    someone logged an object we can't serialize — repr it and move on.
+    """
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError):
+        return repr(value)
+    return value
+
+
+def _record_to_dict(record: logging.LogRecord) -> dict[str, Any]:
+    """Serialize a prepared LogRecord as a JSON-safe dict.
+
+    Only the fields the parent needs to rebuild a useful LogRecord are
+    included. ``extras`` captures any attribute the caller set beyond
+    the base LogRecord shape (typically via ``logger.info(..., extra={...})``),
+    each coerced via :func:`_json_safe`.
+    """
+    extras = {
+        k: _json_safe(v)
+        for k, v in record.__dict__.items()
+        if k not in _BASE_LOGRECORD_ATTRS
+    }
+    return {
+        "name": record.name,
+        "levelno": record.levelno,
+        "msg": record.message,
+        "pathname": record.pathname,
+        "lineno": record.lineno,
+        "funcName": record.funcName,
+        "created": record.created,
+        "exc_text": record.exc_text,
+        "extras": extras,
+    }
+
+
 async def drain_loop(
     q: queue.Queue[logging.LogRecord],
     handler: _DropOldestQueueHandler,
@@ -115,8 +166,8 @@ async def drain_loop(
     """Pull log records from *q* and ferry them to the parent over *writer*.
 
     Runs until cancelled.  Each record is ``prepare()``-d (formats
-    ``msg % args``, renders ``exc_info`` → ``exc_text``), pickled, and
-    base64-encoded before writing as a ``MSG_LOG`` frame.
+    ``msg % args``, renders ``exc_info`` → ``exc_text``), converted to
+    a JSON-safe dict, and written as a ``MSG_LOG`` frame.
 
     A synthetic "dropped N records" warning is written directly to
     *writer* every :data:`_DROP_WARN_INTERVAL` drops so loss is visible
@@ -146,9 +197,8 @@ async def drain_loop(
             last_warned_at = current_bucket
 
         prepared = _prepare_record(record)
-        data = base64.b64encode(pickle.dumps(prepared)).decode("ascii")
         try:
-            await write_frame(writer, ChildMessage.log(data))
+            await write_frame(writer, ChildMessage.log(_record_to_dict(prepared)))
         except (ConnectionError, OSError):
             # Parent gone — stop silently; the child will exit soon anyway.
             break
@@ -175,8 +225,7 @@ async def _write_drop_warning(
         exc_info=None,
     )
     prepared = _prepare_record(warning_record)
-    data = base64.b64encode(pickle.dumps(prepared)).decode("ascii")
     try:
-        await write_frame(writer, ChildMessage.log(data))
+        await write_frame(writer, ChildMessage.log(_record_to_dict(prepared)))
     except (ConnectionError, OSError):
         pass

@@ -45,8 +45,7 @@ from shu.plugins.sandbox.rpc_client import connect
 # Deny list: these modules must never be importable by plugin code in
 # the child.  The subprocess boundary means there is no trusted host
 # code sharing the process — every import comes from the plugin, so
-# no stack-walk trust check is needed (unlike the in-process
-# _DenyImportsFinder in executor.py).
+# no stack-walk trust check is needed.
 _DENIED_MODULES: frozenset[str] = frozenset({
     "ctypes",
     "socket",
@@ -58,6 +57,13 @@ _DENIED_MODULES: frozenset[str] = frozenset({
     "urllib",
     "urllib3",
     "http.client",
+    # sqlite3 gives file-based persistence (and arbitrary SQL against any
+    # path the child can name). The sandbox blocks opening *files*, but
+    # sqlite3 uses its own libsqlite3 file handles under the hood — the
+    # builtins.open / os.open patches don't intercept them. Blocking the
+    # import is the only Python-level defense until SHU-681's seccomp
+    # filter lands.
+    "sqlite3",
     "shu",
 })
 
@@ -439,7 +445,7 @@ async def main(uds_path: str) -> None:
 
     # -- Step 8: Install logging ferry --
     q, handler = install_queue_handler()
-    drain_task = asyncio.create_task(drain_loop(q, handler, client._writer))
+    drain_task = asyncio.create_task(drain_loop(q, handler, client.writer))
 
     try:
         # -- Step 9: Import plugin (still needs importlib.get_data access) --
@@ -455,10 +461,10 @@ async def main(uds_path: str) -> None:
         plugin = plugin_cls()
 
         # -- Step 11: Signal readiness --
-        await write_frame(client._writer, ChildMessage.ready())
+        await write_frame(client.writer, ChildMessage.ready())
 
         # -- Step 12: Await execute command --
-        exec_frame = await read_frame(client._reader)
+        exec_frame = await read_frame(client.reader)
         if exec_frame.get("type") != MSG_EXECUTE:
             raise RuntimeError(f"Expected execute, got {exec_frame.get('type')!r}")
         vparams: dict[str, Any] = exec_frame["vparams"]
@@ -472,16 +478,19 @@ async def main(uds_path: str) -> None:
             log=log_cap,
             utils=utils_cap,
         )
-        ctx = ExecuteContext(user_id=handshake["user_id"])
+        ctx = ExecuteContext(
+            user_id=handshake["user_id"],
+            agent_key=handshake.get("agent_key"),
+        )
 
         result: PluginResult = await plugin.execute(vparams, ctx, host)
-        await write_frame(client._writer, ChildMessage.final_result(result.model_dump()))
+        await write_frame(client.writer, ChildMessage.final_result(result.model_dump()))
 
     except Exception as exc:
         tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         exc_payload = serialize_exc(exc)
         await write_frame(
-            client._writer,
+            client.writer,
             ChildMessage.final_error(
                 exc_type=exc_payload["exc_type"],
                 payload=exc_payload.get("payload", {}),
