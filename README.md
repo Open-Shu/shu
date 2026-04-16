@@ -148,6 +148,10 @@ redis-cli ping  # Should return "PONG"
 
    The docker-compose file at `deployment/compose/docker-compose.yml` will load this `.env` automatically.
 
+   > **Postgres image note**: The compose stack uses [`paradedb/paradedb`](https://hub.docker.com/r/paradedb/paradedb)
+   > as its Postgres image. Check Docker Hub for the correct tag as specified by `deployment/compose/docker-compose.yml` in `shu-postgres`
+   > and pull paradedb into Docker if necessary
+
 2. **Start the full stack (Postgres + Redis + API + frontend)**:
 
    Using the Makefile:
