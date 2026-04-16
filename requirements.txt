@@ -74,6 +74,9 @@ pytest-cov==6.0.0  # Pytest plugin for coverage
 # Plugin SDK
 shu-plugin-sdk @ git+https://github.com/Open-Shu/shu-plugin-sdk@v0.0.1
 
+# Billing (Stripe integration)
+stripe==12.2.0  # Stripe SDK for subscription and usage billing
+
 # Utilities
 python-dotenv==1.1.1
 click==8.2.1

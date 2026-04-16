@@ -575,6 +575,15 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     # Attachment cleanup: TTL-based chat attachment deletion (always enabled)
     sources.append(AttachmentCleanupSource())
 
+    # Billing sources: only register when Stripe is configured for this instance
+    from ..billing.config import get_billing_settings
+
+    if get_billing_settings().is_configured:
+        from ..billing.sync import BillingQuantitySyncSource, UsageReportingSource
+
+        sources.append(BillingQuantitySyncSource())
+        sources.append(UsageReportingSource())
+
     logger.info(
         "Starting unified scheduler | tick=%ds batch=%d sources=%s",
         tick_interval,

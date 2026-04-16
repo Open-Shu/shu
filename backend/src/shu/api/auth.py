@@ -1,5 +1,6 @@
 """Authentication API endpoints for Shu."""
 
+import asyncio
 import logging
 from typing import Any, Literal
 
@@ -14,6 +15,8 @@ from ..api.dependencies import get_db
 from ..auth import User, UserRole
 from ..auth.password_auth import password_auth_service
 from ..auth.rbac import get_current_user, require_admin
+from ..billing.enforcement import check_user_limit
+from ..billing.sync import trigger_quantity_sync
 from ..core.rate_limiting import get_rate_limit_service
 from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
@@ -164,6 +167,7 @@ async def login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -202,6 +206,21 @@ async def register_user(
     """
     try:
         is_first_user = await user_service.is_first_user(db)
+
+        # Enforce user limit (skip for the very first user bootstrapping the instance)
+        if not is_first_user:
+            limit_status = await check_user_limit(db)
+            if limit_status.at_limit and limit_status.enforcement == "hard":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"User limit ({limit_status.user_limit}) reached. Contact your administrator.",
+                )
+            if limit_status.at_limit and limit_status.enforcement == "soft":
+                logger.warning(
+                    "User registered above subscription limit",
+                    extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
+                )
+
         user_role = user_service.determine_user_role(request.email, is_first_user)
         is_admin = user_role == UserRole.ADMIN
 
@@ -214,6 +233,7 @@ async def register_user(
             db=db,
             admin_created=is_admin,
         )
+        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Return success message without tokens (user is inactive)
         return SuccessResponse(
@@ -229,6 +249,8 @@ async def register_user(
             }
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -466,6 +488,7 @@ async def google_exchange_login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -543,6 +566,7 @@ async def microsoft_exchange_login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -597,6 +621,18 @@ async def create_user(
 ):
     """Create a new user (admin only)."""
     try:
+        limit_status = await check_user_limit(db)
+        if limit_status.at_limit and limit_status.enforcement == "hard":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User limit ({limit_status.user_limit}) reached. Remove users or upgrade your subscription.",
+            )
+        if limit_status.at_limit and limit_status.enforcement == "soft":
+            logger.warning(
+                "User created above subscription limit",
+                extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
+            )
+
         if request.auth_method == "password":
             if not request.password:
                 raise ValueError("Password is required for password authentication")
@@ -635,8 +671,11 @@ async def create_user(
                 await db.rollback()
                 raise ValueError(f"User with email {request.email} already exists") from e
 
+        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
         return SuccessResponse(data=user.to_dict())
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -716,6 +755,7 @@ async def delete_user(
     """Delete user (admin only)."""
     try:
         await user_service.delete_user(user_id, current_user.id, db)
+        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
         return SuccessResponse(data={"message": "User deleted successfully"})
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

@@ -9,6 +9,7 @@ from .access_policy import AccessPolicy, AccessPolicyBinding, AccessPolicyStatem
 from .agent_memory import AgentMemory
 from .attachment import Attachment, MessageAttachment
 from .base import Base
+from .billing_state import BillingState, BillingStateAudit
 from .document import (
     ENTITY_TYPE_EMAIL_ADDRESS,
     ENTITY_TYPE_ORGANIZATION,
@@ -69,6 +70,8 @@ __all__ = [
     "AccessPolicyStatement",
     "AgentMemory",
     "Base",
+    "BillingState",
+    "BillingStateAudit",
     "CapabilityManifest",
     "Conversation",
     "Document",

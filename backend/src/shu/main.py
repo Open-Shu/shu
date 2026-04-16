@@ -40,6 +40,7 @@ from .api.side_call import router as side_call_router
 from .api.system import router as system_router
 from .api.user_permissions import router as user_permissions_router
 from .api.user_preferences import router as user_preferences_router
+from .billing.router import router as billing_router
 from .core.config import get_settings_instance
 from .core.database import init_db
 from .core.exceptions import ShuException
@@ -237,6 +238,24 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             await sync_pricing_to_db(session)
     except Exception as e:
         logger.warning(f"Model pricing sync failed: {e}")
+
+    # Ensure the billing_state singleton row exists, then seed from env vars.
+    # These run in separate transaction scopes: ensure_singleton commits via
+    # session.begin() context exit; seed_from_config → BillingStateService.update()
+    # always commits its own transaction and must not run inside an outer begin().
+    try:
+        from .billing.config import get_billing_settings
+        from .billing.state_service import BillingStateService
+        from .core.database import get_async_session_local
+
+        session_maker = get_async_session_local()
+        billing_settings = get_billing_settings()
+        async with session_maker() as session:
+            async with session.begin():
+                await BillingStateService.ensure_singleton(session)
+            await BillingStateService.seed_from_config(session, billing_settings)
+    except Exception as e:
+        logger.warning(f"billing_state init failed: {e}")
 
     # Preload the default embedding model to avoid lazy loading
     try:
@@ -788,6 +807,9 @@ def setup_routes(app: FastAPI) -> None:
     # Side-call routes
     app.include_router(side_call_router, prefix=settings.api_v1_prefix)
 
+    # Billing routes
+    app.include_router(billing_router, prefix=settings.api_v1_prefix)
+
     # Compute known API router root paths for middleware normalization
     try:
         router_prefixes = [
@@ -811,6 +833,7 @@ def setup_routes(app: FastAPI) -> None:
             policies_router.prefix,
             experiences_router.prefix,
             side_call_router.prefix,
+            billing_router.prefix,
         ]
         base = settings.api_v1_prefix.rstrip("/")
         app.state.api_root_paths = {base + p for p in router_prefixes}
