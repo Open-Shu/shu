@@ -14,7 +14,6 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shu.billing.protocols import UsageRecord, UsageSummary
 from shu.models.llm_provider import LLMUsage
 
 # =============================================================================
@@ -78,7 +77,7 @@ class UsageProviderImpl:
         self,
         period_start: datetime,
         period_end: datetime,
-    ) -> list[UsageRecord]:
+    ) -> list[UsageRecordImpl]:
         """Get individual usage records for a billing period.
 
         Returns all llm_usage records in the date range.
@@ -110,7 +109,7 @@ class UsageProviderImpl:
         self,
         period_start: datetime,
         period_end: datetime,
-    ) -> UsageSummary:
+    ) -> UsageSummaryImpl:
         """Get aggregated usage summary for a billing period.
 
         Returns totals and breakdown by model.
@@ -292,8 +291,20 @@ async def get_billing_config(db: AsyncSession) -> dict:
 
 
 async def get_user_count(db: AsyncSession) -> int:
-    """Get current user count for billing purposes."""
+    """Get total user count (active + inactive) for limit enforcement."""
     from shu.auth.models import User
 
     result = await db.execute(select(func.count(User.id)))
+    return result.scalar() or 0
+
+
+async def get_active_user_count(db: AsyncSession) -> int:
+    """Get active user count for Stripe billing quantity sync.
+
+    Only active users are billable — pending registrations awaiting admin
+    activation should not increase the subscription seat count.
+    """
+    from shu.auth.models import User
+
+    result = await db.execute(select(func.count(User.id)).where(User.is_active.is_(True)))
     return result.scalar() or 0

@@ -12,7 +12,7 @@ from shu.billing.sync import BillingQuantitySyncSource, UsageReportingSource, tr
 _P_SETTINGS = "shu.billing.sync.get_billing_settings"
 _P_DB_SESSION = "shu.core.database.get_db_session"
 _P_BILLING_CONFIG = "shu.billing.adapters.get_billing_config"
-_P_USER_COUNT = "shu.billing.adapters.get_user_count"
+_P_USER_COUNT = "shu.billing.adapters.get_active_user_count"
 _P_SERVICE = "shu.billing.service.BillingService"
 _P_SS_SERVICE = "shu.services.system_settings_service.SystemSettingsService"
 

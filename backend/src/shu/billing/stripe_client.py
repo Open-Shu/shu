@@ -163,13 +163,19 @@ class StripeClient:
     async def update_subscription_quantity(
         self,
         subscription_id: str,
+        seat_item_id: str,
         quantity: int,
         proration_behavior: Literal["create_prorations", "none", "always_invoice"] = "create_prorations",
     ) -> Subscription:
-        """Update the quantity (seats) on a subscription.
+        """Update the quantity (seats) on a subscription item.
+
+        The caller is responsible for retrieving the subscription and
+        identifying the correct seat item (via ``get_subscription`` +
+        price-ID matching). This method only performs the Stripe modify call.
 
         Args:
             subscription_id: Stripe subscription ID
+            seat_item_id: Stripe subscription item ID (``si_...``) for the seat line
             quantity: New seat count
             proration_behavior: How to handle proration
                 - 'create_prorations': Generate prorated line items (default)
@@ -181,30 +187,9 @@ class StripeClient:
 
         """
         try:
-            subscription = await stripe.Subscription.retrieve_async(subscription_id)
-
-            # Find the seat item by price ID — subscriptions may carry multiple
-            # items (e.g., licensed seat + metered cost) and quantity only
-            # applies to the seat item.
-            items_data = subscription.get("items", {}).get("data", [])
-            if not items_data:
-                raise StripeClientError("Subscription has no items")
-
-            seat_price_id = self._settings.price_id_monthly
-            seat_item = None
-            for item in items_data:
-                price = item.get("price")
-                price_id = price.get("id") if isinstance(price, dict) else None
-                if price_id == seat_price_id:
-                    seat_item = item
-                    break
-
-            if seat_item is None:
-                raise StripeClientError(f"Subscription has no item matching configured seat price {seat_price_id}")
-
             updated = await stripe.Subscription.modify_async(
                 subscription_id,
-                items=[{"id": seat_item["id"], "quantity": quantity}],
+                items=[{"id": seat_item_id, "quantity": quantity}],
                 proration_behavior=proration_behavior,
             )
 

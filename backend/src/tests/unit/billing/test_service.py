@@ -50,7 +50,7 @@ class TestSyncSubscriptionQuantity:
 
         assert result is True
         client.update_subscription_quantity.assert_called_once_with(
-            "sub_123", 5, "create_prorations"
+            "sub_123", "si_1", 5, "create_prorations"
         )
 
     @pytest.mark.asyncio

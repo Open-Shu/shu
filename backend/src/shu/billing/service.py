@@ -122,6 +122,7 @@ class BillingService:
 
             await self._client.update_subscription_quantity(
                 stripe_subscription_id,
+                seat_item["id"],
                 user_count,
                 proration,
             )

@@ -38,7 +38,7 @@ async def trigger_quantity_sync() -> None:
     if not settings.is_configured:
         return
 
-    from shu.billing.adapters import get_billing_config, get_user_count
+    from shu.billing.adapters import get_active_user_count, get_billing_config
     from shu.billing.service import BillingService
     from shu.core.database import get_db_session
 
@@ -51,7 +51,7 @@ async def trigger_quantity_sync() -> None:
             logger.debug("No subscription configured, skipping quantity sync")
             return
 
-        user_count = await get_user_count(db)
+        user_count = await get_active_user_count(db)
         service = BillingService(settings)
         updated = await service.sync_subscription_quantity(subscription_id, user_count)
 
@@ -107,7 +107,7 @@ class BillingQuantitySyncSource:
             if elapsed < _RECONCILIATION_INTERVAL_SECONDS:
                 return 0
 
-        from shu.billing.adapters import get_billing_config, get_user_count
+        from shu.billing.adapters import get_active_user_count, get_billing_config
         from shu.billing.service import BillingService
 
         try:
@@ -117,7 +117,7 @@ class BillingQuantitySyncSource:
                 self._last_run = now
                 return 0
 
-            user_count = await get_user_count(db)
+            user_count = await get_active_user_count(db)
             service = BillingService(settings)
             updated = await service.sync_subscription_quantity(subscription_id, user_count)
 

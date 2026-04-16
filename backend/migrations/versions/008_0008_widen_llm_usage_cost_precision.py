@@ -25,6 +25,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
+from migrations.helpers import index_exists, table_exists
+
 # revision identifiers, used by Alembic.
 revision = "008_0008"
 down_revision = "008_0007"
@@ -33,7 +35,7 @@ depends_on = None
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (migration-specific — not in shared helpers)
 # ---------------------------------------------------------------------------
 
 def _column_numeric_scale(conn: sa.engine.Connection, table: str, column: str) -> int | None:
@@ -48,37 +50,13 @@ def _column_numeric_scale(conn: sa.engine.Connection, table: str, column: str) -
     return int(row[0]) if row and row[0] is not None else None
 
 
-def _table_exists(conn: sa.engine.Connection, table: str) -> bool:
-    row = conn.execute(
-        sa.text(
-            "SELECT EXISTS("
-            "  SELECT 1 FROM information_schema.tables "
-            "  WHERE table_name = :tbl"
-            ")"
-        ),
-        {"tbl": table},
-    ).scalar()
-    return bool(row)
-
-
-def _index_exists(conn: sa.engine.Connection, index: str) -> bool:
-    row = conn.execute(
-        sa.text(
-            "SELECT EXISTS("
-            "  SELECT 1 FROM pg_indexes WHERE indexname = :idx"
-            ")"
-        ),
-        {"idx": index},
-    ).scalar()
-    return bool(row)
-
-
 # ---------------------------------------------------------------------------
 # Upgrade
 # ---------------------------------------------------------------------------
 
 def upgrade() -> None:
     conn = op.get_bind()
+    inspector = sa.inspect(conn)
 
     # ------------------------------------------------------------------
     # 1. Widen llm_usage cost columns (idempotent: skip if already wide)
@@ -98,7 +76,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 2. Create billing_state singleton table
     # ------------------------------------------------------------------
-    if not _table_exists(conn, "billing_state"):
+    if not table_exists(inspector, "billing_state"):
         op.create_table(
             "billing_state",
             sa.Column("id", sa.Integer(), primary_key=True),
@@ -184,7 +162,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 3. Create billing_state_audit append-only log
     # ------------------------------------------------------------------
-    if not _table_exists(conn, "billing_state_audit"):
+    if not table_exists(inspector, "billing_state_audit"):
         op.create_table(
             "billing_state_audit",
             sa.Column(
@@ -206,14 +184,14 @@ def upgrade() -> None:
             sa.Column("stripe_event_id", sa.Text(), nullable=True),
         )
 
-    if not _index_exists(conn, "idx_billing_state_audit_changed_at"):
+    if not index_exists(inspector, "billing_state_audit", "idx_billing_state_audit_changed_at"):
         op.create_index(
             "idx_billing_state_audit_changed_at",
             "billing_state_audit",
             ["changed_at"],
         )
 
-    if not _index_exists(conn, "idx_billing_state_audit_stripe_event_id"):
+    if not index_exists(inspector, "billing_state_audit", "idx_billing_state_audit_stripe_event_id"):
         op.create_index(
             "idx_billing_state_audit_stripe_event_id",
             "billing_state_audit",
@@ -227,17 +205,18 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
+    inspector = sa.inspect(conn)
 
     # Drop billing_state_audit indexes and table
-    if _index_exists(conn, "idx_billing_state_audit_stripe_event_id"):
+    if index_exists(inspector, "billing_state_audit", "idx_billing_state_audit_stripe_event_id"):
         op.drop_index("idx_billing_state_audit_stripe_event_id", table_name="billing_state_audit")
-    if _index_exists(conn, "idx_billing_state_audit_changed_at"):
+    if index_exists(inspector, "billing_state_audit", "idx_billing_state_audit_changed_at"):
         op.drop_index("idx_billing_state_audit_changed_at", table_name="billing_state_audit")
-    if _table_exists(conn, "billing_state_audit"):
+    if table_exists(inspector, "billing_state_audit"):
         op.drop_table("billing_state_audit")
 
     # Drop billing_state table
-    if _table_exists(conn, "billing_state"):
+    if table_exists(inspector, "billing_state"):
         op.drop_table("billing_state")
 
     # Narrow llm_usage cost columns back to DECIMAL(10,6)
