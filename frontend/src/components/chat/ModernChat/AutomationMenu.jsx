@@ -32,14 +32,16 @@ const AutomationMenu = React.memo(function AutomationMenu({
       transformOrigin={{ vertical: 'top', horizontal: 'left' }}
     >
       {EXPERIENCES_ENABLED && (
-        <MenuItem onClick={handleDashboardClick}>
-          <ListItemIcon>
-            <DashboardIcon fontSize="small" />
-          </ListItemIcon>
-          Dashboard
-        </MenuItem>
+        <>
+          <MenuItem onClick={handleDashboardClick}>
+            <ListItemIcon>
+              <DashboardIcon fontSize="small" />
+            </ListItemIcon>
+            Dashboard
+          </MenuItem>
+          <Divider />
+        </>
       )}
-      {EXPERIENCES_ENABLED && <Divider />}
       {isTitleLocked ? (
         <MenuItem onClick={onUnlock} disabled={disableUnlock}>
           <ListItemIcon>

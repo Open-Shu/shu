@@ -3,7 +3,7 @@
 // Set via environment variables at build time (Vite: VITE_*).
 // All default to true — set to 'false' to hide a section entirely.
 
-const parseBoolean = (envKey, fallback = false) => {
+const parseBoolean = (envKey, fallback = true) => {
   const raw = import.meta.env[envKey];
   if (raw === undefined || raw === null || raw === '') {
     return fallback;

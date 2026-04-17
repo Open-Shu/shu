@@ -292,6 +292,7 @@ const QuickStart = () => {
 
   // Filter out sections gated by disabled feature flags
   const visibleGettingStarted = gettingStartedSections.filter((s) => s.featureFlag !== false);
+  const visibleTools = toolsSections.filter((s) => s.featureFlag !== false);
 
   // Calculate progress for Getting Started section (only visible cards)
   const completedSteps = visibleGettingStarted.filter((s) => s.statusKey && getCompletionStatus(s.statusKey)).length;
@@ -346,11 +347,7 @@ const QuickStart = () => {
       {renderSection('Getting Started', visibleGettingStarted, 3, true)}
       {renderSection('Configuration', advancedSections, 3)}
       {renderSection('Access Control', accessControlSections, 3)}
-      {renderSection(
-        'Tools & Testing',
-        toolsSections.filter((s) => s.featureFlag !== false),
-        4
-      )}
+      {renderSection('Tools & Testing', visibleTools, 4)}
 
       <Box sx={{ mt: 4, p: 2, backgroundColor: 'action.hover', borderRadius: 2 }}>
         <Typography variant="subtitle2" color="text.secondary">
