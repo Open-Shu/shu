@@ -4,6 +4,7 @@ import { Box, Button, Paper, Alert, Drawer, Stack, Typography, useMediaQuery } f
 import { useTheme } from '@mui/material/styles';
 import { Add as AddIcon, ChatBubbleOutline as ChatIcon, Dashboard as DashboardIcon } from '@mui/icons-material';
 
+import { EXPERIENCES_ENABLED } from '../../../config/featureFlags';
 import ConversationSidebar from './ConversationSidebar';
 import ChatHeader from './ChatHeader';
 import AutomationMenu from './AutomationMenu';
@@ -171,14 +172,16 @@ const ModernChatView = ({
                 >
                   New Chat
                 </Button>
-                <Button
-                  variant="outlined"
-                  size="large"
-                  startIcon={<DashboardIcon />}
-                  onClick={() => navigate('/dashboard')}
-                >
-                  Dashboard
-                </Button>
+                {EXPERIENCES_ENABLED && (
+                  <Button
+                    variant="outlined"
+                    size="large"
+                    startIcon={<DashboardIcon />}
+                    onClick={() => navigate('/dashboard')}
+                  >
+                    Dashboard
+                  </Button>
+                )}
               </Stack>
             </Box>
           )}
