@@ -407,6 +407,12 @@ async def _handle_content_embed_job(job) -> None:
                 embedding_svc = await get_embedding_service()
                 if kb.embedding_model != embedding_svc.model_name:
                     kb.embedding_model = embedding_svc.model_name
+                    # This correction IS the moment the KB becomes consistent with the
+                    # active embedding service. If a prior detect_stale_kbs run had flipped
+                    # the KB to 'stale' based on the old default model name, clear that now —
+                    # the chunks we're about to write will be produced by the current service.
+                    if str(kb.embedding_status) == "stale":
+                        kb.embedding_status = "current"
 
             # Set EMBEDDING status before processing so a crash mid-embed leaves
             # the document in a diagnosable state rather than the previous status.
