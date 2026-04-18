@@ -71,6 +71,15 @@ class StripeClient:
     def _configure_stripe(self) -> None:
         """Configure the Stripe SDK with our settings."""
         stripe.api_key = self._settings.secret_key
+        # Pin the Stripe API version explicitly. Without this, the SDK sends
+        # requests using the account's Dashboard-configured default version,
+        # which Stripe can auto-roll without warning. A silent version bump
+        # broke parse_subscription_update when 2026-03-25.dahlia moved
+        # current_period_{start,end} off the Subscription object onto each
+        # SubscriptionItem (SHU-707). Bumping this pin requires reviewing all
+        # parse_* functions in this file for payload-shape compatibility.
+        # See https://docs.stripe.com/upgrades for the changelog.
+        stripe.api_version = "2026-03-25.dahlia"
         # Set app info for Stripe Dashboard identification
         stripe.set_app_info(
             "Shu",
@@ -445,13 +454,20 @@ class StripeClient:
             seat_item = items_data[0]
         quantity = (seat_item.get("quantity") or 1) if seat_item else 1
 
+        # Stripe API 2026-03-25.dahlia moved current_period_* from the subscription object
+        # onto each subscription item. Prefer the item-level value; fall back to the
+        # subscription-level field for compatibility with older API versions.
+        period_source = seat_item if seat_item and "current_period_start" in seat_item else subscription_data
+        period_start_ts = period_source["current_period_start"]
+        period_end_ts = period_source["current_period_end"]
+
         return SubscriptionUpdate(
             stripe_subscription_id=subscription_data["id"],
             stripe_customer_id=subscription_data["customer"],
             status=subscription_data["status"],
             quantity=quantity,
-            current_period_start=datetime.fromtimestamp(subscription_data["current_period_start"], tz=UTC),
-            current_period_end=datetime.fromtimestamp(subscription_data["current_period_end"], tz=UTC),
+            current_period_start=datetime.fromtimestamp(period_start_ts, tz=UTC),
+            current_period_end=datetime.fromtimestamp(period_end_ts, tz=UTC),
             cancel_at_period_end=subscription_data.get("cancel_at_period_end", False),
             canceled_at=(
                 datetime.fromtimestamp(subscription_data["canceled_at"], tz=UTC)
