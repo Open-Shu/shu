@@ -148,6 +148,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/auth/callback",
             "/api/v1/settings/branding",
             "/api/v1/settings/branding/",
+            # Stripe webhooks authenticate via Stripe-Signature header, not JWT.
+            "/api/v1/billing/webhooks",
         }
 
     def _is_public_path(self, path: str) -> bool:
