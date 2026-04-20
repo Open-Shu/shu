@@ -1,26 +1,40 @@
 # Billing UAT Lab Runbook
 
-End-to-end procedure for bringing up the `local-billing-lab` Kubernetes overlay, wiring it to Stripe + OpenRouter + Mistral, and validating the billing pipeline. This is the operator-facing counterpart to [STRIPE_SETUP.md](STRIPE_SETUP.md) — Stripe setup lives there, K8s setup lives here, and both are needed for a full lab.
+End-to-end procedure for bringing up the full Stripe-billing lab (tenant shu-api + Shu Control Plane webhook router + shared Envoy gateway) on Kubernetes, wiring it to Stripe + OpenRouter + Mistral, and validating the billing pipeline. This is the operator-facing counterpart to [STRIPE_SETUP.md](STRIPE_SETUP.md) — Stripe setup lives there, K8s setup lives here, and both are needed for a full lab.
+
+The lab reflects the hosted-offering topology: Stripe posts webhooks to a single control-plane endpoint, which verifies the Stripe signature, looks up the target tenant, and forwards the event under an HMAC envelope. The tenant's shu-api accepts envelopes signed with a per-tenant shared secret and no longer verifies Stripe signatures directly.
 
 ## Table of contents
 
 1. [Purpose and scope](#purpose-and-scope)
 2. [Prerequisites](#prerequisites)
 3. [External account setup](#external-account-setup)
-4. [Populate secrets](#populate-secrets)
-5. [Apply the lab overlay](#apply-the-lab-overlay)
-6. [Run migrations and hosting seed](#run-migrations-and-hosting-seed)
-7. [Verify the stack](#verify-the-stack)
-8. [Register an admin user](#register-an-admin-user)
-9. [Start Stripe CLI webhook forwarding](#start-stripe-cli-webhook-forwarding)
-10. [Smoke test the billing pipeline](#smoke-test-the-billing-pipeline)
-11. [Known gaps at current codebase](#known-gaps-at-current-codebase)
-12. [Teardown](#teardown)
-13. [Troubleshooting](#troubleshooting)
+4. [Populate tenant secrets (shu-billing-lab)](#populate-tenant-secrets-shu-billing-lab)
+5. [Populate control-plane secrets (shu-control-plane)](#populate-control-plane-secrets-shu-control-plane)
+6. [Apply the lab overlays](#apply-the-lab-overlays)
+7. [Run migrations and seeds](#run-migrations-and-seeds)
+8. [Seed the tenant registry and the router shared secret](#seed-the-tenant-registry-and-the-router-shared-secret)
+9. [Verify the stack](#verify-the-stack)
+10. [Register an admin user](#register-an-admin-user)
+11. [Start Stripe CLI webhook forwarding](#start-stripe-cli-webhook-forwarding)
+12. [Smoke test the billing pipeline](#smoke-test-the-billing-pipeline)
+13. [Known gaps at current codebase](#known-gaps-at-current-codebase)
+14. [Teardown](#teardown)
+15. [Troubleshooting](#troubleshooting)
 
 ## Purpose and scope
 
-The `local-billing-lab` overlay is a single-tenant, docker-desktop–deployable instance of Shu with the full Stripe billing module wired up against live Stripe test-mode APIs. It is the environment that validates every billable surface (LLM chat, embeddings, OCR) and every Stripe lifecycle event (subscription creation, quantity sync, usage reporting, webhook delivery).
+The lab is a single-tenant, docker-desktop–deployable instance of Shu with the full Stripe billing module wired up against live Stripe test-mode APIs. It is the environment that validates every billable surface (LLM chat, embeddings, OCR) and every Stripe lifecycle event (subscription creation, quantity sync, usage reporting, webhook delivery). It also validates the control-plane webhook router that fronts every tenant in the hosted offering.
+
+The lab runs three cooperating overlays in three namespaces:
+
+| Namespace | Overlay | Role |
+|---|---|---|
+| `shu-gateway` | `shu-deploy/kubernetes/shu-gateway/` | Shared Envoy Gateway with two listeners — port 80 for tenant traffic, port 8080 for Stripe webhook ingress. One Envoy pod serves the whole lab. |
+| `shu-billing-lab` | `shu-deploy/kubernetes/local-billing-lab/` | Tenant stack: shu-api, shu-frontend, postgres, redis. Webhook endpoint is internal (reached by the control plane over cluster DNS). |
+| `shu-control-plane` | `shu-deploy/kubernetes/control-plane-local/` | Control-plane webhook router: verifies Stripe signatures, looks up the target tenant in its registry, forwards the event under an HMAC envelope. |
+
+Stripe CLI forwards webhooks to `http://localhost:8080/api/v1/billing/webhooks` (the control-plane listener on the shared gateway). Tenants do not receive Stripe traffic directly — the router is the only thing Stripe talks to.
 
 This runbook is what a **new** operator (someone who has never deployed Shu before) follows to reach a working lab. No tribal knowledge is assumed. Where a step is covered authoritatively in another doc, this runbook links to it rather than duplicating.
 
@@ -38,8 +52,9 @@ Local tooling:
 
 Repository checkouts under a shared workspace directory:
 
-- `shu-deploy/` — kustomize overlays.
-- `shu/` — backend source, docs, and this runbook.
+- `shu-deploy/` — tenant kustomize overlays + Makefile targets.
+- `shu/` — tenant backend source, docs, and this runbook.
+- `shu-control-plane/` — control-plane source, Dockerfile, and its own kustomize overlays under `deployment/kubernetes/`.
 
 External accounts:
 
@@ -91,9 +106,9 @@ Start the subscription quantity at **1** — see [STRIPE_SETUP.md Part 1.6.1](ST
 
 Note: Mistral OCR does **not** route through OpenRouter. It talks directly to `api.mistral.ai`. The hosting seeder contains a misleading comment that says otherwise; SHU-711 tracks the fix for that plus the downstream impact on OCR usage recording.
 
-## Populate secrets
+## Populate tenant secrets (shu-billing-lab)
 
-The lab overlay ships a committed example at `shu-deploy/kubernetes/local-billing-lab/shu-secrets.yaml.example`. Copy it to the real secret file, which is gitignored:
+The tenant overlay ships a committed example at `shu-deploy/kubernetes/local-billing-lab/shu-secrets.yaml.example`. Copy it to the real secret file, which is gitignored:
 
 ```bash
 cd /path/to/shu-workspace/shu-deploy/kubernetes/local-billing-lab
@@ -114,32 +129,58 @@ Fields that need real values (all other fields in the example are lab-appropriat
 | Field | Source |
 |---|---|
 | `stripe-secret-key` | Stripe dashboard Part 1.1 |
-| `stripe-webhook-secret` | Printed by `stripe listen` the first time you run it (step below); update after |
 | `stripe-customer-id` | Stripe dashboard Part 2.1 |
 | `stripe-subscription-id` | Stripe dashboard Part 2.3 |
+| `router-shared-secret` | Generated during [Seed the tenant registry](#seed-the-tenant-registry-and-the-router-shared-secret); leave blank for now |
 | `openrouter-api-key` | OpenRouter dashboard |
 | `mistral-ocr-api-key` | Mistral console |
 | `google-client-secret` | Only if you want Google OAuth login; otherwise leave blank |
 
-The webhook secret becomes available during [Start Stripe CLI webhook forwarding](#start-stripe-cli-webhook-forwarding). Populate it into the secret, then `kubectl apply` or re-run `make apply-local-lab` to push the updated value.
+The router shared secret is generated when you register this tenant in the control-plane registry — come back and populate it there after that step, then restart shu-api. The Stripe webhook secret is no longer needed on the tenant side; the control plane holds it instead.
 
-## Apply the lab overlay
+## Populate control-plane secrets (shu-control-plane)
 
-From `shu-deploy/`:
+The control-plane overlay ships a committed example at `shu-deploy/kubernetes/control-plane-local/shu-cp-secrets.yaml.example`. Copy it:
 
 ```bash
-make apply-local-lab
+cd /path/to/shu-workspace/shu-deploy/kubernetes/control-plane-local
+cp shu-cp-secrets.yaml.example shu-cp-secrets.yaml
 ```
 
-This runs `kubectl apply -k kubernetes/local-billing-lab`. It creates:
+The only field that needs a real value is `stripe-webhook-secret` — all database credentials are pre-populated with the lab's shared-Postgres defaults. You'll fill the webhook secret in after the first `stripe listen` run in [Start Stripe CLI webhook forwarding](#start-stripe-cli-webhook-forwarding); for now leave it empty and the control-plane pod will start and crash-loop until you populate it (expected).
 
-- Namespace `shu-billing-lab`
-- ConfigMap and Secret
-- Deployments: `postgres`, `redis`, `shu-api`, `shu-frontend`
-- Services and the Gateway API `HTTPRoute`
-- Migration Job (`shu-db-migrate`)
+| Field | Source |
+|---|---|
+| `stripe-webhook-secret` | Printed by `stripe listen --forward-to http://localhost:8080/...` the first time you run it |
+| All `pg-admin-*`, `cp-db-*`, `database-url*` keys | Pre-populated in the example for the lab's shared-Postgres topology |
 
-You will see one harmless apply-time error:
+## Apply the lab overlays
+
+Before building images locally (first time only):
+
+```bash
+# Tenant image
+cd /path/to/shu-workspace/shu
+docker build -t shu-api:latest -f deployment/docker/api/Dockerfile .
+
+# Control-plane image
+cd /path/to/shu-workspace/shu-control-plane
+docker build -t shu-control-plane:latest .
+```
+
+Then from `shu-deploy/`:
+
+```bash
+make apply-lab-full
+```
+
+This applies three overlays in order: `shu-gateway/` → `local-billing-lab/` → `control-plane-local/`. It creates:
+
+- Namespace `shu-gateway` with one Envoy Gateway (two listeners on ports 80 and 8080).
+- Namespace `shu-billing-lab` with the tenant stack: `postgres`, `redis`, `shu-api`, `shu-frontend`, HTTPRoute attaching to the `:80` listener on the shared gateway, and the tenant migration Job.
+- Namespace `shu-control-plane` with the router: `shu-control-plane` deployment, HTTPRoute attaching to the `:8080` listener, plus two lab-only Jobs — `shu-cp-db-init` (creates the `shu_cp` role + database inside the tenant's Postgres) and `shu-cp-migrate` (alembic upgrade head).
+
+You will see one harmless apply-time error from the tenant overlay:
 
 ```
 error: resource mapping not found for name: "letsencrypt-prod" namespace: "shu-billing-lab" from "kubernetes/local-billing-lab": no matches for kind "ClusterIssuer" in version "cert-manager.io/v1"
@@ -147,26 +188,40 @@ error: resource mapping not found for name: "letsencrypt-prod" namespace: "shu-b
 
 This is because cert-manager isn't installed on docker-desktop and the `ClusterIssuer` CRD doesn't exist. The lab doesn't use TLS so this is expected. The rest of the apply succeeds despite this error.
 
-Wait for pods:
+Wait for pods across all three namespaces:
 
 ```bash
 make rollout-status-local-lab
+make rollout-status-cp-local
 ```
 
 Expected final state:
 
 ```text
+# shu-billing-lab
 NAME                            READY   STATUS      RESTARTS   AGE
 postgres-...                    1/1     Running     0          ...
 redis-...                       1/1     Running     0          ...
 shu-api-...                     1/1     Running     0          ...
 shu-frontend-...                1/1     Running     0          ...
 shu-db-migrate-...              0/1     Completed   0          ...
+
+# shu-control-plane
+NAME                            READY   STATUS             RESTARTS   AGE
+shu-control-plane-...           1/1     Running            0          ...
+shu-cp-db-init-...              0/1     Completed          0          ...
+shu-cp-migrate-...              0/1     Completed          0          ...
 ```
 
-## Run migrations and hosting seed
+If the control-plane pod is in CrashLoopBackOff with a `SHU_CP_STRIPE_WEBHOOK_SECRET` validation error, you haven't populated it yet — that's fixed in [Start Stripe CLI webhook forwarding](#start-stripe-cli-webhook-forwarding) below. The lab can proceed in this state up to the point where you need a live webhook delivery.
 
-The migration Job runs automatically during the first `apply`. It performs both Alembic migrations **and** the hosting deployment seed (creates LLM provider rows, seeds chat/embedding/OCR model configurations).
+## Run migrations and seeds
+
+Two migration tracks run — the tenant (alembic + hosting deployment seed) and the control plane (alembic against the `shu_cp` database).
+
+### Tenant migrations
+
+The tenant migration Job runs automatically during the first `apply`. It performs both Alembic migrations **and** the hosting deployment seed (creates LLM provider rows, seeds chat/embedding/OCR model configurations).
 
 If you need to re-run (e.g. after changing seed env):
 
@@ -193,6 +248,103 @@ Running hosting deployment seed ...
 [hosting] Created embedding model 'openai/text-embedding-3-small' (dimension=1536)
 [hosting] Created OCR model 'mistral-ocr-latest'
 [hosting] Hosting deployment seed complete
+```
+
+### Control-plane migrations
+
+The control-plane Jobs run automatically during the first `apply-lab-full`: `shu-cp-db-init` creates the `shu_cp` role + database inside the tenant Postgres, and `shu-cp-migrate` runs alembic against it to create the `tenant` table.
+
+If you need to re-run (e.g. after changing the control-plane alembic chain):
+
+```bash
+make migrate-cp-local
+```
+
+Verify:
+
+```bash
+kubectl -n shu-control-plane logs job/shu-cp-migrate | tail -10
+```
+
+Expected:
+
+```text
+Alembic heads: 0001 (head)
+Alembic current: 0001 (head)
+Running alembic upgrade head ...
+Migrations complete
+```
+
+Confirm the table exists:
+
+```bash
+kubectl -n shu-billing-lab exec deployment/postgres -- \
+  psql -U shu_cp -d shu_cp -c "\d tenant"
+```
+
+The table is empty at this point — you'll insert the lab tenant row in the next section.
+
+## Seed the tenant registry and the router shared secret
+
+The control plane needs one row in its `tenant` table before it will forward events to this lab. The row carries a 64-hex HMAC `shared_secret` that must also be configured on the tenant's shu-api. Generate the secret once, insert the registry row, and copy the value to the tenant secret in the same turn.
+
+### 1. Generate the shared secret
+
+```bash
+ROUTER_SECRET=$(openssl rand -hex 32)
+echo "ROUTER_SECRET=$ROUTER_SECRET"
+```
+
+Save the value somewhere ephemeral — you'll use it twice below, then it lives in Kubernetes secrets from that point on.
+
+### 2. Insert the tenant row via port-forwarded psql
+
+In one terminal:
+
+```bash
+kubectl -n shu-billing-lab port-forward svc/postgres 5432:5432
+```
+
+In another terminal, substitute your `cus_...` id from the Stripe dashboard:
+
+```bash
+CUSTOMER_ID=cus_YOUR_STRIPE_CUSTOMER_ID
+INSTANCE_URL=http://shu-api.shu-billing-lab.svc.cluster.local/api/v1/billing/webhooks
+PGPASSWORD=password psql -h localhost -p 5432 -U shu_cp -d shu_cp <<SQL
+INSERT INTO tenant (id, stripe_customer_id, instance_url, shared_secret, status, attributes)
+VALUES (gen_random_uuid(), '${CUSTOMER_ID}', '${INSTANCE_URL}', '${ROUTER_SECRET}', 'active', '{}'::jsonb)
+ON CONFLICT (stripe_customer_id) DO UPDATE
+  SET instance_url = EXCLUDED.instance_url,
+      shared_secret = EXCLUDED.shared_secret,
+      status = 'active';
+SELECT stripe_customer_id, instance_url, status FROM tenant WHERE stripe_customer_id = '${CUSTOMER_ID}';
+SQL
+```
+
+`ON CONFLICT` keeps the step idempotent — re-running rotates the secret; just re-copy to the tenant (step 3).
+
+### 3. Populate `router-shared-secret` on the tenant and restart shu-api
+
+Base64-encode the same value and paste it into `shu-deploy/kubernetes/local-billing-lab/shu-secrets.yaml` under the `router-shared-secret` key:
+
+```bash
+printf '%s' "$ROUTER_SECRET" | base64
+# Paste the output into shu-secrets.yaml
+```
+
+Re-apply the tenant secret and bounce shu-api so it picks up the new env value:
+
+```bash
+cd /path/to/shu-workspace/shu-deploy
+make apply-local-lab
+kubectl -n shu-billing-lab rollout restart deployment/shu-api
+kubectl -n shu-billing-lab rollout status deployment/shu-api --timeout=90s
+```
+
+At this point the control plane knows about this tenant and shu-api can verify router envelopes. Smoke-check shu-api didn't start with a 503:
+
+```bash
+kubectl -n shu-billing-lab logs deployment/shu-api --tail=20 | grep -i "router_shared_secret\|SHU_ROUTER_SHARED_SECRET" || echo "no errors — router secret is loaded"
 ```
 
 ## Verify the stack
@@ -284,10 +436,10 @@ Expected:
 
 ## Start Stripe CLI webhook forwarding
 
-In a separate terminal:
+Webhooks enter the control plane on port **8080** (not 80). In a separate terminal:
 
 ```bash
-stripe listen --forward-to http://localhost/api/v1/billing/webhooks
+stripe listen --forward-to http://localhost:8080/api/v1/billing/webhooks
 ```
 
 First run prints:
@@ -296,15 +448,23 @@ First run prints:
 > Ready! You are using Stripe API Version [2026-03-25.dahlia]. Your webhook signing secret is whsec_...
 ```
 
-Copy that `whsec_...` value — it goes into `shu-secrets.yaml` as `stripe-webhook-secret`. Re-apply the secret:
+Copy that `whsec_...` value — it goes into the **control-plane** secret (not the tenant secret) as `stripe-webhook-secret`. The tenant no longer verifies Stripe signatures; the control plane does.
 
 ```bash
-make apply-local-lab
-kubectl -n shu-billing-lab rollout restart deployment/shu-api
-kubectl -n shu-billing-lab rollout status deployment/shu-api --timeout=90s
+printf '%s' 'whsec_...' | base64
+# Paste into shu-deploy/kubernetes/control-plane-local/shu-cp-secrets.yaml under stripe-webhook-secret
 ```
 
-Leave the `stripe listen` terminal running for the rest of the lab session. Shu verifies the signature on every inbound webhook using this secret.
+Re-apply the control-plane secret and restart the control-plane deployment:
+
+```bash
+cd /path/to/shu-workspace/shu-deploy
+make apply-cp-local
+kubectl -n shu-control-plane rollout restart deployment/shu-control-plane
+kubectl -n shu-control-plane rollout status deployment/shu-control-plane --timeout=90s
+```
+
+Leave the `stripe listen` terminal running for the rest of the lab session. The control plane verifies the Stripe signature on every inbound webhook using this secret, then forwards the verbatim event body to the tenant under its HMAC envelope.
 
 ## Smoke test the billing pipeline
 
@@ -320,10 +480,18 @@ Within a second or two, the `stripe listen` window should show:
 
 ```text
 ... --> customer.subscription.updated [evt_...]
-... <--  [200] POST http://localhost/api/v1/billing/webhooks [evt_...]
+... <--  [200] POST http://localhost:8080/api/v1/billing/webhooks [evt_...]
 ```
 
-A 200 return code confirms three things at once: the middleware is not blocking the webhook, Stripe signature verification succeeded, and `parse_subscription_update` parsed the payload (Stripe API version 2026-03-25.dahlia is pinned in `StripeClient._configure_stripe`, which matches the CLI's reported version).
+A 200 return code confirms the end-to-end path: control plane verified the Stripe signature, looked up the lab tenant by customer id, forwarded under HMAC; shu-api verified the HMAC envelope, matched `expected_customer_id`, parsed the event, and the subscription handler ran without raising. The Stripe API version (2026-03-25.dahlia) is pinned in `StripeClient._configure_stripe` on both sides.
+
+Cross-check the control-plane's own log for the outcome:
+
+```bash
+kubectl -n shu-control-plane logs deployment/shu-control-plane --tail=20 | grep 'webhook routed'
+```
+
+Expected: a line with `"outcome": "forwarded"`, the event id, and `forward_status: 200`.
 
 Confirm the DB state transition:
 
@@ -395,7 +563,6 @@ At the time this runbook was written, the lab setup works end-to-end but the fol
 
 - **SHU-700** — chat and side_call costs come from a hardcoded `model_pricing.py` table, which doesn't include most OpenRouter model IDs (`z-ai/*`, `google/*`, `openrouter/*`). Expect `llm_usage.total_cost=0` on those rows until SHU-700 lands; only `openai/text-embedding-3-small` embedding calls currently produce non-zero cost.
 - **SHU-711** — Mistral OCR usage is never recorded in `llm_usage` because of a provider-name mismatch between the hosting seeder and the OCR service's resolver. OCR extractions succeed; usage rows don't appear; no OCR cost reaches the meter.
-- **SHU-697 / SHU-712** — the hosted offering will front `shu-api` with a webhook router (Stripe → router → shu-api). The lab currently uses direct `/api/v1/billing/webhooks` via a `middleware.public_paths` workaround committed explicitly as a placeholder. Once SHU-712 lands the router integration, the lab topology changes and this runbook needs a `Stripe CLI → router → shu-api` section.
 - **SHU-704** — per-seat included-usage allowance via Stripe Credit Grants, plus the asymmetric upgrade-immediate / downgrade-deferred seat policy. Not implemented yet; scenarios 5b/5c and 19 in the SHU-699 matrix will show `known-gap` until SHU-704 ships.
 - **SHU-705** — Shu-managed vs BYOK provider provenance for the billing filter. Not implemented yet; scenarios 20/21 will show `known-gap`.
 
@@ -403,14 +570,16 @@ None of these gaps block the lab from being stood up and exercised. They define 
 
 ## Teardown
 
-Full reset (namespace + PVCs):
+Full reset across all three namespaces:
 
 ```bash
-make delete-local-lab
-kubectl -n shu-billing-lab delete pvc --all  # if the namespace deletion didn't already clean these
+make delete-lab-full
+kubectl -n shu-billing-lab delete pvc --all  # if namespace deletion didn't already clean these
 ```
 
-Lab data (chat history, documents, usage rows) is on the `shu-data-pvc` and is destroyed with the PVC. Stripe-side objects (the customer, subscription, events) persist in your Stripe test account independently; manage them from the Stripe dashboard if you need to reset.
+`delete-lab-full` tears down control plane → tenant → gateway in reverse of apply order. Lab data (chat history, documents, usage rows) is on `shu-data-pvc` in the tenant namespace and is destroyed with the PVC. The `shu_cp` database lives in the tenant's Postgres and is destroyed with the tenant PVC.
+
+Stripe-side objects (the customer, subscription, events) persist in your Stripe test account independently; manage them from the Stripe dashboard if you need to reset.
 
 ## Troubleshooting
 
@@ -422,9 +591,47 @@ The paradedb pg18 image requires the PVC mounted at `/var/lib/postgresql` (paren
 
 That tag doesn't exist on Docker Hub. The correct canonical image is `paradedb/paradedb:latest-pg18`, defined in `common-local/postgres-deployment.yaml`. Verify the overlay you're applying has that image.
 
-### Webhook forwarder returns `[401]` from shu-api
+### `stripe listen` shows `[401]` from the control plane
 
-If you see this during `stripe listen` output after a trigger, the `middleware.public_paths` entry for `/api/v1/billing/webhooks` is missing. Check `shu/backend/src/shu/core/middleware.py` has `"/api/v1/billing/webhooks"` in `AuthenticationMiddleware.public_paths`. This is a lab-only workaround that SHU-712 will retire.
+The 401 comes from the control plane rejecting the Stripe signature (not from shu-api). Two common causes:
+
+1. **`stripe-webhook-secret` was never populated in `shu-cp-secrets.yaml`**, or was populated with stale value. Re-run `stripe listen`, copy the `whsec_...` it prints, base64-encode, update the CP secret, `make apply-cp-local`, restart the CP deployment.
+2. **Control-plane pod is using an older secret after rotation.** `stripe listen` caches the webhook secret per-device; if you deleted the CLI state (`rm ~/.config/stripe/`), a new secret is generated on the next run. Always rotate the CP secret alongside.
+
+### Control plane returns `[500]` with outcome `timeout` or `tenant_error`
+
+The control plane reached its registered `instance_url` but shu-api didn't respond. Check:
+
+```bash
+kubectl -n shu-control-plane logs deployment/shu-control-plane --tail=20 | grep 'webhook routed'
+```
+
+If `outcome: timeout`, shu-api is slow or unreachable. Check it's running (`kubectl -n shu-billing-lab get pods`) and that the `instance_url` in the tenant row matches the actual service DNS (`http://shu-api.shu-billing-lab.svc.cluster.local/api/v1/billing/webhooks`).
+
+If `outcome: tenant_error` with a non-2xx forward status, shu-api responded but rejected. 401 → HMAC verification failed (mismatch between tenant row `shared_secret` and `SHU_ROUTER_SHARED_SECRET`). 409 → `customer_mismatch` (the `stripe_customer_id` on the tenant row doesn't match the tenant's `SHU_STRIPE_CUSTOMER_ID`).
+
+### shu-api `/api/v1/billing/webhooks` returns `[401] signature_invalid`
+
+The router envelope failed verification. Most common cause: the `router-shared-secret` in `shu-secrets.yaml` doesn't match the `shared_secret` column on the tenant's registry row. Re-run the seed step or inspect the mismatch:
+
+```bash
+# What shu-api thinks:
+kubectl -n shu-billing-lab get secret shu-secrets -o jsonpath='{.data.router-shared-secret}' | base64 -d; echo
+# What the registry has:
+kubectl -n shu-billing-lab exec deployment/postgres -- \
+  psql -U shu_cp -d shu_cp -c "SELECT stripe_customer_id, shared_secret FROM tenant;"
+```
+
+They must be identical. If they differ, pick one and copy it everywhere.
+
+### shu-api `/api/v1/billing/webhooks` returns `[503] router_secret_not_configured`
+
+Tenant pod started before `SHU_ROUTER_SHARED_SECRET` was populated. Re-apply the tenant secret and restart:
+
+```bash
+make apply-local-lab
+kubectl -n shu-billing-lab rollout restart deployment/shu-api
+```
 
 ### Webhook 500s with `KeyError: 'current_period_start'`
 

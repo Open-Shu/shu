@@ -37,17 +37,6 @@ class StripeConfigurationError(StripeClientError):
     pass
 
 
-class StripeSignatureError(StripeClientError):
-    """Raised when webhook signature verification fails.
-
-    Distinct from StripeClientError so callers can differentiate signature
-    failures (bad secret / replay attack → 400) from other Stripe errors
-    (subscription shape mismatch → 500) without inspecting error messages.
-    """
-
-    pass
-
-
 class StripeClient:
     """Wrapper around the Stripe SDK.
 
@@ -382,46 +371,12 @@ class StripeClient:
     # =========================================================================
     # Webhooks
     # =========================================================================
-
-    def construct_webhook_event(
-        self,
-        payload: bytes,
-        signature: str,
-    ) -> stripe.Event:
-        """Construct and verify a webhook event from Stripe.
-
-        Args:
-            payload: Raw request body
-            signature: Stripe-Signature header value
-
-        Returns:
-            Verified Stripe Event object
-
-        Raises:
-            StripeClientError: If signature verification fails
-
-        """
-        if not self._settings.webhook_secret:
-            raise StripeConfigurationError("Webhook secret not configured")
-
-        try:
-            return stripe.Webhook.construct_event(
-                payload,
-                signature,
-                self._settings.webhook_secret,
-            )
-        except stripe.SignatureVerificationError as e:
-            logger.warning(
-                "Webhook signature verification failed",
-                extra={"error": str(e)},
-            )
-            raise StripeSignatureError("Invalid webhook signature", e) from e
-        except ValueError as e:
-            logger.warning(
-                "Invalid webhook payload",
-                extra={"error": str(e)},
-            )
-            raise StripeSignatureError("Invalid webhook payload") from e
+    #
+    # Stripe signature verification used to live here as construct_webhook_event.
+    # It was retired when the Shu Control Plane took over as the sole Stripe
+    # webhook receiver — the control plane verifies Stripe signatures at its
+    # edge, then forwards events to this tenant under an HMAC envelope.
+    # Envelope verification is in shu.billing.router_envelope.
 
     def parse_subscription_update(self, subscription_data: dict[str, Any]) -> SubscriptionUpdate:
         """Parse subscription data from a webhook event into our DTO.

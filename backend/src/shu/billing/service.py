@@ -12,6 +12,7 @@ from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import stripe
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.config import BillingSettings, get_billing_settings
@@ -28,6 +29,22 @@ logger = get_logger(__name__)
 
 
 PersistSubscriptionFn = Callable[..., Coroutine[Any, Any, None]]
+
+
+class CustomerMismatchError(Exception):
+    """Raised when a forwarded webhook carries a customer id that does not
+    match this tenant's configured SHU_STRIPE_CUSTOMER_ID.
+
+    Defense-in-depth against control-plane registry misconfiguration: the
+    router already filters by customer upstream, so this should never fire in
+    a healthy deployment. Route handlers surface it as HTTP 409 with a body
+    the router can log as TENANT_CUSTOMER_MISMATCH.
+    """
+
+    def __init__(self, expected: str, received: str) -> None:
+        super().__init__(f"expected customer {expected!r}, received {received!r}")
+        self.expected = expected
+        self.received = received
 
 
 class BillingService:
@@ -397,42 +414,46 @@ class BillingService:
 
     async def handle_webhook(
         self,
-        payload: bytes,
-        signature: str,
+        event: stripe.Event,
         persist_subscription: PersistSubscriptionFn | None = None,
         on_payment_failed: Any | None = None,
         on_payment_recovered: Any | None = None,
         expected_customer_id: str | None = None,
     ) -> tuple[bool, str, str | None]:
-        """Process a Stripe webhook event.
+        """Process a router-forwarded Stripe webhook event.
 
-        This verifies the webhook signature, dispatches to handlers, and
-        uses the provided callbacks to persist state changes.
+        Authentication (Stripe signature verification at the router edge and
+        HMAC envelope verification at this tenant's ingress) has already
+        happened by the time this method is called — the caller passes in a
+        fully-parsed stripe.Event. Responsibility here is customer-scoping
+        and dispatch.
 
         Args:
-            payload: Raw request body
-            signature: Stripe-Signature header
+            event: Pre-parsed stripe.Event. Route handler should build this
+                via stripe.Event.construct_from(json.loads(body), stripe.api_key)
+                after the router envelope has been verified.
             persist_subscription: Callback to save subscription changes
             on_payment_failed: Callback to set payment_failed_at on invoice failure
             on_payment_recovered: Callback to clear payment_failed_at on invoice paid
-            expected_customer_id: Customer ID from billing_state. When set,
-                events for other customers are silently dropped (multi-instance
-                safety: all instances on a shared Stripe account receive all
-                events). When None the instance is misconfigured — all events
-                are dropped with a warning.
+            expected_customer_id: Customer ID from billing_state. When None the
+                instance is misconfigured (SHU_STRIPE_CUSTOMER_ID unset) — events
+                are dropped with a warning rather than raising, because dropping
+                is the safer behavior for an unconfigured instance that should
+                not be receiving webhooks anyway.
 
         Returns:
             Tuple of (handled: bool, event_type: str, event_id: str | None)
 
-        """
-        try:
-            event = self._client.construct_webhook_event(payload, signature)
-        except StripeClientError as e:
-            logger.warning("Webhook verification failed", extra={"error": str(e)})
-            raise
+        Raises:
+            CustomerMismatchError: The event's customer id does not match
+                expected_customer_id. Defense-in-depth against router registry
+                misconfiguration — in a healthy deployment the router filters
+                by customer upstream and this tenant only receives its own
+                events. Route handlers map this to HTTP 409.
 
+        """
         logger.info(
-            "Received webhook",
+            "Received forwarded webhook",
             extra={"event_type": event.type, "event_id": event.id},
         )
 
@@ -445,19 +466,22 @@ class BillingService:
             )
             return False, event.type, event.id
 
-        # Multi-instance safety: all instances on a shared Stripe account
-        # receive all events. Only process events for our own customer.
+        # Defense-in-depth: router filters by customer upstream, but a
+        # misconfigured registry row (wrong customer → this tenant) would let
+        # a foreign event through. Raise so the route handler returns 409 and
+        # the operator can fix the registry, rather than silently absorbing
+        # the misroute.
         event_customer = self._extract_customer_id(event)
         if event_customer and event_customer != expected_customer_id:
-            logger.info(
-                "Ignoring webhook for different customer",
+            logger.warning(
+                "Rejecting forwarded webhook for different customer",
                 extra={
                     "event_type": event.type,
                     "event_customer": event_customer,
                     "expected_customer": expected_customer_id,
                 },
             )
-            return False, event.type, event.id
+            raise CustomerMismatchError(expected=expected_customer_id, received=event_customer)
 
         callbacks: dict[str, Any] = {}
 

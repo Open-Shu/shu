@@ -7,8 +7,9 @@ This guide walks through configuring Stripe and each Shu instance for billing. I
 
 ## Architecture Assumptions
 
-- One Stripe account serves the hosted offering
-- Each customer gets their own Shu instance with its own database and webhook endpoint URL
+- One Stripe account serves the hosted offering.
+- Exactly one Stripe webhook endpoint is registered in the Stripe Dashboard: the **Shu Control Plane** (`shu-control-plane`). The control plane verifies Stripe signatures, looks up the target tenant by `customer` id in its registry, and forwards events to the tenant's shu-api under an HMAC envelope. Tenants do not register their own Stripe webhook endpoints.
+- Each customer gets their own Shu instance (tenant) with its own database. Tenants are reachable from the control plane via internal cluster DNS; they never accept Stripe traffic directly.
 - Per-seat pricing: flat $222/user/month (licensed price)
 - Overage pricing: actual LLM cost + margin, reported in microdollars (metered price)
 - Margin is applied via the Stripe price, not in application code
@@ -160,18 +161,20 @@ Each seat on the hosted offering includes **$50/user/month** of LLM + embedding 
 
 **Implementation status**: Tracked under SHU-704. Until that ticket lands, test-mode invoices will show full usage charges with no credit applied. SHU-699 scenario #19 verifies end-to-end behavior once SHU-704 ships.
 
-### 1.8 Choose webhook strategy
+### 1.8 Webhook strategy
 
-For **local development**, use the Stripe CLI:
+All Stripe webhooks go to the **Shu Control Plane**, which is a single centrally-deployed webhook router service. Tenants do not register their own Stripe endpoints — one endpoint per Stripe account is enough because the router fans events out to tenants internally.
+
+For **local development** against the lab (docker-desktop + `local-billing-lab` + `control-plane-local`), use the Stripe CLI pointed at the control-plane listener on port 8080:
 
 ```bash
 stripe login
-stripe listen --forward-to http://localhost:8000/api/v1/billing/webhooks
+stripe listen --forward-to http://localhost:8080/api/v1/billing/webhooks
 ```
 
-The CLI prints a webhook signing secret (`whsec_…`) each session. Use this for local `SHU_STRIPE_WEBHOOK_SECRET`.
+The CLI prints a Stripe webhook signing secret (`whsec_…`) each session. It goes into the **control-plane** secret (`shu-cp-secrets.yaml` → `stripe-webhook-secret`), not the tenant secret. The tenant verifies HMAC envelopes signed by the control plane, not Stripe signatures directly.
 
-For **deployed customer instances**, create a webhook endpoint per instance in the Dashboard (see section 3.4 below). Each deployed instance has a unique URL and a unique webhook secret.
+For **deployed environments** (staging, prod), register exactly one webhook endpoint in the Stripe Dashboard pointing at the control plane's public URL (e.g. `https://webhooks.shu.ai/api/v1/billing/webhooks`). See [Going Live](#going-live) for the deployed-environment procedure.
 
 ### 1.9 Test cards
 
@@ -298,11 +301,15 @@ SHU_STRIPE_SUBSCRIPTION_ID="sub_..."
 # This is the customer-facing URL of THEIR Shu instance
 SHU_APP_BASE_URL="https://acme.shu.example.com"
 
-# Webhook signing secret — UNIQUE PER WEBHOOK ENDPOINT
-# Local dev: value from `stripe listen`
-# Deployed: value from the Dashboard webhook endpoint you create in 2.4
-SHU_STRIPE_WEBHOOK_SECRET="whsec_..."  # pragma: allowlist secret
+# Router HMAC shared secret — UNIQUE PER TENANT
+# Value matches the `shared_secret` column on this tenant's row in the
+# control-plane registry (64 lowercase hex chars). Generated when the tenant
+# is registered with the control plane; see the lab runbook "Seed the tenant
+# registry and the router shared secret" section for the procedure.
+SHU_ROUTER_SHARED_SECRET="..."  # pragma: allowlist secret
 ```
+
+Note: the prior `SHU_STRIPE_WEBHOOK_SECRET` is no longer configured on the tenant. Stripe signatures are verified at the control-plane edge. Tenants only see HMAC envelopes from the control plane.
 
 ### 3.3 Optional / operational variables
 
@@ -327,20 +334,19 @@ SHU_STRIPE_PAYMENT_GRACE_DAYS=0
 SHU_STRIPE_INCLUDED_USD_PER_USER=50
 ```
 
-### 3.4 Register the per-instance webhook endpoint
+### 3.4 Register the tenant with the control plane
 
-**Dashboard > Developers > Webhooks > Add endpoint**
+Tenants no longer register their own webhook endpoints in the Stripe Dashboard. Instead, the tenant is registered with the **Shu Control Plane**, which is the single Stripe webhook endpoint for the whole account. Registration creates a row in the control-plane `tenant` table that maps this customer's `cus_...` id to the tenant's internal webhook URL and the HMAC shared secret used to sign forwarded events.
 
-- **Endpoint URL**: `https://<customer-instance-domain>/api/v1/billing/webhooks`
-- **API version**: `2025-05-28.basil` (pinned by stripe SDK 12.2.0 — update when upgrading)
-- **Events to send** (select exactly these — handlers exist for all of them):
-  - `customer.subscription.created`
-  - `customer.subscription.updated`
-  - `customer.subscription.deleted`
-  - `invoice.paid`
-  - `invoice.payment_failed`
+For the **lab**, registration is a direct `psql INSERT` — see the "Seed the tenant registry" section of [BILLING_UAT_LAB_RUNBOOK.md](BILLING_UAT_LAB_RUNBOOK.md).
 
-After creation, click the endpoint to reveal its **Signing secret** (`whsec_…`). Set this as `SHU_STRIPE_WEBHOOK_SECRET` on that specific customer's instance.
+For **deployed environments**, registration happens through whatever tenant-provisioning tool the hosted offering uses (TBD — tracked as a SHU-696 follow-up). The operational contract is:
+
+1. Allocate a 64-lowercase-hex `shared_secret` via `secrets.token_hex(32)` / `openssl rand -hex 32`.
+2. INSERT a row into the control-plane `tenant` table with: `stripe_customer_id`, `instance_url` (the tenant's internal shu-api webhook endpoint reachable from the control plane), `shared_secret`, `status='active'`.
+3. Configure `SHU_ROUTER_SHARED_SECRET` on the tenant with the same shared secret value.
+
+The **single Stripe endpoint** (the control plane) is registered once in the Stripe Dashboard — see [Going Live](#going-live) for the steps.
 
 ### 3.5 Start the instance
 
@@ -495,16 +501,29 @@ Returns a Stripe Customer Portal URL. Opening it lets the customer update paymen
 
 When switching from test to live mode:
 
-1. Create live-mode equivalents of everything in Part 1 (product, prices, meter, webhook endpoint)
-2. Update `.env` on each customer instance:
+1. Create live-mode equivalents of everything in Part 1 (product, prices, meter).
+2. **Register one Stripe webhook endpoint in the Dashboard** pointing at the live control-plane URL (e.g. `https://webhooks.shu.ai/api/v1/billing/webhooks`):
+   - Dashboard > Developers > Webhooks > **Add endpoint**
+   - Endpoint URL: the control plane's public URL
+   - API version: `2026-03-25.dahlia` (pinned in both control plane and shu-api — update in lockstep)
+   - Events to send (select exactly these — handlers exist for all of them):
+     - `customer.subscription.created`
+     - `customer.subscription.updated`
+     - `customer.subscription.deleted`
+     - `invoice.paid`
+     - `invoice.payment_failed`
+   - Copy the **Signing secret** (`whsec_…`) into the control-plane deployment as `SHU_CP_STRIPE_WEBHOOK_SECRET`.
+3. For each tenant customer instance, update its config:
    - `SHU_STRIPE_SECRET_KEY` to `sk_live_…`
    - `SHU_STRIPE_PUBLISHABLE_KEY` to `pk_live_…`
-   - `SHU_STRIPE_WEBHOOK_SECRET` to the live webhook endpoint's secret
    - `SHU_STRIPE_PRODUCT_ID`, `SHU_STRIPE_PRICE_ID_MONTHLY`, `SHU_STRIPE_METER_ID_COST` to the live-mode IDs
    - `SHU_STRIPE_MODE="live"`
-3. Restart the instance
+   - `SHU_ROUTER_SHARED_SECRET` — stays per-tenant; live-mode tenants typically get freshly-rotated secrets. Register the tenant with the live-mode control plane (`tenant` table INSERT) using a new `shared_secret`, then configure the same value here.
+4. Restart the control-plane deployment and each tenant instance.
 
 Shu validates the key prefix against `SHU_STRIPE_MODE` at startup — a live key with `mode=test` (or vice versa) will raise a configuration error.
+
+One practical note: there is still exactly **one** Stripe webhook endpoint in the Dashboard per account, regardless of how many tenants are behind the control plane. If this is a hosted account with both test and live modes, you register one endpoint in each mode (pointing at test-mode vs. live-mode control-plane URLs).
 
 ---
 
@@ -527,22 +546,40 @@ Causes to check in order:
 3. Did startup log `"billing_state init failed"`? An exception during seeding is swallowed with a
    warning. Check the full log for the error details.
 
-### Webhook signature verification fails
+### Control plane returns 400 "signature verification failed" to Stripe
 
-Cause: `SHU_STRIPE_WEBHOOK_SECRET` doesn't match the endpoint. For local dev, the `stripe listen`
-command prints a fresh secret each time — copy that to `.env` and restart. For deployed instances,
-the secret is per-endpoint; copy it from the Dashboard webhook page.
+Cause: `SHU_CP_STRIPE_WEBHOOK_SECRET` on the control-plane deployment doesn't match the Stripe
+Dashboard's webhook endpoint secret. For local dev, the `stripe listen` command prints a fresh
+secret each time — copy into `shu-cp-secrets.yaml` and restart the control plane. For deployed
+environments, the secret is per-endpoint in the Dashboard.
+
+### Tenant returns 401 "signature_invalid" to the control plane
+
+Cause: `SHU_ROUTER_SHARED_SECRET` on the tenant doesn't match the `shared_secret` column on the
+tenant's row in the control-plane registry. Re-check both values, regenerate if needed, and
+restart shu-api. See the lab runbook's "Seed the tenant registry" section for the shared-secret
+propagation procedure.
+
+### Tenant returns 409 "customer_mismatch" to the control plane
+
+Cause: The `stripe_customer_id` on the control-plane tenant row doesn't match the tenant's
+`SHU_STRIPE_CUSTOMER_ID`. Defense-in-depth is firing because the registry is misconfigured — a
+wrong-customer row let a foreign event through to this tenant. Fix the `stripe_customer_id` on
+the registry row (UPDATE) and the event will route correctly on Stripe's next retry.
+
+### Control plane logs `"outcome": "unknown_customer"`
+
+Cause: Stripe sent an event for a `customer.*` id that has no row in the control-plane registry.
+This is expected during initial customer setup before registration completes (and for events that
+trickle in for decommissioned customers). If the customer should be active, register it (see
+[3.4](#34-register-the-tenant-with-the-control-plane)) and trigger Stripe to retry the event.
 
 ### Webhook logged as "Ignoring webhook — SHU_STRIPE_CUSTOMER_ID not configured"
 
-Cause: `billing_state.stripe_customer_id` is NULL. Set `SHU_STRIPE_CUSTOMER_ID` and restart so
-seeding populates the field. All webhooks are dropped until the instance has a known customer ID.
-
-### Webhook logged as "Ignoring webhook for different customer"
-
-Cause: The event is for a different Stripe customer. Multi-instance safety working correctly —
-all instances on the same Stripe account receive all events; each instance only processes its own.
-No action needed.
+Cause: `billing_state.stripe_customer_id` is NULL on the tenant. Set `SHU_STRIPE_CUSTOMER_ID` and
+restart so seeding populates the field. Forwarded events will be dropped at the tenant layer with
+this warning until the tenant has a known customer ID — a misconfigured tenant should not be
+processing events anyway.
 
 ### Usage meter shows 0 after hours of activity
 

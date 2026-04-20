@@ -20,10 +20,17 @@ class BillingSettings(BaseSettings):
     but this class can be instantiated independently.
     """
 
-    # Stripe API keys
+    # Stripe API keys. Webhook ingress runs through the Shu Control Plane,
+    # which verifies the Stripe signature once at the edge and forwards events
+    # to this tenant under an HMAC envelope. Tenants never verify Stripe
+    # signatures directly, so there is no SHU_STRIPE_WEBHOOK_SECRET here.
     secret_key: str | None = Field(None, alias="SHU_STRIPE_SECRET_KEY")
     publishable_key: str | None = Field(None, alias="SHU_STRIPE_PUBLISHABLE_KEY")
-    webhook_secret: str | None = Field(None, alias="SHU_STRIPE_WEBHOOK_SECRET")
+
+    # Shared HMAC secret used to verify the forwarded-envelope signature on
+    # /api/v1/billing/webhooks. Must match the tenant row's `shared_secret` in
+    # the control-plane registry (64 lowercase hex chars from secrets.token_hex(32)).
+    router_shared_secret: str | None = Field(None, alias="SHU_ROUTER_SHARED_SECRET")
 
     # Tenant identifiers — set by the operator at deploy time.
     # These seed billing_state on first boot so webhook handlers and
@@ -104,8 +111,8 @@ class BillingSettings(BaseSettings):
         if not self.subscription_id:
             issues.append("SHU_STRIPE_SUBSCRIPTION_ID is required (set at deploy time by the operator)")
 
-        if not self.webhook_secret:
-            issues.append("SHU_STRIPE_WEBHOOK_SECRET is required for webhook verification")
+        if not self.router_shared_secret:
+            issues.append("SHU_ROUTER_SHARED_SECRET is required for router-envelope verification")
 
         if not self.price_id_monthly:
             issues.append("SHU_STRIPE_PRICE_ID_MONTHLY is required for subscriptions")

@@ -14,7 +14,7 @@ This runbook is **incomplete by design** — several sections depend on tickets 
 6. [External provider configuration](#external-provider-configuration)
 7. [Deployment overlay](#deployment-overlay)
 8. [Secret provisioning](#secret-provisioning)
-9. [Webhook registration](#webhook-registration)
+9. [Tenant registration with the control plane](#tenant-registration-with-the-control-plane)
 10. [Apply, migrate, and seed](#apply-migrate-and-seed)
 11. [First-webhook verification](#first-webhook-verification)
 12. [Admin user setup](#admin-user-setup)
@@ -42,7 +42,7 @@ High-level flow per new customer:
 1. Customer signs up through whatever intake process exists.
 2. Operator creates a Stripe customer + subscription in Stripe's dashboard (or via API).
 3. Operator provisions the tenant's Shu instance on Kubernetes (overlay + secrets + config).
-4. Operator registers the tenant's webhook endpoint with Stripe (or with the webhook router — see SHU-712).
+4. Operator registers the tenant with the Shu Control Plane (generates the HMAC shared secret, inserts the `tenant` row, syncs the secret to the tenant's shu-api).
 5. Operator triggers a first webhook to confirm state transitions; verifies `/billing/config` and `/billing/subscription`.
 6. Operator registers the customer's initial admin user and hands off credentials.
 
@@ -152,41 +152,34 @@ Per-tenant secret fields (same shape as the lab's `shu-secrets.yaml`):
 | `llm-encryption-key` | Generate per tenant | Different from other tenants |
 | `oauth-encryption-key` | Generate per tenant | Different from other tenants |
 | `stripe-secret-key` | Shu-account restricted key | Same for all tenants |
-| `stripe-webhook-secret` | See [Webhook registration](#webhook-registration) | Per-tenant OR per-router (see gap) |
+| `router-shared-secret` | Generated when the tenant is registered with the control plane | Unique per tenant; 64 lowercase hex |
 | `stripe-customer-id` | Per-customer Stripe setup | Unique per tenant |
 | `stripe-subscription-id` | Per-customer Stripe setup | Unique per tenant |
 | `openrouter-api-key` | Shu-account OpenRouter key | Same for all tenants |
 | `mistral-ocr-api-key` | Shu-account Mistral key | Same for all tenants |
 
-## Webhook registration
+## Tenant registration with the control plane
 
-> **Gap — webhook architecture migration**
-> The webhook topology is about to change. Today Stripe is configured to post directly to each tenant's `/api/v1/billing/webhooks` endpoint — but Stripe accounts are capped at 16 webhook endpoints, so this does not scale past 16 tenants and is not viable for the hosted offering. SHU-712 (Integrate SHU-697 webhook router) replaces direct per-tenant endpoints with a single router: Stripe posts to the router, the router dispatches to the correct tenant via HMAC-signed forwarding.
->
-> Until SHU-712 lands, webhook registration is: per-tenant endpoint URL registered in the Stripe dashboard, secret piped into the tenant's `shu-secrets.stripe-webhook-secret`. This works for up to 16 concurrent live tenants and is the only option.
->
-> Once SHU-712 lands, webhook registration becomes: **one** account-level webhook endpoint registered in Stripe (pointing at the router), per-tenant shared HMAC secret configured on both router and tenant. The router handles routing; individual tenants never appear in the Stripe dashboard webhooks list.
+Stripe webhooks are received by the **Shu Control Plane**, a single central webhook router service. There is exactly one Stripe webhook endpoint registered in the Stripe dashboard per environment (test, live) — it points at the control plane. Tenants never appear in the Stripe dashboard webhooks list, and the Stripe 16-endpoint-per-account cap is irrelevant for scaling tenants.
 
-### Pre-SHU-712 (current state)
+The operational unit of "adding a customer to webhook delivery" is registering a row in the control-plane `tenant` table. The row maps `stripe_customer_id → (instance_url, shared_secret)`:
 
-1. In the Stripe dashboard, go to **Developers → Webhooks → Add endpoint**.
-2. Endpoint URL: `https://<tenant-subdomain>/api/v1/billing/webhooks`
-3. Events to listen for (minimum set, expand as needed):
-   - `customer.subscription.created`
-   - `customer.subscription.updated`
-   - `customer.subscription.deleted`
-   - `invoice.paid`
-   - `invoice.payment_failed`
-   - `invoice.finalized`
-4. Save. Copy the `whsec_...` signing secret into the tenant's `shu-secrets.stripe-webhook-secret`.
-5. Reapply the secret manifest and restart `shu-api` so it picks up the new value.
+- `stripe_customer_id` — the `cus_...` id Stripe sends in event payloads.
+- `instance_url` — the full URL the control plane POSTs forwarded events to. Internal cluster DNS in K8s (e.g. `http://shu-api.shu-tenant-<slug>.svc.cluster.local/api/v1/billing/webhooks`).
+- `shared_secret` — 64 lowercase hex chars. The control plane uses it to sign forwarded envelopes (HMAC-SHA256 over timestamp + method + path + body); the tenant uses it to verify.
+- `status` — `active`, `disabled`, or `unprovisioned`. Only `active` tenants receive forwarded events.
 
-Note: the current `shu-api` webhook endpoint requires a `public_paths` middleware bypass (committed as `f5b6811` with an explicit "will be removed after webhook router control plane is in place" label). Once SHU-712 replaces the bypass with HMAC verification, this workaround is retired.
+### Registration procedure
 
-### Post-SHU-712 (once integration lands)
+> **Gap — registration tooling**
+> Production-grade tenant registration (CLI or API against the control plane, tied into an onboarding flow) is tracked as a SHU-696 follow-up. Until that lands, registration is a direct SQL INSERT against the control-plane `shu_cp` database. The lab runbook documents the exact psql flow in its "Seed the tenant registry" section — the same pattern works for hosted environments, just pointed at the hosted control-plane's Postgres.
 
-> **Gap — SHU-712 not yet integrated**
-> This section fills in once SHU-712 is in the deployment. Expected procedure: register the tenant with the control-plane's webhook router (via a CLI or API call), which inserts the tenant into the router's routing table keyed by `stripe_customer_id`. No per-tenant Stripe dashboard webhook configuration. Per-tenant HMAC secret generated at registration and synced to the tenant's secret.
+Registration writes to two places; both must be kept in sync:
+
+1. **Control-plane `tenant` table**: INSERT row with the generated `shared_secret`.
+2. **Tenant `Secret`** (`shu-secrets` in the tenant's namespace): set `router-shared-secret` to the same value, then restart `shu-api` so it picks up the new `SHU_ROUTER_SHARED_SECRET`.
+
+The Stripe account-level webhook endpoint is configured once (not per tenant) — see [STRIPE_SETUP.md Going Live](STRIPE_SETUP.md#going-live) for the Dashboard procedure.
 
 ## Apply, migrate, and seed
 
@@ -235,7 +228,7 @@ Trigger a no-op subscription update on the customer's sub:
 stripe subscriptions update <sub_id> -d 'metadata[provisioning]=hello'
 ```
 
-On the tenant's webhook endpoint (or the router, post-SHU-712), observe a 200 response. In the DB:
+Observe a 200 response at the Stripe Dashboard webhook endpoint (the control plane). In the tenant DB:
 
 ```bash
 psql "..." -c "SELECT subscription_status, quantity, current_period_start, current_period_end FROM billing_state;"
@@ -243,7 +236,7 @@ psql "..." -c "SELECT subscription_status, quantity, current_period_start, curre
 
 Expected: `subscription_status='active'`, quantity populated (typically 0 or 1), periods populated.
 
-If still `pending`: check that `stripe listen` or the registered webhook endpoint is receiving events, that signature verification is succeeding (look for 401 or 400 responses in tenant logs), and that the `billing_state` singleton was actually seeded.
+If still `pending`: check the control-plane logs for the outcome (`kubectl -n shu-control-plane logs deployment/shu-control-plane --tail=20 | grep 'webhook routed'`). Common failure modes: `unknown_customer` (tenant not registered), `tenant_error` with 401 (HMAC secret mismatch between control-plane registry and tenant `SHU_ROUTER_SHARED_SECRET`), `tenant_error` with 409 (`stripe_customer_id` mismatch between registry row and tenant `SHU_STRIPE_CUSTOMER_ID`).
 
 ## Admin user setup
 
@@ -274,8 +267,9 @@ High-level procedure (pending SHU-703 rewrite):
 2. Recreate the same Part 1 resources (product, prices, meter) in live mode.
 3. Recreate per-customer Part 2 resources for each live customer.
 4. Update each tenant's `shu-secrets` and `configmap` with `_live` keys and IDs.
-5. Register the live-mode webhook endpoint (per-tenant today; via router post-SHU-712).
-6. Roll the tenant pod and verify.
+5. Register the single live-mode Stripe webhook endpoint pointing at the live control plane (one per Stripe account, not per tenant). Configure `SHU_CP_STRIPE_WEBHOOK_SECRET` on the live control plane with the endpoint's signing secret. See [STRIPE_SETUP.md Going Live](STRIPE_SETUP.md#going-live).
+6. Register each live-mode tenant with the live control plane (INSERT tenant row, sync `SHU_ROUTER_SHARED_SECRET` to the tenant's secret).
+7. Roll the tenant pod and verify.
 
 ## Operational procedures
 
@@ -329,7 +323,15 @@ Interim procedure (data-destructive):
    ```
 
 3. Drop the tenant's Postgres database (if using per-tenant DBs on external Postgres).
-4. Remove the tenant from the webhook router's routing table (post-SHU-712) or delete the tenant's webhook endpoint from Stripe dashboard (pre-SHU-712).
+4. Remove the tenant from the control-plane registry:
+
+   ```sql
+   UPDATE tenant SET status = 'disabled' WHERE stripe_customer_id = 'cus_...';
+   -- or, after a retention window:
+   DELETE FROM tenant WHERE stripe_customer_id = 'cus_...';
+   ```
+
+   Disabling first (rather than deleting) preserves audit trail and causes the control plane to return `tenant_inactive` for any in-flight events. Delete once the retention window has passed.
 5. Revoke any tenant-specific credentials.
 
 All of the above is destructive; have a data-export path ready before executing if the customer has requested their data.

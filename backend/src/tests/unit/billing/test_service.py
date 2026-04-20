@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.billing.schemas import SubscriptionUpdate
-from shu.billing.service import BillingService
+from shu.billing.service import BillingService, CustomerMismatchError
 from shu.billing.stripe_client import StripeClientError
 
 
@@ -29,7 +29,6 @@ def _make_client():
     client.report_usage = AsyncMock()
     client.get_meter_event_summary = AsyncMock()
     # Sync methods (no network I/O)
-    client.construct_webhook_event = MagicMock()
     client.parse_subscription_update = MagicMock()
     return client
 
@@ -176,24 +175,27 @@ class TestWebhookCustomerScoping:
 
     @pytest.mark.asyncio
     async def test_rejects_event_for_wrong_customer(self):
-        """Webhook for a different customer should be ignored."""
+        """Forwarded webhook for a different customer raises CustomerMismatchError.
+
+        The router filters by customer upstream, so this should never fire in
+        a healthy deployment. Raising (rather than silently dropping) forces
+        the route handler to return 409 and surfaces a registry misconfig.
+        """
         client = _make_client()
         event = MagicMock()
         event.type = "customer.subscription.updated"
         event.id = "evt_123"
         event.data.object = {"customer": "cus_other", "id": "sub_other"}
-        client.construct_webhook_event.return_value = event
 
         service = BillingService(_make_settings(), stripe_client=client)
 
-        handled, event_type, event_id = await service.handle_webhook(
-            payload=b"payload",
-            signature="sig",
-            expected_customer_id="cus_mine",
-        )
-
-        assert handled is False
-        assert event_type == "customer.subscription.updated"
+        with pytest.raises(CustomerMismatchError) as excinfo:
+            await service.handle_webhook(
+                event=event,
+                expected_customer_id="cus_mine",
+            )
+        assert excinfo.value.expected == "cus_mine"
+        assert excinfo.value.received == "cus_other"
 
     @pytest.mark.asyncio
     async def test_accepts_event_for_matching_customer(self):
@@ -203,7 +205,6 @@ class TestWebhookCustomerScoping:
         event.type = "customer.subscription.updated"
         event.id = "evt_123"
         event.data.object = {"customer": "cus_mine", "id": "sub_123"}
-        client.construct_webhook_event.return_value = event
         client.parse_subscription_update.return_value = SubscriptionUpdate(
             stripe_subscription_id="sub_123",
             stripe_customer_id="cus_mine",
@@ -217,8 +218,7 @@ class TestWebhookCustomerScoping:
         service = BillingService(_make_settings(), stripe_client=client)
 
         handled, event_type, event_id = await service.handle_webhook(
-            payload=b"payload",
-            signature="sig",
+            event=event,
             persist_subscription=persist_sub,
             expected_customer_id="cus_mine",
         )
@@ -709,14 +709,12 @@ class TestWebhookGuard:
         event = MagicMock()
         event.type = "customer.subscription.updated"
         event.id = "evt_123"
-        client.construct_webhook_event.return_value = event
 
         persist_sub = AsyncMock()
         service = BillingService(_make_settings(), stripe_client=client)
 
         handled, event_type, _ = await service.handle_webhook(
-            payload=b"payload",
-            signature="sig",
+            event=event,
             persist_subscription=persist_sub,
             expected_customer_id=None,  # misconfigured — SHU_STRIPE_CUSTOMER_ID not set
         )

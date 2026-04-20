@@ -10,9 +10,11 @@ The router is designed to be mounted at /api/v1/billing.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+import stripe
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,9 +30,10 @@ from shu.billing.adapters import (
     get_user_count,
 )
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
+from shu.billing.router_envelope import verify_router_envelope_dep
 from shu.billing.schemas import WebhookEventResponse
-from shu.billing.service import BillingService
-from shu.billing.stripe_client import StripeClientError, StripeSignatureError
+from shu.billing.service import BillingService, CustomerMismatchError
+from shu.billing.stripe_client import StripeClientError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
 
@@ -222,26 +225,49 @@ async def get_current_usage(
 
 @router.post(
     "/webhooks",
-    summary="Stripe webhook receiver",
-    description="Receives and processes Stripe webhook events.",
+    summary="Router-forwarded Stripe webhook receiver",
+    description=(
+        "Receives Stripe webhook events forwarded from the Shu Control Plane. "
+        "The router envelope (HMAC-SHA256 over timestamp + method + path + body, "
+        "headers X-Shu-Router-Timestamp / X-Shu-Router-Signature) is verified "
+        "via the verify_router_envelope_dep dependency before this handler runs."
+    ),
     include_in_schema=False,  # Hide from OpenAPI docs
 )
 async def handle_webhook(
-    request: Request,
+    body: Annotated[bytes, Depends(verify_router_envelope_dep)],
     db: Annotated[AsyncSession, Depends(get_db)],
     service: Annotated[BillingService, Depends(get_billing_service)],
-    stripe_signature: Annotated[str, Header(alias="Stripe-Signature")],
 ) -> JSONResponse:
-    """Process Stripe webhook events.
+    """Process a router-forwarded Stripe webhook event.
 
-    This endpoint:
-    1. Verifies the webhook signature
-    2. Dispatches to appropriate handler
-    3. Updates billing_state under a row-level lock
+    Authentication has already happened by the time this runs:
+    1. The control plane verified the Stripe signature at its edge with its
+       own SHU_CP_STRIPE_WEBHOOK_SECRET.
+    2. verify_router_envelope_dep verified the HMAC envelope using this
+       tenant's SHU_ROUTER_SHARED_SECRET.
 
-    Stripe will retry failed webhooks, so handlers must be idempotent.
+    This handler parses the already-verified body as a Stripe event, applies
+    the defense-in-depth customer-scope check, and dispatches. Handlers must
+    be idempotent — the router will retry on tenant 5xx.
     """
-    payload = await request.body()
+    try:
+        event_payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        # The router forwards Stripe's body verbatim and Stripe always sends
+        # JSON, so a decode failure here means either the router is broken or
+        # we verified a non-Stripe payload. Either way, return 400 so the
+        # router doesn't retry an unfixable request.
+        logger.error("Forwarded webhook body is not JSON", extra={"error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_json"},
+        )
+
+    # Construct a stripe.Event from the verified dict. No signature verification
+    # — that happened upstream. Passing stripe.api_key mirrors the SDK internals
+    # for any follow-up API calls made from the event context.
+    event = stripe.Event.construct_from(event_payload, stripe.api_key)
 
     try:
         persist_subscription = await create_subscription_persistence_callback(db)
@@ -250,9 +276,8 @@ async def handle_webhook(
         billing_config = await get_billing_config(db)
         expected_customer_id = billing_config.get("stripe_customer_id")
 
-        handled, event_type, event_id = await service.handle_webhook(
-            payload=payload,
-            signature=stripe_signature,
+        _handled, event_type, event_id = await service.handle_webhook(
+            event=event,
             persist_subscription=persist_subscription,
             on_payment_failed=on_payment_failed,
             on_payment_recovered=on_payment_recovered,
@@ -267,14 +292,34 @@ async def handle_webhook(
             ).model_dump()
         )
 
-    except StripeSignatureError as e:
+    except CustomerMismatchError as e:
+        # Defense-in-depth surfaced a router registry misconfiguration. Return
+        # a structured 409 so the router (once its forwarder parses error
+        # bodies) can log this as TENANT_CUSTOMER_MISMATCH rather than a
+        # generic TENANT_ERROR. Stripe retries on 5xx, not 4xx, so 409 also
+        # prevents Stripe from hammering the mismatched tenant while the
+        # operator fixes the registry.
         logger.warning(
-            "Webhook request rejected",
-            extra={"error": str(e)},
+            "Rejecting forwarded webhook — customer mismatch",
+            extra={"expected": e.expected, "received": e.received},
         )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid webhook request",
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "customer_mismatch",
+                "expected": e.expected,
+                "received": e.received,
+            },
+        )
+    except StripeClientError as e:
+        logger.error(
+            "Webhook handler error (Stripe SDK)",
+            extra={"error": str(e)},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "webhook_processing_failed"},
         )
     except Exception as e:
         logger.error(
@@ -284,7 +329,7 @@ async def handle_webhook(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Webhook processing failed",
+            detail={"error": "webhook_processing_failed"},
         )
 
 

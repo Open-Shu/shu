@@ -148,7 +148,10 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/auth/callback",
             "/api/v1/settings/branding",
             "/api/v1/settings/branding/",
-            # Stripe webhooks authenticate via Stripe-Signature header, not JWT.
+            # Router-forwarded Stripe webhooks. JWT does not apply here — the
+            # route is HMAC-authenticated via shu.billing.router_envelope
+            # (verify_router_envelope_dep). Public to JWT, not public to
+            # traffic: unsigned requests get a 401 from the route dependency.
             "/api/v1/billing/webhooks",
         }
 
