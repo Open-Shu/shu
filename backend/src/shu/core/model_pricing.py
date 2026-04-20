@@ -118,8 +118,10 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
             continue
 
         # Skip zero-cost models (local/self-hosted) — leave DB columns as NULL
-        # so "has pricing" checks (IS NOT NULL) work correctly.
-        if not pricing["input"] and not pricing["output"]:
+        # so "has pricing" checks (IS NOT NULL) work correctly. Using explicit
+        # equality (not Python truthiness) keeps the intent clear and avoids
+        # the Decimal-falsiness foot-gun that bit us in LLMService.record_usage.
+        if pricing["input"] == 0 and pricing["output"] == 0:
             continue
 
         await db.execute(

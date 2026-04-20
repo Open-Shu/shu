@@ -37,8 +37,18 @@ def _mock_ocr_response(pages: list[dict]) -> httpx.Response:
 
 @contextmanager
 def _patched_httpx(response):
-    """Patch httpx.AsyncClient to return a mock that yields `response` on post."""
-    with patch("shu.services.external_ocr_service.httpx.AsyncClient") as mock_client_cls:
+    """Patch httpx.AsyncClient AND ExternalOCRService._record_usage for full DB isolation.
+
+    Previously only httpx was mocked, which let the real `_record_usage` method run
+    and write rows to whatever database the host env pointed at (a live dev Postgres
+    in typical setups). Tests that exercise the extract_text control flow don't need
+    to verify usage persistence — that is covered separately in TestUsageRecording —
+    so a blanket mock on `_record_usage` keeps these tests hermetic.
+    """
+    with (
+        patch("shu.services.external_ocr_service.httpx.AsyncClient") as mock_client_cls,
+        patch.object(ExternalOCRService, "_record_usage", new_callable=AsyncMock),
+    ):
         mock_client = AsyncMock()
         mock_client.post.return_value = response
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)

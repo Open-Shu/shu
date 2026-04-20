@@ -122,7 +122,7 @@ class TestRecordUsage:
     """
 
     @staticmethod
-    def _make_service_with_model(model: MagicMock | None) -> tuple[MagicMock, "LLMService"]:
+    def _make_service_with_model(model):
         from shu.llm.service import LLMService
 
         db = AsyncMock(spec=AsyncSession)
@@ -135,6 +135,7 @@ class TestRecordUsage:
     @staticmethod
     def _model_with_rates(input_rate: str, output_rate: str) -> MagicMock:
         from decimal import Decimal
+
         m = MagicMock()
         m.cost_per_input_unit = Decimal(input_rate)
         m.cost_per_output_unit = Decimal(output_rate)
@@ -236,25 +237,83 @@ class TestRecordUsage:
         usage = db.add.call_args[0][0]
         assert usage.user_id is None
 
+    @pytest.mark.asyncio
+    async def test_one_sided_rate_still_computes_input_cost(self):
+        """Regression: Decimal(0) output rate must not collapse the DB-rate fallback.
+
+        An earlier guard used truthiness (`model.cost_per_input_unit and
+        model.cost_per_output_unit`), which treated a legitimate Decimal(0)
+        output rate as "no pricing" and silently recorded $0 for a chat row
+        with real input-token cost. Using `is not None` preserves each side
+        independently.
+        """
+        from decimal import Decimal
+        db, service = self._make_service_with_model(
+            self._model_with_rates("0.00001", "0")  # free output, billed input
+        )
+
+        await service.record_usage(
+            provider_id="p1",
+            model_id="m1",
+            request_type="chat",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost=Decimal("0"),
+        )
+
+        usage = db.add.call_args[0][0]
+        assert usage.input_cost == Decimal("0.01")  # 1000 * 0.00001
+        assert usage.output_cost == Decimal("0")   # 500 * 0
+        assert usage.total_cost == Decimal("0.01")
+        assert usage.input_cost + usage.output_cost == usage.total_cost
+
+    @pytest.mark.asyncio
+    async def test_only_input_rate_set_still_computes(self):
+        """Only cost_per_input_unit set (output rate NULL) falls back to Decimal(0) for output."""
+        from decimal import Decimal
+        model = MagicMock()
+        model.cost_per_input_unit = Decimal("0.00002")
+        model.cost_per_output_unit = None
+        db, service = self._make_service_with_model(model)
+
+        await service.record_usage(
+            provider_id="p1",
+            model_id="m1",
+            request_type="chat",
+            input_tokens=500,
+            output_tokens=100,
+            total_cost=Decimal("0"),
+        )
+
+        usage = db.add.call_args[0][0]
+        assert usage.input_cost == Decimal("0.01")
+        assert usage.output_cost == Decimal("0")
+        assert usage.total_cost == Decimal("0.01")
+
 
 class TestSafeDecimal:
     """safe_decimal() coerces untrusted provider values into Decimal defensively."""
 
     def test_numeric_string_is_coerced(self):
         from decimal import Decimal
+
         from shu.core.safe_decimal import safe_decimal
+
         assert safe_decimal("0.042") == Decimal("0.042")
         assert safe_decimal(0.042) == Decimal(str(0.042))
         assert safe_decimal(42) == Decimal("42")
 
     def test_none_returns_zero(self):
         from decimal import Decimal
+
         from shu.core.safe_decimal import safe_decimal
+
         assert safe_decimal(None) == Decimal(0)
 
     def test_malformed_returns_zero_with_warning(self, caplog):
         import logging
         from decimal import Decimal
+
         from shu.core.safe_decimal import safe_decimal
 
         with caplog.at_level(logging.WARNING):

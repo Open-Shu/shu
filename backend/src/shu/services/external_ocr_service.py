@@ -211,6 +211,21 @@ class ExternalOCRService:
             session_factory = get_async_session_local()
             async with session_factory() as session:
                 if not await self._resolve_provider_and_model(session):
+                    # Provider/model lookup failed (see upstream error in _resolve_provider_and_model).
+                    # Billing loses a row for a real OCR call here — surface that explicitly so
+                    # ops can correlate the raw_usage_info log above with missing llm_usage
+                    # entries and drive the seed fix. See SHU-713.
+                    logger.error(
+                        "Dropping OCR llm_usage row — Mistral OCR provider/model not seeded. "
+                        "Reconstruct cost from the raw_usage_info log above (pages_billed=%d). "
+                        "Fix by seeding via the hosting script.",
+                        page_count,
+                        extra={
+                            "model": self._model_name,
+                            "pages_billed": page_count,
+                            "usage_recording": "dropped",
+                        },
+                    )
                     return
 
                 model = await session.get(LLMModel, self._model_id)

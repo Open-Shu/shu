@@ -9,6 +9,7 @@ TODO: Abstract provider-specific formatting when we support more than
 OpenRouter for embedding models.
 """
 
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -111,7 +112,14 @@ class ExternalEmbeddingService:
         return response.json()
 
     async def _record_usage(self, usage: dict[str, Any] | None, *, user_id: str | None = None) -> None:
-        """Record embedding API usage in llm_usage. Best-effort — failures are logged, not raised."""
+        """Record embedding API usage in llm_usage. Best-effort — failures are logged, not raised.
+
+        Cost-column contract (SHU-700): provider-authoritative wire cost is stored
+        verbatim on ``total_cost`` and ``input_cost`` / ``output_cost`` stay at
+        ``Decimal(0)`` — providers return a single total, not a split. This matches
+        the chat/side-call path's contract so downstream aggregations can identify
+        provider-authoritative rows consistently regardless of request_type.
+        """
         if not usage:
             return
 
@@ -129,7 +137,7 @@ class ExternalEmbeddingService:
 
         prompt_tokens = usage.get("prompt_tokens", 0)
         total_tokens = usage.get("total_tokens", 0)
-        cost = usage.get("cost")
+        cost = safe_decimal(usage.get("cost"))
 
         await record_llm_usage(
             provider_id=self._provider_id,
@@ -138,6 +146,7 @@ class ExternalEmbeddingService:
             user_id=user_id,
             input_tokens=prompt_tokens,
             total_tokens=total_tokens,
-            input_cost=safe_decimal(cost),
-            total_cost=safe_decimal(cost),
+            input_cost=Decimal(0),
+            output_cost=Decimal(0),
+            total_cost=cost,
         )

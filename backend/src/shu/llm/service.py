@@ -445,9 +445,14 @@ class LLMService:
         if total_cost > Decimal("0"):
             # Provider-authoritative: leave input_cost/output_cost at 0.
             pass
-        elif model and model.cost_per_input_unit and model.cost_per_output_unit:
-            input_cost = Decimal(str(input_tokens)) * model.cost_per_input_unit
-            output_cost = Decimal(str(output_tokens)) * model.cost_per_output_unit
+        elif model and (model.cost_per_input_unit is not None or model.cost_per_output_unit is not None):
+            # Use `is not None` (not truthiness) so a legitimate Decimal(0) rate on one
+            # side — e.g. a model with free output tokens — doesn't collapse the entire
+            # fallback and silently lose the other side's cost.
+            input_rate = model.cost_per_input_unit if model.cost_per_input_unit is not None else Decimal(0)
+            output_rate = model.cost_per_output_unit if model.cost_per_output_unit is not None else Decimal(0)
+            input_cost = Decimal(str(input_tokens)) * input_rate
+            output_cost = Decimal(str(output_tokens)) * output_rate
             total_cost = input_cost + output_cost
 
         usage = LLMUsage(

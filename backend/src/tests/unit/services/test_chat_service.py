@@ -1503,3 +1503,66 @@ class TestChatServiceExplicitKnowledgeBaseAccess:
 
             mock_kb_service.check_kb_read_access.assert_not_called()
             assert ctx.knowledge_base_ids == []
+
+
+class TestHandleExceptionUserIdThreading:
+    """SHU-700 regression tests: _handle_exception must forward user_id to record_usage.
+
+    Streaming callers pass ``conversation.user_id`` (via ``conversation_owner_id``)
+    into ``_handle_exception``; the method must thread it to ``LLMService.record_usage``
+    so failed-chat rows in ``llm_usage`` still attribute to the originating user.
+    Dropping it at this boundary would leave every failed chat attempt with a
+    NULL ``user_id`` despite the caller supplying one — symmetric to the OCR
+    auto/fallback bug caught mid-ticket.
+    """
+
+    @pytest.mark.asyncio
+    async def test_user_id_forwarded_to_record_usage(self):
+        from shu.core.exceptions import LLMProviderError
+
+        chat_service = ChatService.__new__(ChatService)
+        chat_service.db_session = AsyncMock()
+        chat_service.llm_service = MagicMock()
+        chat_service.llm_service.record_usage = AsyncMock()
+        chat_service.add_message = AsyncMock()
+
+        model = MagicMock()
+        model.id = "model-1"
+        model.provider_id = "provider-1"
+
+        await chat_service._handle_exception(
+            conversation_id="conv-1",
+            model=model,
+            e=LLMProviderError("boom"),
+            user_id="user-42",
+        )
+
+        chat_service.llm_service.record_usage.assert_awaited_once()
+        kwargs = chat_service.llm_service.record_usage.call_args.kwargs
+        assert kwargs["user_id"] == "user-42"
+        assert kwargs["success"] is False
+        assert kwargs["request_type"] == "chat"
+
+    @pytest.mark.asyncio
+    async def test_user_id_defaults_to_none_when_not_provided(self):
+        """Backwards compat: legacy callers that don't pass user_id still work."""
+        from shu.core.exceptions import LLMProviderError
+
+        chat_service = ChatService.__new__(ChatService)
+        chat_service.db_session = AsyncMock()
+        chat_service.llm_service = MagicMock()
+        chat_service.llm_service.record_usage = AsyncMock()
+        chat_service.add_message = AsyncMock()
+
+        model = MagicMock()
+        model.id = "model-1"
+        model.provider_id = "provider-1"
+
+        await chat_service._handle_exception(
+            conversation_id="conv-1",
+            model=model,
+            e=LLMProviderError("boom"),
+        )
+
+        kwargs = chat_service.llm_service.record_usage.call_args.kwargs
+        assert kwargs["user_id"] is None

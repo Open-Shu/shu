@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, NotRequired, Self, TypedDict
 
 from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,26 @@ from shu.services.plugin_execution import execute_plugin
 from shu.services.providers.events import ProviderStreamEvent
 
 logger = get_logger(__name__)
+
+
+class UsageDict(TypedDict, total=False):
+    """Shape of `BaseProviderAdapter.self.usage` and entries on provider-event metadata.
+
+    Token counts are always ``int``; ``cost`` is stored as a **stringified Decimal**
+    so the dict stays JSON-serializable when persisted into ``Message.message_metadata``
+    and SSE event payloads. Callers recover precision via
+    ``safe_decimal(usage["cost"])`` at record-usage sites.
+
+    All fields are optional (``total=False``) because some provider responses
+    omit token detail breakdowns and local/self-hosted providers omit ``cost``.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    reasoning_tokens: int
+    total_tokens: int
+    cost: NotRequired[str]
 
 
 @dataclass
@@ -170,8 +190,8 @@ class BaseProviderAdapter:
         # Decimal (not a Decimal object). The dict flows into message_metadata,
         # which is persisted as JSON — Decimal is not JSON-serializable by
         # default. Callers convert cost back to Decimal via safe_decimal() when
-        # recording usage.
-        self.usage: dict[str, int | str] = {}
+        # recording usage. See UsageDict for the full shape.
+        self.usage: UsageDict = {}
 
         self.db_session = context.db_session
 
@@ -228,8 +248,8 @@ class BaseProviderAdapter:
         reasoning_tokens: int,
         total_tokens: int,
         cost: Decimal | None = None,
-    ) -> dict[str, int | str]:
-        usage: dict[str, int | str] = {
+    ) -> UsageDict:
+        usage: UsageDict = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
@@ -241,17 +261,17 @@ class BaseProviderAdapter:
             usage["cost"] = str(cost)
         return usage
 
-    def _aggregate_usage(self, first: dict[str, int | str], second: dict[str, int | str]) -> dict[str, int | str]:
-        result: dict[str, int | str] = {}
+    def _aggregate_usage(self, first: UsageDict, second: UsageDict) -> UsageDict:
+        result: UsageDict = {}
         for k in set(first) | set(second):
             if k == "cost":
                 # Cost is stored as a stringified Decimal; sum with Decimal math
                 # to preserve precision, then restringify for JSON safety.
                 a = Decimal(str(first.get(k, "0")))
                 b = Decimal(str(second.get(k, "0")))
-                result[k] = str(a + b)
+                result[k] = str(a + b)  # type: ignore[literal-required]
             else:
-                result[k] = first.get(k, 0) + second.get(k, 0)  # type: ignore[operator]
+                result[k] = first.get(k, 0) + second.get(k, 0)  # type: ignore[literal-required,operator]
         return result
 
     def _flatten_chat_context(
