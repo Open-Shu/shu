@@ -201,7 +201,7 @@ async def extract_text_with_ocr_fallback(
     if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
         return result
 
-    return await _run_ocr_service(file_bytes, mime_type, effective_mode)
+    return await _run_ocr_service(file_bytes, mime_type, effective_mode, user_id=user_id)
 
 
 async def _run_ocr_service(file_bytes: bytes, mime_type: str, ocr_mode: str, *, user_id: str | None = None) -> dict:

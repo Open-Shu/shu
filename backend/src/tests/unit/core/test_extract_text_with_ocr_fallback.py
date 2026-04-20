@@ -341,3 +341,74 @@ class TestRunOCRService:
         assert result["metadata"]["details"]["page_count"] == 1
         assert result["metadata"]["details"]["ocr_mode"] == "auto"
         assert result["metadata"]["details"]["processing_time"] > 0
+
+
+class TestUserIdThreading:
+    """SHU-700 regression tests: user_id must reach the OCR service regardless
+    of which branch of extract_text_with_ocr_fallback fires.
+
+    An earlier user_id plumbing edit caught the ``ocr_mode='always'`` path but
+    missed the ``auto`` / ``fallback`` path — the latter dropped user_id on its
+    way to ``_run_ocr_service``. That bug left every auto-mode OCR row in
+    ``llm_usage`` with NULL ``user_id`` despite the ingestion worker passing
+    one correctly. These tests guard both branches.
+    """
+
+    @pytest.mark.asyncio
+    async def test_user_id_reaches_ocr_service_on_auto_fallback_path(self):
+        """Real-world path: text extraction below threshold → falls back to OCR."""
+        mock_extractor_cls, _ = _mock_text_extractor(text="short")  # below default min
+        mock_ocr_svc = _mock_ocr_service()
+
+        with patch("shu.core.ocr_service.TextExtractor", mock_extractor_cls), patch(
+            "shu.core.ocr_service.get_ocr_service", return_value=mock_ocr_svc
+        ), patch("shu.core.ocr_service.get_settings_instance", return_value=_mock_settings(50)):
+            reset_ocr_service()
+            await extract_text_with_ocr_fallback(
+                b"%PDF-dummy",
+                "application/pdf",
+                MagicMock(),
+                ocr_mode="auto",
+                user_id="user-abc",
+            )
+
+        mock_ocr_svc.extract_text.assert_called_once()
+        assert mock_ocr_svc.extract_text.call_args.kwargs.get("user_id") == "user-abc", (
+            "user_id must be forwarded to the OCR service on the auto/fallback path"
+        )
+
+    @pytest.mark.asyncio
+    async def test_user_id_reaches_ocr_service_on_always_path(self):
+        """ocr_mode='always' forces OCR; user_id must still thread through."""
+        mock_ocr_svc = _mock_ocr_service()
+
+        with patch("shu.core.ocr_service.get_ocr_service", return_value=mock_ocr_svc), patch(
+            "shu.core.ocr_service.get_settings_instance", return_value=_mock_settings()
+        ):
+            reset_ocr_service()
+            await extract_text_with_ocr_fallback(
+                b"%PDF-dummy",
+                "application/pdf",
+                MagicMock(),
+                ocr_mode="always",
+                user_id="user-xyz",
+            )
+
+        mock_ocr_svc.extract_text.assert_called_once()
+        assert mock_ocr_svc.extract_text.call_args.kwargs.get("user_id") == "user-xyz"
+
+    @pytest.mark.asyncio
+    async def test_user_id_default_is_none_when_not_provided(self):
+        """Regression guard: callers that don't pass user_id still get None-safe behavior."""
+        mock_extractor_cls, _ = _mock_text_extractor(text="short")
+        mock_ocr_svc = _mock_ocr_service()
+
+        with patch("shu.core.ocr_service.TextExtractor", mock_extractor_cls), patch(
+            "shu.core.ocr_service.get_ocr_service", return_value=mock_ocr_svc
+        ), patch("shu.core.ocr_service.get_settings_instance", return_value=_mock_settings(50)):
+            reset_ocr_service()
+            await extract_text_with_ocr_fallback(
+                b"%PDF-dummy", "application/pdf", MagicMock(), ocr_mode="auto"
+            )
+
+        assert mock_ocr_svc.extract_text.call_args.kwargs.get("user_id") is None
