@@ -4,7 +4,6 @@ import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.core.config import ConfigurationManager, get_settings_instance
 from shu.core.exceptions import LLMError, LLMProviderError, LLMRateLimitError
 from shu.core.rate_limiting import get_rate_limit_service
+from shu.core.safe_decimal import safe_decimal
 from shu.llm.client import UnifiedLLMClient
 from shu.services.message_context_builder import MessageContextBuilder
 from shu.services.providers.adapter_base import (
@@ -516,7 +516,8 @@ class EnsembleStreamingHelper:
                     request_type="chat",
                     input_tokens=usage_from_event.get("input_tokens", 0),
                     output_tokens=usage_from_event.get("output_tokens", 0),
-                    total_cost=Decimal("0"),
+                    total_cost=safe_decimal(usage_from_event.get("cost")),
+                    user_id=str(conversation_owner_id) if conversation_owner_id else None,
                     response_time_ms=metadata.get("response_time_ms"),
                     success=True,
                 )
@@ -543,7 +544,12 @@ class EnsembleStreamingHelper:
                     getattr(exc, "details", None),
                     exc_info=True,
                 )
-                await service._handle_exception(conversation_id, inputs.model, exc)
+                await service._handle_exception(
+                    conversation_id,
+                    inputs.model,
+                    exc,
+                    user_id=str(conversation_owner_id) if conversation_owner_id else None,
+                )
                 # Pass through the technical error message - it will be sanitized by the endpoint
                 await queue.put(
                     self._create_error_event(exc.message, variant_index, inputs, model_snapshot, model_display_name)
@@ -556,7 +562,12 @@ class EnsembleStreamingHelper:
                     type(exc).__name__,
                     stack_info=True,
                 )
-                await service._handle_exception(conversation_id, inputs.model, exc)
+                await service._handle_exception(
+                    conversation_id,
+                    inputs.model,
+                    exc,
+                    user_id=str(conversation_owner_id) if conversation_owner_id else None,
+                )
                 # For unknown errors, show details only in development
                 settings = get_settings_instance()
                 if settings.environment == "development":

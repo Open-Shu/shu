@@ -68,8 +68,8 @@ MANUAL_MODEL_DATA = {
     "supports_streaming": True,
     "supports_functions": True,
     "supports_vision": True,
-    "cost_per_input_token": 0.00001,  # Fixed field name
-    "cost_per_output_token": 0.00003,  # Fixed field name
+    "cost_per_input_unit": 0.00001,  # Fixed field name
+    "cost_per_output_unit": 0.00003,  # Fixed field name
     "is_active": True,  # Added missing field
 }
 

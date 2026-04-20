@@ -126,8 +126,12 @@ class LLMModelCreate(BaseModel):
     supports_streaming: bool = Field(True, description="Supports streaming")
     supports_functions: bool = Field(False, description="Supports function calling")
     supports_vision: bool = Field(False, description="Supports vision/image inputs")
-    cost_per_input_token: float | None = Field(None, description="Cost per input token")
-    cost_per_output_token: float | None = Field(None, description="Cost per output token")
+    cost_per_input_unit: float | None = Field(
+        None, description="Cost per input unit (per-token for chat/embedding, per-page for ocr)"
+    )
+    cost_per_output_unit: float | None = Field(
+        None, description="Cost per output unit (per-token for chat/embedding, per-page for ocr)"
+    )
 
 
 class LLMModelResponse(BaseModel):
@@ -143,8 +147,8 @@ class LLMModelResponse(BaseModel):
     supports_streaming: bool
     supports_functions: bool
     supports_vision: bool
-    cost_per_input_token: float | None
-    cost_per_output_token: float | None
+    cost_per_input_unit: float | None
+    cost_per_output_unit: float | None
     is_active: bool
     created_at: datetime
 

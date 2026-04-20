@@ -9,7 +9,11 @@ import httpx
 import pytest
 
 from shu.core.ocr_service import OCRResult
-from shu.services.external_ocr_service import ExternalOCRService, _COST_PER_PAGE
+from shu.services.external_ocr_service import ExternalOCRService
+
+# OCR cost is now DB-sourced (cost_per_input_unit on the llm_models row, seeded from
+# model_pricing.py). Tests that assert on total cost stub a model row with this rate.
+_OCR_PER_PAGE_RATE = Decimal("0.002")
 
 
 def _make_service(**kwargs) -> ExternalOCRService:
@@ -176,12 +180,17 @@ class TestUsageRecording:
 
     @pytest.mark.asyncio
     async def test_record_usage_inserts_correct_cost(self):
-        """_record_usage should record via shared helper with per-page cost."""
+        """_record_usage should record with per-page cost sourced from the DB model row."""
         svc = _make_service()
         svc._provider_id = "provider-123"
         svc._model_id = "model-456"
 
+        # Fake LLMModel row that session.get(...) will return.
+        fake_model = MagicMock()
+        fake_model.cost_per_input_unit = _OCR_PER_PAGE_RATE
+
         mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=fake_model)
         # begin_nested() is sync, returns an async context manager (AsyncSessionTransaction)
         mock_savepoint = MagicMock()
         mock_savepoint.__aenter__ = AsyncMock()
@@ -195,16 +204,17 @@ class TestUsageRecording:
         with patch(
             "shu.core.database.get_async_session_local",
             return_value=mock_session_factory,
-        ):
-            await svc._record_usage(page_count=5)
+        ), patch.object(svc, "_resolve_provider_and_model", new_callable=AsyncMock, return_value=True):
+            await svc._record_usage(page_count=5, user_id="user-789")
 
         mock_session.add.assert_called_once()
         record = mock_session.add.call_args[0][0]
         assert record.provider_id == "provider-123"
         assert record.model_id == "model-456"
+        assert record.user_id == "user-789"
         assert record.request_type == "ocr"
-        assert record.total_cost == _COST_PER_PAGE * 5
-        assert record.input_cost == _COST_PER_PAGE * 5
+        assert record.total_cost == _OCR_PER_PAGE_RATE * 5
+        assert record.input_cost == _OCR_PER_PAGE_RATE * 5
         assert record.output_cost == Decimal("0")
         assert record.request_metadata == {"page_count": 5}
         assert record.success is True
@@ -256,7 +266,7 @@ class TestUsageRecording:
             with patch.object(svc, "_record_usage", new_callable=AsyncMock) as mock_record:
                 await svc.extract_text(b"%PDF-content", "application/pdf")
 
-        mock_record.assert_called_once_with(3, usage_info={}, observed_page_count=3)
+        mock_record.assert_called_once_with(3, usage_info={}, observed_page_count=3, user_id=None)
 
 
 class TestResolveProviderAndModel:

@@ -1066,10 +1066,19 @@ class ChatService:
         # finally:
         #     await release_conversation_lock(self.db_session, conversation_id, lock_id)
 
-    async def _handle_exception(self, conversation_id: str, model: LLMModel, e: Exception | ShuException) -> Message:
+    async def _handle_exception(
+        self,
+        conversation_id: str,
+        model: LLMModel,
+        e: Exception | ShuException,
+        user_id: str | None = None,
+    ) -> Message:
         logger.error("LLM completion failed: %s", e)
 
-        # Record failed usage
+        # Record failed usage. Tokens and cost stay at 0 — the request never
+        # produced output, so there's nothing to bill. user_id is still
+        # populated so failed attempts appear under the originating user in
+        # any per-user usage dashboard.
         try:
             await self.llm_service.record_usage(
                 provider_id=model.provider_id,
@@ -1078,6 +1087,7 @@ class ChatService:
                 input_tokens=0,
                 output_tokens=0,
                 total_cost=Decimal("0"),
+                user_id=user_id,
                 success=False,
                 error_message=str(e),
             )

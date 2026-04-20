@@ -93,8 +93,8 @@ async def test_model_configuration_conversation_creation(client, db, auth_header
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 
@@ -188,8 +188,8 @@ async def test_rag_integration_with_model_config(client, db, auth_headers):
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 
@@ -318,8 +318,8 @@ async def test_llm_integration_with_error_handling(client, db, auth_headers):
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 
@@ -424,8 +424,8 @@ async def test_streaming_functionality(client, db, auth_headers):
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 
@@ -526,8 +526,8 @@ async def test_performance_concurrent_conversations(client, db, auth_headers):
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 
@@ -608,8 +608,8 @@ async def test_authentication_and_permissions(client, db, auth_headers):
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 
@@ -687,8 +687,8 @@ async def test_edge_cases_and_validation(client, db, auth_headers):
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.00003,
-        "cost_per_output_token": 0.00006,
+        "cost_per_input_unit": 0.00003,
+        "cost_per_output_unit": 0.00006,
         "is_active": True,
     }
 

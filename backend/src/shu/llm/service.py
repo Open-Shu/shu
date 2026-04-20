@@ -418,15 +418,36 @@ class LLMService:
         error_message: str | None = None,
         request_metadata: dict[str, Any] | None = None,
     ) -> LLMUsage:
-        """Record LLM usage for analytics and cost tracking."""
-        # Calculate individual costs if model has pricing info
+        """Record LLM usage for analytics and cost tracking.
+
+        Cost resolution is two-tiered:
+
+        1. **Provider-authoritative** — if the caller passes ``total_cost > 0``,
+           the value is recorded verbatim. ``input_cost`` and ``output_cost``
+           stay at ``Decimal(0)`` because providers return a single total, not
+           a split. This is the hot path for OpenRouter, which returns
+           ``usage.cost`` on the wire.
+
+        2. **DB-rate fallback** — if the caller passes ``total_cost = Decimal(0)``
+           (the sentinel meaning "no wire-reported cost"), cost is computed as
+           ``input_tokens * cost_per_input_unit + output_tokens * cost_per_output_unit``
+           using the resolved ``LLMModel`` row. ``input_cost + output_cost == total_cost``
+           holds on this path.
+
+        When neither path produces a cost (no wire cost, no DB rates — e.g. a
+        local/self-hosted model), all three cost columns are recorded as
+        ``Decimal(0)``.
+        """
         model = await self.db.get(LLMModel, model_id)
         input_cost = Decimal("0")
         output_cost = Decimal("0")
 
-        if model and model.cost_per_input_token and model.cost_per_output_token:
-            input_cost = Decimal(str(input_tokens)) * model.cost_per_input_token
-            output_cost = Decimal(str(output_tokens)) * model.cost_per_output_token
+        if total_cost > Decimal("0"):
+            # Provider-authoritative: leave input_cost/output_cost at 0.
+            pass
+        elif model and model.cost_per_input_unit and model.cost_per_output_unit:
+            input_cost = Decimal(str(input_tokens)) * model.cost_per_input_unit
+            output_cost = Decimal(str(output_tokens)) * model.cost_per_output_unit
             total_cost = input_cost + output_cost
 
         usage = LLMUsage(

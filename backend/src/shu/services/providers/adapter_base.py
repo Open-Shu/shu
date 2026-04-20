@@ -10,6 +10,7 @@ import base64
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Self
 
@@ -165,7 +166,7 @@ class BaseProviderAdapter:
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
         self.api_key = None
-        self.usage: dict[str, int] = {}
+        self.usage: dict[str, int | Decimal] = {}
 
         self.db_session = context.db_session
 
@@ -221,16 +222,22 @@ class BaseProviderAdapter:
         cached_tokens: int,
         reasoning_tokens: int,
         total_tokens: int,
-    ) -> dict[str, int]:
-        return {
+        cost: Decimal | None = None,
+    ) -> dict[str, int | Decimal]:
+        usage: dict[str, int | Decimal] = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
             "reasoning_tokens": reasoning_tokens,
             "total_tokens": total_tokens,
         }
+        if cost is not None:
+            usage["cost"] = cost
+        return usage
 
-    def _aggregate_usage(self, first: dict[str, int], second: dict[str, int]) -> dict[str, int]:
+    def _aggregate_usage(
+        self, first: dict[str, int | Decimal], second: dict[str, int | Decimal]
+    ) -> dict[str, int | Decimal]:
         return {k: first.get(k, 0) + second.get(k, 0) for k in set(first) | set(second)}
 
     def _flatten_chat_context(
@@ -341,6 +348,7 @@ class BaseProviderAdapter:
         cached_tokens: int,
         reasoning_tokens: int,
         total_tokens: int,
+        cost: Decimal | None = None,
     ) -> None:
         usage_dict = self._get_usage(
             input_tokens,
@@ -348,6 +356,7 @@ class BaseProviderAdapter:
             cached_tokens,
             reasoning_tokens,
             total_tokens,
+            cost,
         )
         if not self.usage:
             self.usage = usage_dict

@@ -140,6 +140,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         raise ValueError("INGESTION_OCR job missing mime_type in payload")
 
     ocr_mode = job.payload.get("ocr_mode")
+    user_id = job.payload.get("user_id")
 
     logger.info(
         "Processing OCR job",
@@ -209,6 +210,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 get_config_manager(),
                 filename=filename,
                 ocr_mode=ocr_mode or "auto",
+                user_id=user_id,
             )
             extracted_text = extraction_result.get("text", "")
             extraction_metadata = extraction_result.get("metadata", {})
@@ -243,6 +245,7 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 payload={
                     "document_id": document_id,
                     "knowledge_base_id": knowledge_base_id,
+                    "user_id": user_id,
                     "action": "embed_document",
                 },
                 max_attempts=3,
@@ -355,6 +358,8 @@ async def _handle_content_embed_job(job) -> None:
     if not knowledge_base_id:
         raise ValueError("INGESTION_EMBED job missing knowledge_base_id in payload")
 
+    user_id = job.payload.get("user_id")
+
     logger.info(
         "Processing embedding job",
         extra={
@@ -416,6 +421,7 @@ async def _handle_content_embed_job(job) -> None:
                     document,
                     document.title,  # type: ignore[arg-type]  # SQLAlchemy Column resolves at runtime
                     document.content,  # type: ignore[arg-type]
+                    user_id=user_id,
                 )
             except ValueError as kb_err:
                 # KB was deleted between OCR and embed stages — permanent failure, no retry.
@@ -444,7 +450,9 @@ async def _handle_content_embed_job(job) -> None:
             )
 
             settings = get_settings_instance()
-            await _finalize_embed_job(job, session, document, document_id, settings.enable_document_profiling)
+            await _finalize_embed_job(
+                job, session, document, document_id, settings.enable_document_profiling, user_id=user_id
+            )
 
         except Exception as e:
             # Check if we've exhausted retries
@@ -464,7 +472,9 @@ async def _handle_content_embed_job(job) -> None:
             raise
 
 
-async def _finalize_embed_job(job, session, document, document_id: str, profiling_enabled: bool) -> None:
+async def _finalize_embed_job(
+    job, session, document, document_id: str, profiling_enabled: bool, *, user_id: str | None = None
+) -> None:
     """Set CONTENT_PROCESSED, collect KB stats, then optionally enqueue profiling."""
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
@@ -494,7 +504,7 @@ async def _finalize_embed_job(job, session, document, document_id: str, profilin
         await enqueue_job(
             queue,
             WorkloadType.PROFILING,
-            payload={"document_id": document_id, "action": "profile_document"},
+            payload={"document_id": document_id, "user_id": user_id, "action": "profile_document"},
             max_attempts=5,
             visibility_timeout=600,
         )
@@ -531,6 +541,8 @@ async def _handle_profile_artifact_embed_job(job) -> None:
     if not document_id:
         raise ValueError("embed_profile_artifacts job missing document_id in payload")
 
+    user_id = job.payload.get("user_id")
+
     logger.info(
         "Processing profile artifact embedding job",
         extra={"job_id": job.id, "document_id": document_id},
@@ -555,7 +567,7 @@ async def _handle_profile_artifact_embed_job(job) -> None:
             await session.commit()
 
             synopsis_embedded, chunk_summaries_embedded, queries_embedded = await embed_profile_artifacts(
-                session, document
+                session, document, user_id=user_id
             )
 
             document.update_status(DocumentStatus.PROFILE_PROCESSED)
@@ -938,6 +950,8 @@ async def _handle_profiling_job(job) -> None:
     if not document_id:
         raise ValueError("PROFILING job missing document_id in payload")
 
+    user_id = job.payload.get("user_id")
+
     logger.info("Processing profiling job", extra={"job_id": job.id, "document_id": document_id})
 
     from sqlalchemy import select
@@ -956,7 +970,7 @@ async def _handle_profiling_job(job) -> None:
         side_call_service = SideCallService(session, config_manager)
         orchestrator = ProfilingOrchestrator(session, settings, side_call_service)
 
-        result = await orchestrator.run_for_document(document_id)
+        result = await orchestrator.run_for_document(document_id, user_id=user_id)
 
         if result.skipped:
             # skipped==True means the job had nothing to do (e.g. document not found). It is appropriate to bail without retrying.
@@ -985,6 +999,7 @@ async def _handle_profiling_job(job) -> None:
                     payload={
                         "document_id": document_id,
                         "knowledge_base_id": document.knowledge_base_id,
+                        "user_id": user_id,
                         "action": "embed_profile_artifacts",
                     },
                     max_attempts=3,

@@ -111,3 +111,154 @@ class TestModelConfigurationTypeValidation:
             await service.create_model_configuration(config_data, created_by="test-user")
         except ShuException as e:
             assert e.error_code != "INVALID_MODEL_TYPE", f"Chat model should pass type validation, got: {e.error_code}"
+
+
+class TestRecordUsage:
+    """Cover the two-tier cost-resolution contract of LLMService.record_usage.
+
+    SHU-700: provider-reported cost is authoritative when non-zero; DB-rate math
+    is the fallback when the caller passes Decimal(0). user_id is always threaded
+    through to the written llm_usage row.
+    """
+
+    @staticmethod
+    def _make_service_with_model(model: MagicMock | None) -> tuple[MagicMock, "LLMService"]:
+        from shu.llm.service import LLMService
+
+        db = AsyncMock(spec=AsyncSession)
+        db.get = AsyncMock(return_value=model)
+        db.add = MagicMock()
+        db.commit = AsyncMock()
+        service = LLMService(db)
+        return db, service
+
+    @staticmethod
+    def _model_with_rates(input_rate: str, output_rate: str) -> MagicMock:
+        from decimal import Decimal
+        m = MagicMock()
+        m.cost_per_input_unit = Decimal(input_rate)
+        m.cost_per_output_unit = Decimal(output_rate)
+        return m
+
+    @pytest.mark.asyncio
+    async def test_provider_reported_cost_recorded_verbatim(self):
+        """Non-zero caller-supplied total_cost is authoritative; input/output = 0."""
+        from decimal import Decimal
+        db, service = self._make_service_with_model(
+            self._model_with_rates("0.00001", "0.00003")  # DB rates present but should be IGNORED
+        )
+
+        await service.record_usage(
+            provider_id="p1",
+            model_id="m1",
+            request_type="chat",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost=Decimal("0.042"),  # provider-reported wire value
+            user_id="user-1",
+        )
+
+        db.add.assert_called_once()
+        usage = db.add.call_args[0][0]
+        assert usage.total_cost == Decimal("0.042")
+        assert usage.input_cost == Decimal("0")
+        assert usage.output_cost == Decimal("0")
+        assert usage.user_id == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_db_rate_fallback_when_total_cost_is_zero(self):
+        """total_cost=0 triggers DB-rate math; summation invariant holds."""
+        from decimal import Decimal
+        db, service = self._make_service_with_model(
+            self._model_with_rates("0.00001", "0.00003")
+        )
+
+        await service.record_usage(
+            provider_id="p1",
+            model_id="m1",
+            request_type="chat",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost=Decimal("0"),  # sentinel for "caller has no provider cost"
+            user_id="user-2",
+        )
+
+        usage = db.add.call_args[0][0]
+        assert usage.input_cost == Decimal("0.01")   # 1000 * 0.00001
+        assert usage.output_cost == Decimal("0.015") # 500 * 0.00003
+        assert usage.total_cost == Decimal("0.025")
+        assert usage.input_cost + usage.output_cost == usage.total_cost
+        assert usage.user_id == "user-2"
+
+    @pytest.mark.asyncio
+    async def test_no_rates_no_provider_cost_records_all_zero(self):
+        """Local/self-hosted models with NULL rates and no wire cost record all zeros."""
+        from decimal import Decimal
+        local_model = MagicMock()
+        local_model.cost_per_input_unit = None
+        local_model.cost_per_output_unit = None
+        db, service = self._make_service_with_model(local_model)
+
+        await service.record_usage(
+            provider_id="p1",
+            model_id="m1",
+            request_type="chat",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost=Decimal("0"),
+            user_id="user-3",
+        )
+
+        usage = db.add.call_args[0][0]
+        assert usage.input_cost == Decimal("0")
+        assert usage.output_cost == Decimal("0")
+        assert usage.total_cost == Decimal("0")
+        assert usage.user_id == "user-3"
+
+    @pytest.mark.asyncio
+    async def test_user_id_nullable_on_write(self):
+        """user_id=None is valid; the row still writes cleanly."""
+        from decimal import Decimal
+        db, service = self._make_service_with_model(
+            self._model_with_rates("0.00001", "0.00003")
+        )
+
+        await service.record_usage(
+            provider_id="p1",
+            model_id="m1",
+            request_type="chat",
+            input_tokens=10,
+            output_tokens=5,
+            total_cost=Decimal("0"),
+            # user_id omitted
+        )
+
+        usage = db.add.call_args[0][0]
+        assert usage.user_id is None
+
+
+class TestSafeDecimal:
+    """safe_decimal() coerces untrusted provider values into Decimal defensively."""
+
+    def test_numeric_string_is_coerced(self):
+        from decimal import Decimal
+        from shu.core.safe_decimal import safe_decimal
+        assert safe_decimal("0.042") == Decimal("0.042")
+        assert safe_decimal(0.042) == Decimal(str(0.042))
+        assert safe_decimal(42) == Decimal("42")
+
+    def test_none_returns_zero(self):
+        from decimal import Decimal
+        from shu.core.safe_decimal import safe_decimal
+        assert safe_decimal(None) == Decimal(0)
+
+    def test_malformed_returns_zero_with_warning(self, caplog):
+        import logging
+        from decimal import Decimal
+        from shu.core.safe_decimal import safe_decimal
+
+        with caplog.at_level(logging.WARNING):
+            result = safe_decimal("N/A")
+
+        assert result == Decimal(0)
+        assert any("Malformed" in rec.message for rec in caplog.records)

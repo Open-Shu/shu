@@ -147,9 +147,10 @@ class LLMModel(BaseModel):
     supports_functions = Column(Boolean, default=False, nullable=False)
     supports_vision = Column(Boolean, default=False, nullable=False)
 
-    # Cost information (per-model pricing)
-    cost_per_input_token = Column(DECIMAL(12, 10), nullable=True)
-    cost_per_output_token = Column(DECIMAL(12, 10), nullable=True)
+    # Cost information (per-model pricing). Unit is per-token for chat/embedding
+    # models and per-page for ocr models; disambiguated by model_type.
+    cost_per_input_unit = Column(DECIMAL(12, 10), nullable=True)
+    cost_per_output_unit = Column(DECIMAL(12, 10), nullable=True)
 
     # Status
     is_active = Column(Boolean, default=True, nullable=False, index=True)
