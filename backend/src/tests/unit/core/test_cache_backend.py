@@ -8,14 +8,23 @@ Feature: unified-cache-interface
 """
 
 import asyncio
+import logging
 import time
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from shu.core.cache_backend import CacheBackend, InMemoryCacheBackend, RedisCacheBackend
+from shu.core import cache_backend as cache_backend_module
+from shu.core.cache_backend import (
+    CacheBackend,
+    InMemoryCacheBackend,
+    RedisCacheBackend,
+    get_cache_backend,
+)
 
 
 class MockRedisClient:
@@ -1431,3 +1440,171 @@ class TestBinaryBackendSubstitutability:
         assert await binary_backend.get(key) != string_val
         # Binary read should return the last-written value (both backends agree)
         assert await binary_backend.get_bytes(key) == binary_val
+
+
+class TestRedisCacheBackendTenantPrefix:
+    """Verify every key-bearing method of RedisCacheBackend routes through the tenant prefix.
+
+    The risk we are guarding against is missing a single method in the wrapper —
+    that would silently leak a write to a non-namespaced key, contaminating the
+    shared Redis deployment across tenants.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_reads_prefixed_key(self) -> None:
+        mock = MockRedisClient()
+        mock._data["t1:foo"] = "v"
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        assert await backend.get("foo") == "v"
+
+    @pytest.mark.asyncio
+    async def test_set_writes_prefixed_key(self) -> None:
+        mock = MockRedisClient()
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        await backend.set("foo", "v")
+        assert mock._data == {"t1:foo": "v"}
+
+    @pytest.mark.asyncio
+    async def test_delete_targets_prefixed_key_only(self) -> None:
+        mock = MockRedisClient()
+        mock._data["t1:foo"] = "v"
+        mock._data["foo"] = "other-tenant"
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        await backend.delete("foo")
+        assert "t1:foo" not in mock._data
+        assert mock._data["foo"] == "other-tenant"
+
+    @pytest.mark.asyncio
+    async def test_exists_checks_prefixed_key(self) -> None:
+        mock = MockRedisClient()
+        mock._data["foo"] = "other-tenant"  # Unprefixed key must not be seen
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        assert await backend.exists("foo") is False
+        mock._data["t1:foo"] = "v"
+        assert await backend.exists("foo") is True
+
+    @pytest.mark.asyncio
+    async def test_expire_targets_prefixed_key(self) -> None:
+        mock = MockRedisClient()
+        mock._data["t1:foo"] = "v"
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        assert await backend.expire("foo", 60) is True
+        assert "t1:foo" in mock._expiry
+
+    @pytest.mark.asyncio
+    async def test_incr_writes_prefixed_key(self) -> None:
+        mock = MockRedisClient()
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        await backend.incr("counter")
+        assert mock._data == {"t1:counter": "1"}
+
+    @pytest.mark.asyncio
+    async def test_decr_writes_prefixed_key(self) -> None:
+        mock = MockRedisClient()
+        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        await backend.decr("counter")
+        assert mock._data == {"t1:counter": "-1"}
+
+    @pytest.mark.asyncio
+    async def test_get_bytes_reads_prefixed_key(self) -> None:
+        binary = MockRedisClient(decode_responses=False)
+        binary._data["t1:blob"] = b"bytes-val"
+        backend = RedisCacheBackend(MockRedisClient(), binary, tenant_prefix="t1")
+        assert await backend.get_bytes("blob") == b"bytes-val"
+
+    @pytest.mark.asyncio
+    async def test_set_bytes_writes_prefixed_key(self) -> None:
+        binary = MockRedisClient(decode_responses=False)
+        backend = RedisCacheBackend(MockRedisClient(), binary, tenant_prefix="t1")
+        await backend.set_bytes("blob", b"bytes-val")
+        assert binary._data == {"t1:blob": b"bytes-val"}
+
+    @pytest.mark.asyncio
+    async def test_no_prefix_uses_raw_keys(self) -> None:
+        mock = MockRedisClient()
+        backend = RedisCacheBackend(mock)
+        await backend.set("foo", "v")
+        assert mock._data == {"foo": "v"}
+
+    @pytest.mark.asyncio
+    async def test_two_tenants_sharing_redis_have_isolated_keys(self) -> None:
+        mock = MockRedisClient()
+        tenant_a = RedisCacheBackend(mock, tenant_prefix="a")
+        tenant_b = RedisCacheBackend(mock, tenant_prefix="b")
+
+        await tenant_a.set("k", "v1")
+        await tenant_b.set("k", "v2")
+
+        assert mock._data == {"a:k": "v1", "b:k": "v2"}
+        assert await tenant_a.get("k") == "v1"
+        assert await tenant_b.get("k") == "v2"
+
+
+def _factory_settings(*, redis_url: str | None, tenant_id: str | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        redis_url=redis_url,
+        redis_enabled=bool(redis_url),
+        tenant_id=tenant_id,
+    )
+
+
+class TestGetCacheBackendFactory:
+    """Verifies factory wiring: tenant_id propagates to Redis backend, and the
+    hosted-without-Redis misconfig surfaces as a WARNING."""
+
+    def setup_method(self) -> None:
+        cache_backend_module._cache_backend = None
+
+    def teardown_method(self) -> None:
+        cache_backend_module._cache_backend = None
+
+    @pytest.mark.asyncio
+    async def test_redis_enabled_with_tenant_id_propagates_prefix(self) -> None:
+        settings = _factory_settings(redis_url="redis://localhost", tenant_id="t1")
+        string_client = MockRedisClient(decode_responses=True)
+        binary_client = MockRedisClient(decode_responses=False)
+
+        with (
+            patch("shu.core.config.get_settings_instance", return_value=settings),
+            patch.object(cache_backend_module, "_get_redis_client", return_value=string_client),
+            patch.object(cache_backend_module, "_get_redis_binary_client", return_value=binary_client),
+        ):
+            backend = await get_cache_backend()
+
+        assert isinstance(backend, RedisCacheBackend)
+        assert backend._prefix == "t1:"
+
+    @pytest.mark.asyncio
+    async def test_redis_disabled_with_tenant_id_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _factory_settings(redis_url=None, tenant_id="t1")
+
+        with (
+            patch("shu.core.config.get_settings_instance", return_value=settings),
+            caplog.at_level(logging.WARNING, logger=cache_backend_module.logger.name),
+        ):
+            backend = await get_cache_backend()
+
+        assert isinstance(backend, InMemoryCacheBackend)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "SHU_TENANT_ID" in message
+        assert "SHU_REDIS_URL" in message
+        assert "t1" in message
+
+    @pytest.mark.asyncio
+    async def test_redis_disabled_without_tenant_id_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _factory_settings(redis_url=None, tenant_id=None)
+
+        with (
+            patch("shu.core.config.get_settings_instance", return_value=settings),
+            caplog.at_level(logging.WARNING, logger=cache_backend_module.logger.name),
+        ):
+            backend = await get_cache_backend()
+
+        assert isinstance(backend, InMemoryCacheBackend)
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []

@@ -42,12 +42,19 @@ class Settings(BaseSettings):
     database_max_overflow: int = 30
     database_pool_timeout: int = 30
     database_pool_recycle: int = 3600
+    # Set true when connecting through PgBouncer in transaction mode (e.g. DO
+    # Managed Postgres on port 6543). Disables asyncpg's prepared statement
+    # cache, which is incompatible with transaction-level connection reuse.
+    use_pgbouncer: bool = Field(False, alias="SHU_USE_PGBOUNCER")
 
     # Redis configuration
     # Set SHU_REDIS_URL to enable Redis-backed caching/queues; omit for in-memory.
     redis_url: str | None = Field(None, alias="SHU_REDIS_URL")
     redis_connection_timeout: int = Field(5, alias="SHU_REDIS_CONNECTION_TIMEOUT")
     redis_socket_timeout: int = Field(5, alias="SHU_REDIS_SOCKET_TIMEOUT")
+    # Tenant identifier prefixed to every Redis key for multi-tenant isolation
+    # on shared Redis. Unset in dev/self-hosted deployments (no prefix applied).
+    tenant_id: str | None = Field(None, alias="SHU_TENANT_ID")
 
     @property
     def redis_enabled(self) -> bool:
@@ -535,6 +542,18 @@ class Settings(BaseSettings):
         if not v.startswith(("postgresql://", "postgresql+psycopg2://", "postgresql+asyncpg://")):
             raise ValueError("Database URL must be PostgreSQL")
         return v
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_tenant_id(cls, v: str | None) -> str | None:
+        # Silent fallthrough to no-prefix in a hosted context would cause
+        # cross-tenant key contamination — reject empty/whitespace explicitly.
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("SHU_TENANT_ID must not be empty or whitespace")
+        return stripped
 
     @field_validator("log_level")
     @classmethod

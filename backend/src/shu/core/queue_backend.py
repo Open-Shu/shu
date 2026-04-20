@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional, Protocol, runtime_checkable
 
+from .tenant import warn_tenant_without_redis
+
 logger = logging.getLogger(__name__)
 
 
@@ -1160,7 +1162,7 @@ class RedisQueueBackend:
 
     """
 
-    def __init__(self, redis_client: Any) -> None:
+    def __init__(self, redis_client: Any, *, tenant_prefix: str | None = None) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -1168,25 +1170,35 @@ class RedisQueueBackend:
                 created internally by `get_queue_backend()`. External code
                 should use the factory function instead of constructing
                 this class directly.
+            tenant_prefix: Optional tenant identifier prepended as `{prefix}:` to
+                every Redis key for shared-deployment isolation. None = no prefix.
+
+        Raises:
+            ValueError: If ``tenant_prefix`` is provided but empty/whitespace.
+                Empty would silently disable prefixing — dangerous in a hosted
+                context where callers expect structural isolation.
 
         """
+        if tenant_prefix is not None and not tenant_prefix.strip():
+            raise ValueError("tenant_prefix must be None or a non-empty string")
         self._client = redis_client
+        self._prefix = f"{tenant_prefix}:" if tenant_prefix else ""
 
     def _queue_key(self, queue_name: str) -> str:
         """Get the Redis key for the main queue list."""
-        return f"queue:{queue_name}"
+        return f"{self._prefix}queue:{queue_name}"
 
     def _processing_key(self, queue_name: str) -> str:
         """Get the Redis key for the processing sorted set."""
-        return f"queue:{queue_name}:processing"
+        return f"{self._prefix}queue:{queue_name}:processing"
 
     def _scheduled_key(self, queue_name: str) -> str:
         """Get the Redis key for the scheduled sorted set."""
-        return f"queue:{queue_name}:scheduled"
+        return f"{self._prefix}queue:{queue_name}:scheduled"
 
     def _job_key(self, queue_name: str, job_id: str) -> str:
         """Get the Redis key for storing job data while in processing."""
-        return f"queue:{queue_name}:job:{job_id}"
+        return f"{self._prefix}queue:{queue_name}:job:{job_id}"
 
     async def _restore_expired_jobs(self, queue_name: str) -> int:
         """Move expired processing jobs back to the queue.
@@ -1833,15 +1845,22 @@ async def get_queue_backend() -> QueueBackend:
     from .config import get_settings_instance
 
     settings = get_settings_instance()
+    tenant_id = settings.tenant_id
 
     if not settings.redis_enabled:
+        if tenant_id:
+            # Tenant-scoped without Redis means per-pod in-memory jobs no other
+            # pod can see — almost certainly a misconfigured hosted deploy. We
+            # warn loudly but continue so local dev (tenant_id set, no Redis)
+            # still works; raising here would break that workflow.
+            warn_tenant_without_redis(logger, "queue", tenant_id)
         logger.info("SHU_REDIS_URL not configured, using InMemoryQueueBackend")
         _queue_backend = InMemoryQueueBackend()
         return _queue_backend
 
     # Redis is enabled — connection failure is fatal
     redis_client = await _get_shared_redis_client()
-    _queue_backend = RedisQueueBackend(redis_client)
+    _queue_backend = RedisQueueBackend(redis_client, tenant_prefix=tenant_id)
     logger.info("Using RedisQueueBackend")
     return _queue_backend
 

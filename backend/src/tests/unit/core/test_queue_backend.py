@@ -8,14 +8,18 @@ Feature: queue-backend-interface
 """
 
 import asyncio
+import logging
 import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from shu.core import queue_backend as queue_backend_module
 from shu.core.queue_backend import (
     InMemoryQueueBackend,
     Job,
@@ -25,6 +29,7 @@ from shu.core.queue_backend import (
     QueueError,
     QueueOperationError,
     RedisQueueBackend,
+    get_queue_backend,
 )
 
 # =============================================================================
@@ -2163,3 +2168,112 @@ class TestInitializeQueueBackend:
             assert initialized is subsequent
         finally:
             reset_queue_backend()
+
+
+class TestRedisQueueBackendTenantPrefix:
+    """Verify every queue key flows through the tenant prefix.
+
+    The queue backend routes all Redis access through four centralized key
+    helpers (`_queue_key`, `_processing_key`, `_scheduled_key`, `_job_key`).
+    If the prefix is missing from any of them, tenant jobs could collide on
+    the shared Redis deployment.
+    """
+
+    def test_prefix_applied_to_all_four_key_helpers(self) -> None:
+        backend = RedisQueueBackend(MockRedisClientForQueue(), tenant_prefix="t1")
+        assert backend._queue_key("tasks") == "t1:queue:tasks"
+        assert backend._processing_key("tasks") == "t1:queue:tasks:processing"
+        assert backend._scheduled_key("tasks") == "t1:queue:tasks:scheduled"
+        assert backend._job_key("tasks", "abc") == "t1:queue:tasks:job:abc"
+
+    def test_no_prefix_preserves_legacy_key_shape(self) -> None:
+        backend = RedisQueueBackend(MockRedisClientForQueue())
+        assert backend._queue_key("tasks") == "queue:tasks"
+        assert backend._processing_key("tasks") == "queue:tasks:processing"
+        assert backend._scheduled_key("tasks") == "queue:tasks:scheduled"
+        assert backend._job_key("tasks", "abc") == "queue:tasks:job:abc"
+
+    @pytest.mark.asyncio
+    async def test_two_tenants_sharing_redis_cannot_see_each_others_jobs(self) -> None:
+        shared_client = MockRedisClientForQueue()
+        tenant_a = RedisQueueBackend(shared_client, tenant_prefix="a")
+        tenant_b = RedisQueueBackend(shared_client, tenant_prefix="b")
+
+        await tenant_a.enqueue(Job(queue_name="tasks", payload={"for": "a"}))
+
+        assert await tenant_b.dequeue("tasks") is None
+        dequeued = await tenant_a.dequeue("tasks")
+        assert dequeued is not None
+        assert dequeued.payload == {"for": "a"}
+
+
+def _factory_settings(*, redis_url: str | None, tenant_id: str | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        redis_url=redis_url,
+        redis_enabled=bool(redis_url),
+        tenant_id=tenant_id,
+    )
+
+
+class TestGetQueueBackendFactory:
+    """Verifies queue factory wiring: tenant_id propagates into RedisQueueBackend,
+    and the hosted-without-Redis misconfig surfaces as a WARNING. Mirrors the
+    cache factory tests so the two selection paths stay in lockstep."""
+
+    def setup_method(self) -> None:
+        queue_backend_module._queue_backend = None
+
+    def teardown_method(self) -> None:
+        queue_backend_module._queue_backend = None
+
+    @pytest.mark.asyncio
+    async def test_redis_enabled_with_tenant_id_propagates_prefix(self) -> None:
+        settings = _factory_settings(redis_url="redis://localhost", tenant_id="t1")
+        mock_client = MockRedisClientForQueue()
+
+        async def _fake_shared_client() -> Any:
+            return mock_client
+
+        with (
+            patch("shu.core.config.get_settings_instance", return_value=settings),
+            patch.object(queue_backend_module, "_get_shared_redis_client", _fake_shared_client),
+        ):
+            backend = await get_queue_backend()
+
+        assert isinstance(backend, RedisQueueBackend)
+        assert backend._prefix == "t1:"
+
+    @pytest.mark.asyncio
+    async def test_redis_disabled_with_tenant_id_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _factory_settings(redis_url=None, tenant_id="t1")
+
+        with (
+            patch("shu.core.config.get_settings_instance", return_value=settings),
+            caplog.at_level(logging.WARNING, logger=queue_backend_module.logger.name),
+        ):
+            backend = await get_queue_backend()
+
+        assert isinstance(backend, InMemoryQueueBackend)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "SHU_TENANT_ID" in message
+        assert "SHU_REDIS_URL" in message
+        assert "t1" in message
+
+    @pytest.mark.asyncio
+    async def test_redis_disabled_without_tenant_id_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _factory_settings(redis_url=None, tenant_id=None)
+
+        with (
+            patch("shu.core.config.get_settings_instance", return_value=settings),
+            caplog.at_level(logging.WARNING, logger=queue_backend_module.logger.name),
+        ):
+            backend = await get_queue_backend()
+
+        assert isinstance(backend, InMemoryQueueBackend)
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []

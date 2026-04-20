@@ -41,6 +41,7 @@ from .api.system import router as system_router
 from .api.user_permissions import router as user_permissions_router
 from .api.user_preferences import router as user_preferences_router
 from .billing.router import router as billing_router
+from .core.cache_backend import initialize_cache_backend
 from .core.config import get_settings_instance
 from .core.database import init_db
 from .core.exceptions import ShuException
@@ -54,6 +55,7 @@ from .core.middleware import (
     SecurityHeadersMiddleware,
     TimingMiddleware,
 )
+from .core.queue_backend import initialize_queue_backend
 from .plugins.request_limits import RequestSizeLimitMiddleware
 
 logger = get_logger(__name__)
@@ -225,6 +227,19 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         # Do not crash the app if DB is unavailable; log and continue. Health/readiness will reflect DB status.
         logger.error(f"Failed to initialize database: {e}", exc_info=True)
         # continue without raising to allow the app to start
+
+    # Hosted pods expect cache state shared via Redis. Without populating the
+    # singleton here, get_cache_backend_dependency() falls back to a
+    # per-request InMemoryCacheBackend, fragmenting state across pods.
+    await initialize_cache_backend()
+    logger.info("Cache backend initialized")
+
+    # Hosted API pods run with SHU_WORKERS_ENABLED=false, so the workers
+    # block below never populates the queue singleton. Without this call,
+    # get_queue_backend_dependency() returns a per-request InMemoryQueueBackend
+    # and jobs enqueued from handlers are unreachable to worker pods.
+    await initialize_queue_backend()
+    logger.info("Queue backend initialized")
 
     # Source types are initialized via database migrations
 

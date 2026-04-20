@@ -354,7 +354,9 @@ For more sophisticated health checks, consider adding a sidecar that monitors qu
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SHU_DATABASE_URL` | *required* | PostgreSQL connection string (asyncpg driver) |
+| `SHU_USE_PGBOUNCER` | `false` | Set `true` when Postgres sits behind PgBouncer in transaction-pooling mode (e.g. DigitalOcean Managed Postgres). Disables asyncpg's prepared-statement cache (`statement_cache_size=0`), which is incompatible with transaction pooling. Hosted deployments set `true`; dev/self-hosted omit it. |
 | `SHU_REDIS_URL` | *none* | Redis URL; if unset, uses in-memory backends |
+| `SHU_TENANT_ID` | *unset* | Tenant identifier. When set, every Redis key is namespaced `{tenant_id}:{key}` so multiple tenants can safely share a Redis instance. Required for hosted deployments; omit for dev/self-hosted single-tenant runs. Empty-string values are rejected at startup. |
 | `SHU_ENVIRONMENT` | `production` | Environment name (production, development, staging) |
 | `SHU_LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 | `SHU_LOG_FORMAT` | `json` | Log format (json, text) |

@@ -44,6 +44,8 @@ from typing import Any, Optional, Protocol, runtime_checkable
 
 import redis.asyncio as redis
 
+from .tenant import warn_tenant_without_redis
+
 logger = logging.getLogger(__name__)
 
 # Global cache backend instance (singleton)
@@ -909,7 +911,13 @@ class RedisCacheBackend:
 
     """
 
-    def __init__(self, redis_client: Any, redis_binary_client: Any | None = None) -> None:
+    def __init__(
+        self,
+        redis_client: Any,
+        redis_binary_client: Any | None = None,
+        *,
+        tenant_prefix: str | None = None,
+    ) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -919,10 +927,23 @@ class RedisCacheBackend:
                 instead of constructing this class directly.
             redis_binary_client: An async Redis client instance with decode_responses=False
                 for binary operations. If None, binary operations will not be available.
+            tenant_prefix: Optional tenant identifier prepended as `{prefix}:` to
+                every Redis key for shared-deployment isolation. None = no prefix.
+
+        Raises:
+            ValueError: If ``tenant_prefix`` is provided but empty/whitespace.
+                Empty would silently disable prefixing — dangerous in a hosted
+                context where callers expect structural isolation.
 
         """
+        if tenant_prefix is not None and not tenant_prefix.strip():
+            raise ValueError("tenant_prefix must be None or a non-empty string")
         self._client = redis_client
         self._binary_client = redis_binary_client
+        self._prefix = f"{tenant_prefix}:" if tenant_prefix else ""
+
+    def _key(self, key: str) -> str:
+        return f"{self._prefix}{key}"
 
     async def get(self, key: str) -> str | None:
         """Retrieve a value by key.
@@ -943,7 +964,7 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
-            return await self._client.get(key)
+            return await self._client.get(self._key(key))
         except Exception as e:
             logger.error(f"Redis GET failed for key '{key}': {e}")
             raise CacheConnectionError(
@@ -977,16 +998,17 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
+            namespaced_key = self._key(key)
             # Handle immediate deletion for non-positive TTL
             if ttl_seconds is not None and ttl_seconds <= 0:
-                await self._client.delete(key)
+                await self._client.delete(namespaced_key)
                 return True
 
             if ttl_seconds is not None:
                 # Use setex for atomic set with expiration
-                await self._client.setex(key, ttl_seconds, value)
+                await self._client.setex(namespaced_key, ttl_seconds, value)
             else:
-                await self._client.set(key, value)
+                await self._client.set(namespaced_key, value)
 
             return True
         except Exception as e:
@@ -1013,7 +1035,7 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
-            result = await self._client.delete(key)
+            result = await self._client.delete(self._key(key))
             # Redis delete returns the number of keys deleted
             return result > 0
         except Exception as e:
@@ -1041,12 +1063,12 @@ class RedisCacheBackend:
 
         try:
             # Redis exists returns the count of existing keys
-            result = await self._client.exists(key)
+            result = await self._client.exists(self._key(key))
             return result > 0
         except AttributeError:
             # Fallback for clients that don't have exists method
             try:
-                result = await self._client.get(key)
+                result = await self._client.get(self._key(key))
                 return result is not None
             except Exception as inner_e:
                 logger.error(f"Redis EXISTS fallback failed for key '{key}': {inner_e}")
@@ -1084,7 +1106,7 @@ class RedisCacheBackend:
             raise ValueError("ttl_seconds must be positive")
 
         try:
-            result = await self._client.expire(key, ttl_seconds)
+            result = await self._client.expire(self._key(key), ttl_seconds)
             # Redis expire returns True if the timeout was set, False if key doesn't exist
             return bool(result)
         except Exception as e:
@@ -1117,10 +1139,11 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
+            namespaced_key = self._key(key)
             if amount == 1:
-                result = await self._client.incr(key)
+                result = await self._client.incr(namespaced_key)
             else:
-                result = await self._client.incrby(key, amount)
+                result = await self._client.incrby(namespaced_key, amount)
             return int(result)
         except ValueError as e:
             # Redis returns an error if the value is not an integer
@@ -1164,10 +1187,11 @@ class RedisCacheBackend:
             raise CacheKeyError("Cache key cannot be empty")
 
         try:
+            namespaced_key = self._key(key)
             if amount == 1:
-                result = await self._client.decr(key)
+                result = await self._client.decr(namespaced_key)
             else:
-                result = await self._client.decrby(key, amount)
+                result = await self._client.decrby(namespaced_key, amount)
             return int(result)
         except ValueError as e:
             # Redis returns an error if the value is not an integer
@@ -1214,7 +1238,7 @@ class RedisCacheBackend:
             )
 
         try:
-            return await self._binary_client.get(key)
+            return await self._binary_client.get(self._key(key))
         except Exception as e:
             logger.error(f"Redis GET (binary) failed for key '{key}': {e}")
             raise CacheConnectionError(
@@ -1255,16 +1279,17 @@ class RedisCacheBackend:
             )
 
         try:
+            namespaced_key = self._key(key)
             # Handle immediate deletion for non-positive TTL
             if ttl_seconds is not None and ttl_seconds <= 0:
-                await self._binary_client.delete(key)
+                await self._binary_client.delete(namespaced_key)
                 return True
 
             if ttl_seconds is not None:
                 # Use setex for atomic set with expiration
-                await self._binary_client.setex(key, ttl_seconds, value)
+                await self._binary_client.setex(namespaced_key, ttl_seconds, value)
             else:
-                await self._binary_client.set(key, value)
+                await self._binary_client.set(namespaced_key, value)
 
             return True
         except Exception as e:
@@ -1452,8 +1477,15 @@ async def get_cache_backend() -> CacheBackend:
     from .config import get_settings_instance
 
     settings = get_settings_instance()
+    tenant_id = settings.tenant_id
 
     if not settings.redis_enabled:
+        if tenant_id:
+            # Tenant-scoped without Redis means per-pod in-memory state no other
+            # pod can see — almost certainly a misconfigured hosted deploy. We
+            # warn loudly but continue so local dev (tenant_id set, no Redis)
+            # still works; raising here would break that workflow.
+            warn_tenant_without_redis(logger, "cache", tenant_id)
         logger.info("SHU_REDIS_URL not configured, using InMemoryCacheBackend")
         _cache_backend = InMemoryCacheBackend()
         return _cache_backend
@@ -1472,7 +1504,7 @@ async def get_cache_backend() -> CacheBackend:
         )
         logger.info("Using RedisCacheBackend without binary support")
 
-    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client)
+    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client, tenant_prefix=tenant_id)
     return _cache_backend
 
 
