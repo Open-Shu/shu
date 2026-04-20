@@ -166,7 +166,12 @@ class BaseProviderAdapter:
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
         self.api_key = None
-        self.usage: dict[str, int | Decimal] = {}
+        # Usage dict is stored JSON-safe: tokens as int, cost as a stringified
+        # Decimal (not a Decimal object). The dict flows into message_metadata,
+        # which is persisted as JSON — Decimal is not JSON-serializable by
+        # default. Callers convert cost back to Decimal via safe_decimal() when
+        # recording usage.
+        self.usage: dict[str, int | str] = {}
 
         self.db_session = context.db_session
 
@@ -223,8 +228,8 @@ class BaseProviderAdapter:
         reasoning_tokens: int,
         total_tokens: int,
         cost: Decimal | None = None,
-    ) -> dict[str, int | Decimal]:
-        usage: dict[str, int | Decimal] = {
+    ) -> dict[str, int | str]:
+        usage: dict[str, int | str] = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
@@ -232,13 +237,22 @@ class BaseProviderAdapter:
             "total_tokens": total_tokens,
         }
         if cost is not None:
-            usage["cost"] = cost
+            # Stringify so the dict stays JSON-serializable (see self.usage docstring).
+            usage["cost"] = str(cost)
         return usage
 
-    def _aggregate_usage(
-        self, first: dict[str, int | Decimal], second: dict[str, int | Decimal]
-    ) -> dict[str, int | Decimal]:
-        return {k: first.get(k, 0) + second.get(k, 0) for k in set(first) | set(second)}
+    def _aggregate_usage(self, first: dict[str, int | str], second: dict[str, int | str]) -> dict[str, int | str]:
+        result: dict[str, int | str] = {}
+        for k in set(first) | set(second):
+            if k == "cost":
+                # Cost is stored as a stringified Decimal; sum with Decimal math
+                # to preserve precision, then restringify for JSON safety.
+                a = Decimal(str(first.get(k, "0")))
+                b = Decimal(str(second.get(k, "0")))
+                result[k] = str(a + b)
+            else:
+                result[k] = first.get(k, 0) + second.get(k, 0)  # type: ignore[operator]
+        return result
 
     def _flatten_chat_context(
         self,
