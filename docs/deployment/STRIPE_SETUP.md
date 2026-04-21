@@ -17,7 +17,7 @@ Architecture reference: [stripe-architecture.mermaid](../diagrams/stripe-archite
 
 ### Where LLM cost values come from (`llm_usage.total_cost`)
 
-The `usage_cost` meter aggregates `llm_usage.total_cost` across the billing period and pushes it to Stripe. Each row's `total_cost` is resolved by a two-tier hierarchy, in order:
+The `usage_cost` meter sums dollar-denominated `llm_usage.total_cost` across the billing period, converts the delta since the last report to microdollars (1 microdollar = $0.000001), and pushes that integer value to Stripe — which aggregates meter events with SUM to produce the period total. The DB stores dollars as `numeric(16,9)`; the reporter multiplies by 1,000,000 and rounds up (`math.ceil`) before pushing, so sub-microdollar precision loss never causes under-billing. Each row's `total_cost` is resolved by a two-tier hierarchy, in order:
 
 1. **Provider-reported cost (authoritative).** If the upstream provider returns `usage.cost` on the wire (OpenRouter does; OpenAI direct does not), the value is recorded verbatim. Under this path `llm_usage.input_cost` and `llm_usage.output_cost` are both `0` — the provider returns a single total, not a split.
 2. **DB-rate fallback.** If the caller passed `total_cost = Decimal(0)` (the sentinel for "no wire-reported cost"), cost is computed as `input_tokens × cost_per_input_unit + output_tokens × cost_per_output_unit` from the `llm_models` row. These rates are synced at application startup from [`backend/src/shu/core/model_pricing.py`](../../backend/src/shu/core/model_pricing.py), which is the editable source of truth. Under this path `input_cost + output_cost == total_cost`.

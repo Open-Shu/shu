@@ -262,13 +262,18 @@ class BaseProviderAdapter:
         return usage
 
     def _aggregate_usage(self, first: UsageDict, second: UsageDict) -> UsageDict:
+        from shu.core.safe_decimal import safe_decimal
+
         result: UsageDict = {}
         for k in set(first) | set(second):
             if k == "cost":
                 # Cost is stored as a stringified Decimal; sum with Decimal math
                 # to preserve precision, then restringify for JSON safety.
-                a = Decimal(str(first.get(k, "0")))
-                b = Decimal(str(second.get(k, "0")))
+                # safe_decimal keeps this consistent with the other cost-handling
+                # sites and degrades to Decimal(0) + a warning log if malformed
+                # data ever lands here instead of crashing mid-stream.
+                a = safe_decimal(first.get(k))
+                b = safe_decimal(second.get(k))
                 result[k] = str(a + b)  # type: ignore[literal-required]
             else:
                 result[k] = first.get(k, 0) + second.get(k, 0)  # type: ignore[literal-required,operator]

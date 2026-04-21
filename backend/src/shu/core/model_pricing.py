@@ -100,8 +100,12 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
     cost_per_input_unit and cost_per_output_unit. Models not in the
     reference dict are left untouched.
 
-    Returns {"updated": N, "skipped": N} where skipped means the model_name
-    was in MODEL_PRICING but not found in llm_models.
+    Returns {"updated": N, "cleared": N, "skipped": N}:
+      - updated: row written with non-zero rates.
+      - cleared: row explicitly NULLed because the reference pricing is zero
+        (demote-to-free case — prevents stale rates from a prior sync leaking
+        into DB-rate-fallback cost math).
+      - skipped: model_name was in MODEL_PRICING but not found in llm_models.
     """
     from shu.models.llm_provider import LLMModel
 
@@ -110,6 +114,7 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
     db_model_names = {row[0] for row in result.all()}
 
     updated = 0
+    cleared = 0
     skipped = 0
 
     for model_name, pricing in MODEL_PRICING.items():
@@ -117,11 +122,24 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
             skipped += 1
             continue
 
-        # Skip zero-cost models (local/self-hosted) — leave DB columns as NULL
-        # so "has pricing" checks (IS NOT NULL) work correctly. Using explicit
-        # equality (not Python truthiness) keeps the intent clear and avoids
-        # the Decimal-falsiness foot-gun that bit us in LLMService.record_usage.
+        # Zero-cost models (local/self-hosted) should have NULL rate columns so
+        # "has pricing" checks (IS NOT NULL) are truthful. If a model used to be
+        # paid and got demoted to free in model_pricing.py, a bare `continue`
+        # here would leave stale non-null rates in the DB and the fallback cost
+        # math would keep billing the old rates. Explicitly NULL the columns so
+        # the source-of-truth change actually lands. Explicit equality (not
+        # Python truthiness) avoids the Decimal-falsiness foot-gun that bit us
+        # in LLMService.record_usage.
         if pricing["input"] == 0 and pricing["output"] == 0:
+            await db.execute(
+                update(LLMModel)
+                .where(LLMModel.model_name == model_name)
+                .values(
+                    cost_per_input_unit=None,
+                    cost_per_output_unit=None,
+                )
+            )
+            cleared += 1
             continue
 
         await db.execute(
@@ -135,5 +153,10 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
         updated += 1
 
     await db.commit()
-    logger.info("Model pricing sync complete: %d updated, %d skipped (not in DB)", updated, skipped)
-    return {"updated": updated, "skipped": skipped}
+    logger.info(
+        "Model pricing sync complete: %d updated, %d cleared, %d skipped (not in DB)",
+        updated,
+        cleared,
+        skipped,
+    )
+    return {"updated": updated, "cleared": cleared, "skipped": skipped}

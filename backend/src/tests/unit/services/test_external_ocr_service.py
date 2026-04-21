@@ -206,6 +206,10 @@ class TestUsageRecording:
         mock_savepoint.__aenter__ = AsyncMock()
         mock_savepoint.__aexit__ = AsyncMock(return_value=False)
         mock_session.begin_nested = MagicMock(return_value=mock_savepoint)
+        # session.add() is SYNC in SQLAlchemy. AsyncMock's default would return
+        # a coroutine that record_llm_usage never awaits, producing a
+        # RuntimeWarning that masks real unawaited-coroutine regressions.
+        mock_session.add = MagicMock()
 
         mock_session_factory = MagicMock()
         mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -232,7 +236,17 @@ class TestUsageRecording:
 
     @pytest.mark.asyncio
     async def test_record_usage_calls_ensure_provider(self):
-        """_record_usage should call _resolve_provider_and_model on first use."""
+        """_record_usage should call _resolve_provider_and_model on first use.
+
+        Resolver is stubbed to return False so the method returns early via the
+        "provider/model not seeded" branch. Without that, the downstream
+        `async with session.begin_nested()` call would fire against AsyncMock's
+        default — begin_nested would return a coroutine instead of an async
+        context manager, raising AttributeError inside the try/except and
+        producing a "coroutine never awaited" RuntimeWarning. The test's only
+        contract is "resolver gets called on first use"; exercising the DB
+        write path isn't part of that contract.
+        """
         svc = _make_service()
         assert svc._provider_id is None
 
@@ -244,7 +258,9 @@ class TestUsageRecording:
         with patch(
             "shu.core.database.get_async_session_local",
             return_value=mock_session_factory,
-        ), patch.object(svc, "_resolve_provider_and_model", new_callable=AsyncMock) as mock_ensure:
+        ), patch.object(
+            svc, "_resolve_provider_and_model", new_callable=AsyncMock, return_value=False
+        ) as mock_ensure:
             await svc._record_usage(page_count=1)
 
         mock_ensure.assert_called_once()

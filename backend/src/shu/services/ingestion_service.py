@@ -733,6 +733,7 @@ async def ingest_email(
             document,
             title,
             content,
+            user_id=user_id,
         )
     except Exception as e:
         logger.error(
