@@ -804,7 +804,14 @@ class ExperienceExecutor:
 
         query_service = QueryService(self.db, self.config_manager)
         _, _, responses = await execute_rag_queries(
-            self.db, self.config_manager, query_service, current_user, query_text, [kb_id], _builder
+            self.db,
+            self.config_manager,
+            query_service,
+            current_user,
+            query_text,
+            [kb_id],
+            _builder,
+            user_id=str(current_user.id),
         )
 
         if not responses:

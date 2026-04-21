@@ -87,11 +87,17 @@ async def execute_rag_queries(
     prior_messages: Sequence[Message] | None = None,
     timeout_ms: int = 5000,
     apply_rewrite: bool = True,
+    *,
+    user_id: str | None = None,
 ) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
     """Rewrite a query, enforce minimum word checks, and execute queries for KBs.
 
     Returns the rewritten query, diagnostics, and per-KB results containing
     the query response (if executed), associated RAG config, and skip metadata.
+
+    ``user_id`` is forwarded to ``QueryService.query_documents`` so any
+    embedding ``llm_usage`` rows written during retrieval attribute to the
+    originating user (SHU-718).
     """
     if apply_rewrite:
         rewritten_query, rewrite_diagnostics = await rewrite_query_for_rag(
@@ -139,7 +145,7 @@ async def execute_rag_queries(
             continue
 
         try:
-            response = await query_service.query_documents(kb_id, query_request)
+            response = await query_service.query_documents(kb_id, query_request, user_id=user_id)
             if hasattr(response, "model_dump"):
                 response = response.model_dump()
             responses.append(

@@ -47,7 +47,13 @@ class QueryService(
     def __init__(self, db: AsyncSession, config_manager: ConfigurationManager) -> None:
         super().__init__(db, config_manager)
 
-    async def query_documents(self, knowledge_base_id: str, request: "QueryRequest") -> dict[str, Any]:
+    async def query_documents(
+        self,
+        knowledge_base_id: str,
+        request: "QueryRequest",
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         """Unified query method supporting all search types.
 
         This is the primary entry point for all document queries, consolidating
@@ -57,6 +63,9 @@ class QueryService(
         Args:
             knowledge_base_id: ID of the knowledge base to search
             request: Query request (supports backward compatibility fields)
+            user_id: Optional user attribution forwarded to the underlying
+                retrieval strategy so the embedding llm_usage row lands with
+                the originating user (SHU-718).
 
         Returns:
             Dictionary with search results and RAG configuration
@@ -90,7 +99,9 @@ class QueryService(
                     created_after=getattr(request, "created_after", None),
                     created_before=getattr(request, "created_before", None),
                 )
-                similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+                similarity_response = await self.similarity_search(
+                    knowledge_base_id, similarity_request, user_id=user_id
+                )
 
                 # Convert SimilaritySearchResponse to QueryResponse format
                 query_results = []
@@ -128,6 +139,7 @@ class QueryService(
                     limit,
                     title_weighting_enabled=request.title_weighting_enabled,
                     title_weight_multiplier=request.title_weight_multiplier,
+                    user_id=user_id,
                 )
             elif search_type == "hybrid":
                 query_response = await self.hybrid_search(
@@ -137,6 +149,7 @@ class QueryService(
                     request.similarity_threshold or 0.0,
                     title_weighting_enabled=request.title_weighting_enabled,
                     title_weight_multiplier=request.title_weight_multiplier,
+                    user_id=user_id,
                 )
             elif search_type == "multi_surface":
                 query_response = await self._multi_surface_search(
@@ -150,6 +163,7 @@ class QueryService(
                     bm25_weight=request.bm25_weight,
                     chunk_summary_weight=request.chunk_summary_weight,
                     fusion_formula=request.fusion_formula,
+                    user_id=user_id,
                 )
             else:
                 raise ShuException(f"Unsupported search type: {search_type}", "UNSUPPORTED_SEARCH_TYPE")

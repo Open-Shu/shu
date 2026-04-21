@@ -289,6 +289,7 @@ class MessageContextBuilder:
             request_builder=build_query_request,
             prior_messages=conversation_messages,
             rag_rewrite_mode=rag_rewrite_mode,
+            user_id=str(current_user.id),
         )
 
         if rewrite_diagnostics:

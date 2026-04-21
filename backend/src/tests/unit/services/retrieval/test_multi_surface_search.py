@@ -90,7 +90,7 @@ class TestMultiSurfaceSearchService:
             "test query", uuid4(), session_factory=mock_session_factory
         )
 
-        mock_embedding.embed_query.assert_called_once_with("test query")
+        mock_embedding.embed_query.assert_called_once_with("test query", user_id=None)
 
     @pytest.mark.asyncio
     async def test_search_passes_results_to_fusion(self):
