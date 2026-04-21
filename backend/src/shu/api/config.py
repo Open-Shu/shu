@@ -52,6 +52,7 @@ async def get_public_config():
             special_chars=settings.password_special_chars,
         ),
         enable_document_profiling=settings.enable_document_profiling,
+        lock_provider_creations=settings.lock_provider_creations,
     )
 
     return SuccessResponse(data=config)

@@ -465,6 +465,34 @@ class LLMModelNotFoundError(LLMError):
         )
 
 
+# Managed-provider lockdown + is_active enforcement signals.
+# These are intentionally plain Exception subclasses (not ShuException): the service
+# layer raises them purely to signal a condition, and the api/llm.py router maps each
+# to its own HTTPException with an exact `detail` string prescribed by the spec
+# (Requirements 4.1, 5.1, 10.3). Keeping them message-only avoids carrying a
+# status_code attribute that would tempt a generic handler to translate them.
+class ProviderLockedError(Exception):
+    """Raised when a mutation targets a system-managed provider row."""
+
+
+class ModelLockedError(Exception):
+    """Raised when a model mutation's parent provider is system-managed."""
+
+
+class ProviderCreationDisabledError(Exception):
+    """Raised when provider creation is disabled by settings.lock_provider_creations."""
+
+
+class InactiveProviderError(LLMProviderError):
+    """Raised when a resolved provider or model has is_active = FALSE at routing time.
+
+    Subclasses :class:`LLMProviderError` so existing ``except LLMProviderError``
+    handlers (e.g. side-call failure path) continue to catch this as a provider
+    configuration error, preserving their tidy log lines instead of bubbling up
+    to generic ``except Exception`` branches.
+    """
+
+
 # Chat-specific exceptions
 class ConversationNotFoundError(ShuException):
     """Exception raised when a conversation is not found."""

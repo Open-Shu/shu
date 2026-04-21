@@ -36,6 +36,7 @@ class PublicConfig(BaseModel):
     )
     # Feature flags
     enable_document_profiling: bool = False
+    lock_provider_creations: bool = False
 
 
 class SetupStatus(BaseModel):

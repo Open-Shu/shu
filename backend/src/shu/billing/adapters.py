@@ -14,7 +14,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shu.models.llm_provider import LLMUsage
+from shu.models.llm_provider import LLMProvider, LLMUsage
 
 # =============================================================================
 # UsageRecord / UsageSummary Implementations
@@ -84,9 +84,11 @@ class UsageProviderImpl:
         """
         result = await self._db.execute(
             select(LLMUsage)
+            .join(LLMProvider, LLMUsage.provider_id == LLMProvider.id)
             .where(
                 LLMUsage.created_at >= period_start,
                 LLMUsage.created_at < period_end,
+                LLMProvider.is_system_managed.is_(True),
             )
             .order_by(LLMUsage.created_at)
         )
@@ -123,9 +125,11 @@ class UsageProviderImpl:
                 func.sum(LLMUsage.total_cost).label("total_cost"),
                 func.count(LLMUsage.id).label("request_count"),
             )
+            .join(LLMProvider, LLMUsage.provider_id == LLMProvider.id)
             .where(
                 LLMUsage.created_at >= period_start,
                 LLMUsage.created_at < period_end,
+                LLMProvider.is_system_managed.is_(True),
             )
             .group_by(LLMUsage.model_id)
         )

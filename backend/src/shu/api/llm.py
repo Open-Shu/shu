@@ -15,7 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..api.dependencies import get_db
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
-from ..core.exceptions import LLMProviderError
+from ..core.exceptions import (
+    LLMProviderError,
+    ModelLockedError,
+    ProviderCreationDisabledError,
+    ProviderLockedError,
+)
 from ..core.response import ShuResponse
 from ..llm.service import LLMService
 from ..models.llm_provider import LLMProvider, ModelType
@@ -101,6 +106,7 @@ class LLMProviderResponse(BaseModel):
     api_endpoint: str
     organization_id: str | None
     is_active: bool
+    is_system_managed: bool
     rate_limit_rpm: int
     rate_limit_tpm: int
     budget_limit_monthly: float | None
@@ -176,6 +182,7 @@ def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LL
         api_endpoint=data.base_url_template,
         organization_id=provider.organization_id,
         is_active=provider.is_active,
+        is_system_managed=provider.is_system_managed,
         rate_limit_rpm=provider.rate_limit_rpm,
         rate_limit_tpm=provider.rate_limit_tpm,
         budget_limit_monthly=float(provider.budget_limit_monthly) if provider.budget_limit_monthly else None,
@@ -215,6 +222,8 @@ async def create_provider(
         llm_service = LLMService(db)
         provider = await llm_service.create_provider(**provider_data.model_dump())
         return ShuResponse.created(_provider_to_response(db, provider))
+    except ProviderCreationDisabledError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except LLMProviderError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -257,6 +266,8 @@ async def update_provider(
         llm_service = LLMService(db)
         provider = await llm_service.update_provider(provider_id, **provider_data.dict(exclude_unset=True))
         return ShuResponse.success(_provider_to_response(db, provider))
+    except ProviderLockedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except LLMProviderError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -282,6 +293,8 @@ async def delete_provider(
         return ShuResponse.no_content()
     except HTTPException:
         raise
+    except ProviderLockedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except Exception as e:
         logger.error(f"Error deleting LLM provider: {e}")
         raise HTTPException(
@@ -336,7 +349,9 @@ async def list_models(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid model_type '{model_type}'. Valid values: {', '.join(ModelType)}, all",
             )
-        models = await llm_service.get_available_models(provider_id, model_types=model_types)
+        models = await llm_service.get_available_models(
+            provider_id, model_types=model_types, active_providers_only=True
+        )
         return ShuResponse.success(models)
     except HTTPException:
         raise
@@ -427,15 +442,9 @@ async def disable_provider_model(
     """Disable/remove a model from a provider."""
     try:
         llm_service = LLMService(db)
-
-        # Get the model
-        model = await llm_service.get_model_by_id(model_id)
-        if not model or model.provider_id != provider_id:
+        model = await llm_service.delete_provider_model(provider_id, model_id)
+        if model is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
-
-        # Disable the model
-        model.is_active = False
-        await db.commit()
 
         return ShuResponse.success(
             {
@@ -447,6 +456,8 @@ async def disable_provider_model(
 
     except HTTPException:
         raise
+    except ModelLockedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except Exception as e:
         logger.error(f"Error disabling model {model_id} for provider {provider_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to disable model")

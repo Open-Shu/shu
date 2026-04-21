@@ -8,7 +8,6 @@ from shu.core.ocr_service import (
     OCRResult,
     _run_ocr_service,
     extract_text_with_ocr_fallback,
-    reset_ocr_service,
 )
 
 
@@ -320,12 +319,6 @@ class TestOCRMimeTypeGate:
 class TestRunOCRService:
     """Test _run_ocr_service timing and metadata shape."""
 
-    def setup_method(self):
-        reset_ocr_service()
-
-    def teardown_method(self):
-        reset_ocr_service()
-
     @pytest.mark.asyncio
     async def test_returns_duration_in_metadata(self):
         ocr_svc = _mock_ocr_service("text", engine="mistral-ocr-latest")
@@ -363,7 +356,6 @@ class TestUserIdThreading:
         with patch("shu.core.ocr_service.TextExtractor", mock_extractor_cls), patch(
             "shu.core.ocr_service.get_ocr_service", return_value=mock_ocr_svc
         ), patch("shu.core.ocr_service.get_settings_instance", return_value=_mock_settings(50)):
-            reset_ocr_service()
             await extract_text_with_ocr_fallback(
                 b"%PDF-dummy",
                 "application/pdf",
@@ -385,7 +377,6 @@ class TestUserIdThreading:
         with patch("shu.core.ocr_service.get_ocr_service", return_value=mock_ocr_svc), patch(
             "shu.core.ocr_service.get_settings_instance", return_value=_mock_settings()
         ):
-            reset_ocr_service()
             await extract_text_with_ocr_fallback(
                 b"%PDF-dummy",
                 "application/pdf",
@@ -406,7 +397,6 @@ class TestUserIdThreading:
         with patch("shu.core.ocr_service.TextExtractor", mock_extractor_cls), patch(
             "shu.core.ocr_service.get_ocr_service", return_value=mock_ocr_svc
         ), patch("shu.core.ocr_service.get_settings_instance", return_value=_mock_settings(50)):
-            reset_ocr_service()
             await extract_text_with_ocr_fallback(
                 b"%PDF-dummy", "application/pdf", MagicMock(), ocr_mode="auto"
             )

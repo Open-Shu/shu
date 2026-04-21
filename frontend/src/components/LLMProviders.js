@@ -18,6 +18,7 @@ import {
   Card,
   CardContent,
   CardActions,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,9 +35,15 @@ import {
 import { llmAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import LLMProviderForm from './shared/LLMProviderForm';
+import SystemManagedBadge from './shared/SystemManagedBadge';
 import { log } from '../utils/log';
 import PageHelpHeader from './PageHelpHeader';
 import { formatConnectionTestError } from '../utils/providerSetupGuide';
+import configService from '../services/config';
+
+const PROVIDER_MANAGED_TOOLTIP = 'This provider is managed by Shu and cannot be modified.';
+const MODEL_MANAGED_TOOLTIP = 'This model is managed by Shu and cannot be modified.';
+const PROVIDER_CREATION_LOCKED_NOTICE = 'Provider creation is disabled on this deployment';
 
 const createDefaultProviderCapabilities = () => ({});
 
@@ -98,6 +105,11 @@ const LLMProviders = () => {
       setError(formatError(err).message);
     },
   });
+
+  const { data: publicConfig } = useQuery('public-config', () => configService.fetchConfig(), {
+    staleTime: Infinity,
+  });
+  const lockProviderCreations = !!publicConfig?.lock_provider_creations;
 
   const endpointsOverrideHandler = (prev, key, field, value) => {
     return {
@@ -710,9 +722,11 @@ const LLMProviders = () => {
           'For local models (Ollama), ensure the service is running and accessible',
         ]}
         actions={
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
-            Add Provider
-          </Button>
+          lockProviderCreations ? null : (
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
+              Add Provider
+            </Button>
+          )
         }
       />
 
@@ -731,136 +745,162 @@ const LLMProviders = () => {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Add your first LLM provider to start using AI capabilities
           </Typography>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
-            Add Provider
-          </Button>
+          {!lockProviderCreations && (
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
+              Add Provider
+            </Button>
+          )}
         </Paper>
       ) : (
         <Grid container spacing={3}>
-          {providers.map((provider) => (
-            <Grid item xs={12} md={6} lg={4} key={provider.id}>
-              <Card>
-                <CardContent>
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      mb: 2,
-                    }}
-                  >
-                    <Typography variant="h6" component="div">
-                      {provider.name}
-                    </Typography>
-                    <Chip
-                      label={provider.is_active ? 'Active' : 'Inactive'}
-                      color={provider.is_active ? 'success' : 'default'}
-                      size="small"
-                    />
-                  </Box>
-
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    <strong>Type:</strong> {getProviderTypeLabel(provider.provider_type)}
-                  </Typography>
-
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    <strong>Endpoint:</strong> {provider.api_endpoint}
-                  </Typography>
-
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    <strong>Rate Limit:</strong> {provider.rate_limit_rpm ?? 0} RPM /{' '}
-                    {provider.rate_limit_tpm?.toLocaleString() ?? '—'} TPM
-                  </Typography>
-
-                  {provider.budget_limit_monthly && (
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                      <strong>Budget:</strong> ${provider.budget_limit_monthly}
-                      /month
-                    </Typography>
-                  )}
-
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    <strong>Enabled Models:</strong> {getProviderModelCount(provider.id)}
-                    {getProviderModelCount(provider.id) > 0 && (
-                      <Chip
-                        label={`${getProviderModelCount(provider.id)} models`}
-                        size="small"
-                        color="primary"
-                        variant="outlined"
-                        sx={{ ml: 1, fontSize: '0.7rem', height: '20px' }}
-                      />
-                    )}
-                  </Typography>
-
-                  {testResults[provider.id] && (
-                    <Alert
-                      severity={testResults[provider.id].success ? 'success' : 'error'}
-                      sx={{ mt: 1, fontSize: '0.75rem' }}
+          {providers.map((provider) => {
+            const isManaged = provider.is_system_managed ?? false;
+            return (
+              <Grid item xs={12} md={6} lg={4} key={provider.id}>
+                <Card>
+                  <CardContent>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        mb: 2,
+                        gap: 1,
+                      }}
                     >
-                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                        {testResults[provider.id].message}
+                      <Typography variant="h6" component="div">
+                        {provider.name}
                       </Typography>
-                      {testResults[provider.id].suggestions && testResults[provider.id].suggestions.length > 0 && (
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-                            Suggestions:
-                          </Typography>
-                          <ul style={{ margin: '4px 0 0 0', paddingLeft: 20 }}>
-                            {testResults[provider.id].suggestions.map((suggestion, index) => (
-                              <li key={index}>
-                                <Typography variant="caption">{suggestion}</Typography>
-                              </li>
-                            ))}
-                          </ul>
-                        </Box>
-                      )}
-                    </Alert>
-                  )}
-                </CardContent>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        {isManaged && <SystemManagedBadge tooltipText={PROVIDER_MANAGED_TOOLTIP} />}
+                        <Chip
+                          label={provider.is_active ? 'Active' : 'Inactive'}
+                          color={provider.is_active ? 'success' : 'default'}
+                          size="small"
+                        />
+                      </Box>
+                    </Box>
 
-                <CardActions>
-                  <IconButton
-                    onClick={() => handleTestProvider(provider.id)}
-                    size="small"
-                    color="info"
-                    disabled={testProviderMutation.isLoading}
-                    title="Test Connection"
-                  >
-                    <TestIcon />
-                  </IconButton>
-                  <IconButton
-                    onClick={() => handleManageModels(provider)}
-                    size="small"
-                    color="secondary"
-                    title="Manage Models"
-                  >
-                    <SettingsIcon />
-                  </IconButton>
-                  <IconButton
-                    onClick={() => handleEditProvider(provider)}
-                    size="small"
-                    color="primary"
-                    title="Edit Provider"
-                  >
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton
-                    onClick={() => handleDeleteProvider(provider)}
-                    size="small"
-                    color="error"
-                    title="Delete Provider"
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                </CardActions>
-              </Card>
-            </Grid>
-          ))}
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      <strong>Type:</strong> {getProviderTypeLabel(provider.provider_type)}
+                    </Typography>
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      <strong>Endpoint:</strong> {provider.api_endpoint}
+                    </Typography>
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      <strong>Rate Limit:</strong> {provider.rate_limit_rpm ?? 0} RPM /{' '}
+                      {provider.rate_limit_tpm?.toLocaleString() ?? '—'} TPM
+                    </Typography>
+
+                    {provider.budget_limit_monthly && (
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        <strong>Budget:</strong> ${provider.budget_limit_monthly}
+                        /month
+                      </Typography>
+                    )}
+
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      <strong>Enabled Models:</strong> {getProviderModelCount(provider.id)}
+                      {getProviderModelCount(provider.id) > 0 && (
+                        <Chip
+                          label={`${getProviderModelCount(provider.id)} models`}
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                          sx={{ ml: 1, fontSize: '0.7rem', height: '20px' }}
+                        />
+                      )}
+                    </Typography>
+
+                    {testResults[provider.id] && (
+                      <Alert
+                        severity={testResults[provider.id].success ? 'success' : 'error'}
+                        sx={{ mt: 1, fontSize: '0.75rem' }}
+                      >
+                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                          {testResults[provider.id].message}
+                        </Typography>
+                        {testResults[provider.id].suggestions && testResults[provider.id].suggestions.length > 0 && (
+                          <Box sx={{ mt: 1 }}>
+                            <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                              Suggestions:
+                            </Typography>
+                            <ul style={{ margin: '4px 0 0 0', paddingLeft: 20 }}>
+                              {testResults[provider.id].suggestions.map((suggestion, index) => (
+                                <li key={index}>
+                                  <Typography variant="caption">{suggestion}</Typography>
+                                </li>
+                              ))}
+                            </ul>
+                          </Box>
+                        )}
+                      </Alert>
+                    )}
+                  </CardContent>
+
+                  <CardActions>
+                    <IconButton
+                      onClick={() => handleTestProvider(provider.id)}
+                      size="small"
+                      color="info"
+                      disabled={testProviderMutation.isLoading}
+                      title="Test Connection"
+                    >
+                      <TestIcon />
+                    </IconButton>
+                    <IconButton
+                      onClick={() => handleManageModels(provider)}
+                      size="small"
+                      color="secondary"
+                      title="Manage Models"
+                    >
+                      <SettingsIcon />
+                    </IconButton>
+                    <Tooltip title={isManaged ? PROVIDER_MANAGED_TOOLTIP : ''} disableHoverListener={!isManaged}>
+                      <span>
+                        <IconButton
+                          onClick={() => handleEditProvider(provider)}
+                          size="small"
+                          color="primary"
+                          title="Edit Provider"
+                          aria-label="Edit Provider"
+                          disabled={isManaged}
+                        >
+                          <EditIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title={isManaged ? PROVIDER_MANAGED_TOOLTIP : ''} disableHoverListener={!isManaged}>
+                      <span>
+                        <IconButton
+                          onClick={() => handleDeleteProvider(provider)}
+                          size="small"
+                          color="error"
+                          title="Delete Provider"
+                          aria-label="Delete Provider"
+                          disabled={isManaged}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </CardActions>
+                </Card>
+              </Grid>
+            );
+          })}
         </Grid>
       )}
 
       {/* Create Provider Dialog */}
-      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={createDialogOpen && !lockProviderCreations}
+        onClose={() => setCreateDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
         <DialogTitle>Add LLM Provider</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
@@ -906,6 +946,20 @@ const LLMProviders = () => {
         </DialogActions>
       </Dialog>
 
+      {lockProviderCreations && createDialogOpen && (
+        <Dialog open onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Add LLM Provider</DialogTitle>
+          <DialogContent>
+            <Alert severity="info" sx={{ mt: 1 }}>
+              {PROVIDER_CREATION_LOCKED_NOTICE}
+            </Alert>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCreateDialogOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
+      )}
+
       {/* Edit Provider Dialog */}
       <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Edit LLM Provider</DialogTitle>
@@ -938,6 +992,7 @@ const LLMProviders = () => {
                 providerCapabilities={providerCapabilities}
                 endpointsOverride={endpointsOverrideEdit}
                 onUpdateEndpointField={(k, f, v) => updateEndpointField(k, f, v)}
+                disabled={editProvider.is_system_managed ?? false}
               />
             </Box>
           )}
@@ -1003,25 +1058,39 @@ const LLMProviders = () => {
                 <Typography variant="h6" gutterBottom>
                   Currently Enabled Models ({getProviderModelCount(selectedProvider.id)})
                 </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  {getSortedEnabledModels(selectedProvider.id).map((model) => (
-                    <Chip
-                      key={model.id}
-                      label={model.display_name || model.model_name}
-                      color="primary"
-                      size="small"
-                      variant="filled"
-                      onDelete={() => handleRemoveModel(model.id)}
-                      deleteIcon={
-                        modelRemovalLoading.has(model.id) ? (
-                          <CircularProgress size={16} color="inherit" />
-                        ) : (
-                          <RemoveIcon />
-                        )
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+                  {(() => {
+                    const providerManaged = selectedProvider.is_system_managed ?? false;
+                    return getSortedEnabledModels(selectedProvider.id).map((model) => {
+                      const chip = (
+                        <Chip
+                          key={model.id}
+                          label={model.display_name || model.model_name}
+                          color="primary"
+                          size="small"
+                          variant="filled"
+                          onDelete={providerManaged ? undefined : () => handleRemoveModel(model.id)}
+                          deleteIcon={
+                            modelRemovalLoading.has(model.id) ? (
+                              <CircularProgress size={16} color="inherit" />
+                            ) : (
+                              <RemoveIcon />
+                            )
+                          }
+                          disabled={providerManaged || modelRemovalLoading.has(model.id)}
+                        />
+                      );
+                      if (!providerManaged) {
+                        return chip;
                       }
-                      disabled={modelRemovalLoading.has(model.id)}
-                    />
-                  ))}
+                      return (
+                        <Box key={model.id} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                          {chip}
+                          <SystemManagedBadge tooltipText={MODEL_MANAGED_TOOLTIP} />
+                        </Box>
+                      );
+                    });
+                  })()}
                 </Box>
               </Box>
             )}

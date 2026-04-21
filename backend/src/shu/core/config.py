@@ -368,6 +368,11 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_encryption_key: str | None = Field(None, alias="SHU_LLM_ENCRYPTION_KEY")
 
+    # Hosted deployments set this to disable the admin provider-create endpoint entirely.
+    # Scope is narrow: existing providers remain readable/mutable (subject to the
+    # system-managed lockdown); only POST /api/v1/llm/providers/ is blocked.
+    lock_provider_creations: bool = Field(False, alias="SHU_LOCK_PROVIDER_CREATIONS")
+
     # Chat attachment context limits
     chat_attachment_max_chars_per_file: int = Field(5000, alias="SHU_CHAT_ATTACHMENT_MAX_CHARS_PER_FILE")
     chat_attachment_max_total_chars: int = Field(15000, alias="SHU_CHAT_ATTACHMENT_MAX_TOTAL_CHARS")

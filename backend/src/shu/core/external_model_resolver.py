@@ -8,7 +8,10 @@ and OCR service resolution to avoid duplicate DB/credential logic.
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..models.llm_provider import LLMModel, LLMProvider
 from .config import get_settings_instance
+from .database import get_async_session_local
+from .exceptions import InactiveProviderError
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -40,9 +43,6 @@ async def resolve_external_model(model_type: str) -> ResolvedExternalModel | Non
     from cryptography.fernet import Fernet
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
-
-    from ..models.llm_provider import LLMModel, LLMProvider
-    from .database import get_async_session_local
 
     # TODO: Nondeterministic when multiple active models of the same type exist.
     # limit(1) with no order_by means the DB picks an arbitrary row. We need
@@ -114,3 +114,34 @@ async def resolve_external_model(model_type: str) -> ResolvedExternalModel | Non
         api_key=api_key,
         config=model.config or {},
     )
+
+
+async def ensure_provider_and_model_active(
+    provider_id: str,
+    model_id: str,
+    *,
+    call_type: str,
+) -> None:
+    """Raise :class:`InactiveProviderError` if the provider or model is deactivated.
+
+    Opens a fresh session so callers that cache IDs at construction time (the
+    long-lived embedding/OCR singletons) still observe real-time admin toggles.
+    """
+    session_factory = get_async_session_local()
+    async with session_factory() as session:
+        provider = await session.get(LLMProvider, provider_id)
+        model = await session.get(LLMModel, model_id)
+
+    if provider is None or not provider.is_active:
+        logger.warning(
+            f"Blocking {call_type} call — provider inactive",
+            extra={"provider_id": provider_id, "model_id": model_id},
+        )
+        raise InactiveProviderError(f"Provider '{provider_id}' is inactive; {call_type} call blocked.")
+
+    if model is None or not model.is_active:
+        logger.warning(
+            f"Blocking {call_type} call — model inactive",
+            extra={"provider_id": provider_id, "model_id": model_id},
+        )
+        raise InactiveProviderError(f"Model '{model_id}' is inactive; {call_type} call blocked.")

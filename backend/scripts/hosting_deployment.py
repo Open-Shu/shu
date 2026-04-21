@@ -88,8 +88,8 @@ def _seed_single_provider(cur, name: str, provider_type: str, api_key_encrypted:
         """
         INSERT INTO llm_providers
             (id, name, provider_type, api_key_encrypted, config, is_active,
-             rate_limit_rpm, rate_limit_tpm, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, true, 0, 0, now(), now())
+             is_system_managed, rate_limit_rpm, rate_limit_tpm, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, true, true, 0, 0, now(), now())
         """,
         (provider_id, name, provider_type, api_key_encrypted, json.dumps(OPENROUTER_PROVIDER_CONFIG)),
     )

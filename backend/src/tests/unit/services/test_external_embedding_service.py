@@ -7,6 +7,7 @@ Tests cover:
 - dimension and model_name properties
 - HTTP error propagation
 - Empty input handling
+- Inactive provider/model guard (SHU-705)
 """
 
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ import httpx
 import pytest
 
 from shu.core.embedding_protocol import EmbeddingService
+from shu.core.exceptions import InactiveProviderError
 from shu.services.external_embedding_service import ExternalEmbeddingService
 
 API_BASE = "https://openrouter.ai/api/v1"
@@ -37,6 +39,22 @@ def _make_service(query_prefix: str = "", document_prefix: str = "") -> External
         query_prefix=query_prefix,
         document_prefix=document_prefix,
     )
+
+
+@pytest.fixture(autouse=True)
+def _stub_active_guard():
+    """Bypass the DB-touching provider/model active check in all tests in this module.
+
+    ``_embed_batch`` calls ``ensure_provider_and_model_active`` before the HTTP
+    request, which opens a real session. Unit tests must not hit Postgres.
+    Tests that want to exercise the guard (``TestInactiveProviderGuard``)
+    re-patch the same symbol inside the test body — the inner patch wins.
+    """
+    with patch(
+        "shu.services.external_embedding_service.ensure_provider_and_model_active",
+        new_callable=AsyncMock,
+    ) as stub:
+        yield stub
 
 
 def _mock_embeddings_response(embeddings: list[list[float]]) -> httpx.Response:
@@ -339,4 +357,43 @@ class TestRecordUsageCostContract:
         with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
             await svc._record_usage(None)
 
+        mock_record.assert_not_called()
+
+
+class TestInactiveProviderGuard:
+    """Each public embed method must delegate the is_active check to
+    ``ensure_provider_and_model_active`` BEFORE any HTTP / usage-recording
+    side effect, and propagate its raise.
+
+    What counts as inactive and the resulting log/exception content are
+    the resolver's concern and live in ``test_external_model_resolver``.
+    """
+
+    @pytest.mark.parametrize(
+        "method_name,inputs",
+        [
+            ("embed_texts", [["doc"]]),
+            ("embed_query", ["q"]),
+            ("embed_queries", [["q1", "q2"]]),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_calls_resolver_with_embedding_call_type_and_propagates_raise(
+        self, method_name: str, inputs: list
+    ):
+        with (
+            patch(
+                "shu.services.external_embedding_service.ensure_provider_and_model_active",
+                new_callable=AsyncMock,
+                side_effect=InactiveProviderError("provider inactive: " + PROVIDER_ID),
+            ) as mock_guard,
+            patch("shu.services.external_embedding_service.httpx.AsyncClient") as mock_http_cls,
+            patch.object(ExternalEmbeddingService, "_record_usage", new_callable=AsyncMock) as mock_record,
+        ):
+            svc = _make_service()
+            with pytest.raises(InactiveProviderError):
+                await getattr(svc, method_name)(*inputs)
+
+        mock_guard.assert_awaited_with(PROVIDER_ID, MODEL_ID, call_type="embedding")
+        mock_http_cls.assert_not_called()
         mock_record.assert_not_called()

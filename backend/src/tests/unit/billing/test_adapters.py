@@ -1,6 +1,7 @@
 """Tests for billing adapters — usage queries, persistence callbacks, billing config."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -302,3 +303,44 @@ class TestUsageProviderImpl:
         )
 
         assert "unknown" in summary.by_model
+
+    @pytest.mark.asyncio
+    async def test_get_usage_summary_filters_to_system_managed_providers(self):
+        """SHU-705 billing correctness: aggregation MUST join llm_providers
+        and restrict to is_system_managed=TRUE. BYOK rows belong to the
+        customer, not Shu's invoice.
+        """
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = MagicMock(return_value=iter([]))
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        provider = UsageProviderImpl(mock_db)
+        await provider.get_usage_summary(
+            datetime(2026, 4, 1, tzinfo=UTC),
+            datetime(2026, 5, 1, tzinfo=UTC),
+        )
+
+        stmt = mock_db.execute.call_args.args[0]
+        compiled_sql = str(stmt.compile()).lower()
+        assert "join llm_providers" in compiled_sql
+        assert "is_system_managed" in compiled_sql
+
+    @pytest.mark.asyncio
+    async def test_get_usage_for_period_filters_to_system_managed_providers(self):
+        """Per-record query mirrors the summary filter — same billing rule."""
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars = MagicMock(return_value=iter([]))
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        provider = UsageProviderImpl(mock_db)
+        await provider.get_usage_for_period(
+            datetime(2026, 4, 1, tzinfo=UTC),
+            datetime(2026, 5, 1, tzinfo=UTC),
+        )
+
+        stmt = mock_db.execute.call_args.args[0]
+        compiled_sql = str(stmt.compile()).lower()
+        assert "join llm_providers" in compiled_sql
+        assert "is_system_managed" in compiled_sql

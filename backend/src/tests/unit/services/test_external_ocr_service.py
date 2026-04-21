@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from shu.core.exceptions import InactiveProviderError
 from shu.core.ocr_service import OCRResult
 from shu.services.external_ocr_service import ExternalOCRService
 
@@ -24,6 +25,24 @@ def _make_service(**kwargs) -> ExternalOCRService:
     }
     defaults.update(kwargs)
     return ExternalOCRService(**defaults)
+
+
+@pytest.fixture(autouse=True)
+def _stub_active_guard():
+    """Bypass the DB-touching active check in all tests in this module.
+
+    ``_ensure_active`` opens a real session for the seed lookup AND calls
+    ``ensure_provider_and_model_active`` (which opens another). Unit tests must
+    not hit Postgres. Stubbing the wrapper as a whole covers both DB calls.
+    ``TestExtractTextInactiveGuard`` overrides this fixture at class scope to
+    let the real guard run against mocked sessions.
+    """
+    with patch.object(
+        ExternalOCRService,
+        "_ensure_active",
+        new_callable=AsyncMock,
+    ) as stub:
+        yield stub
 
 
 def _mock_ocr_response(pages: list[dict]) -> httpx.Response:
@@ -216,7 +235,7 @@ class TestUsageRecording:
         mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "shu.core.database.get_async_session_local",
+            "shu.services.external_ocr_service.get_async_session_local",
             return_value=mock_session_factory,
         ), patch.object(svc, "_resolve_provider_and_model", new_callable=AsyncMock, return_value=True):
             await svc._record_usage(page_count=5, user_id="user-789")
@@ -381,3 +400,48 @@ class TestResolveProviderAndModel:
 
         mock_cls.assert_not_called()
         assert svc._provider_id == "cached-p"
+
+
+class TestExtractTextInactiveGuard:
+    """extract_text must delegate the is_active check to
+    ``ensure_provider_and_model_active`` and propagate its raise.
+
+    The active-check logic (what counts as inactive, warning content) is
+    owned by and tested against ``external_model_resolver``; here we only
+    verify the OCR service wires it correctly.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub_active_guard(self):
+        """Shadow the module-level fixture (same name) so _ensure_active runs for real."""
+        yield
+
+    @pytest.mark.asyncio
+    async def test_calls_resolver_with_ocr_call_type_and_propagates_raise(self):
+        provider_id = "provider-123"
+        model_id = "model-456"
+
+        svc = _make_service()
+        svc._provider_id = provider_id
+        svc._model_id = model_id
+
+        with (
+            patch.object(
+                ExternalOCRService,
+                "_resolve_provider_and_model",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "shu.services.external_ocr_service.ensure_provider_and_model_active",
+                new_callable=AsyncMock,
+                side_effect=InactiveProviderError("provider inactive: " + provider_id),
+            ) as mock_guard,
+            patch("shu.services.external_ocr_service.httpx.AsyncClient") as mock_client_cls,
+            patch.object(ExternalOCRService, "_record_usage", new_callable=AsyncMock),
+        ):
+            with pytest.raises(InactiveProviderError):
+                await svc.extract_text(b"%PDF-content", "application/pdf")
+
+            mock_client_cls.assert_not_called()
+            mock_guard.assert_awaited_once_with(provider_id, model_id, call_type="OCR")

@@ -343,6 +343,59 @@ Shu validates the key prefix against `SHU_STRIPE_MODE` at startup — a live key
 
 ---
 
+## Shu-managed vs BYOK Providers
+
+Shu distinguishes between **Shu-managed** LLM providers (whose API usage is billed through this Stripe account) and **BYOK** providers (bring-your-own-key, where the customer pays the upstream provider directly). This section documents how that distinction is enforced and how operators override it.
+
+### The `is_system_managed` column
+
+`llm_providers.is_system_managed` (boolean, default `FALSE`) marks a provider row as Shu-managed. When `TRUE`, the provider is considered part of the hosted offering — its usage flows through the `usage_cost` meter and is billed to the customer via Stripe.
+
+- The flag is **server-assigned only**. It is absent from every create/update request schema on the admin API, so customer admins cannot set, clear, or observe it as a writable field.
+- New rows created via `POST /api/v1/llm/providers/` always get `is_system_managed=FALSE`.
+- The flag is **immutable through the customer admin API**. It can only be changed via the operational-override path below.
+
+### Lockdown semantics
+
+When `is_system_managed=TRUE`, the customer admin API locks down mutation of the provider and its child models:
+
+**Provider endpoints (`/api/v1/llm/providers/{id}`):**
+
+- `PUT` and `DELETE` return HTTP 403 with detail `"Provider is managed by Shu and cannot be modified."`
+- `POST .../sync-models`, `POST .../test`, `POST .../models` (create a new model under the provider), and all `GET` read endpoints remain allowed — operators still need to add models, refresh the catalog, and inspect health.
+
+**Model endpoints (`/api/v1/llm/models/{id}`):**
+
+- `DELETE` on a model whose parent provider is system-managed returns HTTP 403 with detail `"Model is managed by Shu and cannot be modified."`
+
+### Operational-override path
+
+Changes to `is_system_managed` (flipping a BYOK provider to Shu-managed or vice versa) happen outside the customer admin API:
+
+- **Direct database access**: `UPDATE llm_providers SET is_system_managed = TRUE WHERE id = ...;`
+- **HMAC-signed control-plane calls** from the hosted-offering control plane (SHU-697).
+
+Either way, this override **does not go through the customer admin API** — customers (including customer admins) cannot promote or demote providers themselves.
+
+### `SHU_LOCK_PROVIDER_CREATIONS`
+
+An instance-level kill switch for new provider creation:
+
+```bash
+# Default: FALSE — provider creation allowed
+SHU_LOCK_PROVIDER_CREATIONS=FALSE
+```
+
+When set to `TRUE`:
+
+- `POST /api/v1/llm/providers/` returns HTTP 403 with detail `"Provider creation is disabled on this deployment."`
+- All other endpoints (`PUT`, `DELETE`, sync-models, `POST /models`, `GET`) continue to function, subject to the system-managed rules above. The lock is **create-only**.
+- `GET /api/v1/config/public` exposes the flag as `lock_provider_creations` so the frontend hides the Add Provider button.
+
+Typical use: hosted deployments where the set of providers is curated by Shu and customers should not add their own.
+
+---
+
 ## Troubleshooting
 
 ### "Billing is not configured" (503 on billing endpoints)
