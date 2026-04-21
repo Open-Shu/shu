@@ -357,6 +357,7 @@ class TestOcrCapabilityIntegration:
             "application/pdf",
             cap._config_manager,
             ocr_mode="fallback",
+            user_id="user-123",
         )
         assert result == mock_result
 
@@ -383,6 +384,7 @@ class TestOcrCapabilityIntegration:
             "text/plain",
             cap._config_manager,
             ocr_mode="never",
+            user_id="user-123",
         )
 
     @pytest.mark.asyncio

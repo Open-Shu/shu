@@ -347,6 +347,8 @@ class DocumentService:
         document: Document,
         title: str,
         content: str,
+        *,
+        user_id: str | None = None,
     ) -> tuple[int, int, int]:
         """Generate chunks for a document and update processing stats."""
         from ..core.embedding_service import get_embedding_service
@@ -365,6 +367,7 @@ class DocumentService:
             knowledge_base=kb,
             text=content,
             document_title=title,
+            user_id=user_id,
         )
 
         await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))

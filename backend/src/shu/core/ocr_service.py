@@ -54,12 +54,20 @@ class OCRResult:
 class OCRService(Protocol):
     """Protocol for OCR text extraction services."""
 
-    async def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
+    async def extract_text(
+        self,
+        file_bytes: bytes,
+        mime_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> OCRResult:
         """Extract text from a document using OCR.
 
         Args:
             file_bytes: Raw bytes of the document to process.
             mime_type: MIME type of the document (e.g., "application/pdf", "image/png").
+            user_id: Optional user attribution for llm_usage rows written by
+                billable OCR providers (ExternalOCRService). Local OCR ignores it.
 
         Returns:
             OCRResult with extracted text and metadata.
@@ -124,6 +132,7 @@ async def extract_text_with_ocr_fallback(
     *,
     filename: str | None = None,
     ocr_mode: str = "auto",
+    user_id: str | None = None,
 ) -> dict:
     """Two-step text extraction: fast extraction first, OCR service if needed.
 
@@ -168,7 +177,7 @@ async def extract_text_with_ocr_fallback(
                 ocr_mode="text_only",
                 **({"file_path": filename} if filename else {}),
             )
-        return await _run_ocr_service(file_bytes, mime_type, effective_mode)
+        return await _run_ocr_service(file_bytes, mime_type, effective_mode, user_id=user_id)
 
     # auto / fallback: try cheap text extraction, fall back to OCR if
     # the result is missing or below the minimum length threshold.
@@ -192,16 +201,16 @@ async def extract_text_with_ocr_fallback(
     if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
         return result
 
-    return await _run_ocr_service(file_bytes, mime_type, effective_mode)
+    return await _run_ocr_service(file_bytes, mime_type, effective_mode, user_id=user_id)
 
 
-async def _run_ocr_service(file_bytes: bytes, mime_type: str, ocr_mode: str) -> dict:
+async def _run_ocr_service(file_bytes: bytes, mime_type: str, ocr_mode: str, *, user_id: str | None = None) -> dict:
     """Call the configured OCR service and return a result dict with timing."""
     import time
 
     start = time.monotonic()
     ocr_service = get_ocr_service()
-    ocr_result = await ocr_service.extract_text(file_bytes, mime_type)
+    ocr_result = await ocr_service.extract_text(file_bytes, mime_type, user_id=user_id)
     duration = time.monotonic() - start
 
     return {

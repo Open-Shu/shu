@@ -48,7 +48,7 @@ class ProfilingOrchestrator:
         self.settings = settings
         self.profiling_service = ProfilingService(side_call_service, settings)
 
-    async def run_for_document(self, document_id: str) -> ProfilingResult:
+    async def run_for_document(self, document_id: str, *, user_id: str | None = None) -> ProfilingResult:
         """Run profiling for a document and its chunks.
 
         This is the main entry point called by ingestion integration.
@@ -58,6 +58,11 @@ class ProfilingOrchestrator:
 
         Args:
             document_id: ID of the document to profile
+            user_id: Originating ingestion user. Currently accepted for API
+                parity but NOT yet threaded into the internal side-call chain,
+                so side-call llm_usage rows emitted during profiling still land
+                with NULL user_id. Follow-up ticket will plumb this through
+                ProfilingService and its SideCallService invocations.
 
         Returns:
             ProfilingResult with document and chunk profiles
@@ -400,7 +405,9 @@ class ProfilingOrchestrator:
 # ---------------------------------------------------------------------------
 
 
-async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple[bool, int, int]:
+async def embed_profile_artifacts(
+    db: AsyncSession, document: Document, *, user_id: str | None = None
+) -> tuple[bool, int, int]:
     """Embed synopsis, chunk summaries, and synthesized query vectors for a profiled document.
 
     This is a standalone function (not on ProfilingOrchestrator) because it only
@@ -415,6 +422,8 @@ async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple
     Args:
         db: Async database session.
         document: The profiled document (must have synopsis set).
+        user_id: Optional user attribution for llm_usage rows on the
+            embedding API calls (threaded from the ingestion job).
 
     Returns:
         Tuple of (synopsis_embedded, chunk_summaries_embedded_count, queries_embedded_count).
@@ -429,7 +438,7 @@ async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple
 
     # Phase 1: Embed synopsis using document encoder
     if document.synopsis and document.synopsis.strip():
-        embeddings = await embedding_service.embed_texts([str(document.synopsis)])
+        embeddings = await embedding_service.embed_texts([str(document.synopsis)], user_id=user_id)
         if not embeddings:
             logger.warning("synopsis_embedding_empty", document_id=document.id)
         else:
@@ -456,7 +465,7 @@ async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple
     if chunks_to_embed:
         try:
             summary_texts = [str(c.summary) for c in chunks_to_embed]
-            embeddings = await embedding_service.embed_texts(summary_texts)
+            embeddings = await embedding_service.embed_texts(summary_texts, user_id=user_id)
             entries = [VectorEntry(id=c.id, vector=emb) for c, emb in zip(chunks_to_embed, embeddings, strict=True)]
             await vector_store.store_embeddings("chunk_summaries", entries, db=db)
             chunk_summaries_embedded = len(entries)
@@ -479,7 +488,7 @@ async def embed_profile_artifacts(db: AsyncSession, document: Document) -> tuple
     if queries:
         try:
             query_texts = [q.query_text for q in queries]
-            embeddings = await embedding_service.embed_queries(query_texts)
+            embeddings = await embedding_service.embed_queries(query_texts, user_id=user_id)
             entries = [VectorEntry(id=q.id, vector=emb) for q, emb in zip(queries, embeddings, strict=True)]
             await vector_store.store_embeddings("queries", entries, db=db)
             queries_embedded = len(queries)

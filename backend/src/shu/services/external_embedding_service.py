@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from ..core.logging import get_logger
+from ..core.safe_decimal import safe_decimal
 
 logger = get_logger(__name__)
 
@@ -59,11 +60,11 @@ class ExternalEmbeddingService:
     def model_name(self) -> str:
         return self._model_name
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        return await self._embed_batch(texts, prefix=self._document_prefix)
+    async def embed_texts(self, texts: list[str], *, user_id: str | None = None) -> list[list[float]]:
+        return await self._embed_batch(texts, prefix=self._document_prefix, user_id=user_id)
 
-    async def embed_query(self, text: str) -> list[float]:
-        results = await self._embed_batch([text], prefix=self._query_prefix)
+    async def embed_query(self, text: str, *, user_id: str | None = None) -> list[float]:
+        results = await self._embed_batch([text], prefix=self._query_prefix, user_id=user_id)
         if not results:
             raise ValueError(
                 f"embed_texts returned no results for query text "
@@ -71,10 +72,12 @@ class ExternalEmbeddingService:
             )
         return results[0]
 
-    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        return await self._embed_batch(texts, prefix=self._query_prefix)
+    async def embed_queries(self, texts: list[str], *, user_id: str | None = None) -> list[list[float]]:
+        return await self._embed_batch(texts, prefix=self._query_prefix, user_id=user_id)
 
-    async def _embed_batch(self, texts: list[str], prefix: str = "") -> list[list[float]]:
+    async def _embed_batch(
+        self, texts: list[str], prefix: str = "", *, user_id: str | None = None
+    ) -> list[list[float]]:
         if not texts:
             return []
         response_data = await self._call_embeddings_api(texts, prefix=prefix)
@@ -84,7 +87,7 @@ class ExternalEmbeddingService:
                 f"Embedding API returned {len(entries)} results for {len(texts)} inputs (model={self._model_name})"
             )
         entries = sorted(entries, key=lambda e: e["index"])
-        await self._record_usage(response_data.get("usage"))
+        await self._record_usage(response_data.get("usage"), user_id=user_id)
         return [entry["embedding"] for entry in entries]
 
     async def _call_embeddings_api(self, texts: list[str], prefix: str = "") -> dict[str, Any]:
@@ -108,8 +111,15 @@ class ExternalEmbeddingService:
 
         return response.json()
 
-    async def _record_usage(self, usage: dict[str, Any] | None) -> None:
-        """Record embedding API usage in llm_usage. Best-effort — failures are logged, not raised."""
+    async def _record_usage(self, usage: dict[str, Any] | None, *, user_id: str | None = None) -> None:
+        """Record embedding API usage in llm_usage. Best-effort — failures are logged, not raised.
+
+        Cost-column contract (SHU-700): provider-authoritative wire cost is stored
+        verbatim on ``total_cost`` and ``input_cost`` / ``output_cost`` stay at
+        ``Decimal(0)`` — providers return a single total, not a split. This matches
+        the chat/side-call path's contract so downstream aggregations can identify
+        provider-authoritative rows consistently regardless of request_type.
+        """
         if not usage:
             return
 
@@ -127,25 +137,16 @@ class ExternalEmbeddingService:
 
         prompt_tokens = usage.get("prompt_tokens", 0)
         total_tokens = usage.get("total_tokens", 0)
-        cost = usage.get("cost")
+        cost = safe_decimal(usage.get("cost"))
 
         await record_llm_usage(
             provider_id=self._provider_id,
             model_id=self._model_id,
             request_type="embedding",
+            user_id=user_id,
             input_tokens=prompt_tokens,
             total_tokens=total_tokens,
-            input_cost=_safe_decimal(cost),
-            total_cost=_safe_decimal(cost),
+            input_cost=Decimal(0),
+            output_cost=Decimal(0),
+            total_cost=cost,
         )
-
-
-def _safe_decimal(value: Any) -> Decimal:
-    """Convert a value to Decimal, falling back to zero for None or non-numeric."""
-    if value is None:
-        return Decimal("0")
-    try:
-        return Decimal(str(value))
-    except Exception:
-        logger.warning("Malformed cost value, defaulting to 0: %r", value)
-        return Decimal("0")

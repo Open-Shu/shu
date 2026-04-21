@@ -24,6 +24,7 @@ async def record_llm_usage(
     provider_id: str,
     model_id: str,
     request_type: str,
+    user_id: str | None = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
     total_tokens: int = 0,
@@ -39,11 +40,17 @@ async def record_llm_usage(
     Pass an existing `session` to reuse a connection already checked out
     (e.g. when the caller ran a query in the same unit of work).
     When omitted, a fresh session is created and committed automatically.
+
+    `user_id` should be populated wherever the originating user is
+    identifiable (chat conversation owner, ingestion job user, etc.) so
+    billing can attribute usage per user. It is nullable only for genuinely
+    user-less surfaces (none exist today).
     """
     try:
         record = LLMUsage(
             provider_id=provider_id,
             model_id=model_id,
+            user_id=user_id,
             request_type=request_type,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -73,6 +80,7 @@ async def record_llm_usage(
             extra={
                 "provider_id": provider_id,
                 "model_id": model_id,
+                "user_id": user_id,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,

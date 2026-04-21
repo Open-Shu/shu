@@ -21,12 +21,20 @@ class LocalOCRService:
     def __init__(self, config_manager: ConfigurationManager | None = None) -> None:
         self._config_manager = config_manager or get_config_manager()
 
-    async def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
+    async def extract_text(
+        self,
+        file_bytes: bytes,
+        mime_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> OCRResult:
         """Extract text using local EasyOCR/Tesseract via TextExtractor.
 
         Args:
             file_bytes: Raw bytes of the document to process.
             mime_type: MIME type of the document.
+            user_id: Accepted for protocol parity with ExternalOCRService;
+                local OCR doesn't record llm_usage, so the value is unused.
 
         Returns:
             OCRResult with extracted text and metadata.

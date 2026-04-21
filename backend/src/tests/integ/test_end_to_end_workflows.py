@@ -50,8 +50,8 @@ async def test_complete_admin_setup_workflow(client, db, auth_headers):
         "max_output_tokens": 4096,
         "supports_streaming": True,
         "supports_functions": True,
-        "cost_per_input_token": 0.00001,
-        "cost_per_output_token": 0.00003,
+        "cost_per_input_unit": 0.00001,
+        "cost_per_output_unit": 0.00003,
         "is_active": True,
     }
 
@@ -165,8 +165,8 @@ async def test_complete_user_chat_workflow(client, db, auth_headers):
         "max_output_tokens": 4096,
         "supports_streaming": True,
         "supports_functions": True,
-        "cost_per_input_token": 0.00001,
-        "cost_per_output_token": 0.00003,
+        "cost_per_input_unit": 0.00001,
+        "cost_per_output_unit": 0.00003,
         "is_active": True,
     }
 
@@ -325,8 +325,8 @@ async def test_error_recovery_workflow(client, db, auth_headers):
         "max_output_tokens": 4096,
         "supports_streaming": True,
         "supports_functions": True,
-        "cost_per_input_token": 0.00001,
-        "cost_per_output_token": 0.00003,
+        "cost_per_input_unit": 0.00001,
+        "cost_per_output_unit": 0.00003,
         "is_active": True,
     }
 
@@ -469,8 +469,8 @@ async def test_concurrent_user_workflow(client, db, auth_headers):
         "max_output_tokens": 4096,
         "supports_streaming": True,
         "supports_functions": True,
-        "cost_per_input_token": 0.00001,
-        "cost_per_output_token": 0.00003,
+        "cost_per_input_unit": 0.00001,
+        "cost_per_output_unit": 0.00003,
         "is_active": True,
     }
 

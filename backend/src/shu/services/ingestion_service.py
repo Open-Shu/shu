@@ -75,7 +75,7 @@ def _build_skipped_result(
     }
 
 
-async def _trigger_profiling_if_enabled(document_id: str) -> None:
+async def _trigger_profiling_if_enabled(document_id: str, user_id: str | None = None) -> None:
     """Trigger async document profiling if enabled (SHU-344).
 
     Enqueues a profiling job to the QueueBackend with PROFILING WorkloadType.
@@ -111,6 +111,7 @@ async def _trigger_profiling_if_enabled(document_id: str) -> None:
             WorkloadType.PROFILING,
             payload={
                 "document_id": document_id,
+                "user_id": user_id,
                 "action": "profile_document",
             },
             max_attempts=5,  # Retry up to 5 times for transient failures
@@ -267,13 +268,20 @@ def _check_skip(
     return None
 
 
-async def _enqueue_embed_job(queue: QueueBackend, document_id: str, knowledge_base_id: str) -> None:
+async def _enqueue_embed_job(
+    queue: QueueBackend,
+    document_id: str,
+    knowledge_base_id: str,
+    user_id: str | None = None,
+) -> None:
     """Enqueue an embedding job for a document.
 
     Args:
         queue: QueueBackend instance
         document_id: Document ID to embed
         knowledge_base_id: Knowledge base ID
+        user_id: User ID performing the ingestion, threaded through to
+            llm_usage attribution on the resulting embedding API call.
 
     """
     from ..core.workload_routing import WorkloadType, enqueue_job
@@ -284,6 +292,7 @@ async def _enqueue_embed_job(queue: QueueBackend, document_id: str, knowledge_ba
         payload={
             "document_id": document_id,
             "knowledge_base_id": knowledge_base_id,
+            "user_id": user_id,
             "action": "embed_document",
         },
         max_attempts=3,
@@ -575,6 +584,7 @@ async def ingest_document(  # noqa: PLR0915
             "source_id": source_id,
             "staging_key": staging_key,
             "ocr_mode": ocr_mode,
+            "user_id": user_id,
             "action": "extract_text",
         }
 
@@ -723,6 +733,7 @@ async def ingest_email(
             document,
             title,
             content,
+            user_id=user_id,
         )
     except Exception as e:
         logger.error(
@@ -744,7 +755,7 @@ async def ingest_email(
     await db.commit()
 
     # Trigger async profiling if enabled
-    await _trigger_profiling_if_enabled(document.id)
+    await _trigger_profiling_if_enabled(document.id, user_id=user_id)
 
     return {
         "ko_id": deterministic_ko_id(f"{plugin_name}:{user_id}", external_id),
@@ -869,7 +880,7 @@ async def ingest_text(  # noqa: PLR0915
     # where the document is EMBEDDING with no job in the queue.
     try:
         queue = await get_queue_backend()
-        await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+        await _enqueue_embed_job(queue, document.id, knowledge_base_id, user_id=user_id)
     except Exception as e:
         logger.error(
             "Failed to enqueue text ingestion embedding job",
@@ -1017,7 +1028,7 @@ async def ingest_thread(  # noqa: PLR0915
     # where the document is EMBEDDING with no job in the queue.
     try:
         queue = await get_queue_backend()
-        await _enqueue_embed_job(queue, document.id, knowledge_base_id)
+        await _enqueue_embed_job(queue, document.id, knowledge_base_id, user_id=user_id)
     except Exception as e:
         logger.error(
             "Failed to enqueue thread ingestion embedding job",

@@ -51,6 +51,8 @@ class RAGProcessingService:
         text: str,
         document_title: str | None = None,
         config_manager: Optional["ConfigurationManager"] = None,  # noqa: F821
+        *,
+        user_id: str | None = None,
     ) -> list[DocumentChunk]:
         """Chunk the document text and generate embeddings for each chunk.
         Returns a list of DocumentChunk objects (not yet added to DB).
@@ -81,7 +83,7 @@ class RAGProcessingService:
                 chunks[0] = title_prefix + chunks[0]
 
         # 3. Generate embeddings via the EmbeddingService
-        embeddings = await self.embedding_service.embed_texts(chunks)
+        embeddings = await self.embedding_service.embed_texts(chunks, user_id=user_id)
 
         if len(embeddings) != len(chunks):
             raise ValueError(f"Embedding count mismatch: got {len(embeddings)} embeddings for {len(chunks)} chunks")

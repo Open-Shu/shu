@@ -27,11 +27,13 @@ class EmbeddingService(Protocol):
         """Name of the underlying embedding model."""
         ...
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str], *, user_id: str | None = None) -> list[list[float]]:
         """Generate embeddings for a batch of texts.
 
         Args:
             texts: List of text strings to embed. Empty list returns [].
+            user_id: Optional user attribution for llm_usage rows written by
+                billable external providers. Local services ignore it.
 
         Returns:
             List of embedding vectors, one per input text.
@@ -39,11 +41,13 @@ class EmbeddingService(Protocol):
         """
         ...
 
-    async def embed_query(self, text: str) -> list[float]:
+    async def embed_query(self, text: str, *, user_id: str | None = None) -> list[float]:
         """Generate an embedding for a single query text.
 
         Args:
             text: The query text to embed.
+            user_id: Optional user attribution for llm_usage rows written by
+                billable external providers. Local services ignore it.
 
         Returns:
             A single embedding vector.
@@ -51,7 +55,7 @@ class EmbeddingService(Protocol):
         """
         ...
 
-    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+    async def embed_queries(self, texts: list[str], *, user_id: str | None = None) -> list[list[float]]:
         """Generate embeddings for a batch of query texts.
 
         Like embed_texts(), but applies the query prompt for asymmetric
@@ -61,6 +65,8 @@ class EmbeddingService(Protocol):
 
         Args:
             texts: List of query strings to embed. Empty list returns [].
+            user_id: Optional user attribution for llm_usage rows written by
+                billable external providers. Local services ignore it.
 
         Returns:
             List of embedding vectors, one per input text.

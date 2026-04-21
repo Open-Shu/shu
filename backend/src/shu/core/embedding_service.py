@@ -190,7 +190,7 @@ class LocalEmbeddingService:
     def model_name(self) -> str:
         return self._model_name
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str], *, user_id: str | None = None) -> list[list[float]]:
         if not texts:
             return []
 
@@ -206,7 +206,7 @@ class LocalEmbeddingService:
         )
         return [e.tolist() for e in embeddings]
 
-    async def embed_query(self, text: str) -> list[float]:
+    async def embed_query(self, text: str, *, user_id: str | None = None) -> list[float]:
         loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(
             self._executor,
@@ -216,7 +216,7 @@ class LocalEmbeddingService:
         )
         return embedding.tolist()
 
-    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+    async def embed_queries(self, texts: list[str], *, user_id: str | None = None) -> list[list[float]]:
         if not texts:
             return []
 

@@ -97,8 +97,8 @@ async def _create_local_side_call_model_config(client, db, auth_headers) -> dict
         "supports_streaming": True,
         "supports_functions": False,
         "supports_vision": False,
-        "cost_per_input_token": 0.0,
-        "cost_per_output_token": 0.0,
+        "cost_per_input_unit": 0.0,
+        "cost_per_output_unit": 0.0,
     }
     model_response = await client.post(
         f"/api/v1/llm/providers/{provider['id']}/models",

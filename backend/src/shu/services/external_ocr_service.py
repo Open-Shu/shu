@@ -17,13 +17,10 @@ import httpx
 from ..core.logging import get_logger
 from ..core.ocr_service import OCR_ELIGIBLE_MIME_PREFIXES, OCRResult
 from ..llm.service import LLMService
-from ..models.llm_provider import ModelType
+from ..models.llm_provider import LLMModel, ModelType
 from .usage_recording import record_llm_usage
 
 logger = get_logger(__name__)
-
-# $1 per 1000 pages
-_COST_PER_PAGE = Decimal("0.002")
 
 _PROVIDER_TYPE_KEY = "generic_completions"
 _PROVIDER_NAME = "Mistral OCR (auto-provisioned)"
@@ -59,12 +56,19 @@ class ExternalOCRService:
         """Redact API key to prevent leaking credentials in logs/tracebacks."""
         return f"ExternalOCRService(model={self._model_name!r})"
 
-    async def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
+    async def extract_text(
+        self,
+        file_bytes: bytes,
+        mime_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> OCRResult:
         """Extract text by sending the document to Mistral's OCR API.
 
         Args:
             file_bytes: Raw bytes of the document to process.
             mime_type: MIME type of the document.
+            user_id: Optional user attribution for the resulting llm_usage row.
 
         Returns:
             OCRResult with extracted text from all pages.
@@ -126,7 +130,9 @@ class ExternalOCRService:
             usage_info.get("pages_processed"),
             fallback=len(pages),
         )
-        await self._record_usage(pages_processed, usage_info=usage_info, observed_page_count=len(pages))
+        await self._record_usage(
+            pages_processed, usage_info=usage_info, observed_page_count=len(pages), user_id=user_id
+        )
 
         return OCRResult(
             text="\n\n".join(page_texts),
@@ -175,22 +181,27 @@ class ExternalOCRService:
         *,
         usage_info: dict[str, Any] | None = None,
         observed_page_count: int | None = None,
+        user_id: str | None = None,
     ) -> None:
         """Record OCR usage in llm_usage. Best-effort — failures are logged, not raised.
 
-        Always logs the raw usage payload alongside the computed cost so costs
-        can be reconstructed from logs if DB recording ever fails.
-        """
-        total_cost = _COST_PER_PAGE * page_count
+        Cost is sourced from the resolved ``llm_models.cost_per_input_unit`` (synced
+        from ``core/model_pricing.py`` at startup) rather than a module-level constant,
+        so repricing is a one-entry change in ``model_pricing.py`` plus a restart.
 
+        Always logs the raw usage payload so costs can be reconstructed from logs
+        if DB recording ever fails. The computed cost is logged separately once the
+        DB-sourced rate is known.
+        """
+        # Log raw usage payload first — unconditional, independent of DB state,
+        # so cost reconstruction from logs works even if the DB write later fails.
         logger.info(
-            "Mistral OCR usage",
+            "Mistral OCR usage (raw)",
             extra={
                 "model": self._model_name,
                 "raw_usage_info": usage_info or {},
                 "observed_page_count": observed_page_count,
                 "pages_billed": page_count,
-                "total_cost": str(total_cost),
             },
         )
 
@@ -200,11 +211,50 @@ class ExternalOCRService:
             session_factory = get_async_session_local()
             async with session_factory() as session:
                 if not await self._resolve_provider_and_model(session):
+                    # Provider/model lookup failed (see upstream error in _resolve_provider_and_model).
+                    # Billing loses a row for a real OCR call here — surface that explicitly so
+                    # ops can correlate the raw_usage_info log above with missing llm_usage
+                    # entries and drive the seed fix. See SHU-713.
+                    logger.error(
+                        "Dropping OCR llm_usage row — Mistral OCR provider/model not seeded. "
+                        "Reconstruct cost from the raw_usage_info log above (pages_billed=%d). "
+                        "Fix by seeding via the hosting script.",
+                        page_count,
+                        extra={
+                            "model": self._model_name,
+                            "pages_billed": page_count,
+                            "usage_recording": "dropped",
+                        },
+                    )
                     return
+
+                model = await session.get(LLMModel, self._model_id)
+                per_page_rate = model.cost_per_input_unit if model else None
+                if per_page_rate is None:
+                    logger.warning(
+                        "OCR model %r has no cost_per_input_unit set — recording $0. "
+                        "Ensure model_pricing.sync_pricing_to_db ran at startup.",
+                        self._model_name,
+                    )
+                    per_page_rate = Decimal(0)
+
+                total_cost = per_page_rate * page_count
+
+                logger.info(
+                    "Mistral OCR cost computed",
+                    extra={
+                        "model": self._model_name,
+                        "pages_billed": page_count,
+                        "per_page_rate": str(per_page_rate),
+                        "total_cost": str(total_cost),
+                    },
+                )
+
                 await record_llm_usage(
                     provider_id=self._provider_id,
                     model_id=self._model_id,
                     request_type="ocr",
+                    user_id=user_id,
                     input_cost=total_cost,
                     total_cost=total_cost,
                     request_metadata={"page_count": page_count},

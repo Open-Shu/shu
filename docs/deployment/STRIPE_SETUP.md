@@ -15,6 +15,20 @@ This guide walks through configuring Stripe and each Shu instance for billing. I
 
 Architecture reference: [stripe-architecture.mermaid](../diagrams/stripe-architecture.mermaid)
 
+### Where LLM cost values come from (`llm_usage.total_cost`)
+
+The `usage_cost` meter sums dollar-denominated `llm_usage.total_cost` across the billing period, converts the delta since the last report to microdollars (1 microdollar = $0.000001), and pushes that integer value to Stripe — which aggregates meter events with SUM to produce the period total. The DB stores dollars as `numeric(16,9)`; the reporter multiplies by 1,000,000 and rounds up (`math.ceil`) before pushing, so sub-microdollar precision loss never causes under-billing. Each row's `total_cost` is resolved by a two-tier hierarchy, in order:
+
+1. **Provider-reported cost (authoritative).** If the upstream provider returns `usage.cost` on the wire (OpenRouter does; OpenAI direct does not), the value is recorded verbatim. Under this path `llm_usage.input_cost` and `llm_usage.output_cost` are both `0` — the provider returns a single total, not a split.
+2. **DB-rate fallback.** If the caller passed `total_cost = Decimal(0)` (the sentinel for "no wire-reported cost"), cost is computed as `input_tokens × cost_per_input_unit + output_tokens × cost_per_output_unit` from the `llm_models` row. These rates are synced at application startup from [`backend/src/shu/core/model_pricing.py`](../../backend/src/shu/core/model_pricing.py), which is the editable source of truth. Under this path `input_cost + output_cost == total_cost`.
+3. **No rates, no wire cost.** A local/self-hosted model with no `model_pricing.py` entry records `0` for all three cost columns — appropriate because no external billing occurred.
+
+To reprice a model, edit `model_pricing.py` and restart. To cover a model whose provider doesn't return `cost`, add it to the same file. `llm_models.cost_per_input_unit` and `cost_per_output_unit` carry per-token rates for `chat`/`embedding` models and per-page rates for `ocr` models; `llm_models.model_type` disambiguates the unit.
+
+### Per-user attribution (`llm_usage.user_id`)
+
+Every `llm_usage` row whose originating user is identifiable populates `user_id`: chat from `conversation_owner_id`, side-call and ingestion (OCR + embedding) from the user who initiated the job. This is the basis for future per-user invoicing and per-user quota enforcement. Rows with `user_id IS NULL` indicate genuinely user-less surfaces (currently: side-calls emitted during document profiling — a known limitation flagged for follow-up).
+
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)

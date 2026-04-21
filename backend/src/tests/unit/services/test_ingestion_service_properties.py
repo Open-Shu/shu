@@ -306,3 +306,67 @@ class TestAPIImmediateReturnProperty:
             assert "status" in result
             assert result["status"] == DocumentStatus.EMBEDDING.value
             assert result["skipped"] is False
+
+
+class TestIngestEmailUserIdThreading:
+    """SHU-700 regression: ingest_email must forward user_id into
+    DocumentService.process_and_update_chunks so the embedding API calls
+    generated during chunk processing land in llm_usage with the correct
+    user attribution. Without the forward, Gmail-style plugin feeds ingest
+    emails and produce NULL user_id embedding rows despite the plugin having
+    user_id on self at the call site — same class of bug as the OCR
+    auto/fallback drop caught earlier in SHU-700.
+    """
+
+    @pytest.mark.asyncio
+    async def test_user_id_reaches_process_and_update_chunks(self):
+        from shu.services.ingestion_service import UpsertResult, ingest_email
+
+        mock_db = AsyncMock()
+
+        mock_document = MagicMock()
+        mock_document.id = "doc-1"
+        mock_document.mark_error = MagicMock()
+        mock_document.update_status = MagicMock()
+
+        # upsert returns a not-skipped result so we reach process_and_update_chunks
+        upsert_result = UpsertResult(
+            document=mock_document,
+            extraction={"method": "text"},
+            skipped=False,
+        )
+
+        mock_doc_service = MagicMock()
+        mock_doc_service.process_and_update_chunks = AsyncMock(return_value=(10, 50, 2))
+
+        with (
+            patch("shu.services.ingestion_service.DocumentService", return_value=mock_doc_service),
+            patch(
+                "shu.services.ingestion_service._upsert_document_record",
+                new_callable=AsyncMock,
+                return_value=upsert_result,
+            ),
+            patch(
+                "shu.services.ingestion_service._trigger_profiling_if_enabled",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await ingest_email(
+                mock_db,
+                "kb-1",
+                plugin_name="gmail",
+                user_id="user-42",
+                subject="Test",
+                sender="alice@example.com",
+                recipients={"to": ["bob@example.com"]},
+                date=None,
+                message_id="msg-1",
+                thread_id=None,
+                body_text="hello",
+            )
+
+        mock_doc_service.process_and_update_chunks.assert_awaited_once()
+        assert mock_doc_service.process_and_update_chunks.call_args.kwargs.get("user_id") == "user-42", (
+            "ingest_email must forward user_id to process_and_update_chunks so embedding "
+            "llm_usage rows attribute to the originating user"
+        )

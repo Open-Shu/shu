@@ -49,11 +49,17 @@ class OcrCapability(ImmutableCapabilityMixin):
     async def extract_text(self, *, file_bytes: bytes, mime_type: str, mode: str | None = None) -> dict[str, Any]:
         mm = (mode or self._ocr_mode or "auto").strip().lower()
 
+        # Forward user_id so the resulting llm_usage row attributes to the
+        # plugin's acting user, matching the ingestion-worker OCR path.
+        # Dropping it here would leave every plugin-initiated OCR row with
+        # NULL user_id — same class of bug as the extract_text_with_ocr_fallback
+        # auto/fallback drop caught earlier in SHU-700.
         res = await extract_text_with_ocr_fallback(
             file_bytes,
             mime_type,
             self._config_manager,
             ocr_mode=mm,
+            user_id=self._user_id,
         )
 
         logger.info(

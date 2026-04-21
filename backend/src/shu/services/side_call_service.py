@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import ConfigurationManager
 from ..core.exceptions import LLMProviderError
+from ..core.safe_decimal import safe_decimal
 from ..llm.service import LLMService
 from ..models.llm_provider import Message
 from ..models.model_configuration import ModelConfiguration
@@ -150,6 +151,7 @@ class SideCallService:
                 output_tokens=output_tokens,
                 response_time_ms=response_time_ms,
                 success=True,
+                total_cost=safe_decimal(usage.get("cost")),
             )
 
             return SideCallResult(
@@ -631,6 +633,7 @@ class SideCallService:
                 output_tokens=output_tokens,
                 response_time_ms=response_time_ms,
                 success=True,
+                total_cost=safe_decimal(usage.get("cost")),
             )
 
             return SideCallResult(
@@ -771,6 +774,7 @@ class SideCallService:
         output_tokens: int,
         response_time_ms: int,
         success: bool,
+        total_cost: Decimal = Decimal("0"),
         error_message: str | None = None,
     ) -> None:
         """Record usage metrics for the side-call.
@@ -783,20 +787,19 @@ class SideCallService:
             output_tokens: Number of output (completion) tokens
             response_time_ms: Response time in milliseconds
             success: Whether the call was successful
+            total_cost: Provider-reported cost (Decimal(0) triggers DB-rate fallback
+                in LLMService.record_usage).
             error_message: Error message if the call failed
 
         """
         try:
-            # Record usage in LLMUsage table
-            # LLMService.record_usage() computes input_cost, output_cost, and
-            # total_cost from the model's pricing columns — no need to duplicate here.
             await self.llm_service.record_usage(
                 provider_id=model_config.llm_provider_id,
                 model_id=model.id,
                 request_type="side_call",
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                total_cost=Decimal("0"),
+                total_cost=total_cost,
                 user_id=user_id,
                 response_time_ms=response_time_ms,
                 success=success,

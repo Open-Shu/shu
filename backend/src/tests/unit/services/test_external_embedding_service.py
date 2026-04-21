@@ -287,3 +287,56 @@ class TestErrorHandling:
             svc = _make_service()
             with pytest.raises(httpx.HTTPStatusError):
                 await svc.embed_texts(["test"])
+
+
+class TestRecordUsageCostContract:
+    """SHU-700: provider-authoritative cost contract — embedding rows must match
+    the chat-path shape so downstream aggregators can identify wire-reported
+    rows uniformly by `input_cost == 0 AND output_cost == 0 AND total_cost > 0`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wire_cost_recorded_on_total_only(self):
+        """Provider-reported `usage.cost` lands on `total_cost`; input/output stay 0."""
+        from decimal import Decimal
+
+        svc = _make_service()
+
+        with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
+            await svc._record_usage(
+                {"prompt_tokens": 100, "total_tokens": 100, "cost": "0.00042"},
+                user_id="user-7",
+            )
+
+        mock_record.assert_awaited_once()
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["total_cost"] == Decimal("0.00042")
+        assert kwargs["input_cost"] == Decimal(0)
+        assert kwargs["output_cost"] == Decimal(0)
+        assert kwargs["user_id"] == "user-7"
+        assert kwargs["request_type"] == "embedding"
+
+    @pytest.mark.asyncio
+    async def test_missing_wire_cost_records_zero(self):
+        """Response without `cost` field (local provider) records all-zero costs, not NULL."""
+        from decimal import Decimal
+
+        svc = _make_service()
+
+        with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
+            await svc._record_usage({"prompt_tokens": 50, "total_tokens": 50})
+
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["total_cost"] == Decimal(0)
+        assert kwargs["input_cost"] == Decimal(0)
+        assert kwargs["output_cost"] == Decimal(0)
+
+    @pytest.mark.asyncio
+    async def test_empty_usage_skips_record(self):
+        """No usage block at all (early return path) must not call record_llm_usage."""
+        svc = _make_service()
+
+        with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
+            await svc._record_usage(None)
+
+        mock_record.assert_not_called()

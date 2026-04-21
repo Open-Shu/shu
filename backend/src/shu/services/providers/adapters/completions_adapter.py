@@ -5,6 +5,7 @@ from typing import Any
 import jmespath
 
 from shu.core.logging import get_logger
+from shu.core.safe_decimal import safe_decimal
 from shu.models.plugin_execution import CallableTool
 
 from ..adapter_base import (
@@ -107,12 +108,15 @@ class CompletionsAdapter(BaseProviderAdapter):
         usage = jmespath.search(path, chunk) or {}
         if not usage:
             return
+        raw_cost = usage.get("cost")
+        cost = safe_decimal(raw_cost) if raw_cost is not None else None
         self._update_usage(
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0),
             usage.get("prompt_tokens_details", {}).get("cached_tokens", 0),
             usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0),
             usage.get("total_tokens", 0),
+            cost,
         )
 
     def _format_completions_attachments(self, attachments: list[Any]) -> list[dict[str, Any]]:

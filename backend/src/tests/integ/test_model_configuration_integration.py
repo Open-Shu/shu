@@ -47,8 +47,8 @@ MODEL_DATA = {
     "max_output_tokens": 4096,
     "supports_streaming": True,
     "supports_functions": True,
-    "cost_per_input_token": 0.000005,
-    "cost_per_output_token": 0.000015,
+    "cost_per_input_unit": 0.000005,
+    "cost_per_output_unit": 0.000015,
     "is_active": True,
 }
 

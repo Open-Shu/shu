@@ -10,8 +10,9 @@ import base64
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, NotRequired, Self, TypedDict
 
 from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,26 @@ from shu.services.plugin_execution import execute_plugin
 from shu.services.providers.events import ProviderStreamEvent
 
 logger = get_logger(__name__)
+
+
+class UsageDict(TypedDict, total=False):
+    """Shape of `BaseProviderAdapter.self.usage` and entries on provider-event metadata.
+
+    Token counts are always ``int``; ``cost`` is stored as a **stringified Decimal**
+    so the dict stays JSON-serializable when persisted into ``Message.message_metadata``
+    and SSE event payloads. Callers recover precision via
+    ``safe_decimal(usage["cost"])`` at record-usage sites.
+
+    All fields are optional (``total=False``) because some provider responses
+    omit token detail breakdowns and local/self-hosted providers omit ``cost``.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    reasoning_tokens: int
+    total_tokens: int
+    cost: NotRequired[str]
 
 
 @dataclass
@@ -165,7 +186,12 @@ class BaseProviderAdapter:
         self.settings = get_settings_instance()
         self.encryption_key = self.settings.llm_encryption_key
         self.api_key = None
-        self.usage: dict[str, int] = {}
+        # Usage dict is stored JSON-safe: tokens as int, cost as a stringified
+        # Decimal (not a Decimal object). The dict flows into message_metadata,
+        # which is persisted as JSON — Decimal is not JSON-serializable by
+        # default. Callers convert cost back to Decimal via safe_decimal() when
+        # recording usage. See UsageDict for the full shape.
+        self.usage: UsageDict = {}
 
         self.db_session = context.db_session
 
@@ -221,17 +247,37 @@ class BaseProviderAdapter:
         cached_tokens: int,
         reasoning_tokens: int,
         total_tokens: int,
-    ) -> dict[str, int]:
-        return {
+        cost: Decimal | None = None,
+    ) -> UsageDict:
+        usage: UsageDict = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
             "reasoning_tokens": reasoning_tokens,
             "total_tokens": total_tokens,
         }
+        if cost is not None:
+            # Stringify so the dict stays JSON-serializable (see self.usage docstring).
+            usage["cost"] = str(cost)
+        return usage
 
-    def _aggregate_usage(self, first: dict[str, int], second: dict[str, int]) -> dict[str, int]:
-        return {k: first.get(k, 0) + second.get(k, 0) for k in set(first) | set(second)}
+    def _aggregate_usage(self, first: UsageDict, second: UsageDict) -> UsageDict:
+        from shu.core.safe_decimal import safe_decimal
+
+        result: UsageDict = {}
+        for k in set(first) | set(second):
+            if k == "cost":
+                # Cost is stored as a stringified Decimal; sum with Decimal math
+                # to preserve precision, then restringify for JSON safety.
+                # safe_decimal keeps this consistent with the other cost-handling
+                # sites and degrades to Decimal(0) + a warning log if malformed
+                # data ever lands here instead of crashing mid-stream.
+                a = safe_decimal(first.get(k))
+                b = safe_decimal(second.get(k))
+                result[k] = str(a + b)  # type: ignore[literal-required]
+            else:
+                result[k] = first.get(k, 0) + second.get(k, 0)  # type: ignore[literal-required,operator]
+        return result
 
     def _flatten_chat_context(
         self,
@@ -341,6 +387,7 @@ class BaseProviderAdapter:
         cached_tokens: int,
         reasoning_tokens: int,
         total_tokens: int,
+        cost: Decimal | None = None,
     ) -> None:
         usage_dict = self._get_usage(
             input_tokens,
@@ -348,6 +395,7 @@ class BaseProviderAdapter:
             cached_tokens,
             reasoning_tokens,
             total_tokens,
+            cost,
         )
         if not self.usage:
             self.usage = usage_dict

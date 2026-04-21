@@ -9,7 +9,11 @@ import httpx
 import pytest
 
 from shu.core.ocr_service import OCRResult
-from shu.services.external_ocr_service import ExternalOCRService, _COST_PER_PAGE
+from shu.services.external_ocr_service import ExternalOCRService
+
+# OCR cost is now DB-sourced (cost_per_input_unit on the llm_models row, seeded from
+# model_pricing.py). Tests that assert on total cost stub a model row with this rate.
+_OCR_PER_PAGE_RATE = Decimal("0.002")
 
 
 def _make_service(**kwargs) -> ExternalOCRService:
@@ -33,8 +37,18 @@ def _mock_ocr_response(pages: list[dict]) -> httpx.Response:
 
 @contextmanager
 def _patched_httpx(response):
-    """Patch httpx.AsyncClient to return a mock that yields `response` on post."""
-    with patch("shu.services.external_ocr_service.httpx.AsyncClient") as mock_client_cls:
+    """Patch httpx.AsyncClient AND ExternalOCRService._record_usage for full DB isolation.
+
+    Previously only httpx was mocked, which let the real `_record_usage` method run
+    and write rows to whatever database the host env pointed at (a live dev Postgres
+    in typical setups). Tests that exercise the extract_text control flow don't need
+    to verify usage persistence — that is covered separately in TestUsageRecording —
+    so a blanket mock on `_record_usage` keeps these tests hermetic.
+    """
+    with (
+        patch("shu.services.external_ocr_service.httpx.AsyncClient") as mock_client_cls,
+        patch.object(ExternalOCRService, "_record_usage", new_callable=AsyncMock),
+    ):
         mock_client = AsyncMock()
         mock_client.post.return_value = response
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -176,17 +190,26 @@ class TestUsageRecording:
 
     @pytest.mark.asyncio
     async def test_record_usage_inserts_correct_cost(self):
-        """_record_usage should record via shared helper with per-page cost."""
+        """_record_usage should record with per-page cost sourced from the DB model row."""
         svc = _make_service()
         svc._provider_id = "provider-123"
         svc._model_id = "model-456"
 
+        # Fake LLMModel row that session.get(...) will return.
+        fake_model = MagicMock()
+        fake_model.cost_per_input_unit = _OCR_PER_PAGE_RATE
+
         mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=fake_model)
         # begin_nested() is sync, returns an async context manager (AsyncSessionTransaction)
         mock_savepoint = MagicMock()
         mock_savepoint.__aenter__ = AsyncMock()
         mock_savepoint.__aexit__ = AsyncMock(return_value=False)
         mock_session.begin_nested = MagicMock(return_value=mock_savepoint)
+        # session.add() is SYNC in SQLAlchemy. AsyncMock's default would return
+        # a coroutine that record_llm_usage never awaits, producing a
+        # RuntimeWarning that masks real unawaited-coroutine regressions.
+        mock_session.add = MagicMock()
 
         mock_session_factory = MagicMock()
         mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -195,16 +218,17 @@ class TestUsageRecording:
         with patch(
             "shu.core.database.get_async_session_local",
             return_value=mock_session_factory,
-        ):
-            await svc._record_usage(page_count=5)
+        ), patch.object(svc, "_resolve_provider_and_model", new_callable=AsyncMock, return_value=True):
+            await svc._record_usage(page_count=5, user_id="user-789")
 
         mock_session.add.assert_called_once()
         record = mock_session.add.call_args[0][0]
         assert record.provider_id == "provider-123"
         assert record.model_id == "model-456"
+        assert record.user_id == "user-789"
         assert record.request_type == "ocr"
-        assert record.total_cost == _COST_PER_PAGE * 5
-        assert record.input_cost == _COST_PER_PAGE * 5
+        assert record.total_cost == _OCR_PER_PAGE_RATE * 5
+        assert record.input_cost == _OCR_PER_PAGE_RATE * 5
         assert record.output_cost == Decimal("0")
         assert record.request_metadata == {"page_count": 5}
         assert record.success is True
@@ -212,7 +236,17 @@ class TestUsageRecording:
 
     @pytest.mark.asyncio
     async def test_record_usage_calls_ensure_provider(self):
-        """_record_usage should call _resolve_provider_and_model on first use."""
+        """_record_usage should call _resolve_provider_and_model on first use.
+
+        Resolver is stubbed to return False so the method returns early via the
+        "provider/model not seeded" branch. Without that, the downstream
+        `async with session.begin_nested()` call would fire against AsyncMock's
+        default — begin_nested would return a coroutine instead of an async
+        context manager, raising AttributeError inside the try/except and
+        producing a "coroutine never awaited" RuntimeWarning. The test's only
+        contract is "resolver gets called on first use"; exercising the DB
+        write path isn't part of that contract.
+        """
         svc = _make_service()
         assert svc._provider_id is None
 
@@ -224,7 +258,9 @@ class TestUsageRecording:
         with patch(
             "shu.core.database.get_async_session_local",
             return_value=mock_session_factory,
-        ), patch.object(svc, "_resolve_provider_and_model", new_callable=AsyncMock) as mock_ensure:
+        ), patch.object(
+            svc, "_resolve_provider_and_model", new_callable=AsyncMock, return_value=False
+        ) as mock_ensure:
             await svc._record_usage(page_count=1)
 
         mock_ensure.assert_called_once()
@@ -256,7 +292,7 @@ class TestUsageRecording:
             with patch.object(svc, "_record_usage", new_callable=AsyncMock) as mock_record:
                 await svc.extract_text(b"%PDF-content", "application/pdf")
 
-        mock_record.assert_called_once_with(3, usage_info={}, observed_page_count=3)
+        mock_record.assert_called_once_with(3, usage_info={}, observed_page_count=3, user_id=None)
 
 
 class TestResolveProviderAndModel:
