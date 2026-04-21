@@ -4,6 +4,7 @@ from typing import Any
 
 import jmespath
 
+from shu.core.safe_decimal import safe_decimal
 from shu.models.plugin_execution import CallableTool
 
 from ..adapter_base import (
@@ -82,12 +83,19 @@ class ResponsesAdapter(BaseProviderAdapter):
         usage = jmespath.search(path, chunk) or {}
         if not usage:
             return
+        # Provider-reported cost (SHU-700 tier 1) — OpenRouter returns this on the
+        # responses endpoint the same way it does on chat/completions. The sibling
+        # fix in CompletionsAdapter already handles it; this adapter missed it,
+        # which is why chat + side_call total_cost landed as 0 in llm_usage.
+        raw_cost = usage.get("cost")
+        cost = safe_decimal(raw_cost) if raw_cost is not None else None
         self._update_usage(
             usage.get("input_tokens", 0),
             usage.get("output_tokens", 0),
             usage.get("input_tokens_details", {}).get("cached_tokens", 0),
             usage.get("output_tokens_details", {}).get("reasoning_tokens", 0),
             usage.get("total_tokens", 0),
+            cost,
         )
 
     def _format_responses_attachments(self, attachments: list[Any]) -> list[dict[str, Any]]:
