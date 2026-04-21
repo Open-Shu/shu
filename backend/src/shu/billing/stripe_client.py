@@ -411,8 +411,16 @@ class StripeClient:
 
         # Stripe API 2026-03-25.dahlia moved current_period_* from the subscription object
         # onto each subscription item. Prefer the item-level value; fall back to the
-        # subscription-level field for compatibility with older API versions.
+        # subscription-level field for compatibility with older API versions. If neither
+        # carries the fields, the payload shape has drifted beyond what this parser
+        # understands — fail loudly with context rather than a bare KeyError.
         period_source = seat_item if seat_item and "current_period_start" in seat_item else subscription_data
+        if "current_period_start" not in period_source or "current_period_end" not in period_source:
+            raise StripeClientError(
+                f"Subscription {subscription_data.get('id')!r} webhook payload has no "
+                "current_period_start/current_period_end at item level or subscription level; "
+                f"Stripe API version may have drifted past {stripe.api_version!r}"
+            )
         period_start_ts = period_source["current_period_start"]
         period_end_ts = period_source["current_period_end"]
 

@@ -6,7 +6,7 @@ verify, raise HTTPException) and is covered end-to-end by the SHU-712 lab
 scenario matrix rather than unit-level FastAPI mocking.
 
 Cross-implementation compatibility with the router's signer lives in
-shu-control-plane/tests; duplicating it here would coupled the two repos.
+shu-control-plane/tests; duplicating it here would couple the two repos.
 """
 
 from __future__ import annotations

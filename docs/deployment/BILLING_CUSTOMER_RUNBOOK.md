@@ -114,7 +114,7 @@ The OpenRouter API key is typically shared across tenants via the deployment ove
 OCR traffic routes directly to `api.mistral.ai` (not through OpenRouter). Single Mistral account, single API key, shared across tenants in the same way as OpenRouter.
 
 > **Gap — Mistral OCR usage recording**
-> SHU-711 fixes the provider-name mismatch that's silently dropping OCR `llm_usage` rows. Until it lands, OCR extractions work but their cost is not metered and customers are under-billed for OCR. Do not onboard customers whose workload is OCR-heavy (scanned document corpora) until SHU-711 ships.
+> SHU-711 fixes the provider-name mismatch that's silently dropping OCR `llm_usage` rows. Until it lands, OCR extractions work but their cost is not metered and customers are under-billed for OCR. Must be fixed before go-live.
 
 ## Deployment overlay
 
@@ -213,8 +213,10 @@ kubectl -n shu-tenant-<slug> rollout status deployment/shu-frontend --timeout=5m
 Verify `billing_state` row was seeded:
 
 ```bash
-# Connect to external Postgres, per-tenant DB
-psql "$(kubectl -n shu-tenant-<slug> get secret shu-secrets -o jsonpath='{.data.database-url}' | base64 -d)" \
+# Connect to external Postgres, per-tenant DB.
+# base64 -d works on GNU coreutils (Linux) and modern macOS; on older macOS
+# use -D, or use --decode for GNU. The `|| base64 -D` fallback is portable.
+psql "$(kubectl -n shu-tenant-<slug> get secret shu-secrets -o jsonpath='{.data.database-url}' | { base64 -d 2>/dev/null || base64 -D; })" \
   -c "SELECT stripe_customer_id, stripe_subscription_id, subscription_status FROM billing_state;"
 ```
 
