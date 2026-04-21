@@ -147,7 +147,7 @@ Per-tenant secret fields (same shape as the lab's `shu-secrets.yaml`):
 
 | Field | Source | Notes |
 |---|---|---|
-| `database-url` | External Postgres per-tenant | `postgresql+asyncpg://user:pass@host:5432/tenant_<slug>` |
+| `database-url` | External Postgres per-tenant | `postgresql+asyncpg://<user>:<pass>@host:5432/tenant_<slug>` |
 | `jwt-secret-key` | Generate per tenant | Different from other tenants |
 | `llm-encryption-key` | Generate per tenant | Different from other tenants |
 | `oauth-encryption-key` | Generate per tenant | Different from other tenants |

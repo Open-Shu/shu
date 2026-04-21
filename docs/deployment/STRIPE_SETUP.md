@@ -363,7 +363,7 @@ On startup, Shu validates the configuration. Check the logs for any "SHU_STRIPE_
 
 Run these checks after configuring a new instance. All URLs use `http://localhost:8000` for local dev — substitute the instance's public URL for deployed instances.
 
-### 3.1 Billing state seeded correctly (database — authoritative)
+### 4.1 Billing state seeded correctly (database — authoritative)
 
 The direct source of truth is the `billing_state` row. Query it straight from Postgres:
 
@@ -388,7 +388,7 @@ What to verify:
 
 If the row is missing or fields are NULL, the seed didn't run (usually because the service started before Postgres was ready — restart the service pod once Postgres is healthy). See `### Seeding didn't populate stripe_customer_id / stripe_subscription_id` under Troubleshooting.
 
-### 3.1.1 Publishable key exposure (admin auth required)
+### 4.2 Publishable key exposure (admin auth required)
 
 Separate check: the frontend Stripe Elements flow needs the publishable key surfaced to admins. The `/billing/config` endpoint requires an admin JWT (all endpoints under `/api/v1/billing/*` are behind `AuthenticationMiddleware`; only `/api/v1/config/public` and explicit public paths bypass auth).
 
@@ -410,7 +410,7 @@ Expected:
 
 If `configured` is `false`, the env vars didn't load at startup — check for typos and restart. If you get `{"detail":"Authentication required"}` with no `Authorization` header, that's the expected middleware behavior, not a bug.
 
-### 3.2 Subscription status (admin auth required)
+### 4.3 Subscription status (admin auth required)
 
 ```bash
 curl -H "Authorization: Bearer <admin-jwt>" http://localhost:8000/api/v1/billing/subscription
@@ -437,7 +437,7 @@ Expected after startup with `SHU_STRIPE_CUSTOMER_ID` and `SHU_STRIPE_SUBSCRIPTIO
 `subscription_status` stays `"pending"` until the first `customer.subscription.created` webhook
 arrives from Stripe.
 
-### 3.3 Env seeding verification
+### 4.4 Env seeding verification
 
 Confirm that startup seeding wrote the tenant identifiers correctly.
 
@@ -456,7 +456,7 @@ Confirm that startup seeding wrote the tenant identifiers correctly.
 5. Trigger a test webhook from the Stripe Dashboard (or Stripe CLI) to confirm the customer
    scoping guard accepts events for this customer ID and drops events for others.
 
-### 3.4 Quantity sync
+### 4.5 Quantity sync
 
 Shu applies an **asymmetric seat-change policy** (SHU-704): **seat increases take effect immediately**, **seat decreases are deferred to the next period boundary**. This closes the gaming vector where a customer buys N seats, burns the `N × $50` included-usage grant in a day, then drops back to 1 seat and pockets a proration refund. Upgrades are immediate because the customer is paying for and immediately using the additional allowance; downgrades wait because the customer has already paid for the current period's seat count and should keep that allowance through period end.
 
@@ -476,7 +476,7 @@ Verify in the Stripe Dashboard: **Customers > [Your customer] > Subscriptions > 
 
 **Period rollover — verify deferred downgrade applies.** On the next `invoice.paid` webhook (simulate via Stripe CLI `trigger invoice.paid` or wait for the billing period), Shu calls `Subscription.modify(quantity=pending_quantity, proration_behavior="none")`, clears `pending_quantity` to NULL, then issues the new period's Credit Grant at the post-rollover quantity.
 
-### 3.5 Usage reporting
+### 4.6 Usage reporting
 
 Usage reporting runs on the scheduler's hourly interval. For testing, you can either:
 
@@ -487,7 +487,7 @@ interval elapses. Or reset `last_reported_total` and `last_reported_period_start
 (via `psql -d shu -c "UPDATE billing_state SET last_reported_total=0, last_reported_period_start=NULL WHERE id=1;"`)
 to force a fresh reconciliation on next tick.
 
-### 3.6 Customer portal
+### 4.7 Customer portal
 
 ```bash
 curl -H "Authorization: Bearer <admin-jwt>" http://localhost:8000/api/v1/billing/portal

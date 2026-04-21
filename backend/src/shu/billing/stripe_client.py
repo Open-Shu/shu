@@ -410,19 +410,24 @@ class StripeClient:
         quantity = (seat_item.get("quantity") or 1) if seat_item else 1
 
         # Stripe API 2026-03-25.dahlia moved current_period_* from the subscription object
-        # onto each subscription item. Prefer the item-level value; fall back to the
-        # subscription-level field for compatibility with older API versions. If neither
-        # carries the fields, the payload shape has drifted beyond what this parser
-        # understands — fail loudly with context rather than a bare KeyError.
-        period_source = seat_item if seat_item and "current_period_start" in seat_item else subscription_data
-        if "current_period_start" not in period_source or "current_period_end" not in period_source:
+        # onto each subscription item. Prefer the item-level value when BOTH fields are
+        # present; fall back to the subscription-level fields for compatibility with older
+        # API versions. If neither carries both fields (or either value is None/non-numeric),
+        # the payload shape has drifted beyond what this parser understands — fail loudly
+        # with context rather than letting datetime.fromtimestamp raise a bare TypeError.
+        period_source = (
+            seat_item
+            if seat_item and "current_period_start" in seat_item and "current_period_end" in seat_item
+            else subscription_data
+        )
+        period_start_ts = period_source.get("current_period_start")
+        period_end_ts = period_source.get("current_period_end")
+        if not isinstance(period_start_ts, (int, float)) or not isinstance(period_end_ts, (int, float)):
             raise StripeClientError(
-                f"Subscription {subscription_data.get('id')!r} webhook payload has no "
+                f"Subscription {subscription_data.get('id')!r} webhook payload has no valid "
                 "current_period_start/current_period_end at item level or subscription level; "
                 f"Stripe API version may have drifted past {stripe.api_version!r}"
             )
-        period_start_ts = period_source["current_period_start"]
-        period_end_ts = period_source["current_period_end"]
 
         return SubscriptionUpdate(
             stripe_subscription_id=subscription_data["id"],

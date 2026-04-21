@@ -411,7 +411,7 @@ async def _handle_content_embed_job(job) -> None:
                     # active embedding service. If a prior detect_stale_kbs run had flipped
                     # the KB to 'stale' based on the old default model name, clear that now —
                     # the chunks we're about to write will be produced by the current service.
-                    if str(kb.embedding_status) == "stale":
+                    if kb.embedding_status == "stale":
                         kb.embedding_status = "current"
 
             # Set EMBEDDING status before processing so a crash mid-embed leaves

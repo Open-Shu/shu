@@ -410,9 +410,10 @@ Register with your email. If auto-activate is off or the user is flagged inactiv
 Obtain a JWT (for CLI testing):
 
 ```bash
+LOGIN_PAYLOAD='{"email":"you@your-domain.com","password":"YOUR_PASSWORD"}'  # pragma: allowlist secret
 curl -sS -X POST http://localhost/api/v1/auth/login/password \
   -H "Content-Type: application/json" \
-  -d '{"email":"you@your-domain.com","password":"YOUR_PASSWORD"}' \
+  -d "$LOGIN_PAYLOAD" \
   | python -c "import json,sys; print(json.load(sys.stdin)['data']['access_token'])"
 ```
 
@@ -507,9 +508,10 @@ Expected: `subscription_status='active'`, `quantity=1`, periods populated.
 Create a second user via the admin API:
 
 ```bash
+NEW_USER_PAYLOAD='{"email":"user2@your-domain.com","password":"userpass123!","name":"User Two","role":"regular_user"}'  # pragma: allowlist secret
 curl -sS -X POST http://localhost/api/v1/auth/users \
   -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
-  -d '{"email":"user2@your-domain.com","password":"userpass123!","name":"User Two","role":"regular_user"}'
+  -d "$NEW_USER_PAYLOAD"
 ```
 
 The scheduler's `billing_quantity_sync` source runs every 60s. Within a minute, check:
