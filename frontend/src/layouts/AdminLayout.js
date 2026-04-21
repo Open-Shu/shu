@@ -37,6 +37,7 @@ import {
 
 import { useNavigate, useLocation } from 'react-router-dom';
 import TopBar from '../components/layout/TopBar.jsx';
+import { PLUGINS_ENABLED, MCP_ENABLED, EXPERIENCES_ENABLED } from '../config/featureFlags';
 
 const DRAWER_WIDTH = 280;
 
@@ -71,13 +72,14 @@ const AdminLayout = ({ children }) => {
       path: '/admin/knowledge-bases',
     },
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
-    { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins' },
-    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds' },
-    { text: 'MCP Servers', icon: <HubIcon />, path: '/admin/mcp' },
+    { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins', featureFlag: PLUGINS_ENABLED },
+    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds', featureFlag: PLUGINS_ENABLED },
+    { text: 'MCP Servers', icon: <HubIcon />, path: '/admin/mcp', featureFlag: MCP_ENABLED },
     {
       text: 'Experiences',
       icon: <ExperiencesIcon />,
       path: '/admin/experiences',
+      featureFlag: EXPERIENCES_ENABLED,
     },
     {
       text: 'Query Tester',
@@ -131,12 +133,18 @@ const AdminLayout = ({ children }) => {
               KNOWLEDGE MANAGEMENT
             </Typography>
           </ListItem>
-          {adminMenuItems.map((item) => (
-            <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
-              <ListItemIcon>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
-          ))}
+          {adminMenuItems
+            .filter((item) => item.featureFlag !== false)
+            .map((item) => (
+              <ListItemButton
+                key={item.text}
+                selected={isActive(item.path)}
+                onClick={() => handleNavigation(item.path)}
+              >
+                <ListItemIcon>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.text} />
+              </ListItemButton>
+            ))}
         </List>
 
         <Divider />

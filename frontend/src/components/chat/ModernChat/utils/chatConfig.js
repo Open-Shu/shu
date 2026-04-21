@@ -1,6 +1,8 @@
 // Centralized configuration for ModernChat UI and streaming
 // Values can be overridden via environment variables at build time (Vite: VITE_*)
 
+import { PLUGINS_ENABLED } from '../../../../config/featureFlags';
+
 const parsePositiveInt = (envKey, fallback) => {
   const raw = import.meta.env[envKey];
   if (raw === undefined || raw === null || raw === '') {
@@ -37,7 +39,11 @@ const parseBoolean = (envKey, fallback = false) => {
 };
 
 // Feature toggles
-export const CHAT_PLUGINS_ENABLED = parseBoolean('VITE_CHAT_PLUGINS_ENABLED', false);
+// Chat plugin calling requires the plugins feature to be enabled at the app level.
+// When VITE_PLUGINS_ENABLED is false, chat plugins are forced off regardless of
+// VITE_CHAT_PLUGINS_ENABLED to prevent UI showing plugin controls with no
+// admin/subscriptions pages available.
+export const CHAT_PLUGINS_ENABLED = parseBoolean('VITE_CHAT_PLUGINS_ENABLED', false) && PLUGINS_ENABLED;
 
 // Windowing + scroll thresholds
 export const CHAT_WINDOW_SIZE = parsePositiveInt('VITE_CHAT_WINDOW_SIZE', 15);

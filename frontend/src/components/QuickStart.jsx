@@ -34,6 +34,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName } from '../utils/constants';
+import { PLUGINS_ENABLED, EXPERIENCES_ENABLED } from '../config/featureFlags';
 import PageHelpHeader from './PageHelpHeader';
 import { setupAPI, extractDataFromResponse } from '../services/api';
 
@@ -206,6 +207,7 @@ const QuickStart = () => {
       path: '/admin/plugins',
       priority: 'Step 5',
       statusKey: 'plugins_enabled',
+      featureFlag: PLUGINS_ENABLED,
     },
     {
       title: 'Plugin Feeds',
@@ -215,6 +217,7 @@ const QuickStart = () => {
       path: '/admin/feeds',
       priority: 'Step 6',
       statusKey: 'plugin_feed_created',
+      featureFlag: PLUGINS_ENABLED,
     },
     {
       title: 'Experiences',
@@ -224,6 +227,7 @@ const QuickStart = () => {
       path: '/admin/experiences',
       priority: 'Step 7',
       statusKey: 'experience_created',
+      featureFlag: EXPERIENCES_ENABLED,
     },
   ];
 
@@ -264,6 +268,7 @@ const QuickStart = () => {
         'Run an AI-powered daily briefing that summarizes your calendar, email, and chat. Experimental demo feature.',
       icon: <BriefingIcon />,
       path: '/admin/briefing',
+      featureFlag: EXPERIENCES_ENABLED,
     },
     {
       title: 'Query Tester',
@@ -285,9 +290,13 @@ const QuickStart = () => {
     },
   ];
 
-  // Calculate progress for Getting Started section
-  const completedSteps = gettingStartedSections.filter((s) => s.statusKey && getCompletionStatus(s.statusKey)).length;
-  const totalSteps = gettingStartedSections.length;
+  // Filter out sections gated by disabled feature flags
+  const visibleGettingStarted = gettingStartedSections.filter((s) => s.featureFlag !== false);
+  const visibleTools = toolsSections.filter((s) => s.featureFlag !== false);
+
+  // Calculate progress for Getting Started section (only visible cards)
+  const completedSteps = visibleGettingStarted.filter((s) => s.statusKey && getCompletionStatus(s.statusKey)).length;
+  const totalSteps = visibleGettingStarted.length;
 
   const renderSection = (title, sections, columns = 4, showProgress = false) => (
     <Box sx={{ mb: 4 }}>
@@ -329,16 +338,16 @@ const QuickStart = () => {
           'Start by configuring an LLM Provider with your API key (OpenAI, Anthropic, Ollama, etc.)',
           'Create a Model Configuration to define which AI model powers your assistant',
           'Create a Knowledge Base to store documents your assistant can reference',
-          'Enable Plugins to connect external services and power automated data feeds',
+          ...(PLUGINS_ENABLED ? ['Enable Plugins to connect external services and power automated data feeds'] : []),
           'Use the Query Tester and LLM Tester to verify everything is working correctly',
         ]}
         defaultExpanded={true}
       />
 
-      {renderSection('Getting Started', gettingStartedSections, 3, true)}
+      {renderSection('Getting Started', visibleGettingStarted, 3, true)}
       {renderSection('Configuration', advancedSections, 3)}
       {renderSection('Access Control', accessControlSections, 3)}
-      {renderSection('Tools & Testing', toolsSections, 4)}
+      {renderSection('Tools & Testing', visibleTools, 4)}
 
       <Box sx={{ mt: 4, p: 2, backgroundColor: 'action.hover', borderRadius: 2 }}>
         <Typography variant="subtitle2" color="text.secondary">
@@ -353,22 +362,26 @@ const QuickStart = () => {
               A searchable collection of documents. Used for RAG to give your AI context about your data.
             </Typography>
           </Grid>
-          <Grid item xs={12} md={4}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              Plugin
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              An extension that adds capabilities like email reading, calendar access, or web search.
-            </Typography>
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              Feed
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              An automated job that runs a plugin operation on a schedule to sync data into a KB.
-            </Typography>
-          </Grid>
+          {PLUGINS_ENABLED && (
+            <Grid item xs={12} md={4}>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                Plugin
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                An extension that adds capabilities like email reading, calendar access, or web search.
+              </Typography>
+            </Grid>
+          )}
+          {PLUGINS_ENABLED && (
+            <Grid item xs={12} md={4}>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                Feed
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                An automated job that runs a plugin operation on a schedule to sync data into a KB.
+              </Typography>
+            </Grid>
+          )}
         </Grid>
       </Box>
     </Box>

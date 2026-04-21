@@ -42,6 +42,7 @@ import ForceChangePasswordGate from './components/ForceChangePasswordGate';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 
 import configService from './services/config';
+import { PLUGINS_ENABLED, MCP_ENABLED, EXPERIENCES_ENABLED } from './config/featureFlags';
 
 // Theme Context
 import { ThemeProvider as CustomThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -140,22 +141,26 @@ const AuthenticatedApp = () => {
           />
 
           {/* Experience Dashboard - Available to ALL users */}
-          <Route
-            path="/dashboard"
-            element={
-              <RoleBasedRoute layout="user">
-                <DashboardPage />
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/experience/:experienceId"
-            element={
-              <RoleBasedRoute layout="user">
-                <ExperienceDetailPage />
-              </RoleBasedRoute>
-            }
-          />
+          {EXPERIENCES_ENABLED && (
+            <Route
+              path="/dashboard"
+              element={
+                <RoleBasedRoute layout="user">
+                  <DashboardPage />
+                </RoleBasedRoute>
+              }
+            />
+          )}
+          {EXPERIENCES_ENABLED && (
+            <Route
+              path="/dashboard/experience/:experienceId"
+              element={
+                <RoleBasedRoute layout="user">
+                  <ExperienceDetailPage />
+                </RoleBasedRoute>
+              }
+            />
+          )}
 
           {/* User Permissions Dashboard - Available to ALL users */}
           <Route
@@ -168,14 +173,16 @@ const AuthenticatedApp = () => {
           />
 
           {/* Connected Accounts - Available to ALL users */}
-          <Route
-            path="/settings/connected-accounts"
-            element={
-              <RoleBasedRoute layout="user">
-                <ConnectedAccountsPage />
-              </RoleBasedRoute>
-            }
-          />
+          {PLUGINS_ENABLED && (
+            <Route
+              path="/settings/connected-accounts"
+              element={
+                <RoleBasedRoute layout="user">
+                  <ConnectedAccountsPage />
+                </RoleBasedRoute>
+              }
+            />
+          )}
 
           {/* User Preferences - Available to ALL users */}
           <Route path="/settings/preferences" element={<Navigate to="/settings/preferences/general" replace />} />
@@ -298,60 +305,72 @@ const AuthenticatedApp = () => {
               </RoleBasedRoute>
             }
           />
-          <Route
-            path="/admin/plugins"
-            element={
-              <RoleBasedRoute adminOnly>
-                <PluginsAdmin />
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/admin/mcp"
-            element={
-              <RoleBasedRoute adminOnly>
-                <McpAdmin />
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/admin/feeds"
-            element={
-              <RoleBasedRoute adminOnly>
-                <PluginsAdminFeeds />
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/admin/experiences"
-            element={
-              <RoleBasedRoute adminOnly>
-                <ProtectedRoute requiredRole="admin">
-                  <ExperiencesAdmin />
-                </ProtectedRoute>
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/admin/experiences/new"
-            element={
-              <RoleBasedRoute adminOnly>
-                <ProtectedRoute requiredRole="admin">
-                  <ExperienceEditor />
-                </ProtectedRoute>
-              </RoleBasedRoute>
-            }
-          />
-          <Route
-            path="/admin/experiences/:experienceId/edit"
-            element={
-              <RoleBasedRoute adminOnly>
-                <ProtectedRoute requiredRole="admin">
-                  <ExperienceEditor />
-                </ProtectedRoute>
-              </RoleBasedRoute>
-            }
-          />
+          {PLUGINS_ENABLED && (
+            <Route
+              path="/admin/plugins"
+              element={
+                <RoleBasedRoute adminOnly>
+                  <PluginsAdmin />
+                </RoleBasedRoute>
+              }
+            />
+          )}
+          {MCP_ENABLED && (
+            <Route
+              path="/admin/mcp"
+              element={
+                <RoleBasedRoute adminOnly>
+                  <McpAdmin />
+                </RoleBasedRoute>
+              }
+            />
+          )}
+          {PLUGINS_ENABLED && (
+            <Route
+              path="/admin/feeds"
+              element={
+                <RoleBasedRoute adminOnly>
+                  <PluginsAdminFeeds />
+                </RoleBasedRoute>
+              }
+            />
+          )}
+          {EXPERIENCES_ENABLED && (
+            <Route
+              path="/admin/experiences"
+              element={
+                <RoleBasedRoute adminOnly>
+                  <ProtectedRoute requiredRole="admin">
+                    <ExperiencesAdmin />
+                  </ProtectedRoute>
+                </RoleBasedRoute>
+              }
+            />
+          )}
+          {EXPERIENCES_ENABLED && (
+            <Route
+              path="/admin/experiences/new"
+              element={
+                <RoleBasedRoute adminOnly>
+                  <ProtectedRoute requiredRole="admin">
+                    <ExperienceEditor />
+                  </ProtectedRoute>
+                </RoleBasedRoute>
+              }
+            />
+          )}
+          {EXPERIENCES_ENABLED && (
+            <Route
+              path="/admin/experiences/:experienceId/edit"
+              element={
+                <RoleBasedRoute adminOnly>
+                  <ProtectedRoute requiredRole="admin">
+                    <ExperienceEditor />
+                  </ProtectedRoute>
+                </RoleBasedRoute>
+              }
+            />
+          )}
           <Route
             path="/admin/policies"
             element={
