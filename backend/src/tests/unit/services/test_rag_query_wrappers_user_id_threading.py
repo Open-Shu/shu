@@ -16,10 +16,6 @@ from shu.schemas.query import QueryRequest, RagRewriteMode
 from shu.services import rag_query_processing, rag_query_rewrite
 
 
-def _make_query_request() -> QueryRequest:
-    return QueryRequest(query="hello world how are you", query_type="hybrid", limit=10)
-
-
 def _build_request(_kb_id, _rag_config, query_text):
     return QueryRequest(query=query_text, query_type="hybrid", limit=10)
 

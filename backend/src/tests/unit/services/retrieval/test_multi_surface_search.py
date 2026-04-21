@@ -93,6 +93,25 @@ class TestMultiSurfaceSearchService:
         mock_embedding.embed_query.assert_called_once_with("test query", user_id=None)
 
     @pytest.mark.asyncio
+    async def test_search_forwards_user_id_to_embed_query(self):
+        """SHU-718: when user_id is passed to search(), it must reach
+        embed_query so the embedding llm_usage row attributes to the
+        originating user. Guards against a hardcoded-None regression
+        that the default-user_id test at test_search_embeds_query
+        would not catch.
+        """
+        mock_embedding = MagicMock()
+        mock_embedding.embed_query = AsyncMock(return_value=[0.1] * 1024)
+        service = self._make_service(embedding_service=mock_embedding)
+        mock_session_factory = _make_mock_session_factory()
+
+        await service.search(
+            "test query", uuid4(), session_factory=mock_session_factory, user_id="user-42"
+        )
+
+        mock_embedding.embed_query.assert_called_once_with("test query", user_id="user-42")
+
+    @pytest.mark.asyncio
     async def test_search_passes_results_to_fusion(self):
         """search() should pass surface results to fusion service."""
         doc_id = uuid4()
