@@ -13,6 +13,9 @@ Environment variables:
     SHU_SEED_PROFILING_MODEL   Model ID to designate for document profiling
     SHU_SEED_EMBEDDING_MODEL   Embedding model ID and dimension, e.g. "qwen/qwen3-embedding-8b:4096"
     SHU_SEED_OCR_MODEL         OCR model name (default: "mistral-ocr-latest")
+    SHU_MISTRAL_OCR_API_KEY    Mistral API key; required to seed the dedicated
+                               Mistral OCR provider (talks directly to Mistral's
+                               /ocr endpoint, not OpenRouter)
 
 Usage (from the backend/ directory):
     python scripts/hosting_deployment.py seed
@@ -345,17 +348,61 @@ def _seed_embedding_model(
     print(f"{LOG_PREFIX} Created embedding model '{model_id}' (dimension={dimension})", flush=True)
 
 
-def _seed_ocr_model(cur, model_id: str, provider_ids: dict[str, str]) -> None:
-    """Seed an OCR model row in llm_models.
+MISTRAL_PROVIDER_NAME = _curated("Mistral")
+# Mistral is a general-purpose vendor (chat, embedding, OCR); the provider row
+# is named for the vendor so additional Mistral models can attach to it later
+# without fragmenting into "Mistral OCR" / "Mistral Chat" providers. Type stays
+# generic_completions — matches external_ocr_service._PROVIDER_TYPE_KEY and
+# exists in llm_provider_type_definitions for adapter dispatch.
+MISTRAL_PROVIDER_TYPE = "generic_completions"
 
-    Uses the OpenAI provider since the Mistral OCR API key is routed
-    through the same OpenRouter account.
+
+def _seed_mistral_provider(cur, api_key_encrypted: str) -> str | None:
+    """Seed the Mistral provider row. Returns the provider ID, or None on failure.
+
+    The name must stay in lockstep with
+    shu.services.external_ocr_service._PROVIDER_NAME — that resolver looks up
+    the provider by exact name, and a mismatch silently drops all OCR usage
+    rows (SHU-711).
     """
-    provider_id = provider_ids.get("openai")
-    if not provider_id:
-        print(f"{LOG_PREFIX} OpenAI provider not found, cannot seed OCR model", flush=True)
-        return
+    cur.execute("SELECT id FROM llm_providers WHERE name = %s", (MISTRAL_PROVIDER_NAME,))
+    existing = cur.fetchone()
+    if existing:
+        print(f"{LOG_PREFIX} Provider '{MISTRAL_PROVIDER_NAME}' already exists, skipping", flush=True)
+        return existing[0]
 
+    cur.execute(
+        "SELECT key FROM llm_provider_type_definitions WHERE key = %s",
+        (MISTRAL_PROVIDER_TYPE,),
+    )
+    if not cur.fetchone():
+        print(
+            f"{LOG_PREFIX} Provider type '{MISTRAL_PROVIDER_TYPE}' not found — run migrations first",
+            file=sys.stderr,
+        )
+        return None
+
+    provider_id = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO llm_providers
+            (id, name, provider_type, api_key_encrypted, config, is_active,
+             rate_limit_rpm, rate_limit_tpm, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, true, 0, 0, now(), now())
+        """,
+        (provider_id, MISTRAL_PROVIDER_NAME, MISTRAL_PROVIDER_TYPE, api_key_encrypted, json.dumps({})),
+    )
+    print(f"{LOG_PREFIX} Created provider '{MISTRAL_PROVIDER_NAME}' (id={provider_id})", flush=True)
+    return provider_id
+
+
+def _seed_ocr_model(cur, model_id: str, provider_id: str) -> None:
+    """Seed the Mistral OCR model row in llm_models under the Mistral provider.
+
+    Mistral OCR talks directly to Mistral's /ocr API via SHU_MISTRAL_OCR_API_KEY
+    (not OpenRouter). The model row must live under the dedicated Mistral
+    provider so external_ocr_service can resolve provider + model together.
+    """
     cur.execute(
         "SELECT id FROM llm_models WHERE model_name = %s AND provider_id = %s",
         (model_id, provider_id),
@@ -444,7 +491,19 @@ def run() -> bool:
                 )
 
             if ocr_model:
-                _seed_ocr_model(cur, ocr_model, provider_ids)
+                mistral_api_key = os.getenv("SHU_MISTRAL_OCR_API_KEY")
+                if not mistral_api_key:
+                    print(
+                        f"{LOG_PREFIX} SHU_MISTRAL_OCR_API_KEY not set, skipping Mistral OCR seed",
+                        flush=True,
+                    )
+                else:
+                    mistral_key_encrypted = fernet.encrypt(mistral_api_key.encode()).decode()
+                    mistral_provider_id = _seed_mistral_provider(cur, mistral_key_encrypted)
+                    if mistral_provider_id is None:
+                        conn.rollback()
+                        return False
+                    _seed_ocr_model(cur, ocr_model, mistral_provider_id)
 
         conn.commit()
         print(f"{LOG_PREFIX} Hosting deployment seed complete", flush=True)
@@ -479,6 +538,7 @@ Environment variables (for seed):
   SHU_SEED_PROFILING_MODEL   Model ID for document profiling
   SHU_SEED_EMBEDDING_MODEL   Embedding model as "model_id:dimension" (e.g. "qwen/qwen3-embedding-8b:4096")
   SHU_SEED_OCR_MODEL         OCR model name (default: "mistral-ocr-latest")
+  SHU_MISTRAL_OCR_API_KEY    Mistral API key for the dedicated OCR provider
 
 Examples (from the backend/ directory):
   python scripts/hosting_deployment.py seed
