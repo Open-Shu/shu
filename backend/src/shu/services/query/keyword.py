@@ -37,8 +37,15 @@ class KeywordSearchMixin:
         *,
         title_weighting_enabled: bool | None = None,
         title_weight_multiplier: float | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
-        """Perform keyword search on document chunks with improved term extraction."""
+        """Perform keyword search on document chunks with improved term extraction.
+
+        ``user_id`` is threaded into the title-match precompute ``embed_query``
+        and forwarded on into ``_get_title_match_chunks`` (whose own fallback
+        ``embed_query`` call picks it up if reached) so any resulting
+        llm_usage row attributes to the originating user (SHU-718).
+        """
         try:
             # Verify knowledge base exists
             knowledge_base = await self._verify_knowledge_base(knowledge_base_id)
@@ -162,7 +169,7 @@ class KeywordSearchMixin:
                     from ...core.embedding_service import get_embedding_service
 
                     embedding_service = await get_embedding_service()
-                    precomputed_query_embedding = await embedding_service.embed_query(query)
+                    precomputed_query_embedding = await embedding_service.embed_query(query, user_id=user_id)
 
                     for title_match in title_matches:
                         doc_chunks = await self._get_title_match_chunks(
@@ -171,6 +178,7 @@ class KeywordSearchMixin:
                             max_chunks=max_chunks_per_doc,
                             knowledge_base_id=knowledge_base_id,
                             query_embedding=precomputed_query_embedding,
+                            user_id=user_id,
                         )
 
                         # Convert to the expected format and apply title boost
@@ -341,6 +349,8 @@ class KeywordSearchMixin:
         max_chunks: int,
         knowledge_base_id: str,
         query_embedding: list[float] | None = None,
+        *,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """For title-matched documents, find the most relevant chunks within that document.
         Uses the original query to find semantically and keyword relevant chunks.
@@ -385,7 +395,7 @@ class KeywordSearchMixin:
                 from ...core.embedding_service import get_embedding_service
 
                 embedding_service = await get_embedding_service()
-                query_embedding = await embedding_service.embed_query(query)
+                query_embedding = await embedding_service.embed_query(query, user_id=user_id)
 
             # Preprocess query and get weights once (loop-invariant)
             processed = self.preprocess_query(query)

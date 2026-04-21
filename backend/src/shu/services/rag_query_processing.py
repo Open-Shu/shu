@@ -98,8 +98,15 @@ async def execute_rag_queries(
     prior_messages: Sequence[Message] | None = None,
     timeout_ms: int = 5000,
     rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
+    *,
+    user_id: str | None = None,
 ) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
-    """Process a query, enforce minimum word checks, and execute queries for KBs."""
+    """Process a query, enforce minimum word checks, and execute queries for KBs.
+
+    ``user_id`` is forwarded to ``QueryService.query_documents`` so any
+    embedding ``llm_usage`` rows written during retrieval attribute to the
+    originating user (SHU-718).
+    """
     rewritten_query, rewrite_diagnostics = await process_query_for_rag(
         db_session=db_session,
         config_manager=config_manager,
@@ -146,7 +153,7 @@ async def execute_rag_queries(
             continue
 
         try:
-            response = await query_service.query_documents(kb_id, query_request)
+            response = await query_service.query_documents(kb_id, query_request, user_id=user_id)
             if hasattr(response, "model_dump"):
                 response = response.model_dump(mode="json")
             responses.append(

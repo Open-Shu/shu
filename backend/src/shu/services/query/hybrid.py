@@ -34,6 +34,7 @@ class HybridSearchMixin:
         *,
         title_weighting_enabled: bool | None = None,
         title_weight_multiplier: float | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """Perform hybrid search (combination of similarity and keyword).
 
@@ -46,6 +47,9 @@ class HybridSearchMixin:
             query: Search query
             limit: Maximum number of results to return
             threshold: Similarity threshold for filtering results
+            user_id: Optional user attribution forwarded to both sub-searches
+                so the resulting embedding llm_usage rows attribute to the
+                originating user (SHU-718).
 
         Returns:
             Dictionary with search results
@@ -73,7 +77,9 @@ class HybridSearchMixin:
                     created_after=None,
                     created_before=None,
                 )
-                similarity_response = await self.similarity_search(knowledge_base_id, similarity_request)
+                similarity_response = await self.similarity_search(
+                    knowledge_base_id, similarity_request, user_id=user_id
+                )
             except ShuException as e:
                 if e.error_code == "KNOWLEDGE_BASE_STALE_EMBEDDINGS":
                     logger.warning(
@@ -89,6 +95,7 @@ class HybridSearchMixin:
                 limit,
                 title_weighting_enabled=title_weighting_enabled,
                 title_weight_multiplier=title_weight_multiplier,
+                user_id=user_id,
             )
 
             # Log keyword search results for debugging

@@ -94,6 +94,7 @@ async def query_documents(
             request_builder=build_request,
             prior_messages=None,
             rag_rewrite_mode=request.rag_rewrite_mode,
+            user_id=str(current_user.id),
         )
 
         if query_results:

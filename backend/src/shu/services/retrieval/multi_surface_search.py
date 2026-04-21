@@ -73,6 +73,7 @@ class MultiSurfaceSearchService:
         threshold: float = 0.0,
         max_chunks_per_document: int = 2,
         session_factory: async_sessionmaker,
+        user_id: str | None = None,
     ) -> tuple[list[FusedResult], dict[str, dict[str, float]], list[FormattedDocument]]:
         """Execute multi-surface search and return fused results.
 
@@ -83,6 +84,9 @@ class MultiSurfaceSearchService:
             threshold: Minimum final score threshold.
             session_factory: Factory for creating database sessions. Each surface
                 gets its own session to allow safe parallel execution.
+            user_id: Optional user attribution forwarded to
+                ``embedding_service.embed_query`` so the resulting llm_usage
+                row attributes to the originating user (SHU-718).
 
         Returns:
             Tuple of (fused_results, all_surface_scores, formatted_docs) where
@@ -94,7 +98,7 @@ class MultiSurfaceSearchService:
         start_time = time.perf_counter()
 
         # Step 1: Generate query embedding
-        query_vector = await self._embedding_service.embed_query(query)
+        query_vector = await self._embedding_service.embed_query(query, user_id=user_id)
 
         # Step 2: Execute all surfaces in parallel (each gets its own session)
         # NOTE: Each surface checks out a connection from the pool. With N surfaces + 1 fusion,

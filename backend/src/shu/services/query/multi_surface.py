@@ -71,6 +71,7 @@ class MultiSurfaceSearchMixin:
         bm25_weight: float | None = None,
         chunk_summary_weight: float | None = None,
         fusion_formula: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """Perform multi-surface search across multiple retrieval strategies.
 
@@ -87,6 +88,9 @@ class MultiSurfaceSearchMixin:
             synopsis_match_weight: Weight for synopsis match surface (None = use config default)
             bm25_weight: Weight for BM25 surface (None = use config default)
             chunk_summary_weight: Weight for chunk summary surface (None = use config default)
+            user_id: Optional user attribution forwarded into the orchestrator's
+                ``embed_query`` call so the resulting llm_usage row attributes
+                to the originating user (SHU-718).
 
         Returns:
             Dictionary with search results in QueryResponse format
@@ -173,6 +177,7 @@ class MultiSurfaceSearchMixin:
                 threshold=threshold,
                 max_chunks_per_document=max_chunks_per_doc,
                 session_factory=get_async_session_local(),
+                user_id=user_id,
             )
 
             # Convert FusedResult to QueryResult format

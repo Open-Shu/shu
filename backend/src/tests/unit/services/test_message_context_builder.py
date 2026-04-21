@@ -149,3 +149,43 @@ class TestGetRagSectionsKBIds:
             mock_exec.assert_not_awaited()
             assert sections == []
             assert metadata == []
+
+
+class TestUserIdThreadingFromMessageContext:
+    """SHU-718 regression: _get_rag_sections must forward the acting user's
+    ID into ``execute_rag_queries`` so retrieval-time embedding ``llm_usage``
+    rows attribute to the originating user.
+
+    Dropping ``user_id`` at this boundary would leave every RAG-enabled chat
+    turn producing NULL-user_id embedding rows despite ``current_user`` being
+    in scope at the chat layer — the exact bug SHU-718 closes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_rag_sections_forwards_user_id_to_execute_rag_queries(self):
+        builder = _make_builder()
+        conversation = _mock_conversation()
+        current_user = _mock_user(user_id="user-42")
+        model = MagicMock()
+
+        with patch(
+            "shu.services.message_context_builder.execute_rag_queries",
+            new_callable=AsyncMock,
+            return_value=("rewritten", None, []),
+        ) as mock_exec:
+            await builder._get_rag_sections(
+                conversation=conversation,
+                user_message="test query",
+                current_user=current_user,
+                knowledge_base_ids=["kb-1"],
+                rag_rewrite_mode=RagRewriteMode.RAW_QUERY,
+                model=model,
+                conversation_messages=[],
+            )
+
+        mock_exec.assert_awaited_once()
+        assert mock_exec.call_args.kwargs.get("user_id") == "user-42", (
+            "MessageContextBuilder must forward str(current_user.id) into "
+            "execute_rag_queries so retrieval-side embedding llm_usage rows "
+            "attribute to the originating user (SHU-718)."
+        )

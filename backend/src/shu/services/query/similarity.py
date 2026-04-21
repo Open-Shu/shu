@@ -21,12 +21,21 @@ class SimilaritySearchMixin:
     """Mixin providing vector similarity search."""
 
     @measure_execution_time
-    async def similarity_search(self, knowledge_base_id: str, request: "SimilaritySearchRequest") -> dict[str, Any]:
+    async def similarity_search(
+        self,
+        knowledge_base_id: str,
+        request: "SimilaritySearchRequest",
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         """Perform vector similarity search on document chunks.
 
         Args:
             knowledge_base_id: ID of the knowledge base to search
             request: Similarity search request
+            user_id: Optional user attribution for the embedding llm_usage row.
+                Threaded down to ``embedding_service.embed_query`` so the row
+                lands with the originating user. See SHU-718.
 
         Returns:
             Dictionary with search results
@@ -62,7 +71,7 @@ class SimilaritySearchMixin:
             from ...core.embedding_service import get_embedding_service
 
             embedding_service = await get_embedding_service()
-            query_embedding = await embedding_service.embed_query(processed["similarity_query"])
+            query_embedding = await embedding_service.embed_query(processed["similarity_query"], user_id=user_id)
 
             # Perform vector similarity search via VectorStore
             from ...core.vector_store import get_vector_store
