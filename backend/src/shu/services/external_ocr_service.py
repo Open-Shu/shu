@@ -23,7 +23,13 @@ from .usage_recording import record_llm_usage
 logger = get_logger(__name__)
 
 _PROVIDER_TYPE_KEY = "generic_completions"
-_PROVIDER_NAME = "Mistral OCR (auto-provisioned)"
+# Must stay in lockstep with the name seeded by
+# backend/scripts/hosting_deployment.py::_seed_mistral_provider. Mistral is a
+# general-purpose provider (chat, embedding, OCR); the row is named for the
+# vendor, not the OCR capability. The "Shu Curated:" prefix is the epic-wide
+# convention (SHU-713) for seeder-created rows so they cannot collide with
+# customer-added entries.
+_PROVIDER_NAME = "Shu Curated: Mistral"
 
 
 def _coerce_non_negative_int(value: Any, fallback: int) -> int:
