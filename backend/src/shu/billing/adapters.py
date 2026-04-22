@@ -35,6 +35,10 @@ class UsageRecordImpl:
     output_tokens: int
     cost_usd: Decimal
     usage_type: str
+    # Snapshot of model.model_name at insert time (SHU-727). Populated even
+    # when model_id is NULL because the FK target was deleted, so downstream
+    # displays can still show a human-readable name instead of "unknown".
+    model_name: str | None = None
 
 
 @dataclass
@@ -46,6 +50,8 @@ class ModelUsageImpl:
     output_tokens: int
     cost_usd: Decimal
     request_count: int
+    # See UsageRecordImpl.model_name — same snapshot semantics.
+    model_name: str | None = None
 
 
 @dataclass
@@ -103,6 +109,7 @@ class UsageProviderImpl:
                 UsageRecordImpl(
                     timestamp=row.created_at,
                     model_id=row.model_id or "unknown",
+                    model_name=row.model_name,
                     input_tokens=row.input_tokens or 0,
                     output_tokens=row.output_tokens or 0,
                     cost_usd=row.total_cost if row.total_cost is not None else Decimal("0"),
@@ -120,10 +127,14 @@ class UsageProviderImpl:
 
         Returns totals and breakdown by model.
         """
-        # Aggregate by model
+        # Aggregate by model. Group on the snapshot model_name as well so rows
+        # whose model_id FK was nulled out (provider/model deleted — SHU-727)
+        # still surface a human-readable label instead of collapsing into a
+        # single "unknown" bucket.
         result = await self._db.execute(
             select(
                 LLMUsage.model_id,
+                LLMUsage.model_name,
                 func.sum(LLMUsage.input_tokens).label("input_tokens"),
                 func.sum(LLMUsage.output_tokens).label("output_tokens"),
                 func.sum(LLMUsage.total_cost).label("total_cost"),
@@ -135,7 +146,7 @@ class UsageProviderImpl:
                 LLMUsage.created_at < period_end,
                 LLMProvider.is_system_managed.is_(True),
             )
-            .group_by(LLMUsage.model_id)
+            .group_by(LLMUsage.model_id, LLMUsage.model_name)
         )
 
         by_model: dict[str, ModelUsageImpl] = {}
@@ -152,8 +163,12 @@ class UsageProviderImpl:
             cost = row.total_cost if row.total_cost is not None else Decimal("0")
             count = int(row.request_count or 0)
 
-            by_model[model_id] = ModelUsageImpl(
+            # When model_id is NULL (FK cascade), bucket by the snapshot name
+            # so different deleted models don't collide under one key.
+            bucket_key = model_id if row.model_id else f"unknown:{row.model_name or 'unnamed'}"
+            by_model[bucket_key] = ModelUsageImpl(
                 model_id=model_id,
+                model_name=row.model_name,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cost_usd=cost,
