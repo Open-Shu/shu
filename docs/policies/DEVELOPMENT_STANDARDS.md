@@ -176,7 +176,15 @@ select(Model).where(Model.column != None)  # Also works
 
 **Prevention**: This pattern is difficult to catch with linters. Code reviews must check for this pattern in all SQLAlchemy queries.
 
-### 4.2. Time & Timezones (REQUIRED)
+### 4.2. Billing & audit table preservation (REQUIRED)
+
+`llm_usage` is the system of record for dollar-denominated costs pushed to the Stripe meter and for per-user usage attribution. Losing rows — even for a deleted provider or model — breaks billing reconciliation and forfeits audit history that support and compliance workflows rely on.
+
+**Never declare `ON DELETE CASCADE` on a foreign key pointing *out* of `llm_usage`.** Both `provider_id` and `model_id` FKs must be `ON DELETE SET NULL`, and both referencing columns must be nullable so the SET NULL transition is schema-legal. Every write path populates the `provider_name` / `model_name` snapshot columns at INSERT time so the rows remain human-readable after the FK target is deleted. The snapshot is point-in-time — never updated on source mutation.
+
+Any new table that captures billing, audit, or compliance-critical data should follow the same rule: outbound FKs are `SET NULL`, and denormalized snapshot columns preserve context the FK used to provide.
+
+### 4.3. Time & Timezones (REQUIRED)
 
 - Always use timezone-aware datetimes in backend code (tzinfo set) and normalize to UTC.
 - When generating timestamps, use `datetime.now(timezone.utc)`.

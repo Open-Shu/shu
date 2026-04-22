@@ -173,9 +173,19 @@ class LLMUsage(BaseModel):
 
     __tablename__ = "llm_usage"
 
-    # Provider and model references
-    provider_id = Column(String, ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Provider and model references. Both FKs use ON DELETE SET NULL so
+    # billing/audit rows survive provider or model lifecycle events — the
+    # llm_usage table is the system of record for costs pushed to the
+    # Stripe meter, and losing rows would break reconciliation (SHU-727).
+    provider_id = Column(String, ForeignKey("llm_providers.id", ondelete="SET NULL"), nullable=True, index=True)
     model_id = Column(String, ForeignKey("llm_models.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Snapshot of provider.name / model.model_name captured at insert time.
+    # Never updated when the source row changes — this is point-in-time
+    # audit context that must remain readable even after the FK target is
+    # deleted. Read paths should prefer these when the FK is NULL.
+    provider_name = Column(String(255), nullable=True)
+    model_name = Column(String(255), nullable=True)
 
     # User reference (from auth system)
     user_id = Column(String, nullable=True, index=True)  # Optional user tracking
@@ -205,7 +215,8 @@ class LLMUsage(BaseModel):
 
     def __repr__(self) -> str:
         """Represent as string."""
-        return f"<LLMUsage(model='{self.model.model_name if self.model else 'Unknown'}', tokens={self.total_tokens}, cost=${self.total_cost})>"
+        name = self.model.model_name if self.model else (self.model_name or "Unknown")
+        return f"<LLMUsage(model='{name}', tokens={self.total_tokens}, cost=${self.total_cost})>"
 
 
 class Conversation(BaseModel):

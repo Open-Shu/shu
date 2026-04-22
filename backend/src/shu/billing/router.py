@@ -207,6 +207,7 @@ async def get_current_usage(
             "by_model": [
                 {
                     "model_id": m.model_id,
+                    "model_name": m.model_name,
                     "input_tokens": m.input_tokens,
                     "output_tokens": m.output_tokens,
                     "cost_usd": float(m.cost_usd),
