@@ -228,16 +228,11 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         logger.error(f"Failed to initialize database: {e}", exc_info=True)
         # continue without raising to allow the app to start
 
-    # Hosted pods expect cache state shared via Redis. Without populating the
-    # singleton here, get_cache_backend_dependency() falls back to a
-    # per-request InMemoryCacheBackend, fragmenting state across pods.
+    # Initialize eagerly so backend connection errors surface at startup, not on first request.
     await initialize_cache_backend()
     logger.info("Cache backend initialized")
 
-    # Hosted API pods run with SHU_WORKERS_ENABLED=false, so the workers
-    # block below never populates the queue singleton. Without this call,
-    # get_queue_backend_dependency() returns a per-request InMemoryQueueBackend
-    # and jobs enqueued from handlers are unreachable to worker pods.
+    # Initialize eagerly so backend connection errors surface at startup, not on first enqueue.
     await initialize_queue_backend()
     logger.info("Queue backend initialized")
 
