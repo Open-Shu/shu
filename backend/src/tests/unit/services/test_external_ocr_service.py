@@ -274,8 +274,15 @@ class TestUsageRecording:
         mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        # Patch the import binding inside external_ocr_service, not the
+        # origin module — `from ..core.database import get_async_session_local`
+        # creates a separate name in this module's namespace that
+        # `shu.core.database.get_async_session_local` patches can't see.
+        # Without this, the real session factory runs in CI (no asyncpg driver
+        # loaded), raises, the bare `except` in `_record_usage` swallows it,
+        # and resolver never gets called.
         with patch(
-            "shu.core.database.get_async_session_local",
+            "shu.services.external_ocr_service.get_async_session_local",
             return_value=mock_session_factory,
         ), patch.object(
             svc, "_resolve_provider_and_model", new_callable=AsyncMock, return_value=False
@@ -292,7 +299,7 @@ class TestUsageRecording:
         svc._model_id = "m"
 
         with patch(
-            "shu.core.database.get_async_session_local",
+            "shu.services.external_ocr_service.get_async_session_local",
             side_effect=RuntimeError("DB down"),
         ):
             await svc._record_usage(page_count=3)
@@ -425,7 +432,18 @@ class TestExtractTextInactiveGuard:
         svc._provider_id = provider_id
         svc._model_id = model_id
 
+        # `_ensure_active` opens a real session before delegating to the guard,
+        # so we also stub the session factory to avoid CI hitting Postgres.
+        mock_session = AsyncMock()
+        mock_session_factory = MagicMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
         with (
+            patch(
+                "shu.services.external_ocr_service.get_async_session_local",
+                return_value=mock_session_factory,
+            ),
             patch.object(
                 ExternalOCRService,
                 "_resolve_provider_and_model",
