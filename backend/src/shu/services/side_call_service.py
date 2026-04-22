@@ -23,6 +23,7 @@ from ..models.model_configuration import ModelConfiguration
 from ..services.chat_types import ChatContext
 from ..services.model_configuration_service import ModelConfigurationService
 from ..services.system_settings_service import SystemSettingsService
+from ..services.usage_recording import get_usage_recorder
 
 logger = logging.getLogger(__name__)
 
@@ -788,12 +789,12 @@ class SideCallService:
             response_time_ms: Response time in milliseconds
             success: Whether the call was successful
             total_cost: Provider-reported cost (Decimal(0) triggers DB-rate fallback
-                in LLMService.record_usage).
+                in UsageRecorder).
             error_message: Error message if the call failed
 
         """
         try:
-            await self.llm_service.record_usage(
+            await get_usage_recorder().record(
                 provider_id=model_config.llm_provider_id,
                 model_id=model.id,
                 request_type="side_call",

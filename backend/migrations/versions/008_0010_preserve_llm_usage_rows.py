@@ -72,51 +72,70 @@ def upgrade() -> None:
         """
     )
 
-    # 3. Drop-and-recreate the provider_id FK with ON DELETE SET NULL.
-    # The constraint may not exist under its standard name on some DBs
-    # (e.g. if Alembic generated a different name historically), so we
-    # check via the inspector and skip gracefully.
-    fk_names = {fk["name"] for fk in inspector.get_foreign_keys("llm_usage")}
-    if FK_NAME in fk_names:
-        op.drop_constraint(FK_NAME, "llm_usage", type_="foreignkey")
-
-    # 4. Make provider_id nullable so SET NULL is schema-legal.
-    if column_exists(inspector, "llm_usage", "provider_id"):
-        op.alter_column("llm_usage", "provider_id", existing_type=sa.String(), nullable=True)
-
-    op.create_foreign_key(
-        FK_NAME,
-        "llm_usage",
-        "llm_providers",
-        ["provider_id"],
-        ["id"],
-        ondelete="SET NULL",
+    # 3. Replace the provider_id FK. Inspect the current FK on
+    # provider_id → llm_providers (there is exactly one; we know the name
+    # is llm_usage_provider_id_fkey but we look it up so a re-run of this
+    # migration is a no-op when the target state is already in place).
+    existing_fk = next(
+        (
+            fk
+            for fk in inspector.get_foreign_keys("llm_usage")
+            if fk.get("referred_table") == "llm_providers"
+            and "provider_id" in (fk.get("constrained_columns") or [])
+        ),
+        None,
     )
+    current_ondelete = (existing_fk.get("options", {}).get("ondelete") or "").upper() if existing_fk else None
+
+    if current_ondelete != "SET NULL":
+        existing_fk_name = existing_fk.get("name") if existing_fk is not None else None
+        if existing_fk_name:
+            op.drop_constraint(existing_fk_name, "llm_usage", type_="foreignkey")
+        if column_exists(inspector, "llm_usage", "provider_id"):
+            op.alter_column("llm_usage", "provider_id", existing_type=sa.String(), nullable=True)
+        op.create_foreign_key(
+            FK_NAME,
+            "llm_usage",
+            "llm_providers",
+            ["provider_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
 
-    # Reverse FK first — downgrading to CASCADE requires provider_id to be
-    # NOT NULL again. Any rows with NULL provider_id would violate the
-    # old constraint; leave them untouched and let the downgrade fail loud
-    # if they exist (there is no safe way to reattach them).
-    fk_names = {fk["name"] for fk in inspector.get_foreign_keys("llm_usage")}
-    if FK_NAME in fk_names:
-        op.drop_constraint(FK_NAME, "llm_usage", type_="foreignkey")
-
-    if column_exists(inspector, "llm_usage", "provider_id"):
-        op.alter_column("llm_usage", "provider_id", existing_type=sa.String(), nullable=False)
-
-    op.create_foreign_key(
-        FK_NAME,
-        "llm_usage",
-        "llm_providers",
-        ["provider_id"],
-        ["id"],
-        ondelete="CASCADE",
+    # Downgrade target: provider_id NOT NULL, FK with ON DELETE CASCADE.
+    # Rows with NULL provider_id would violate the NOT NULL constraint —
+    # leave them untouched and let the ALTER fail loud if any exist (there
+    # is no safe way to reattach them to a deleted provider).
+    existing_fk = next(
+        (
+            fk
+            for fk in inspector.get_foreign_keys("llm_usage")
+            if fk.get("referred_table") == "llm_providers"
+            and "provider_id" in (fk.get("constrained_columns") or [])
+        ),
+        None,
     )
+    current_ondelete = (existing_fk.get("options", {}).get("ondelete") or "").upper() if existing_fk else None
+
+    if current_ondelete != "CASCADE":
+        existing_fk_name = existing_fk.get("name") if existing_fk is not None else None
+        if existing_fk_name:
+            op.drop_constraint(existing_fk_name, "llm_usage", type_="foreignkey")
+        if column_exists(inspector, "llm_usage", "provider_id"):
+            op.alter_column("llm_usage", "provider_id", existing_type=sa.String(), nullable=False)
+        op.create_foreign_key(
+            FK_NAME,
+            "llm_usage",
+            "llm_providers",
+            ["provider_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
 
     if column_exists(inspector, "llm_usage", "model_name"):
         op.drop_column("llm_usage", "model_name")

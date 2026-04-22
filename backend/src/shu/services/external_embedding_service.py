@@ -9,13 +9,13 @@ TODO: Abstract provider-specific formatting when we support more than
 OpenRouter for embedding models.
 """
 
-from decimal import Decimal
 from typing import Any
 
 import httpx
 
 from ..core.logging import get_logger
 from ..core.safe_decimal import safe_decimal
+from ..services.usage_recording import get_usage_recorder
 
 logger = get_logger(__name__)
 
@@ -114,16 +114,15 @@ class ExternalEmbeddingService:
     async def _record_usage(self, usage: dict[str, Any] | None, *, user_id: str | None = None) -> None:
         """Record embedding API usage in llm_usage. Best-effort — failures are logged, not raised.
 
-        Cost-column contract (SHU-700): provider-authoritative wire cost is stored
-        verbatim on ``total_cost`` and ``input_cost`` / ``output_cost`` stay at
-        ``Decimal(0)`` — providers return a single total, not a split. This matches
-        the chat/side-call path's contract so downstream aggregations can identify
-        provider-authoritative rows consistently regardless of request_type.
+        Cost-column contract (SHU-700 + SHU-715): wire cost on ``total_cost``
+        when the provider returns it, otherwise ``Decimal(0)`` which triggers
+        ``UsageRecorder``'s DB-rate fallback. Previously this path silently
+        recorded $0 when the provider omitted ``usage.cost``; that was a
+        latent leak — harmless for OpenRouter (always returns cost) but real
+        the moment a direct-API embedding model with DB-priced rates is added.
         """
         if not usage:
             return
-
-        from .usage_recording import record_llm_usage
 
         # Always log the raw usage payload so costs can be reconstructed
         # from logs if DB recording ever fails.
@@ -137,16 +136,13 @@ class ExternalEmbeddingService:
 
         prompt_tokens = usage.get("prompt_tokens", 0)
         total_tokens = usage.get("total_tokens", 0)
-        cost = safe_decimal(usage.get("cost"))
 
-        await record_llm_usage(
+        await get_usage_recorder().record(
             provider_id=self._provider_id,
             model_id=self._model_id,
             request_type="embedding",
             user_id=user_id,
             input_tokens=prompt_tokens,
             total_tokens=total_tokens,
-            input_cost=Decimal(0),
-            output_cost=Decimal(0),
-            total_cost=cost,
+            total_cost=safe_decimal(usage.get("cost")),
         )
