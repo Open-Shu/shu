@@ -67,6 +67,7 @@ def get_settings():
             database_pool_timeout = 30
             database_pool_recycle = 3600
             debug = False
+            use_pgbouncer = False
 
         return MinimalSettings()
 
@@ -100,6 +101,11 @@ def get_async_engine():
             else:
                 logger.debug(f"Database configuration: URL={parsed_url}")
 
+            # PgBouncer in transaction mode reassigns connections between transactions. That means any new request may
+            # end up on another host and then fail to load the cache. statement_cache_size=0 disables client-side caching
+            # so each query falls back to unnamed statements.
+            connect_args = {"statement_cache_size": 0} if settings.use_pgbouncer else {}
+
             _async_engine = create_async_engine(
                 database_url,
                 pool_size=settings.database_pool_size,
@@ -108,6 +114,7 @@ def get_async_engine():
                 pool_recycle=settings.database_pool_recycle,
                 pool_pre_ping=True,
                 echo=False,
+                connect_args=connect_args,
             )
         except Exception as e:
             logger.error(f"Failed to create async database engine: {e!s}")

@@ -1,7 +1,4 @@
-"""Unit tests for Settings field validators.
-
-Validates the password_policy validator added for the password-change feature.
-"""
+"""Unit tests for Settings field validators."""
 
 import pytest
 from pydantic import ValidationError
@@ -31,3 +28,20 @@ class TestValidatePasswordPolicy:
         """An unrecognised policy value should raise a ValidationError."""
         with pytest.raises(ValidationError, match="Password policy must be one of"):
             Settings(SHU_PASSWORD_POLICY="extreme")
+
+
+class TestValidateTenantId:
+    """Tests for Settings.validate_tenant_id field validator."""
+
+    def test_empty_or_whitespace_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Silent fallthrough to no-prefix in a hosted context would cause
+        # cross-tenant key contamination — must fail hard.
+        for value in ("", "   "):
+            monkeypatch.setenv("SHU_TENANT_ID", value)
+            with pytest.raises(ValidationError, match="SHU_TENANT_ID must not be empty or whitespace"):
+                Settings()
+
+    def test_value_is_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SHU_TENANT_ID", " tenant-abc ")
+        settings = Settings()
+        assert settings.tenant_id == "tenant-abc"
