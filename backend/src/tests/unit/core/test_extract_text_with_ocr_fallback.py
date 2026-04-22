@@ -8,6 +8,7 @@ from shu.core.ocr_service import (
     OCRResult,
     _run_ocr_service,
     extract_text_with_ocr_fallback,
+    reset_ocr_service,
 )
 
 
@@ -318,6 +319,12 @@ class TestOCRMimeTypeGate:
 
 class TestRunOCRService:
     """Test _run_ocr_service timing and metadata shape."""
+
+    def setup_method(self):
+        reset_ocr_service()
+
+    def teardown_method(self):
+        reset_ocr_service()
 
     @pytest.mark.asyncio
     async def test_returns_duration_in_metadata(self):

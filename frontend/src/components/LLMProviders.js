@@ -801,7 +801,9 @@ const LLMProviders = () => {
                       </Typography>
                     )}
 
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                    {/* component="div" so the nested <Chip> (renders a div) doesn't
+                        trip validateDOMNesting — Typography defaults to <p>. */}
+                    <Typography component="div" variant="body2" color="text.secondary" gutterBottom>
                       <strong>Enabled Models:</strong> {getProviderModelCount(provider.id)}
                       {getProviderModelCount(provider.id) > 0 && (
                         <Chip
@@ -894,71 +896,69 @@ const LLMProviders = () => {
         </Grid>
       )}
 
-      {/* Create Provider Dialog */}
+      {/* Create Provider Dialog — swaps body to a read-only notice when creation is locked. */}
       <Dialog
-        open={createDialogOpen && !lockProviderCreations}
+        open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
-        maxWidth="md"
+        maxWidth={lockProviderCreations ? 'sm' : 'md'}
         fullWidth
       >
         <DialogTitle>Add LLM Provider</DialogTitle>
         <DialogContent>
-          <Box sx={{ pt: 1 }}>
-            <LLMProviderForm
-              provider={newProvider}
-              onProviderChange={(next) => {
-                if (next.api_endpoint !== newProvider.api_endpoint) {
-                  setApiEndpointDirtyCreate(true);
-                }
-                if (next.provider_capabilities !== newProvider.provider_capabilities) {
-                  setProviderCapabilitiesDirtyCreate(true);
-                }
-                setNewProvider(next);
-              }}
-              providerTypes={providerTypes}
-              onProviderTypeChange={(type) => {
-                setNewProvider((prev) => ({
-                  ...prev,
-                  provider_type: type,
-                  api_endpoint: '',
-                  provider_capabilities: createDefaultProviderCapabilities(),
-                }));
-                setApiEndpointDirtyCreate(false);
-                setEndpointsOverrideCreate({});
-                setProviderCapabilitiesDirtyCreate(false);
-              }}
-              baseEndpoints={baseEndpointsCreate}
-              providerCapabilities={providerCapabilitiesCreate}
-              endpointsOverride={endpointsOverrideCreate}
-              onUpdateEndpointField={(k, f, v) => updateEndpointFieldCreate(k, f, v)}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleCreateProvider}
-            variant="contained"
-            disabled={createProviderMutation.isLoading || !newProvider.name || !newProvider.api_endpoint}
-          >
-            {createProviderMutation.isLoading ? 'Saving...' : 'Next'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {lockProviderCreations && createDialogOpen && (
-        <Dialog open onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
-          <DialogTitle>Add LLM Provider</DialogTitle>
-          <DialogContent>
+          {lockProviderCreations ? (
             <Alert severity="info" sx={{ mt: 1 }}>
               {PROVIDER_CREATION_LOCKED_NOTICE}
             </Alert>
-          </DialogContent>
-          <DialogActions>
+          ) : (
+            <Box sx={{ pt: 1 }}>
+              <LLMProviderForm
+                provider={newProvider}
+                onProviderChange={(next) => {
+                  if (next.api_endpoint !== newProvider.api_endpoint) {
+                    setApiEndpointDirtyCreate(true);
+                  }
+                  if (next.provider_capabilities !== newProvider.provider_capabilities) {
+                    setProviderCapabilitiesDirtyCreate(true);
+                  }
+                  setNewProvider(next);
+                }}
+                providerTypes={providerTypes}
+                onProviderTypeChange={(type) => {
+                  setNewProvider((prev) => ({
+                    ...prev,
+                    provider_type: type,
+                    api_endpoint: '',
+                    provider_capabilities: createDefaultProviderCapabilities(),
+                  }));
+                  setApiEndpointDirtyCreate(false);
+                  setEndpointsOverrideCreate({});
+                  setProviderCapabilitiesDirtyCreate(false);
+                }}
+                baseEndpoints={baseEndpointsCreate}
+                providerCapabilities={providerCapabilitiesCreate}
+                endpointsOverride={endpointsOverrideCreate}
+                onUpdateEndpointField={(k, f, v) => updateEndpointFieldCreate(k, f, v)}
+              />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {lockProviderCreations ? (
             <Button onClick={() => setCreateDialogOpen(false)}>Close</Button>
-          </DialogActions>
-        </Dialog>
-      )}
+          ) : (
+            <>
+              <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+              <Button
+                onClick={handleCreateProvider}
+                variant="contained"
+                disabled={createProviderMutation.isLoading || !newProvider.name || !newProvider.api_endpoint}
+              >
+                {createProviderMutation.isLoading ? 'Saving...' : 'Next'}
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
 
       {/* Edit Provider Dialog */}
       <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="md" fullWidth>

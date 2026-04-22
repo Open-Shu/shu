@@ -377,6 +377,15 @@ Changes to `is_system_managed` (flipping a BYOK provider to Shu-managed or vice 
 
 Either way, this override **does not go through the customer admin API** — customers (including customer admins) cannot promote or demote providers themselves.
 
+> **⚠️ Never flip `is_system_managed` on a provider that already has usage history.**
+>
+> Billing aggregation (`usage_cost` meter) joins `llm_usage` to `llm_providers` and filters on the *current* value of `is_system_managed`. The flag is **not** snapshotted per-usage-row. Consequences:
+>
+> - **FALSE → TRUE** retroactively pulls every past BYOK-era usage row into the customer's next Stripe invoice. The customer already paid the upstream provider directly for those tokens, and they would be double-billed for work that was never Shu's to bill.
+> - **TRUE → FALSE** erases previously-billable usage from future aggregation windows. If the flip happens mid-period before the invoice closes, Shu loses revenue for tokens already served under the hosted offering.
+>
+> Only flip this flag on providers with **zero** rows in `llm_usage`. For a provider that already has traffic, create a new provider row at the correct provenance and migrate routing instead — do not mutate the existing one. A future migration may add `llm_usage.billed_to_shu` to snapshot provenance at insert time and remove this constraint; until then, treat the flag as a one-way decision made at provider creation.
+
 ### `SHU_LOCK_PROVIDER_CREATIONS`
 
 An instance-level kill switch for new provider creation:

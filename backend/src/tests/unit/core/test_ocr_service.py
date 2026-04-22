@@ -3,6 +3,7 @@
 Tests cover:
 - OCRService protocol conformance
 - OCRResult dataclass
+- DI wiring (get_ocr_service, reset_ocr_service)
 - Service resolution logic (API key set → external, absent → local)
 """
 
@@ -12,6 +13,7 @@ from shu.core.ocr_service import (
     OCRResult,
     OCRService,
     get_ocr_service,
+    reset_ocr_service,
 )
 
 
@@ -63,7 +65,34 @@ class TestOCRResult:
 
 
 class TestGetOCRService:
-    """Test get_ocr_service() resolution logic."""
+    """Test get_ocr_service() singleton and resolution logic."""
+
+    def setup_method(self):
+        reset_ocr_service()
+
+    def teardown_method(self):
+        reset_ocr_service()
+
+    @patch("shu.core.ocr_service.get_settings_instance")
+    def test_returns_singleton(self, mock_settings):
+        """Two calls should return the same instance."""
+        settings = MagicMock()
+        settings.mistral_ocr_api_key = None
+        mock_settings.return_value = settings
+
+        svc1 = get_ocr_service()
+        svc2 = get_ocr_service()
+
+        assert svc1 is svc2
+
+    def test_reset_clears_singleton(self):
+        import shu.core.ocr_service as mod
+
+        mod._ocr_service = MagicMock(spec=OCRService)
+        assert mod._ocr_service is not None
+
+        reset_ocr_service()
+        assert mod._ocr_service is None
 
     @patch("shu.core.ocr_service.get_settings_instance")
     def test_api_key_set_uses_external(self, mock_settings):
@@ -109,19 +138,15 @@ class TestGetOCRService:
         assert isinstance(svc, LocalOCRService)
 
     @patch("shu.core.ocr_service.get_settings_instance")
-    def test_resolution_follows_current_settings(self, mock_settings):
-        """Each call resolves against current settings — no stale caching."""
+    def test_external_singleton_returns_same_instance(self, mock_settings):
+        """External service should be cached as a singleton across calls."""
         settings = MagicMock()
-        settings.mistral_ocr_api_key = None
-        mock_settings.return_value = settings
-
-        from shu.services.external_ocr_service import ExternalOCRService
-        from shu.services.local_ocr_service import LocalOCRService
-
-        assert isinstance(get_ocr_service(), LocalOCRService)
-
         settings.mistral_ocr_api_key = "sk-test"
         settings.mistral_ocr_base_url = "https://openrouter.ai/api/v1"
         settings.mistral_ocr_model = "mistralai/mistral-ocr-latest"
+        mock_settings.return_value = settings
 
-        assert isinstance(get_ocr_service(), ExternalOCRService)
+        svc1 = get_ocr_service()
+        svc2 = get_ocr_service()
+
+        assert svc1 is svc2

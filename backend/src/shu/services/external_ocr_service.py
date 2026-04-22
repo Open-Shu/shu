@@ -157,7 +157,7 @@ class ExternalOCRService:
         async with session_factory() as session:
             if not await self._resolve_provider_and_model(session):
                 return
-        await ensure_provider_and_model_active(self._provider_id, self._model_id, call_type="OCR")
+            await ensure_provider_and_model_active(self._provider_id, self._model_id, call_type="OCR", session=session)
 
     async def _resolve_provider_and_model(self, session) -> bool:
         """Look up pre-seeded provider and model records for usage tracking.

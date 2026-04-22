@@ -465,3 +465,46 @@ class TestManagedProviderLockdown:
         assert result is model
         assert model.is_active is False
         service.db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sync_provider_models_is_add_only_on_system_managed_parent(self):
+        """Design decision #4: sync is allowed on system-managed providers BECAUSE
+        the contract is strictly add-only. If sync ever started mutating or
+        deactivating existing rows, admins could use it as a back-door to edit
+        Shu-managed models. Seed an existing row, discover the same name plus
+        a new one, and assert: (a) the existing row is unchanged and still
+        active, (b) only the new name is persisted via db.add.
+        """
+        service = self._build_service()
+        provider = MagicMock()
+        provider.id = "provider-sys"
+        provider.name = "Shu OpenAI"
+        provider.is_system_managed = True
+
+        existing = MagicMock()
+        existing.id = "existing-model-id"
+        existing.model_name = "gpt-4"
+        existing.is_active = True
+        existing.display_name = "GPT-4"
+
+        service.get_provider_by_id = AsyncMock(return_value=provider)
+        service.discover_provider_models = AsyncMock(
+            return_value=[{"id": "gpt-4"}, {"id": "gpt-5"}]
+        )
+        service.get_available_models = AsyncMock(return_value=[existing])
+        service.db.add = MagicMock()
+        service.db.commit = AsyncMock()
+        service.db.refresh = AsyncMock()
+
+        created = await service.sync_provider_models("provider-sys")
+
+        # Only the new model gets persisted; the existing row is never touched.
+        assert [m.model_name for m in created] == ["gpt-5"]
+        assert service.db.add.call_count == 1
+        added_model = service.db.add.call_args.args[0]
+        assert added_model.model_name == "gpt-5"
+
+        # Existing row is unchanged — same id, still active, fields not mutated.
+        assert existing.id == "existing-model-id"
+        assert existing.is_active is True
+        assert existing.display_name == "GPT-4"

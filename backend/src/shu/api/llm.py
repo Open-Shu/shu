@@ -61,6 +61,11 @@ class ProviderCapabilitiesUpdate(BaseModel):
 class LLMProviderCreate(BaseModel):
     """Schema for creating LLM providers."""
 
+    # `is_system_managed` is server-assigned — clients must not be able to smuggle
+    # it in via request body. extra="ignore" pins Pydantic's default behavior so
+    # this defense is load-bearing by intent, not by default.
+    model_config = ConfigDict(extra="ignore")
+
     name: str = Field(..., description="Provider name")
     provider_type: str = Field(..., description="Provider type (openai, anthropic, ollama)")
     api_endpoint: str = Field(..., description="API endpoint URL")
@@ -79,6 +84,9 @@ class LLMProviderCreate(BaseModel):
 
 class LLMProviderUpdate(BaseModel):
     """Schema for updating LLM providers."""
+
+    # See LLMProviderCreate — same reason to pin extra="ignore" here.
+    model_config = ConfigDict(extra="ignore")
 
     name: str | None = None
     provider_type: str

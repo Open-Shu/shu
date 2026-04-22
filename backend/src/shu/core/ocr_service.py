@@ -5,7 +5,8 @@ Provides an abstract interface for OCR text extraction with two backends:
 - LocalOCRService: EasyOCR/Tesseract via TextExtractor (default fallback)
 
 DI wiring:
-    - get_ocr_service() — factory (workers, services, FastAPI Depends())
+    - get_ocr_service()  — singleton factory (workers, services, FastAPI Depends())
+    - reset_ocr_service() — test teardown
 """
 
 from __future__ import annotations
@@ -75,18 +76,27 @@ class OCRService(Protocol):
         ...
 
 
-# TODO: Make this works as a singleton again. It's a headache right now, so I'm kicking this can down the road.
-def get_ocr_service() -> OCRService:
-    """Resolve the configured OCR service from current settings.
+# Module-level singleton. Reused across calls because (a) LocalOCRService
+# initializes EasyOCR/Tesseract models on construction and rebuilding per call
+# is measurably slow on the ingestion hot path, and (b) ExternalOCRService
+# holds a resolved provider/model ID cache that the SHU-705 active-check TTL
+# cache depends on to avoid per-call DB lookups.
+_ocr_service: OCRService | None = None
 
-    Resolution is purely settings-based (no DB query) and constructors are
-    trivial, so this is called fresh each time rather than cached — caching
-    would freeze the first-seen settings snapshot across subsequent changes
-    (e.g. in tests that mock settings). Any expensive per-instance state
-    (httpx clients, ML models) is owned by the service classes themselves.
+
+def get_ocr_service() -> OCRService:
+    """Get the configured OCR service (singleton).
+
+    Resolution is purely settings-based (no DB query), so this is sync.
+    SHU_MISTRAL_OCR_API_KEY set → ExternalOCRService, otherwise → LocalOCRService.
 
     Usable everywhere: workers, services, FastAPI Depends().
     """
+    global _ocr_service  # noqa: PLW0603
+
+    if _ocr_service is not None:
+        return _ocr_service
+
     settings = get_settings_instance()
 
     if settings.mistral_ocr_api_key:
@@ -99,16 +109,24 @@ def get_ocr_service() -> OCRService:
                 "base_url": settings.mistral_ocr_base_url,
             },
         )
-        return ExternalOCRService(
+        _ocr_service = ExternalOCRService(
             api_key=settings.mistral_ocr_api_key,
             api_base_url=settings.mistral_ocr_base_url,
             model_name=settings.mistral_ocr_model,
         )
+        return _ocr_service
 
     from ..services.local_ocr_service import LocalOCRService
 
     logger.info("Using local OCR service (EasyOCR/Tesseract)")
-    return LocalOCRService()
+    _ocr_service = LocalOCRService()
+    return _ocr_service
+
+
+def reset_ocr_service() -> None:
+    """Reset the OCR service singleton (for testing only)."""
+    global _ocr_service  # noqa: PLW0603
+    _ocr_service = None
 
 
 async def extract_text_with_ocr_fallback(

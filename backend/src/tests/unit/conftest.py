@@ -30,19 +30,22 @@ MIGRATIONS_ROOT = BACKEND_ROOT / "migrations"
 if str(MIGRATIONS_ROOT) not in sys.path:
     sys.path.insert(0, str(MIGRATIONS_ROOT))
 
-# Force-disable external OCR for unit tests. The dev .env has a real
-# SHU_MISTRAL_OCR_API_KEY, which would make get_ocr_service() return
-# ExternalOCRService — and its _ensure_active path opens a real DB session,
-# breaking worker tests that only mock the text-extraction layer.
-#
-# shu.core.config calls load_dotenv(override=True) at import time, which
-# clobbers anything we set in os.environ beforehand. Import it first so the
-# dotenv load runs, then override — so Settings() picks our empty value.
-import shu.core.config  # noqa: F401,E402
-
-os.environ["SHU_MISTRAL_OCR_API_KEY"] = ""
-
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_active_check_cache_between_tests():
+    """Drop the resolver's positive-result active-check cache between tests.
+
+    The cache is module-level global state. Without this, a test that lets the
+    real ``ensure_provider_and_model_active`` succeed would hide a follow-up
+    test's inactive-path assertion for up to the TTL.
+    """
+    from shu.core.external_model_resolver import _clear_active_check_cache
+
+    _clear_active_check_cache()
+    yield
+    _clear_active_check_cache()
 
 
 @pytest.fixture

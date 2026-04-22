@@ -444,4 +444,8 @@ class TestExtractTextInactiveGuard:
                 await svc.extract_text(b"%PDF-content", "application/pdf")
 
             mock_client_cls.assert_not_called()
-            mock_guard.assert_awaited_once_with(provider_id, model_id, call_type="OCR")
+            mock_guard.assert_awaited_once()
+            args, kwargs = mock_guard.await_args
+            assert args == (provider_id, model_id)
+            assert kwargs["call_type"] == "OCR"
+            assert kwargs["session"] is not None
