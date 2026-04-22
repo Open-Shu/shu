@@ -279,13 +279,16 @@ class TestUsageProviderImpl:
 
     @pytest.mark.asyncio
     async def test_handles_null_model_id(self):
-        """Should map null model_id to 'unknown'."""
+        """Null model_id (FK cascaded to NULL per SHU-727) is bucketed under
+        the snapshot model_name so distinct deleted models don't collide.
+        """
         from decimal import Decimal
 
         mock_db = AsyncMock()
 
         row = MagicMock()
         row.model_id = None
+        row.model_name = "openai/gpt-4o"
         row.input_tokens = 100
         row.output_tokens = 50
         row.total_cost = Decimal("0.100000000")
@@ -301,4 +304,9 @@ class TestUsageProviderImpl:
             datetime(2026, 5, 1, tzinfo=UTC),
         )
 
-        assert "unknown" in summary.by_model
+        # Bucket key includes the snapshot name so two different deleted
+        # models stay separated; the model_id itself remains "unknown".
+        assert "unknown:openai/gpt-4o" in summary.by_model
+        bucket = summary.by_model["unknown:openai/gpt-4o"]
+        assert bucket.model_id == "unknown"
+        assert bucket.model_name == "openai/gpt-4o"

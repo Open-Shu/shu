@@ -439,6 +439,7 @@ class LLMService:
         ``Decimal(0)``.
         """
         model = await self.db.get(LLMModel, model_id)
+        provider = await self.db.get(LLMProvider, provider_id)
         input_cost = Decimal("0")
         output_cost = Decimal("0")
 
@@ -458,6 +459,8 @@ class LLMService:
         usage = LLMUsage(
             provider_id=provider_id,
             model_id=model_id,
+            provider_name=provider.name if provider else None,
+            model_name=model.model_name if model else None,
             user_id=user_id,
             request_type=request_type,
             input_tokens=input_tokens,

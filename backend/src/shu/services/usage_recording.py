@@ -11,12 +11,78 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.database import get_async_session_local
 from ..core.logging import get_logger
-from ..models.llm_provider import LLMUsage
+from ..models.llm_provider import LLMModel, LLMProvider, LLMUsage
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
+
+
+async def _snapshot_names(
+    session: AsyncSession,
+    provider_id: str,
+    model_id: str,
+) -> tuple[str | None, str | None]:
+    """Look up provider.name and model.model_name for the snapshot columns.
+
+    Returns (None, None) for any id that doesn't resolve — the row still
+    inserts with the FK ids; the snapshot is best-effort audit context.
+    """
+    provider = await session.get(LLMProvider, provider_id)
+    model = await session.get(LLMModel, model_id)
+    return (
+        provider.name if provider else None,
+        model.model_name if model else None,
+    )
+
+
+async def _insert_with_snapshot(
+    session: AsyncSession,
+    *,
+    commit: bool,
+    provider_id: str,
+    model_id: str,
+    user_id: str | None,
+    request_type: str,
+    input_tokens: int,
+    output_tokens: int,
+    total_tokens: int,
+    input_cost: Decimal,
+    output_cost: Decimal,
+    total_cost: Decimal,
+    success: bool,
+    request_metadata: dict[str, Any] | None,
+) -> None:
+    """Snapshot provider/model names, build the LLMUsage row, and insert it.
+
+    `commit=True` commits the session (fresh-session path); `commit=False`
+    flushes inside a nested savepoint (caller-owned session).
+    """
+    provider_name, model_name = await _snapshot_names(session, provider_id, model_id)
+    record = LLMUsage(
+        provider_id=provider_id,
+        model_id=model_id,
+        provider_name=provider_name,
+        model_name=model_name,
+        user_id=user_id,
+        request_type=request_type,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        input_cost=input_cost,
+        output_cost=output_cost,
+        total_cost=total_cost,
+        success=success,
+        request_metadata=request_metadata,
+    )
+    if commit:
+        session.add(record)
+        await session.commit()
+    else:
+        async with session.begin_nested():
+            session.add(record)
+            await session.flush()
 
 
 async def record_llm_usage(
@@ -47,30 +113,42 @@ async def record_llm_usage(
     user-less surfaces (none exist today).
     """
     try:
-        record = LLMUsage(
-            provider_id=provider_id,
-            model_id=model_id,
-            user_id=user_id,
-            request_type=request_type,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            input_cost=input_cost,
-            output_cost=output_cost,
-            total_cost=total_cost,
-            success=success,
-            request_metadata=request_metadata,
-        )
-
         if session is not None:
-            async with session.begin_nested():
-                session.add(record)
-                await session.flush()
+            await _insert_with_snapshot(
+                session,
+                commit=False,
+                provider_id=provider_id,
+                model_id=model_id,
+                user_id=user_id,
+                request_type=request_type,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                input_cost=input_cost,
+                output_cost=output_cost,
+                total_cost=total_cost,
+                success=success,
+                request_metadata=request_metadata,
+            )
         else:
             session_factory = get_async_session_local()
             async with session_factory() as new_session:
-                new_session.add(record)
-                await new_session.commit()
+                await _insert_with_snapshot(
+                    new_session,
+                    commit=True,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    user_id=user_id,
+                    request_type=request_type,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    input_cost=input_cost,
+                    output_cost=output_cost,
+                    total_cost=total_cost,
+                    success=success,
+                    request_metadata=request_metadata,
+                )
     except Exception as e:
         # If we hit this we are in trouble, we'll probably want to try to aggregate this in whatever the hosting's CloudWatch equivalent is
         logger.error(
