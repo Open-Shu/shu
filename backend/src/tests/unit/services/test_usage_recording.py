@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from shu.models.llm_provider import LLMModel, LLMProvider
 from shu.services.usage_recording import CostResolver, UsageRecorder
 
 
@@ -53,11 +54,15 @@ def _make_session(
     session = MagicMock()
 
     async def _get(cls, obj_id):  # noqa: ARG001 — mirrors session.get signature
-        if cls.__name__ == "LLMProvider":
+        # Identity dispatch on the imported class — failing loud on an
+        # unexpected class is better than silently returning None and
+        # letting snapshot-field assertions read "None" without surfacing
+        # the mis-dispatch.
+        if cls is LLMProvider:
             return provider
-        if cls.__name__ == "LLMModel":
+        if cls is LLMModel:
             return model
-        return None
+        raise AssertionError(f"Unexpected session.get lookup for {cls!r}")
 
     session.get = AsyncMock(side_effect=_get)
     session.add = MagicMock()
