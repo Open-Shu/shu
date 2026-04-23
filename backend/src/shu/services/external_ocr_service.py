@@ -191,12 +191,12 @@ class ExternalOCRService:
     ) -> None:
         """Record OCR usage in llm_usage. Best-effort — failures are logged, not raised.
 
-        Cost is computed by ``record_llm_usage`` from the resolved model's
-        ``cost_per_input_unit`` (per-page rate for OCR model_type; see
-        ``core/model_pricing.py``). Passing ``total_cost=Decimal(0)`` triggers
-        the shared DB-rate fallback so OCR uses the same two-tier contract as
-        chat / embedding — repricing is a one-entry change in
-        ``model_pricing.py`` plus a restart.
+        Cost is computed by ``UsageRecorder.record`` (via ``get_usage_recorder()``)
+        from the resolved model's ``cost_per_input_unit`` — the per-page rate
+        for OCR model_type; see ``core/model_pricing.py``. Passing
+        ``total_cost=Decimal(0)`` triggers the shared DB-rate fallback so OCR
+        uses the same two-tier contract as chat / embedding. Repricing is a
+        one-entry change in ``model_pricing.py`` plus a restart.
 
         Always logs the raw usage payload so costs can be reconstructed from
         logs if the DB write fails.
@@ -239,7 +239,7 @@ class ExternalOCRService:
                 # page_count → input_tokens because llm_models.cost_per_input_unit
                 # carries the per-page rate for OCR model_type (unit-agnostic column
                 # rename landed in SHU-700). total_cost=Decimal(0) engages the
-                # DB-rate fallback inside record_llm_usage. A future Mistral
+                # DB-rate fallback inside UsageRecorder. A future Mistral
                 # release that returns cost on the wire will naturally hit the
                 # provider-authoritative branch instead, no code change needed.
                 await get_usage_recorder().record(

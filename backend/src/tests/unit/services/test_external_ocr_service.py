@@ -205,10 +205,13 @@ class TestUsageRecording:
         # Fake LLMModel row that session.get(LLMModel, ...) will return.
         # cost_per_output_unit must be None (not a default MagicMock) so the
         # two-tier fallback leaves output_cost at Decimal(0) instead of
-        # multiplying by a MagicMock.
+        # multiplying by a MagicMock. model_name must be an explicit string
+        # so the snapshot capture assertion below compares scalars, not a
+        # MagicMock auto-attribute.
         fake_model = MagicMock()
         fake_model.cost_per_input_unit = _OCR_PER_PAGE_RATE
         fake_model.cost_per_output_unit = None
+        fake_model.model_name = svc._model_name
 
         # Provider row for snapshot-name capture (SHU-727). The helper calls
         # session.get(LLMProvider, ...) and session.get(LLMModel, ...); dispatch
@@ -216,10 +219,14 @@ class TestUsageRecording:
         fake_provider = MagicMock()
         fake_provider.name = "Shu Curated: Mistral"
 
+        from shu.models.llm_provider import LLMModel, LLMProvider
+
         async def _get(cls, obj_id):  # noqa: ARG001
-            if cls.__name__ == "LLMProvider":
+            if cls is LLMProvider:
                 return fake_provider
-            return fake_model
+            if cls is LLMModel:
+                return fake_model
+            raise AssertionError(f"Unexpected session.get lookup for {cls!r}")
 
         mock_session = AsyncMock()
         mock_session.get = AsyncMock(side_effect=_get)
@@ -254,6 +261,10 @@ class TestUsageRecording:
         assert record.output_cost == Decimal("0")
         assert record.request_metadata == {"page_count": 5}
         assert record.success is True
+        # Snapshot columns captured at insert (SHU-727) — regression guard
+        # for the OCR path specifically.
+        assert record.provider_name == "Shu Curated: Mistral"
+        assert record.model_name == svc._model_name
         mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio

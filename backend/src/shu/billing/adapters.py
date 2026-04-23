@@ -155,9 +155,12 @@ class UsageProviderImpl:
             cost = row.total_cost if row.total_cost is not None else Decimal("0")
             count = int(row.request_count or 0)
 
-            # When model_id is NULL (FK cascade), bucket by the snapshot name
-            # so different deleted models don't collide under one key.
-            bucket_key = model_id if row.model_id else f"unknown:{row.model_name or 'unnamed'}"
+            # Key on (model_id, model_name) so two GROUP BY rows with the same
+            # model_id but different snapshot model_name don't collide. This
+            # matters when model_id is NULL (each deleted model keeps its own
+            # bucket) AND for the theoretical case where llm_models.model_name
+            # was renamed between two INSERTs against the same model_id.
+            bucket_key = f"{model_id}:{row.model_name or 'unnamed'}"
             by_model[bucket_key] = ModelUsageImpl(
                 model_id=model_id,
                 model_name=row.model_name,
