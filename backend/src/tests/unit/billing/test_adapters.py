@@ -220,7 +220,11 @@ class TestUsageProviderImpl:
 
     @pytest.mark.asyncio
     async def test_get_usage_summary_aggregates_by_model(self):
-        """Should aggregate usage by model and compute totals as Decimal."""
+        """Should aggregate usage by model and compute totals as Decimal.
+
+        Bucket keys include the snapshot model_name so two GROUP BY rows
+        sharing a model_id but different model_names don't collide.
+        """
         from decimal import Decimal
 
         mock_db = AsyncMock()
@@ -228,6 +232,7 @@ class TestUsageProviderImpl:
         # DB returns Decimal for DECIMAL(16,9) columns; preserve that all the way through.
         row1 = MagicMock()
         row1.model_id = "claude-haiku-4-5"
+        row1.model_name = "claude-haiku-4-5"
         row1.input_tokens = 1000
         row1.output_tokens = 200
         row1.total_cost = Decimal("1.500000000")
@@ -235,6 +240,7 @@ class TestUsageProviderImpl:
 
         row2 = MagicMock()
         row2.model_id = "gpt-5.4"
+        row2.model_name = "gpt-5.4"
         row2.input_tokens = 500
         row2.output_tokens = 100
         row2.total_cost = Decimal("0.750000000")
@@ -255,9 +261,55 @@ class TestUsageProviderImpl:
         assert summary.total_cost_usd == Decimal("2.250000000")
         # Verify Decimal type is preserved (not silently converted to float)
         assert isinstance(summary.total_cost_usd, Decimal)
-        assert isinstance(summary.by_model["claude-haiku-4-5"].cost_usd, Decimal)
         assert len(summary.by_model) == 2
-        assert summary.by_model["claude-haiku-4-5"].request_count == 10
+        claude_bucket = summary.by_model["claude-haiku-4-5:claude-haiku-4-5"]
+        assert claude_bucket.request_count == 10
+        assert claude_bucket.model_id == "claude-haiku-4-5"
+        assert isinstance(claude_bucket.cost_usd, Decimal)
+
+    @pytest.mark.asyncio
+    async def test_get_usage_summary_keeps_renamed_model_rows_separate(self):
+        """Two GROUP BY rows with the same model_id but different model_name
+        must land in distinct buckets — otherwise the second row silently
+        overwrites the first and its tokens/cost disappear from the summary.
+        """
+        from decimal import Decimal
+
+        mock_db = AsyncMock()
+
+        # Same model_id, different snapshot names (rename scenario).
+        row_a = MagicMock()
+        row_a.model_id = "model-x"
+        row_a.model_name = "foo"
+        row_a.input_tokens = 100
+        row_a.output_tokens = 50
+        row_a.total_cost = Decimal("1.000000000")
+        row_a.request_count = 3
+
+        row_b = MagicMock()
+        row_b.model_id = "model-x"
+        row_b.model_name = "foo-renamed"
+        row_b.input_tokens = 200
+        row_b.output_tokens = 100
+        row_b.total_cost = Decimal("2.000000000")
+        row_b.request_count = 7
+
+        mock_result = MagicMock()
+        mock_result.__iter__ = MagicMock(return_value=iter([row_a, row_b]))
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        provider = UsageProviderImpl(mock_db)
+        summary = await provider.get_usage_summary(
+            datetime(2026, 4, 1, tzinfo=UTC),
+            datetime(2026, 5, 1, tzinfo=UTC),
+        )
+
+        # Both rows must survive — neither set of tokens/cost can be lost.
+        assert len(summary.by_model) == 2
+        assert "model-x:foo" in summary.by_model
+        assert "model-x:foo-renamed" in summary.by_model
+        assert summary.total_input_tokens == 300
+        assert summary.total_cost_usd == Decimal("3.000000000")
 
     @pytest.mark.asyncio
     async def test_get_usage_summary_handles_empty_period(self):

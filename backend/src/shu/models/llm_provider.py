@@ -51,7 +51,13 @@ class LLMProvider(BaseModel):
 
     # Relationships
     models = relationship("LLMModel", back_populates="provider", cascade="all, delete-orphan")
-    usage_records = relationship("LLMUsage", back_populates="provider", cascade="all, delete")
+    # usage_records: no cascade="delete" — deleting a provider must NOT wipe
+    # billing/audit rows. passive_deletes=True tells SQLAlchemy to let the DB
+    # apply ON DELETE SET NULL on llm_usage.provider_id (SHU-727) instead of
+    # emitting its own DELETE for each child. Keeping "delete" here would
+    # defeat the DB-level preservation by doing an explicit ORM-side wipe
+    # before the DB constraint can fire.
+    usage_records = relationship("LLMUsage", back_populates="provider", passive_deletes=True)
     model_configurations = relationship(
         "ModelConfiguration", back_populates="llm_provider", cascade="all, delete-orphan"
     )
@@ -161,7 +167,9 @@ class LLMModel(BaseModel):
 
     # Relationships
     provider = relationship("LLMProvider", back_populates="models")
-    usage_records = relationship("LLMUsage", back_populates="model")
+    # Same rationale as LLMProvider.usage_records — DB handles ON DELETE SET NULL
+    # on llm_usage.model_id (SHU-727); ORM must not load or touch the children.
+    usage_records = relationship("LLMUsage", back_populates="model", passive_deletes=True)
 
     def __repr__(self) -> str:
         """Represent as string."""

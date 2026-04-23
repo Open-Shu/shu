@@ -13,7 +13,7 @@ would only re-prove that SQLAlchemy honours the declaration asserted here.
 
 from __future__ import annotations
 
-from shu.models.llm_provider import LLMUsage
+from shu.models.llm_provider import LLMModel, LLMProvider, LLMUsage
 
 
 def _fk_ondelete(column, referent_table: str) -> str | None:
@@ -61,6 +61,28 @@ class TestSnapshotColumns:
     def test_model_name_column_exists_and_is_nullable(self):
         assert hasattr(LLMUsage, "model_name")
         assert LLMUsage.model_name.nullable is True
+
+
+class TestORMCascadePosture:
+    """The DB-level ON DELETE SET NULL is only half the picture — the ORM
+    relationships on the parent side must not override it by emitting their
+    own cascading DELETE for children. Regression guard: if someone adds
+    ``cascade="all, delete"`` back to either usage_records relationship,
+    these tests fail loudly before it ships.
+    """
+
+    def test_provider_usage_records_does_not_cascade_delete(self):
+        """``LLMProvider.usage_records`` must not carry delete cascade or
+        billing/audit rows get wiped before the DB can SET NULL."""
+        rel = LLMProvider.__mapper__.relationships["usage_records"]
+        assert rel.cascade.delete is False
+        assert rel.passive_deletes is True
+
+    def test_model_usage_records_does_not_cascade_delete(self):
+        """Same rule for ``LLMModel.usage_records``."""
+        rel = LLMModel.__mapper__.relationships["usage_records"]
+        assert rel.cascade.delete is False
+        assert rel.passive_deletes is True
 
 
 class TestRowSurvivalSimulation:

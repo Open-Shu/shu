@@ -76,8 +76,12 @@ class CostResolver:
         (callers default input_cost / output_cost to Decimal(0)).
         """
         if total_cost > Decimal("0"):
-            # Provider-authoritative — record verbatim, leave split at 0.
-            return input_cost, output_cost, total_cost
+            # Provider-authoritative — record total verbatim and force the
+            # split to zero. The module invariant says input_cost == 0 and
+            # output_cost == 0 on this path; don't trust caller-supplied
+            # splits (no current caller passes them, but the invariant is
+            # what aggregators key off to distinguish this tier).
+            return Decimal("0"), Decimal("0"), total_cost
 
         if model is None:
             return input_cost, output_cost, total_cost
@@ -198,6 +202,11 @@ class UsageRecorder:
                     "input_cost": str(input_cost),
                     "output_cost": str(output_cost),
                     "total_cost": str(total_cost),
+                    # Upstream call outcome — lets ops correlate a dropped
+                    # billing row with whether the LLM call itself succeeded
+                    # or was already an error case.
+                    "success": success,
+                    "error_message": error_message,
                 },
             )
 
