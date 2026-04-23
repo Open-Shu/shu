@@ -28,6 +28,7 @@ from shu.services.providers.events import ProviderStreamEvent
 from ..models.llm_provider import LLMProvider
 from ..services.chat_types import ChatContext, ChatMessage
 from ..services.message_utils import serialize_message_for_sse
+from ..services.usage_recording import get_usage_recorder
 
 if TYPE_CHECKING:  # pragma: no cover
     from .chat_service import ChatService, ModelExecutionInputs
@@ -510,7 +511,7 @@ class EnsembleStreamingHelper:
                 )
 
                 usage_from_event = metadata.get("usage") or {}
-                await service.llm_service.record_usage(
+                await get_usage_recorder().record(
                     provider_id=inputs.model.provider_id,
                     model_id=inputs.model.id,
                     request_type="chat",

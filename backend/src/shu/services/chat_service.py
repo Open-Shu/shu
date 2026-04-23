@@ -38,6 +38,7 @@ from ..services.message_utils import serialize_message_for_sse
 from ..services.prompt_service import PromptService
 from ..services.query_service import QueryService
 from ..services.side_call_service import SideCallService
+from ..services.usage_recording import get_usage_recorder
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 from .knowledge_base_service import KnowledgeBaseService
 
@@ -1080,7 +1081,7 @@ class ChatService:
         # populated so failed attempts appear under the originating user in
         # any per-user usage dashboard.
         try:
-            await self.llm_service.record_usage(
+            await get_usage_recorder().record(
                 provider_id=model.provider_id,
                 model_id=model.id,
                 request_type="chat",

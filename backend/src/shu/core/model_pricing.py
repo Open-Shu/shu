@@ -129,7 +129,7 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
         # math would keep billing the old rates. Explicitly NULL the columns so
         # the source-of-truth change actually lands. Explicit equality (not
         # Python truthiness) avoids the Decimal-falsiness foot-gun that bit us
-        # in LLMService.record_usage.
+        # in the cost-contract fallback (now in services/usage_recording.py).
         if pricing["input"] == 0 and pricing["output"] == 0:
             await db.execute(
                 update(LLMModel)

@@ -50,7 +50,13 @@ class LLMProvider(BaseModel):
 
     # Relationships
     models = relationship("LLMModel", back_populates="provider", cascade="all, delete-orphan")
-    usage_records = relationship("LLMUsage", back_populates="provider", cascade="all, delete")
+    # usage_records: no cascade="delete" — deleting a provider must NOT wipe
+    # billing/audit rows. passive_deletes=True tells SQLAlchemy to let the DB
+    # apply ON DELETE SET NULL on llm_usage.provider_id (SHU-727) instead of
+    # emitting its own DELETE for each child. Keeping "delete" here would
+    # defeat the DB-level preservation by doing an explicit ORM-side wipe
+    # before the DB constraint can fire.
+    usage_records = relationship("LLMUsage", back_populates="provider", passive_deletes=True)
     model_configurations = relationship(
         "ModelConfiguration", back_populates="llm_provider", cascade="all, delete-orphan"
     )
@@ -160,7 +166,9 @@ class LLMModel(BaseModel):
 
     # Relationships
     provider = relationship("LLMProvider", back_populates="models")
-    usage_records = relationship("LLMUsage", back_populates="model")
+    # Same rationale as LLMProvider.usage_records — DB handles ON DELETE SET NULL
+    # on llm_usage.model_id (SHU-727); ORM must not load or touch the children.
+    usage_records = relationship("LLMUsage", back_populates="model", passive_deletes=True)
 
     def __repr__(self) -> str:
         """Represent as string."""
@@ -172,9 +180,19 @@ class LLMUsage(BaseModel):
 
     __tablename__ = "llm_usage"
 
-    # Provider and model references
-    provider_id = Column(String, ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Provider and model references. Both FKs use ON DELETE SET NULL so
+    # billing/audit rows survive provider or model lifecycle events — the
+    # llm_usage table is the system of record for costs pushed to the
+    # Stripe meter, and losing rows would break reconciliation (SHU-727).
+    provider_id = Column(String, ForeignKey("llm_providers.id", ondelete="SET NULL"), nullable=True, index=True)
     model_id = Column(String, ForeignKey("llm_models.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Snapshot of provider.name / model.model_name captured at insert time.
+    # Never updated when the source row changes — this is point-in-time
+    # audit context that must remain readable even after the FK target is
+    # deleted. Read paths should prefer these when the FK is NULL.
+    provider_name = Column(String(255), nullable=True)
+    model_name = Column(String(255), nullable=True)
 
     # User reference (from auth system)
     user_id = Column(String, nullable=True, index=True)  # Optional user tracking
@@ -204,7 +222,8 @@ class LLMUsage(BaseModel):
 
     def __repr__(self) -> str:
         """Represent as string."""
-        return f"<LLMUsage(model='{self.model.model_name if self.model else 'Unknown'}', tokens={self.total_tokens}, cost=${self.total_cost})>"
+        name = self.model.model_name if self.model else (self.model_name or "Unknown")
+        return f"<LLMUsage(model='{name}', tokens={self.total_tokens}, cost=${self.total_cost})>"
 
 
 class Conversation(BaseModel):
