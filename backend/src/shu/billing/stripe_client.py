@@ -37,17 +37,6 @@ class StripeConfigurationError(StripeClientError):
     pass
 
 
-class StripeSignatureError(StripeClientError):
-    """Raised when webhook signature verification fails.
-
-    Distinct from StripeClientError so callers can differentiate signature
-    failures (bad secret / replay attack → 400) from other Stripe errors
-    (subscription shape mismatch → 500) without inspecting error messages.
-    """
-
-    pass
-
-
 class StripeClient:
     """Wrapper around the Stripe SDK.
 
@@ -71,6 +60,15 @@ class StripeClient:
     def _configure_stripe(self) -> None:
         """Configure the Stripe SDK with our settings."""
         stripe.api_key = self._settings.secret_key
+        # Pin the Stripe API version explicitly. Without this, the SDK sends
+        # requests using the account's Dashboard-configured default version,
+        # which Stripe can auto-roll without warning. A silent version bump
+        # broke parse_subscription_update when 2026-03-25.dahlia moved
+        # current_period_{start,end} off the Subscription object onto each
+        # SubscriptionItem (SHU-707). Bumping this pin requires reviewing all
+        # parse_* functions in this file for payload-shape compatibility.
+        # See https://docs.stripe.com/upgrades for the changelog.
+        stripe.api_version = "2026-03-25.dahlia"
         # Set app info for Stripe Dashboard identification
         stripe.set_app_info(
             "Shu",
@@ -373,46 +371,12 @@ class StripeClient:
     # =========================================================================
     # Webhooks
     # =========================================================================
-
-    def construct_webhook_event(
-        self,
-        payload: bytes,
-        signature: str,
-    ) -> stripe.Event:
-        """Construct and verify a webhook event from Stripe.
-
-        Args:
-            payload: Raw request body
-            signature: Stripe-Signature header value
-
-        Returns:
-            Verified Stripe Event object
-
-        Raises:
-            StripeClientError: If signature verification fails
-
-        """
-        if not self._settings.webhook_secret:
-            raise StripeConfigurationError("Webhook secret not configured")
-
-        try:
-            return stripe.Webhook.construct_event(
-                payload,
-                signature,
-                self._settings.webhook_secret,
-            )
-        except stripe.SignatureVerificationError as e:
-            logger.warning(
-                "Webhook signature verification failed",
-                extra={"error": str(e)},
-            )
-            raise StripeSignatureError("Invalid webhook signature", e) from e
-        except ValueError as e:
-            logger.warning(
-                "Invalid webhook payload",
-                extra={"error": str(e)},
-            )
-            raise StripeSignatureError("Invalid webhook payload") from e
+    #
+    # Stripe signature verification used to live here as construct_webhook_event.
+    # It was retired when the Shu Control Plane took over as the sole Stripe
+    # webhook receiver — the control plane verifies Stripe signatures at its
+    # edge, then forwards events to this tenant under an HMAC envelope.
+    # Envelope verification is in shu.billing.router_envelope.
 
     def parse_subscription_update(self, subscription_data: dict[str, Any]) -> SubscriptionUpdate:
         """Parse subscription data from a webhook event into our DTO.
@@ -445,13 +409,33 @@ class StripeClient:
             seat_item = items_data[0]
         quantity = (seat_item.get("quantity") or 1) if seat_item else 1
 
+        # Stripe API 2026-03-25.dahlia moved current_period_* from the subscription object
+        # onto each subscription item. Prefer the item-level value when BOTH fields are
+        # present; fall back to the subscription-level fields for compatibility with older
+        # API versions. If neither carries both fields (or either value is None/non-numeric),
+        # the payload shape has drifted beyond what this parser understands — fail loudly
+        # with context rather than letting datetime.fromtimestamp raise a bare TypeError.
+        period_source = (
+            seat_item
+            if seat_item and "current_period_start" in seat_item and "current_period_end" in seat_item
+            else subscription_data
+        )
+        period_start_ts = period_source.get("current_period_start")
+        period_end_ts = period_source.get("current_period_end")
+        if not isinstance(period_start_ts, (int, float)) or not isinstance(period_end_ts, (int, float)):
+            raise StripeClientError(
+                f"Subscription {subscription_data.get('id')!r} webhook payload has no valid "
+                "current_period_start/current_period_end at item level or subscription level; "
+                f"Stripe API version may have drifted past {stripe.api_version!r}"
+            )
+
         return SubscriptionUpdate(
             stripe_subscription_id=subscription_data["id"],
             stripe_customer_id=subscription_data["customer"],
             status=subscription_data["status"],
             quantity=quantity,
-            current_period_start=datetime.fromtimestamp(subscription_data["current_period_start"], tz=UTC),
-            current_period_end=datetime.fromtimestamp(subscription_data["current_period_end"], tz=UTC),
+            current_period_start=datetime.fromtimestamp(period_start_ts, tz=UTC),
+            current_period_end=datetime.fromtimestamp(period_end_ts, tz=UTC),
             cancel_at_period_end=subscription_data.get("cancel_at_period_end", False),
             canceled_at=(
                 datetime.fromtimestamp(subscription_data["canceled_at"], tz=UTC)

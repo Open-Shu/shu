@@ -34,6 +34,17 @@ load_dotenv()
 
 LOG_PREFIX = "[hosting]"
 
+# Applied to every seeded llm_models.display_name and model_configurations.name
+# so curated hosted-offering entries cannot collide with customer-added BYOK
+# entries in the admin UI. Same motivation as the SEED_PROVIDERS rename.
+CURATED_PREFIX = "Shu Curated: "
+
+
+def _curated(name: str) -> str:
+    """Prefix a seeded display/config name so it is distinguishable from customer entries."""
+    return f"{CURATED_PREFIX}{name}"
+
+
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
 OPENROUTER_PROVIDER_CONFIG = {
@@ -46,8 +57,8 @@ OPENROUTER_PROVIDER_CONFIG = {
 }
 
 SEED_PROVIDERS = (
-    {"name": "OpenAI", "provider_type": "openai"},
-    {"name": "Anthropic", "provider_type": "anthropic"},
+    {"name": _curated("OpenAI Compatible"), "provider_type": "openai"},
+    {"name": _curated("Anthropic Compatible"), "provider_type": "anthropic"},
 )
 
 
@@ -152,7 +163,7 @@ def _ensure_llm_model(cur, model_id: str, provider_id: str) -> None:
         print(f"{LOG_PREFIX} Model '{model_id}' already exists, skipping", flush=True)
         return
 
-    display_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
+    display_name = _curated(model_id.split("/", 1)[-1] if "/" in model_id else model_id)
     model_row_id = str(uuid.uuid4())
     cur.execute(
         """
@@ -179,7 +190,7 @@ def _seed_models(cur, models_json: str, provider_ids: dict[str, str]) -> None:
 
     for entry in models:
         model_id = entry["id"].strip()
-        display_name = entry["name"].strip()
+        display_name = _curated(entry["name"].strip())
 
         provider_id = _provider_id_for_model(model_id, provider_ids)
         if not provider_id:
@@ -220,6 +231,7 @@ def _seed_designated_model(
     extra_functionalities: dict[str, bool],
 ) -> None:
     """Create a dedicated model configuration and register it in system_settings."""
+    config_name = _curated(config_name)
     cur.execute("SELECT id FROM model_configurations WHERE name = %s AND is_active = true", (config_name,))
     existing = cur.fetchone()
     if existing:
@@ -312,7 +324,7 @@ def _seed_embedding_model(
         print(f"{LOG_PREFIX} Embedding model '{model_id}' already exists, skipping", flush=True)
         return
 
-    display_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
+    display_name = _curated(model_id.split("/", 1)[-1] if "/" in model_id else model_id)
     model_row_id = str(uuid.uuid4())
     config = {"dimension": dimension}
     if query_prefix:
@@ -352,7 +364,7 @@ def _seed_ocr_model(cur, model_id: str, provider_ids: dict[str, str]) -> None:
         print(f"{LOG_PREFIX} OCR model '{model_id}' already exists, skipping", flush=True)
         return
 
-    display_name = "Mistral OCR"
+    display_name = _curated("Mistral OCR")
     model_row_id = str(uuid.uuid4())
     cur.execute(
         """
