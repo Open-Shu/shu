@@ -190,24 +190,28 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         await session.commit()
 
         try:
-            # Retrieve file bytes from staging (don't delete yet - need retry safety)
-            file_bytes = await staging_service.retrieve_file(staging_key, delete_after_retrieve=False)
+            # Resolve the staged file to a local path (the staging dir is a
+            # ReadWriteMany mount in production, so "local" is always valid).
+            # The file is NOT deleted here; delete_staged_file fires on success
+            # after the embed job enqueues, and on failure we leave it in place
+            # so the retry can re-open it.
+            staged_path = await staging_service.retrieve_to_path(staging_key)
 
             logger.info(
-                "Retrieved staged file",
+                "Resolved staged file path",
                 extra={
                     "job_id": job.id,
                     "document_id": document_id,
-                    "file_size": len(file_bytes),
+                    "staged_path": str(staged_path),
                 },
             )
 
             from .core.ocr_service import extract_text_with_ocr_fallback
 
             extraction_result = await extract_text_with_ocr_fallback(
-                file_bytes,
-                mime_type,
-                get_config_manager(),
+                mime_type=mime_type,
+                config_manager=get_config_manager(),
+                file_path=str(staged_path),
                 filename=filename,
                 ocr_mode=ocr_mode or "auto",
                 user_id=user_id,
@@ -1310,6 +1314,14 @@ Valid workload types:
 
     # Setup logging
     setup_logging()
+
+    # Cap the MuPDF process-global store before any fitz.open in the OCR path
+    # (SHU-710). The API lifespan configures this independently for that process;
+    # dedicated worker processes handle the vast majority of ingestion OCR and
+    # must configure their own cap since they never run the FastAPI lifespan.
+    from .processors.text_extractor import configure_mupdf_store
+
+    configure_mupdf_store()
 
     logger.info(
         "Worker entrypoint starting",

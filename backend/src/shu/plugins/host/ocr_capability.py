@@ -55,9 +55,9 @@ class OcrCapability(ImmutableCapabilityMixin):
         # NULL user_id — same class of bug as the extract_text_with_ocr_fallback
         # auto/fallback drop caught earlier in SHU-700.
         res = await extract_text_with_ocr_fallback(
-            file_bytes,
-            mime_type,
-            self._config_manager,
+            file_bytes=file_bytes,
+            mime_type=mime_type,
+            config_manager=self._config_manager,
             ocr_mode=mm,
             user_id=self._user_id,
         )

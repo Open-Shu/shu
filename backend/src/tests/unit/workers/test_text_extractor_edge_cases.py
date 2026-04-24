@@ -353,9 +353,9 @@ class TestOcrCapabilityIntegration:
             )
 
         mock_fn.assert_called_once_with(
-            b"pdf-data",
-            "application/pdf",
-            cap._config_manager,
+            file_bytes=b"pdf-data",
+            mime_type="application/pdf",
+            config_manager=cap._config_manager,
             ocr_mode="fallback",
             user_id="user-123",
         )
@@ -380,9 +380,9 @@ class TestOcrCapabilityIntegration:
             )
 
         mock_fn.assert_called_once_with(
-            b"data",
-            "text/plain",
-            cap._config_manager,
+            file_bytes=b"data",
+            mime_type="text/plain",
+            config_manager=cap._config_manager,
             ocr_mode="never",
             user_id="user-123",
         )
