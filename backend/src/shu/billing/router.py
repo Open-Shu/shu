@@ -23,6 +23,7 @@ from shu.auth.models import User
 from shu.auth.rbac import get_current_user, require_admin
 from shu.billing.adapters import (
     UsageProviderImpl,
+    create_cycle_rollover_callback,
     create_payment_failed_callback,
     create_payment_recovered_callback,
     create_subscription_persistence_callback,
@@ -32,7 +33,13 @@ from shu.billing.adapters import (
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
 from shu.billing.router_envelope import verify_router_envelope_dep
 from shu.billing.schemas import WebhookEventResponse
+from shu.billing.seat_service import (
+    SeatMinimumError,
+    SeatService,
+    SeatServiceError,
+)
 from shu.billing.service import BillingService, CustomerMismatchError
+from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClientError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
@@ -57,6 +64,17 @@ def get_billing_service(
             detail="Billing is not configured",
         )
     return BillingService(settings)
+
+
+def get_seat_service(
+    service: Annotated[BillingService, Depends(get_billing_service)],
+) -> SeatService:
+    """Dependency for admin-intent seat operations.
+
+    BillingStateService is static-method-only, so the class itself is passed
+    as the state_service argument — matches how it's used elsewhere.
+    """
+    return SeatService(stripe_client=service._client, state_service=BillingStateService)
 
 
 # =============================================================================
@@ -219,6 +237,53 @@ async def get_current_usage(
 
 
 # =============================================================================
+# Seat management
+# =============================================================================
+
+
+@router.post(
+    "/seats/release",
+    summary="Release one open seat",
+    description="Shrink Stripe seat quantity by one without touching user rows.",
+    dependencies=[Depends(require_admin)],
+)
+async def release_open_seat(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    seat_service: Annotated[SeatService, Depends(get_seat_service)],
+) -> JSONResponse:
+    """Schedule a one-seat downgrade at the next period end.
+
+    Returns the fresh `UserLimitStatus` so the frontend can re-render the
+    seat counter without a follow-up GET on `/billing/subscription`.
+    """
+    try:
+        status_result = await seat_service.release_open_seat(db)
+    except SeatMinimumError as e:
+        return ShuResponse.error(
+            message=str(e),
+            code="cannot_release_below_minimum",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    except StripeClientError as e:
+        logger.error("Stripe error during seat release", extra={"error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Billing provider error",
+        )
+    except SeatServiceError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return ShuResponse.success(
+        {
+            "user_count": status_result.current_count,
+            "user_limit": status_result.user_limit,
+            "user_limit_enforcement": status_result.enforcement,
+            "at_user_limit": status_result.at_limit,
+        }
+    )
+
+
+# =============================================================================
 # Webhooks
 # =============================================================================
 
@@ -238,6 +303,7 @@ async def handle_webhook(
     body: Annotated[bytes, Depends(verify_router_envelope_dep)],
     db: Annotated[AsyncSession, Depends(get_db)],
     service: Annotated[BillingService, Depends(get_billing_service)],
+    seat_service: Annotated[SeatService, Depends(get_seat_service)],
 ) -> JSONResponse:
     """Process a router-forwarded Stripe webhook event.
 
@@ -273,6 +339,7 @@ async def handle_webhook(
         persist_subscription = await create_subscription_persistence_callback(db)
         on_payment_failed = await create_payment_failed_callback(db)
         on_payment_recovered = await create_payment_recovered_callback(db)
+        on_cycle_rollover = create_cycle_rollover_callback(db, seat_service)
         billing_config = await get_billing_config(db)
         expected_customer_id = billing_config.get("stripe_customer_id")
 
@@ -281,6 +348,7 @@ async def handle_webhook(
             persist_subscription=persist_subscription,
             on_payment_failed=on_payment_failed,
             on_payment_recovered=on_payment_recovered,
+            on_cycle_rollover=on_cycle_rollover,
             expected_customer_id=expected_customer_id,
         )
 

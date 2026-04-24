@@ -1,20 +1,19 @@
-"""Tests for billing sync — trigger_quantity_sync and BillingQuantitySyncSource."""
+"""Tests for billing sync — BillingQuantitySyncSource and UsageReportingSource."""
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shu.billing.sync import BillingQuantitySyncSource, UsageReportingSource, trigger_quantity_sync
+from shu.billing.sync import BillingQuantitySyncSource, UsageReportingSource
 
 # sync.py uses deferred imports inside function bodies, so we must patch
 # at the source modules rather than shu.billing.sync.*.
 _P_SETTINGS = "shu.billing.sync.get_billing_settings"
-_P_DB_SESSION = "shu.core.database.get_db_session"
 _P_BILLING_CONFIG = "shu.billing.adapters.get_billing_config"
 _P_USER_COUNT = "shu.billing.adapters.get_active_user_count"
 _P_SERVICE = "shu.billing.service.BillingService"
-_P_SS_SERVICE = "shu.services.system_settings_service.SystemSettingsService"
+_P_FETCH_QTY = "shu.billing.sync._fetch_current_stripe_quantity"
 
 
 def _make_unconfigured_settings():
@@ -28,155 +27,6 @@ def _make_configured_settings():
     settings.is_configured = True
     settings.secret_key = "sk_test_fake"
     return settings
-
-
-class TestTriggerQuantitySync:
-    """Tests for the fire-and-forget sync helper."""
-
-    @pytest.mark.asyncio
-    @patch(_P_SETTINGS)
-    async def test_returns_early_when_not_configured(self, mock_get_settings):
-        """Should do nothing when billing is not configured."""
-        mock_get_settings.return_value = _make_unconfigured_settings()
-
-        await trigger_quantity_sync()
-
-        # Should not attempt DB access (no error = success)
-
-    @pytest.mark.asyncio
-    @patch(_P_BILLING_CONFIG)
-    @patch(_P_DB_SESSION)
-    @patch(_P_SETTINGS)
-    async def test_returns_early_when_no_subscription(
-        self, mock_get_settings, mock_get_db, mock_get_config
-    ):
-        """Should skip when no subscription ID in billing config."""
-        mock_get_settings.return_value = _make_configured_settings()
-        mock_db = AsyncMock()
-        mock_get_db.return_value = mock_db
-        mock_get_config.return_value = {"stripe_customer_id": "cus_123"}
-
-        await trigger_quantity_sync()
-
-        mock_db.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    @patch(_P_SERVICE)
-    @patch(_P_USER_COUNT)
-    @patch(_P_BILLING_CONFIG)
-    @patch(_P_DB_SESSION)
-    @patch(_P_SETTINGS)
-    async def test_calls_sync_when_subscription_exists(
-        self, mock_get_settings, mock_get_db, mock_get_config, mock_get_count, mock_svc_cls
-    ):
-        """Should call sync_subscription_quantity when billing is configured."""
-        mock_get_settings.return_value = _make_configured_settings()
-        mock_db = AsyncMock()
-        mock_get_db.return_value = mock_db
-        mock_get_config.return_value = {
-            "stripe_customer_id": "cus_123",
-            "stripe_subscription_id": "sub_456",
-        }
-        mock_get_count.return_value = 5
-
-        mock_service = MagicMock()
-        mock_service.sync_subscription_quantity = AsyncMock(return_value=False)
-        mock_svc_cls.return_value = mock_service
-
-        await trigger_quantity_sync()
-
-        mock_service.sync_subscription_quantity.assert_awaited_once_with("sub_456", 5)
-        mock_db.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    @patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock)
-    @patch(_P_SERVICE)
-    @patch(_P_USER_COUNT)
-    @patch(_P_BILLING_CONFIG)
-    @patch(_P_DB_SESSION)
-    @patch(_P_SETTINGS)
-    async def test_persists_quantity_on_update(
-        self, mock_get_settings, mock_get_db, mock_get_config, mock_get_count,
-        mock_svc_cls, mock_billing_update
-    ):
-        """Should write updated quantity to billing_state when Stripe quantity changes."""
-        mock_get_settings.return_value = _make_configured_settings()
-        mock_db = AsyncMock()
-        mock_get_db.return_value = mock_db
-        mock_get_config.return_value = {
-            "stripe_customer_id": "cus_123",
-            "stripe_subscription_id": "sub_456",
-            "quantity": 3,
-        }
-        mock_get_count.return_value = 5
-
-        mock_service = MagicMock()
-        mock_service.sync_subscription_quantity = AsyncMock(return_value=True)
-        mock_svc_cls.return_value = mock_service
-
-        await trigger_quantity_sync()
-
-        mock_billing_update.assert_awaited_once()
-        _, kwargs = mock_billing_update.call_args
-        assert kwargs["updates"] == {"quantity": 5}
-        assert kwargs["source"] == "scheduler:quantity_sync"
-
-    @pytest.mark.asyncio
-    @patch(_P_BILLING_CONFIG)
-    @patch(_P_DB_SESSION)
-    @patch(_P_SETTINGS)
-    async def test_swallows_exceptions(self, mock_get_settings, mock_get_db, mock_get_config):
-        """Should catch and log errors, never raise."""
-        mock_get_settings.return_value = _make_configured_settings()
-        mock_db = AsyncMock()
-        mock_get_db.return_value = mock_db
-        mock_get_config.side_effect = RuntimeError("DB exploded")
-
-        await trigger_quantity_sync()
-
-        mock_db.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    @patch(_P_DB_SESSION)
-    @patch(_P_SETTINGS)
-    async def test_swallows_session_creation_exceptions(self, mock_get_settings, mock_get_db):
-        """Should catch session acquisition errors and never raise."""
-        mock_get_settings.return_value = _make_configured_settings()
-        mock_get_db.side_effect = RuntimeError("Session factory exploded")
-
-        await trigger_quantity_sync()
-
-        mock_get_db.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    @patch(_P_SERVICE)
-    @patch(_P_USER_COUNT)
-    @patch(_P_BILLING_CONFIG)
-    @patch(_P_DB_SESSION)
-    @patch(_P_SETTINGS)
-    async def test_syncs_zero_when_all_users_deleted(
-        self, mock_get_settings, mock_get_db, mock_get_config, mock_get_count, mock_svc_cls
-    ):
-        """Should forward user_count=0 to Stripe so the seat quantity drops to 0.
-
-        An empty tenant (all users deleted) must be able to drive the subscription
-        quantity to 0 — there's no short-circuit. This test guards against a
-        regression that would silently retain stale seat counts on Stripe.
-        """
-        mock_get_settings.return_value = _make_configured_settings()
-        mock_db = AsyncMock()
-        mock_get_db.return_value = mock_db
-        mock_get_config.return_value = {"stripe_subscription_id": "sub_456"}
-        mock_get_count.return_value = 0
-
-        mock_service = MagicMock()
-        mock_service.sync_subscription_quantity = AsyncMock(return_value=True)
-        mock_svc_cls.return_value = mock_service
-
-        await trigger_quantity_sync()
-
-        mock_service.sync_subscription_quantity.assert_awaited_once_with("sub_456", 0)
-        mock_db.close.assert_awaited_once()
 
 
 class TestBillingQuantitySyncSource:
@@ -230,6 +80,39 @@ class TestBillingQuantitySyncSource:
 
         assert result == 0  # No update needed (sync returned False)
         assert source._last_run is not None
+
+    @pytest.mark.asyncio
+    async def test_skips_on_downgrade(self):
+        """Should skip when user_count < Stripe quantity — safety net is upgrade-only.
+
+        Downgrades are admin-scheduled through SeatService + the SHU-704 primitive;
+        the reconciler must not shrink Stripe on its own.
+        """
+        source = BillingQuantitySyncSource()
+        assert source._last_run is None
+
+        mock_db = AsyncMock()
+
+        with (
+            patch(_P_SETTINGS) as mock_get_settings,
+            patch(_P_BILLING_CONFIG) as mock_get_config,
+            patch(_P_USER_COUNT) as mock_get_count,
+            patch(_P_SERVICE) as mock_svc_cls,
+            patch(_P_FETCH_QTY, new_callable=AsyncMock) as mock_fetch_qty,
+        ):
+            mock_get_settings.return_value = _make_configured_settings()
+            mock_get_config.return_value = {"stripe_subscription_id": "sub_123"}
+            mock_get_count.return_value = 2
+            mock_service = MagicMock()
+            mock_service.sync_subscription_quantity = AsyncMock(return_value=True)
+            mock_svc_cls.return_value = mock_service
+            mock_fetch_qty.return_value = 5  # Stripe has 5 seats, we have 2 active users
+
+            result = await source.cleanup_stale(mock_db)
+
+        assert result == 0
+        assert source._last_run is not None
+        mock_service.sync_subscription_quantity.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_enqueue_due_returns_zero(self):

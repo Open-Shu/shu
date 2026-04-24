@@ -112,9 +112,10 @@ class TestEnsureSingleton:
         state = _make_state()
         db = _make_db(state)
 
-        result = await BillingStateService.ensure_singleton(db)
+        result, inserted = await BillingStateService.ensure_singleton(db)
 
         assert result is state
+        assert inserted is False
         db.add.assert_not_called()
         db.flush.assert_not_awaited()
 
@@ -122,10 +123,11 @@ class TestEnsureSingleton:
     async def test_creates_singleton_when_missing(self):
         db = _make_db(None)
 
-        result = await BillingStateService.ensure_singleton(db)
+        result, inserted = await BillingStateService.ensure_singleton(db)
 
         assert isinstance(result, BillingState)
         assert result.id == 1
+        assert inserted is True
         db.add.assert_called_once_with(result)
         db.flush.assert_awaited_once()
 

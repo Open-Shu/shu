@@ -10,11 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.models.llm_provider import LLMProvider, LLMUsage
+
+if TYPE_CHECKING:
+    from shu.billing.seat_service import SeatService
 
 # =============================================================================
 # UsageRecord / UsageSummary Implementations
@@ -263,6 +267,28 @@ async def create_payment_recovered_callback(db: AsyncSession):
         )
 
     return on_payment_recovered
+
+
+def create_cycle_rollover_callback(db: AsyncSession, seat_service: SeatService):
+    """Create callback that invokes `SeatService.rollover` on cycle-rollover invoices.
+
+    Only `billing_reason == "subscription_cycle"` triggers rollover — other
+    reasons (create, update, manual) reuse the same invoice.paid event but
+    must not touch seat state.
+    """
+
+    async def on_cycle_rollover(
+        stripe_customer_id: str,
+        subscription_id: str,
+        invoice_id: str,
+        stripe_event_id: str,
+        billing_reason: str | None,
+    ) -> None:
+        if billing_reason != "subscription_cycle":
+            return
+        await seat_service.rollover(db, subscription_id, stripe_event_id)
+
+    return on_cycle_rollover
 
 
 async def get_billing_config(db: AsyncSession) -> dict:

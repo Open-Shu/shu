@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shu.billing.adapters import get_billing_config, get_user_count
+from shu.billing.adapters import get_active_user_count, get_billing_config
 from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -61,6 +61,11 @@ async def check_user_limit(db: AsyncSession) -> UserLimitStatus:
 
     enforcement = billing_config.get("user_limit_enforcement", "soft")
 
+    # TODO: Currently we'll only allow "hard" or "none". A "soft" enforcement doesn'r work with
+    # our current logic flows.
+    if enforcement == "soft":
+        enforcement = "none"
+
     if enforcement == "hard":
         # Serialise concurrent user-creation requests at the DB level.
         # Acquiring billing_state FOR UPDATE means the second request blocks
@@ -70,7 +75,7 @@ async def check_user_limit(db: AsyncSession) -> UserLimitStatus:
 
         await BillingStateService.get_for_update(db)
 
-    current_count = await get_user_count(db)
+    current_count = await get_active_user_count(db)
     at_limit = current_count >= user_limit
 
     result = UserLimitStatus(

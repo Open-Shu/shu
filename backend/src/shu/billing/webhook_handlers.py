@@ -36,6 +36,8 @@ class SubscriptionCallback(Protocol):
 # (stripe_customer_id, subscription_id, invoice_id, stripe_event_id)
 PaymentFailedCallback = Callable[[str, str, str, str | None], Any]
 PaymentRecoveredCallback = Callable[[str, str, str, str | None], Any]
+# (stripe_customer_id, subscription_id, invoice_id, stripe_event_id, billing_reason)
+CycleRolloverCallback = Callable[[str, str, str, str, str | None], Any]
 
 
 class WebhookHandler(ABC):
@@ -180,12 +182,14 @@ class InvoicePaidHandler(WebhookHandler):
         self,
         event: stripe.Event,
         on_payment_recovered: PaymentRecoveredCallback | None = None,
+        on_cycle_rollover: CycleRolloverCallback | None = None,
         **kwargs: Any,
     ) -> None:
         invoice = event.data.object
         customer_id = invoice.get("customer")
         subscription_id = invoice.get("subscription")
         invoice_id = invoice.get("id")
+        billing_reason = invoice.get("billing_reason")
         amount_paid = invoice.get("amount_paid", 0) / 100  # cents to dollars
 
         logger.info(
@@ -194,12 +198,16 @@ class InvoicePaidHandler(WebhookHandler):
                 "invoice_id": invoice_id,
                 "customer_id": customer_id,
                 "subscription_id": subscription_id,
+                "billing_reason": billing_reason,
                 "amount_paid": amount_paid,
             },
         )
 
         if on_payment_recovered and customer_id and subscription_id and invoice_id:
             await on_payment_recovered(customer_id, subscription_id, invoice_id, event.id)
+
+        if on_cycle_rollover and customer_id and subscription_id and invoice_id:
+            await on_cycle_rollover(customer_id, subscription_id, invoice_id, event.id, billing_reason)
 
 
 class InvoicePaymentFailedHandler(WebhookHandler):

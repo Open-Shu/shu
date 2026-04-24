@@ -1,6 +1,5 @@
 """Authentication API endpoints for Shu."""
 
-import asyncio
 import logging
 from typing import Any, Literal
 
@@ -16,7 +15,6 @@ from ..auth import User, UserRole
 from ..auth.password_auth import password_auth_service
 from ..auth.rbac import get_current_user, require_admin
 from ..billing.enforcement import check_user_limit
-from ..billing.sync import trigger_quantity_sync
 from ..core.rate_limiting import get_rate_limit_service
 from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
@@ -167,7 +165,6 @@ async def login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -233,7 +230,6 @@ async def register_user(
             db=db,
             admin_created=is_admin,
         )
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Return success message without tokens (user is inactive)
         return SuccessResponse(
@@ -488,7 +484,6 @@ async def google_exchange_login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -566,7 +561,6 @@ async def microsoft_exchange_login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -671,7 +665,6 @@ async def create_user(
                 await db.rollback()
                 raise ValueError(f"User with email {request.email} already exists") from e
 
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
         return SuccessResponse(data=user.to_dict())
 
     except HTTPException:
@@ -755,7 +748,6 @@ async def delete_user(
     """Delete user (admin only)."""
     try:
         await user_service.delete_user(user_id, current_user.id, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
         return SuccessResponse(data={"message": "User deleted successfully"})
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

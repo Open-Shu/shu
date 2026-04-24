@@ -64,8 +64,6 @@ class TestRegisterUserLimitEnforcement:
         with (
             patch("shu.api.auth.check_user_limit") as mock_check,
             patch("shu.api.auth.password_auth_service") as mock_pw,
-            patch("shu.api.auth.trigger_quantity_sync"),
-            patch("shu.api.auth.asyncio.create_task"),
         ):
             mock_pw.create_user = AsyncMock(return_value=mock_user)
 

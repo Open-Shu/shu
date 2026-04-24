@@ -1,19 +1,18 @@
-"""Billing quantity sync — real-time triggers and daily reconciliation.
+"""Billing quantity sync — upgrade-only safety net.
 
-Keeps the Stripe subscription quantity in sync with the actual user count
-for per-seat billing. Two mechanisms:
-
-1. `trigger_quantity_sync()` — fire-and-forget helper called from user
-   create/delete endpoints. Owns its own DB session so it's safe to run
-   as an `asyncio.create_task`.
-
-2. `BillingQuantitySyncSource` — scheduler source that runs daily to
-   reconcile any drift (missed events, Stripe API failures, etc.).
+Admins drive all seat-count changes explicitly through `SeatService`. This
+daily job exists only to catch the edge case where our active user count
+has outpaced the Stripe subscription quantity (e.g. an admin upgrade write
+failed after the user row landed locally): it bumps Stripe up to match.
+Downgrades are never reconciled here — they are admin-scheduled and execute
+at period end, so shrinking Stripe automatically would fight live admin
+decisions.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,60 +20,34 @@ from shu.billing.config import get_billing_settings
 from shu.core.logging import get_logger
 from shu.core.queue_backend import QueueBackend
 
+if TYPE_CHECKING:
+    from shu.billing.service import BillingService
+
 logger = get_logger(__name__)
 
 # Daily reconciliation interval (24 hours)
 _RECONCILIATION_INTERVAL_SECONDS = 86400
 
 
-async def trigger_quantity_sync() -> None:
-    """Sync Stripe subscription quantity to match current user count.
+async def _fetch_current_stripe_quantity(service: BillingService, subscription_id: str) -> int | None:
+    """Return Stripe's live seat quantity, or None if it can't be determined.
 
-    Safe for fire-and-forget: creates its own DB session, catches all
-    exceptions, never raises. Call via `asyncio.create_task(trigger_quantity_sync())`.
+    A None result triggers a skip in the caller — on a Stripe error the
+    upgrade-only safety net deliberately holds rather than writing blind.
     """
-    # Fast check — no DB needed
-    settings = get_billing_settings()
-    if not settings.is_configured:
-        return
+    from shu.billing.stripe_client import _find_seat_item
 
-    from shu.billing.adapters import get_active_user_count, get_billing_config
-    from shu.billing.service import BillingService
-    from shu.core.database import get_db_session
-
-    db: AsyncSession | None = None
     try:
-        db = await get_db_session()
-        billing_config = await get_billing_config(db)
-        subscription_id = billing_config.get("stripe_subscription_id")
-        if not subscription_id:
-            logger.debug("No subscription configured, skipping quantity sync")
-            return
-
-        user_count = await get_active_user_count(db)
-        service = BillingService(settings)
-        updated = await service.sync_subscription_quantity(subscription_id, user_count)
-
-        # Always persist the local quantity so billing_state stays in sync
-        # even when Stripe already had the right value (updated=False).
-        from shu.billing.state_service import BillingStateService
-
-        await BillingStateService.update(
-            db,
-            updates={"quantity": user_count},
-            source="scheduler:quantity_sync",
-        )
-
-        if updated:
-            logger.info(
-                "Quantity sync completed",
-                extra={"subscription_id": subscription_id, "user_count": user_count},
-            )
+        subscription = await service._client.get_subscription(subscription_id)
     except Exception:
-        logger.error("Quantity sync failed", exc_info=True)
-    finally:
-        if db is not None:
-            await db.close()
+        logger.warning("Failed to fetch subscription for quantity guard", exc_info=True)
+        return None
+    if subscription is None:
+        return None
+    seat_item = _find_seat_item(subscription)
+    if seat_item is None:
+        return None
+    return int(seat_item["quantity"])
 
 
 # =============================================================================
@@ -119,6 +92,23 @@ class BillingQuantitySyncSource:
 
             user_count = await get_active_user_count(db)
             service = BillingService(settings)
+
+            # We do not auto-downgrade accounts, so we will only sync if there are upgrades.
+            # Generally those cases should be handled outside of here as well, but this is a
+            # safety net in case something went wrong there.
+            current_stripe_qty = await _fetch_current_stripe_quantity(service, subscription_id)
+            if current_stripe_qty is None or user_count <= current_stripe_qty:
+                logger.debug(
+                    "Skipping daily reconciliation — at or below Stripe (upgrade-only)",
+                    extra={
+                        "subscription_id": subscription_id,
+                        "user_count": user_count,
+                        "stripe_quantity": current_stripe_qty,
+                    },
+                )
+                self._last_run = now
+                return 0
+
             updated = await service.sync_subscription_quantity(subscription_id, user_count)
 
             # Always persist the local quantity so billing_state stays current
