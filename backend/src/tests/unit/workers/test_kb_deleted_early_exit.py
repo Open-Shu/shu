@@ -82,13 +82,13 @@ class TestOCRHandlerKBDeletedEarlyExit:
     async def test_ocr_job_discarded_when_kb_deleted(self):
         """
         When the KB is gone, _handle_ocr_job must return without raising
-        (no retry) and must not call retrieve_file.
+        (no retry) and must not resolve the staged file.
         """
         document = _make_document()
         mock_session_local, _ = _make_session(document, kb=None)
 
         mock_staging_service = AsyncMock()
-        mock_staging_service.retrieve_file = AsyncMock()
+        mock_staging_service.retrieve_to_path = AsyncMock()
         mock_staging_service.delete_staged_file = AsyncMock()
 
         job = _make_ocr_job()
@@ -103,8 +103,8 @@ class TestOCRHandlerKBDeletedEarlyExit:
             # Must return cleanly — no exception means no retry
             await _handle_ocr_job(job)
 
-        # Staged bytes must NOT have been retrieved
-        mock_staging_service.retrieve_file.assert_not_called()
+        # Staged file must NOT have been resolved
+        mock_staging_service.retrieve_to_path.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ocr_job_deletes_staged_file_when_kb_deleted(self):
@@ -190,11 +190,11 @@ class TestOCRHandlerKBDeletedEarlyExit:
         mock_session_local, _ = _make_session(document, kb=mock_kb)
 
         mock_staging_service = AsyncMock()
-        mock_staging_service.retrieve_file = AsyncMock(return_value=b"%PDF fake")
+        mock_staging_service.retrieve_to_path = AsyncMock(return_value="/tmp/fake_staged.bin")
         mock_staging_service.delete_staged_file = AsyncMock()
 
         mock_extractor = MagicMock()
-        mock_extractor.extract_text = AsyncMock(return_value={"text": "text", "metadata": {}})
+        mock_extractor.extract_text = AsyncMock(return_value={"text": "text " * 50, "metadata": {}})
 
         mock_enqueue_job = AsyncMock()
 
@@ -206,14 +206,14 @@ class TestOCRHandlerKBDeletedEarlyExit:
             patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=AsyncMock())),
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
-            patch("shu.processors.text_extractor.TextExtractor", return_value=mock_extractor),
+            patch("shu.core.ocr_service.TextExtractor", return_value=mock_extractor),
         ):
             from shu.worker import _handle_ocr_job
 
             await _handle_ocr_job(job)
 
-        # retrieve_file must have been called — job was not discarded
-        mock_staging_service.retrieve_file.assert_called_once()
+        # retrieve_to_path must have been called — job was not discarded
+        mock_staging_service.retrieve_to_path.assert_called_once()
 
 
 class TestEmbedHandlerKBDeletedEarlyExit:

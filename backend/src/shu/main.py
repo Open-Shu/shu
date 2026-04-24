@@ -173,6 +173,15 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     logger.info(f"Version: {settings.version}")
     logger.info(f"Environment: {'Development' if settings.debug else 'Production'}")
 
+    # Cap the MuPDF process-global store so a malicious PDF with thousands of
+    # unique fonts or scattered references cannot drive unbounded memory growth
+    # (SHU-710). Must run before the first fitz.open in any request path.
+    # Dedicated worker processes configure the same cap in their own entrypoint
+    # (shu.worker.main), since they never enter this lifespan.
+    from .processors.text_extractor import configure_mupdf_store
+
+    configure_mupdf_store()
+
     # Initialize database connection
     try:
         await init_db()

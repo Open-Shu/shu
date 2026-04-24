@@ -125,45 +125,74 @@ def reset_ocr_service() -> None:
     _ocr_service = None
 
 
+def _read_file_sync(path: str) -> bytes:
+    """Blocking file read, intended to run in a thread-pool executor."""
+    with open(path, "rb") as f:
+        return f.read()
+
+
 async def extract_text_with_ocr_fallback(
-    file_bytes: bytes,
+    *,
     mime_type: str,
     config_manager: ConfigurationManager,
-    *,
+    file_bytes: bytes | None = None,
+    file_path: str | None = None,
     filename: str | None = None,
     ocr_mode: str = "auto",
     user_id: str | None = None,
 ) -> dict:
     """Two-step text extraction: fast extraction first, OCR service if needed.
 
+    Exactly one of ``file_bytes`` or ``file_path`` must be provided. The
+    ingestion worker passes ``file_path`` so MuPDF can use mmap-backed reads
+    via the OS page cache instead of holding the file in Python memory.
+    Callers that genuinely operate on in-memory content (plugins, test
+    harnesses) may pass ``file_bytes``.
+
     Step 1 uses TextExtractor with ocr_mode="text_only" (PDF text, DOCX, etc.).
     Step 2 routes through get_ocr_service() (Mistral or local EasyOCR/Tesseract)
-    only when step 1 yields insufficient text and ocr_mode permits it.
+    only when step 1 yields insufficient text and ocr_mode permits it. When
+    step 2 fires for a path-based call, the file bytes are read from disk
+    at that point (the OCR providers need raw bytes for the API payload);
+    those bytes are transient and freed after the OCR call returns.
 
     "auto" and "fallback" behave identically: try fast text extraction,
     fall back to OCR when the result is below the minimum threshold.
 
     Args:
-        file_bytes: Raw document bytes.
         mime_type: MIME type of the document.
         config_manager: ConfigurationManager for TextExtractor.
-        filename: Optional filename for extension detection in fast extraction.
+        file_bytes: Raw document bytes (mutually exclusive with file_path).
+        file_path: Path to the document on local disk (preferred; avoids
+            loading the file into Python memory for the text-extraction path).
+        filename: Optional filename for extension detection (used when
+            file_bytes is supplied without file_path, or when file_path is
+            a tempfile with no informative suffix).
         ocr_mode: One of "auto", "always", "never", "fallback", "text_only".
+        user_id: Optional user attribution for billable OCR providers.
 
     Returns:
         Dict with "text" and "metadata" keys, same shape as TextExtractor.extract_text().
 
     """
+    if (file_bytes is None) == (file_path is None):
+        raise ValueError("Provide exactly one of file_bytes or file_path")
+
     effective_mode = (ocr_mode or "auto").strip().lower()
     settings = get_settings_instance()
 
+    extractor_kwargs: dict = {"mime_type": mime_type, "ocr_mode": "text_only"}
+    if filename:
+        # Original upload filename is the most reliable source of the type extension;
+        # staging paths always have a `.bin` suffix that carries no type information.
+        extractor_kwargs["filename"] = filename
+    if file_path is not None:
+        extractor_kwargs["file_path"] = file_path
+    else:
+        extractor_kwargs["file_bytes"] = file_bytes
+
     if effective_mode in ("never", "text_only"):
-        return await TextExtractor(config_manager=config_manager).extract_text(
-            file_bytes=file_bytes,
-            mime_type=mime_type,
-            ocr_mode="text_only",
-            **({"file_path": filename} if filename else {}),
-        )
+        return await TextExtractor(config_manager=config_manager).extract_text(**extractor_kwargs)
 
     if effective_mode == "always":
         if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
@@ -171,23 +200,15 @@ async def extract_text_with_ocr_fallback(
                 "ocr_mode='always' requested for non-OCR-eligible type %s, using text extraction",
                 mime_type,
             )
-            return await TextExtractor(config_manager=config_manager).extract_text(
-                file_bytes=file_bytes,
-                mime_type=mime_type,
-                ocr_mode="text_only",
-                **({"file_path": filename} if filename else {}),
-            )
-        return await _run_ocr_service(file_bytes, mime_type, effective_mode, user_id=user_id)
+            return await TextExtractor(config_manager=config_manager).extract_text(**extractor_kwargs)
+        return await _run_ocr_service(
+            mime_type, effective_mode, file_bytes=file_bytes, file_path=file_path, user_id=user_id
+        )
 
     # auto / fallback: try cheap text extraction, fall back to OCR if
     # the result is missing or below the minimum length threshold.
     try:
-        result = await TextExtractor(config_manager=config_manager).extract_text(
-            file_bytes=file_bytes,
-            mime_type=mime_type,
-            ocr_mode="text_only",
-            **({"file_path": filename} if filename else {}),
-        )
+        result = await TextExtractor(config_manager=config_manager).extract_text(**extractor_kwargs)
         extracted_text = result.get("text", "")
     except Exception:
         if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
@@ -201,12 +222,35 @@ async def extract_text_with_ocr_fallback(
     if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
         return result
 
-    return await _run_ocr_service(file_bytes, mime_type, effective_mode, user_id=user_id)
+    return await _run_ocr_service(
+        mime_type, effective_mode, file_bytes=file_bytes, file_path=file_path, user_id=user_id
+    )
 
 
-async def _run_ocr_service(file_bytes: bytes, mime_type: str, ocr_mode: str, *, user_id: str | None = None) -> dict:
-    """Call the configured OCR service and return a result dict with timing."""
+async def _run_ocr_service(
+    mime_type: str,
+    ocr_mode: str,
+    *,
+    file_bytes: bytes | None = None,
+    file_path: str | None = None,
+    user_id: str | None = None,
+) -> dict:
+    """Call the configured OCR service and return a result dict with timing.
+
+    The OCR providers (Mistral via HTTP, local EasyOCR/Tesseract) both require
+    raw bytes to construct their request payload, so a path-based caller
+    materializes bytes here on a single blocking read. The bytes are a
+    transient hop — once the OCR call returns, they fall out of scope and
+    are freed by the GC before the next document is processed.
+    """
+    import asyncio
     import time
+
+    if file_bytes is None:
+        if file_path is None:
+            raise ValueError("Provide exactly one of file_bytes or file_path")
+        loop = asyncio.get_running_loop()
+        file_bytes = await loop.run_in_executor(None, _read_file_sync, file_path)
 
     start = time.monotonic()
     ocr_service = get_ocr_service()

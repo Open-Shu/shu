@@ -56,7 +56,9 @@ class TestExtractTextNeverMode:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", config_manager, ocr_mode=mode,
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=config_manager, ocr_mode=mode,
             )
 
         assert result["text"] == "Some extracted text"
@@ -74,7 +76,9 @@ class TestExtractTextNeverMode:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", config_manager, ocr_mode="never",
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=config_manager, ocr_mode="never",
             )
 
         assert result["text"] == ""
@@ -95,7 +99,9 @@ class TestExtractTextAlwaysMode:
             patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode="always",
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode="always",
             )
 
         mock_cls.assert_not_called()
@@ -120,7 +126,9 @@ class TestExtractTextAutoFallbackMode:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", config_manager, ocr_mode=mode,
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=config_manager, ocr_mode=mode,
             )
 
         assert result["text"] == long_text
@@ -140,7 +148,9 @@ class TestExtractTextAutoFallbackMode:
             patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode=mode,
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode=mode,
             )
 
         assert result["text"] == "Full OCR text"
@@ -158,7 +168,9 @@ class TestExtractTextAutoFallbackMode:
             patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode="auto",
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode="auto",
             )
 
         assert result["text"] == "OCR from empty"
@@ -180,7 +192,9 @@ class TestExtractTextAutoFallbackMode:
             patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
         ):
             result = await extract_text_with_ocr_fallback(
-                b"image-bytes", "image/png", MagicMock(), ocr_mode="auto",
+                file_bytes=b"image-bytes",
+                mime_type="image/png",
+                config_manager=MagicMock(), ocr_mode="auto",
             )
 
         assert result["text"] == "OCR after error"
@@ -200,7 +214,9 @@ class TestExtractTextAutoFallbackMode:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode="auto",
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode="auto",
             )
         assert result["text"] == "A" * 30
         mock_get_ocr.assert_not_called()
@@ -213,7 +229,9 @@ class TestExtractTextAutoFallbackMode:
             patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode="auto",
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode="auto",
             )
         assert result["text"] == "OCR text"
 
@@ -234,7 +252,9 @@ class TestOCRMimeTypeGate:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"hi", "text/plain", MagicMock(), ocr_mode=mode,
+                file_bytes=b"hi",
+                mime_type="text/plain",
+                config_manager=MagicMock(), ocr_mode=mode,
             )
 
         assert result["text"] == "hi"
@@ -253,7 +273,9 @@ class TestOCRMimeTypeGate:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"short", docx_mime, MagicMock(), ocr_mode="auto",
+                file_bytes=b"short",
+                mime_type=docx_mime,
+                config_manager=MagicMock(), ocr_mode="auto",
             )
 
         assert result["text"] == "short"
@@ -272,7 +294,9 @@ class TestOCRMimeTypeGate:
             patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc),
         ):
             result = await extract_text_with_ocr_fallback(
-                b"pdf-bytes", "application/pdf", MagicMock(), ocr_mode="auto",
+                file_bytes=b"pdf-bytes",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode="auto",
             )
 
         assert result["text"] == "OCR text from scanned PDF"
@@ -290,7 +314,9 @@ class TestOCRMimeTypeGate:
             patch("shu.core.ocr_service.get_ocr_service") as mock_get_ocr,
         ):
             result = await extract_text_with_ocr_fallback(
-                b"text", "text/plain", MagicMock(), ocr_mode="always",
+                file_bytes=b"text",
+                mime_type="text/plain",
+                config_manager=MagicMock(), ocr_mode="always",
             )
 
         assert result["text"] == "text content"
@@ -307,14 +333,14 @@ class TestOCRMimeTypeGate:
         with (
             patch("shu.core.ocr_service.TextExtractor", mock_cls),
             patch("shu.core.ocr_service.get_settings_instance", return_value=mock_settings),
+            pytest.raises(RuntimeError, match="docx parser broke"),
         ):
-            with pytest.raises(RuntimeError, match="docx parser broke"):
-                await extract_text_with_ocr_fallback(
-                    b"docx-bytes",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    MagicMock(),
-                    ocr_mode="auto",
-                )
+            await extract_text_with_ocr_fallback(
+                file_bytes=b"docx-bytes",
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                config_manager=MagicMock(),
+                ocr_mode="auto",
+            )
 
 
 class TestRunOCRService:
@@ -331,7 +357,7 @@ class TestRunOCRService:
         ocr_svc = _mock_ocr_service("text", engine="mistral-ocr-latest")
 
         with patch("shu.core.ocr_service.get_ocr_service", return_value=ocr_svc):
-            result = await _run_ocr_service(b"data", "application/pdf", "auto")
+            result = await _run_ocr_service("application/pdf", "auto", file_bytes=b"data")
 
         assert result["metadata"]["method"] == "ocr"
         assert result["metadata"]["engine"] == "mistral-ocr-latest"
@@ -365,9 +391,9 @@ class TestUserIdThreading:
         ), patch("shu.core.ocr_service.get_settings_instance", return_value=_mock_settings(50)):
             reset_ocr_service()
             await extract_text_with_ocr_fallback(
-                b"%PDF-dummy",
-                "application/pdf",
-                MagicMock(),
+                file_bytes=b"%PDF-dummy",
+                mime_type="application/pdf",
+                config_manager=MagicMock(),
                 ocr_mode="auto",
                 user_id="user-abc",
             )
@@ -387,9 +413,9 @@ class TestUserIdThreading:
         ):
             reset_ocr_service()
             await extract_text_with_ocr_fallback(
-                b"%PDF-dummy",
-                "application/pdf",
-                MagicMock(),
+                file_bytes=b"%PDF-dummy",
+                mime_type="application/pdf",
+                config_manager=MagicMock(),
                 ocr_mode="always",
                 user_id="user-xyz",
             )
@@ -408,7 +434,9 @@ class TestUserIdThreading:
         ), patch("shu.core.ocr_service.get_settings_instance", return_value=_mock_settings(50)):
             reset_ocr_service()
             await extract_text_with_ocr_fallback(
-                b"%PDF-dummy", "application/pdf", MagicMock(), ocr_mode="auto"
+                file_bytes=b"%PDF-dummy",
+                mime_type="application/pdf",
+                config_manager=MagicMock(), ocr_mode="auto"
             )
 
         assert mock_ocr_svc.extract_text.call_args.kwargs.get("user_id") is None
