@@ -19,6 +19,7 @@ from ..auth.models import User
 from ..core.config import ConfigurationManager, get_settings_instance
 from ..core.exceptions import (
     ConversationNotFoundError,
+    InactiveProviderError,
     LLMProviderError,
     MessageNotFoundError,
     ShuException,
@@ -305,7 +306,7 @@ class ChatService:
         if not provider:
             raise LLMProviderError(f"Provider with ID '{provider_id}' not found")
         if not provider.is_active:
-            raise LLMProviderError(f"Provider '{provider.name}' is not active")
+            raise InactiveProviderError(f"Provider '{provider.name}' is inactive")
         return provider
 
     async def _load_active_model_configuration(self, model_configuration_id: str, current_user: User | None = None):
@@ -349,11 +350,14 @@ class ChatService:
         if not model_name:
             raise LLMProviderError("Model configuration is missing a model name")
 
+        # get_model_by_name pre-filters LLMModel.is_active, so a None result means
+        # the model was either never seeded or has been soft-deleted — either way it
+        # is not routable for this conversation.
         model_record = await self.llm_service.get_model_by_name(model_name, provider_id=model_config.llm_provider_id)
 
-        if not model_record or not model_record.is_active:
-            raise LLMProviderError(
-                f"Model '{model_name}' not found or inactive for provider '{model_config.llm_provider_id}'"
+        if not model_record:
+            raise InactiveProviderError(
+                f"Model '{model_name}' is inactive or unavailable for provider '{model_config.llm_provider_id}'"
             )
 
         return model_config.llm_provider_id, model_record

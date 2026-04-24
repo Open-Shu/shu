@@ -23,6 +23,9 @@ from ..core.config import get_settings_instance
 from ..core.exceptions import (
     LLMConfigurationError,
     LLMProviderError,
+    ModelLockedError,
+    ProviderCreationDisabledError,
+    ProviderLockedError,
 )
 from ..models.llm_provider import LLMModel, LLMProvider, LLMUsage, ModelType
 from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
@@ -83,6 +86,9 @@ class LLMService:
         **kwargs: Any,
     ) -> LLMProvider:
         """Create a new LLM provider."""
+        if self.settings.lock_provider_creations:
+            raise ProviderCreationDisabledError("Provider creation is disabled on this deployment.")
+
         provider_type_definition = await self.provider_type.get(provider_type)
         if not provider_type_definition:
             raise LLMProviderError(f"Provider type '{provider_type}' is invalid")
@@ -130,6 +136,9 @@ class LLMService:
         if not provider:
             raise LLMProviderError(f"Provider with ID '{provider_id}' not found")
 
+        if provider.is_system_managed:
+            raise ProviderLockedError("Provider is managed by Shu and cannot be modified.")
+
         provider_type = updates.get("provider_type", provider.provider_type)
         api_endpoint = updates.pop("api_endpoint", None) or provider.api_endpoint
         provider_type_record = await self.provider_type.get(provider_type)
@@ -173,6 +182,9 @@ class LLMService:
         if not provider:
             return False
 
+        if provider.is_system_managed:
+            raise ProviderLockedError("Provider is managed by Shu and cannot be modified.")
+
         await self.db.delete(provider)
         await self.db.commit()
 
@@ -183,6 +195,8 @@ class LLMService:
         self,
         provider_id: str | None = None,
         model_types: list[str] | None = None,
+        *,
+        active_providers_only: bool = False,
     ) -> list[LLMModel]:
         """Get available LLM models, optionally filtered by provider and type.
 
@@ -192,9 +206,15 @@ class LLMService:
                 Pass None to return all types (for admin model management).
                 Defaults to None (no type filter) for backward compatibility;
                 callers that serve chat contexts should pass ["chat"].
+            active_providers_only: When True, exclude models whose parent provider
+                is deactivated. End-user pickers must pass True; admin flows leave
+                it False so inactive providers remain visible for management.
 
         """
         stmt = select(LLMModel).where(LLMModel.is_active)
+
+        if active_providers_only:
+            stmt = stmt.join(LLMProvider, LLMModel.provider_id == LLMProvider.id).where(LLMProvider.is_active)
 
         if provider_id:
             stmt = stmt.where(LLMModel.provider_id == provider_id)
@@ -239,6 +259,26 @@ class LLMService:
         await self.db.refresh(model)
 
         logger.info(f"Created LLM model: {model_name} for provider {provider.name}")
+        return model
+
+    async def delete_provider_model(self, provider_id: str, model_id: str) -> LLMModel | None:
+        """Soft-delete a model, enforcing lockdown on a system-managed parent provider.
+
+        Returns the soft-deleted model, or ``None`` if the model is not found or
+        does not belong to ``provider_id``. Raises :class:`ModelLockedError` when
+        the parent provider is system-managed.
+        """
+        model = await self.get_model_by_id(model_id)
+        if not model or model.provider_id != provider_id:
+            return None
+
+        if model.provider.is_system_managed:
+            raise ModelLockedError("Model is managed by Shu and cannot be modified.")
+
+        model.is_active = False
+        await self.db.commit()
+
+        logger.info(f"Disabled LLM model: {model.model_name} for provider {provider_id}")
         return model
 
     async def get_model_by_id(self, model_id: str) -> LLMModel | None:

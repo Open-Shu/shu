@@ -78,6 +78,18 @@ def _make_document(doc_id: str = "doc-123"):
 class TestOCRHandlerKBDeletedEarlyExit:
     """OCR handler must discard job and clean up staging when KB is deleted."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_ocr_active_guard(self):
+        """Bypass the DB-touching is_active guard on the ExternalOCRService singleton.
+
+        These tests exercise KB-deleted branches and don't own a DB session.
+        The guard has dedicated coverage in ``test_external_ocr_service.py``.
+        """
+        from shu.services.external_ocr_service import ExternalOCRService
+
+        with patch.object(ExternalOCRService, "_ensure_active", new_callable=AsyncMock):
+            yield
+
     @pytest.mark.asyncio
     async def test_ocr_job_discarded_when_kb_deleted(self):
         """

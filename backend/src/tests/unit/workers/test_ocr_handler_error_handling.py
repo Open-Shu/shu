@@ -55,6 +55,19 @@ def _make_session_with_document(document):
 class TestOCRHandlerStagingCleanupFailure:
     """Staging cleanup failure after successful OCR must not mark document ERROR."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_ocr_active_guard(self):
+        """Bypass the DB-touching is_active guard on the ExternalOCRService singleton.
+
+        These tests exercise the OCR handler's staging-cleanup error path and
+        don't own a DB. The guard is tested directly in
+        ``test_external_ocr_service.py``.
+        """
+        from shu.services.external_ocr_service import ExternalOCRService
+
+        with patch.object(ExternalOCRService, "_ensure_active", new_callable=AsyncMock):
+            yield
+
     @pytest.mark.asyncio
     async def test_staging_delete_failure_does_not_mark_document_error(self):
         """

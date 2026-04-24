@@ -5,15 +5,15 @@ Tests the setup status API to ensure it correctly reflects experience creation
 across various scenarios using property-based testing with Hypothesis.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.strategies import composite
 
-from shu.api.config import get_setup_status
-from shu.schemas.config import SetupStatus
+from shu.api.config import get_public_config, get_setup_status
+from shu.schemas.config import PublicConfig, SetupStatus
 
 
 @composite
@@ -170,3 +170,33 @@ class TestSetupStatusProperty:
         assert status.experience_created is False, (
             f"Expected experience_created=False for experiences count=0, " f"but got {status.experience_created}"
         )
+
+
+class TestPublicConfigLockProviderCreations:
+    """Ensures the public config endpoint mirrors Settings.lock_provider_creations."""
+
+    @pytest.mark.parametrize("lock_value", [True, False])
+    @pytest.mark.asyncio
+    async def test_lock_provider_creations_passthrough(self, lock_value):
+        mock_settings = MagicMock()
+        mock_settings.google_client_id = "google-id"
+        mock_settings.microsoft_client_id = "ms-id"
+        mock_settings.app_name = "Shu"
+        mock_settings.version = "0.0.0"
+        mock_settings.environment = "test"
+        mock_settings.chat_attachment_allowed_types = ["PDF"]
+        mock_settings.chat_attachment_max_size = 1024
+        mock_settings.kb_upload_allowed_types = ["PDF"]
+        mock_settings.kb_upload_max_size = 2048
+        mock_settings.password_policy = "moderate"
+        mock_settings.password_min_length = 8
+        mock_settings.password_special_chars = "!@#"
+        mock_settings.enable_document_profiling = False
+        mock_settings.lock_provider_creations = lock_value
+
+        with patch("shu.api.config.get_settings_instance", return_value=mock_settings):
+            response = await get_public_config()
+
+        config = response.data
+        assert isinstance(config, PublicConfig)
+        assert config.lock_provider_creations is lock_value

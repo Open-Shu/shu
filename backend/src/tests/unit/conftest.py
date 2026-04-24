@@ -33,6 +33,21 @@ if str(MIGRATIONS_ROOT) not in sys.path:
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_active_check_cache_between_tests():
+    """Drop the resolver's positive-result active-check cache between tests.
+
+    The cache is module-level global state. Without this, a test that lets the
+    real ``ensure_provider_and_model_active`` succeed would hide a follow-up
+    test's inactive-path assertion for up to the TTL.
+    """
+    from shu.core.external_model_resolver import _clear_active_check_cache
+
+    _clear_active_check_cache()
+    yield
+    _clear_active_check_cache()
+
+
 @pytest.fixture
 def mock_settings():
     """Provide a mock Settings object for tests that need custom configuration."""

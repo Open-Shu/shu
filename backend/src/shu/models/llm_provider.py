@@ -39,6 +39,7 @@ class LLMProvider(BaseModel):
 
     # Provider capabilities
     is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_system_managed = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Rate limiting (per-provider limits, 0 = unlimited/disabled)
     rate_limit_rpm = Column(Integer, default=0, nullable=False)  # Requests per minute, 0 = unlimited

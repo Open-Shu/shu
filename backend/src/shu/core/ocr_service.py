@@ -76,7 +76,11 @@ class OCRService(Protocol):
         ...
 
 
-# Module-level singleton
+# Module-level singleton. Reused across calls because (a) LocalOCRService
+# initializes EasyOCR/Tesseract models on construction and rebuilding per call
+# is measurably slow on the ingestion hot path, and (b) ExternalOCRService
+# holds a resolved provider/model ID cache that the SHU-705 active-check TTL
+# cache depends on to avoid per-call DB lookups.
 _ocr_service: OCRService | None = None
 
 

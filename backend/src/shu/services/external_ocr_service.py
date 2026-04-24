@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from ..core.database import get_async_session_local
+from ..core.external_model_resolver import ensure_provider_and_model_active
 from ..core.logging import get_logger
 from ..core.ocr_service import OCR_ELIGIBLE_MIME_PREFIXES, OCRResult
 from ..llm.service import LLMService
@@ -85,6 +87,8 @@ class ExternalOCRService:
                 f"Supported: {sorted(OCR_ELIGIBLE_MIME_PREFIXES.keys())}"
             )
 
+        await self._ensure_active()
+
         b64 = base64.b64encode(file_bytes).decode("ascii")
         data_url = f"{prefix}{b64}"
 
@@ -140,6 +144,20 @@ class ExternalOCRService:
             page_count=len(pages),
             confidence=confidence,
         )
+
+    async def _ensure_active(self) -> None:
+        """Gate the OCR call on provider/model is_active.
+
+        Resolves the provider and model IDs first (lazy singleton pattern); if
+        the seed is missing, skip the active check so the usage-recording path
+        can emit the existing "dropped row" diagnostic — a missing row is a
+        seed bug, not a deactivation signal.
+        """
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            if not await self._resolve_provider_and_model(session):
+                return
+            await ensure_provider_and_model_active(self._provider_id, self._model_id, call_type="OCR", session=session)
 
     async def _resolve_provider_and_model(self, session) -> bool:
         """Look up pre-seeded provider and model records for usage tracking.
@@ -206,8 +224,6 @@ class ExternalOCRService:
         )
 
         try:
-            from ..core.database import get_async_session_local
-
             session_factory = get_async_session_local()
             async with session_factory() as session:
                 if not await self._resolve_provider_and_model(session):

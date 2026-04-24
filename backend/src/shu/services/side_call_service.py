@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import ConfigurationManager
-from ..core.exceptions import LLMProviderError
+from ..core.exceptions import InactiveProviderError, LLMProviderError
 from ..core.safe_decimal import safe_decimal
 from ..llm.service import LLMService
 from ..models.llm_provider import Message
@@ -722,18 +722,19 @@ class SideCallService:
         if not model_config.model_name:
             raise LLMProviderError("Model configuration does not specify a model name")
 
-        # Get the provider
         provider = model_config.llm_provider
         if not provider:
             raise LLMProviderError("Model configuration does not have a provider")
 
-        # Find the model by name
+        if not provider.is_active:
+            raise InactiveProviderError(f"Provider '{provider.name}' is inactive")
+
         for model in provider.models:
             if model.model_name == model_config.model_name and model.is_active:
                 return model
 
-        raise LLMProviderError(
-            f"Model '{model_config.model_name}' not found or inactive for provider '{provider.name}'"
+        raise InactiveProviderError(
+            f"Model '{model_config.model_name}' is inactive or unavailable for provider '{provider.name}'"
         )
 
     async def _build_sequence_messages(

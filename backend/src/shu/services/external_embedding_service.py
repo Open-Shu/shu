@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from ..core.external_model_resolver import ensure_provider_and_model_active
 from ..core.logging import get_logger
 from ..core.safe_decimal import safe_decimal
 
@@ -80,6 +81,7 @@ class ExternalEmbeddingService:
     ) -> list[list[float]]:
         if not texts:
             return []
+        await ensure_provider_and_model_active(self._provider_id, self._model_id, call_type="embedding")
         response_data = await self._call_embeddings_api(texts, prefix=prefix)
         entries = response_data.get("data") or []
         if len(entries) != len(texts):

@@ -43,6 +43,7 @@ const LLMProviderForm = ({
   providerCapabilities = {},
   endpointsOverride,
   onUpdateEndpointField,
+  disabled = false,
 }) => {
   const base = baseEndpoints || {};
   const caps = providerCapabilities || {};
@@ -110,6 +111,7 @@ const LLMProviderForm = ({
           value={provider.name}
           onChange={(e) => onProviderChange({ ...provider, name: e.target.value })}
           margin="normal"
+          disabled={disabled}
         />
       </Grid>
       <Grid item xs={12} sm={6}>
@@ -119,6 +121,7 @@ const LLMProviderForm = ({
             value={provider.provider_type}
             label="Provider Type"
             onChange={(e) => onProviderTypeChange(e.target.value)}
+            disabled={disabled}
           >
             {(providerTypes || []).map((pt) => (
               <MenuItem key={pt.key} value={pt.key} disabled={!pt.is_active}>
@@ -144,6 +147,7 @@ const LLMProviderForm = ({
                   ? `Format: ${setupInstructions.apiKeyFormat}`
                   : 'Optional for local providers (Ollama, LM Studio)'
               }
+              disabled={disabled}
             />
           </Box>
           <Box sx={{ mt: 3 }}>
@@ -186,6 +190,7 @@ const LLMProviderForm = ({
           value={provider.organization_id || ''}
           onChange={(e) => onProviderChange({ ...provider, organization_id: e.target.value })}
           margin="normal"
+          disabled={disabled}
         />
       </Grid>
       <Grid item xs={12} sm={6}>
@@ -201,6 +206,7 @@ const LLMProviderForm = ({
             })
           }
           margin="normal"
+          disabled={disabled}
         />
         <Box sx={{ mt: 0.5 }}>
           <NotImplemented label="Budget cap not enforced server-side yet" />
@@ -223,6 +229,7 @@ const LLMProviderForm = ({
               }
               margin="normal"
               helperText="Requests per minute limit for this provider"
+              disabled={disabled}
             />
             <HelpTooltip title="Set to 0 to disable rate limiting for this provider" />
           </Box>
@@ -245,6 +252,7 @@ const LLMProviderForm = ({
               }
               margin="normal"
               helperText="Tokens per minute limit for this provider"
+              disabled={disabled}
             />
             <HelpTooltip title="Set to 0 to disable token rate limiting for this provider" />
           </Box>
@@ -284,6 +292,7 @@ const LLMProviderForm = ({
                           ? `Default: ${setupInstructions.defaultEndpoint}`
                           : 'Base URL for API requests'
                       }
+                      disabled={disabled}
                     />
                     <Box sx={{ mt: 3 }}>
                       <HelpTooltip
@@ -349,6 +358,7 @@ const LLMProviderForm = ({
                             onChange={(e) => onUpdateEndpointField(epKey, 'path', e.target.value)}
                             helperText="Relative path appended to provider base URL"
                             margin="dense"
+                            disabled={disabled}
                           />
                         </Grid>
                         {/* Dynamic options from definition/override */}
@@ -396,6 +406,7 @@ const LLMProviderForm = ({
                                         onUpdateEndpointField(epKey, 'options', nextOpts);
                                       }}
                                       margin="dense"
+                                      disabled={disabled}
                                     />
                                   </Grid>
                                 );
@@ -419,6 +430,7 @@ const LLMProviderForm = ({
             <Switch
               checked={!!provider.is_active}
               onChange={(e) => onProviderChange({ ...provider, is_active: e.target.checked })}
+              disabled={disabled}
             />
           }
           label="Active"
@@ -442,6 +454,7 @@ const LLMProviderForm = ({
                     provider_capabilities: nextCaps,
                   });
                 }}
+                disabled={disabled}
               />
             }
             label={capVal?.label || capKey}

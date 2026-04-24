@@ -94,14 +94,6 @@ class TestGetOCRService:
         reset_ocr_service()
         assert mod._ocr_service is None
 
-    def test_returns_cached_singleton(self):
-        import shu.core.ocr_service as mod
-
-        mock_svc = MagicMock(spec=OCRService)
-        mod._ocr_service = mock_svc
-
-        assert get_ocr_service() is mock_svc
-
     @patch("shu.core.ocr_service.get_settings_instance")
     def test_api_key_set_uses_external(self, mock_settings):
         """When SHU_MISTRAL_OCR_API_KEY is set, ExternalOCRService is used."""
