@@ -912,7 +912,9 @@ class TextExtractor:
                 )
 
                 try:
-                    text, method, confidence = await self._process_pdf_with_ocr_direct(doc, file_path, progress_callback)
+                    text, method, confidence = await self._process_pdf_with_ocr_direct(
+                        doc, file_path, progress_callback
+                    )
                     engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
                     self._last_ocr_engine = engine_map.get(method, method)
                     if text.strip():

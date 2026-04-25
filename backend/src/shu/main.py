@@ -432,6 +432,22 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
 
     await _initialize_policy_cache()
 
+    # Start periodic malloc_trim(0) task (SHU-731). Disabled by default —
+    # enable via SHU_MEMORY_TRIM_INTERVAL_SECONDS>0. No-op on non-glibc libc
+    # and when jemalloc is preloaded (jemalloc handles its own decay).
+    try:
+        from .core.memory_tools import periodic_trim_loop
+
+        trim_interval = getattr(settings, "memory_trim_interval_seconds", 0.0)
+        if trim_interval and trim_interval > 0:
+            app.state.memory_trim_task = asyncio.create_task(periodic_trim_loop(trim_interval))
+            logger.info(
+                "Memory trim task started",
+                extra={"interval_seconds": trim_interval},
+            )
+    except Exception as e:
+        logger.warning(f"Failed to start memory trim task: {e}")
+
     logger.info("Shu startup complete")
 
     yield
@@ -439,6 +455,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     # Cancel and await background schedulers for clean shutdown
     task_attrs = [
         ("scheduler", "scheduler_task"),
+        ("memory_trim", "memory_trim_task"),
     ]
     tasks_to_cancel = []
     for name, attr in task_attrs:

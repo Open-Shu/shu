@@ -14,8 +14,8 @@ table consistent at every intermediate state:
 
 Idempotent — safe to re-run.
 
-Revision ID: 008_0010
-Revises: 008_0009
+Revision ID: 008_0011
+Revises: 008_0010
 Create Date: 2026-04-21
 """
 
@@ -25,8 +25,8 @@ from alembic import op
 from migrations.helpers import add_column_if_not_exists, column_exists
 
 # revision identifiers, used by Alembic.
-revision = "008_0010"
-down_revision = "008_0009"
+revision = "008_0011"
+down_revision = "008_0010"
 branch_labels = None
 depends_on = None
 

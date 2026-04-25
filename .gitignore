@@ -262,3 +262,5 @@ frontend/.surge.sh
 *.key
 *.crt
 client_secret*.json
+scripts/memory_bench_lab_results/
+scripts/memory_bench_results/

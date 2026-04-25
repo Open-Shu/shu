@@ -13,12 +13,20 @@ ARG SHU_DB_RELEASE
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies. libjemalloc2 is LD_PRELOADed below to reduce
+# long-running-process RSS retention vs. glibc's default 8×nproc arenas
+# (SHU-731). SHU_DISABLE_JEMALLOC=1 at runtime clears LD_PRELOAD if an
+# operator needs to fall back to glibc for comparison.
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    libjemalloc2 \
+    && rm -rf /var/lib/apt/lists/* \
+    # Record the concrete jemalloc path once so runtime doesn't have to
+    # guess multi-arch paths (amd64 vs arm64 live in different dirs).
+    && JEMALLOC_PATH="$(find /usr/lib -name 'libjemalloc.so.2' | head -n1)" \
+    && [ -n "$JEMALLOC_PATH" ] && printf '%s\n' "$JEMALLOC_PATH" > /etc/shu-jemalloc-path
 
 # Copy the requirements file into the container at /app
 COPY requirements.txt .
@@ -55,6 +63,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Expose port
 EXPOSE 8000
+
+# Entrypoint wires jemalloc via LD_PRELOAD at startup (SHU-731). Done as an
+# entrypoint rather than a hard-coded ENV so operators can disable it via
+# SHU_DISABLE_JEMALLOC=1 without needing to build a new image, and so we
+# don't bake an arch-specific path into the image metadata.
+COPY deployment/docker/api/entrypoint.sh /usr/local/bin/shu-entrypoint.sh
+USER root
+RUN chmod +x /usr/local/bin/shu-entrypoint.sh
+USER appuser
+ENTRYPOINT ["/usr/local/bin/shu-entrypoint.sh"]
 
 # Specify the command to run on container startup (run ASGI server)
 CMD ["uvicorn", "shu.main:app", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "on"]
