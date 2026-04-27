@@ -138,15 +138,20 @@ apply_variant() {
 }
 
 sample_pod_memory() {
-  # Emits "vmrss_kb,working_set_kb" for the current pod. Uses /proc/1/status
+  # Emits "vmrss_kb,working_set_kb" for the current pod on success; returns
+  # non-zero (with stderr message) and emits nothing on failure so callers
+  # can distinguish "no sample" from "sample = 0,0". Uses /proc/1/status
   # and /sys/fs/cgroup/memory.{current,stat} via kubectl exec — no metrics
   # server required (Docker Desktop K8s doesn't ship one). Working set is
   # memory.current - inactive_file, matching how the kubelet makes OOM
   # decisions (and what `kubectl top` would return if available).
   local pod
   pod="$(kubectl -n "$NAMESPACE" get pod -l "app=$DEPLOYMENT" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-  [[ -z "$pod" ]] && return 0
-  kubectl -n "$NAMESPACE" exec "$pod" -- bash -c '
+  if [[ -z "$pod" ]]; then
+    echo "sample_pod_memory: no pod found for app=$DEPLOYMENT in $NAMESPACE" >&2
+    return 1
+  fi
+  if ! kubectl -n "$NAMESPACE" exec "$pod" -- bash -c '
     vmrss=$(awk "/^VmRSS:/ {print \$2}" /proc/1/status)
     if [ -r /sys/fs/cgroup/memory.current ]; then
       mem_current=$(cat /sys/fs/cgroup/memory.current)
@@ -160,7 +165,10 @@ sample_pod_memory() {
     fi
     working_set=$(( (mem_current - inactive_file) / 1024 ))
     echo "${vmrss},${working_set}"
-  ' 2>/dev/null
+  '; then
+    echo "sample_pod_memory: kubectl exec failed for pod $pod" >&2
+    return 1
+  fi
 }
 
 curl_admin() {
@@ -269,7 +277,15 @@ column -s, -t < "$RUN_DIR/variants.csv"
 echo "======================================================="
 echo
 target_bytes=$((TARGET_RSS_MB * 1024 * 1024))
-awk -F, -v target="$target_bytes" 'NR>1 && $5+0>0 && $5+0<=target {print "  MEETS TARGET: "$1" (post_trim_rss "$5" bytes <= "target" bytes)"}' "$RUN_DIR/variants.csv" \
+# awk exits 0 even when no rows match, so a plain `|| echo` never fires.
+# Force a non-zero exit when nothing was printed so the fallback runs.
+awk -F, -v target="$target_bytes" '
+  NR>1 && $5+0>0 && $5+0<=target {
+    print "  MEETS TARGET: "$1" (post_trim_rss "$5" bytes <= "target" bytes)"
+    matched = 1
+  }
+  END { if (!matched) exit 1 }
+' "$RUN_DIR/variants.csv" \
   || echo "  No variant met the ${TARGET_RSS_MB} MB post-trim RSS target."
 
 exit "$overall_rc"

@@ -76,7 +76,11 @@ echo "==> checking runtime allocator wiring"
 jpath="$(docker exec "$cid" cat /etc/shu-jemalloc-path)"
 
 # The entrypoint should have set LD_PRELOAD for pid 1 (the Python process).
-ld_preload="$(docker exec "$cid" tr '\0' '\n' < /proc/1/environ | grep '^LD_PRELOAD=' || true)"
+# IMPORTANT: the redirection must happen *inside* docker exec so we read the
+# container's /proc/1/environ, not the host's. Running `docker exec ... < /proc/1/environ`
+# would feed the host's PID 1 environment to the container — wrong on Linux,
+# and broken on macOS where /proc doesn't exist.
+ld_preload="$(docker exec "$cid" sh -c "tr '\0' '\n' < /proc/1/environ | grep '^LD_PRELOAD='" || true)"
 if [[ "$ld_preload" == "LD_PRELOAD=$jpath" ]]; then
   check "LD_PRELOAD=$jpath on pid 1" 0
 else
@@ -94,7 +98,8 @@ fi
 
 echo "==> checking env passthrough"
 for var in MALLOC_ARENA_MAX SHU_MEMORY_TRIM_INTERVAL_SECONDS; do
-  val="$(docker exec "$cid" tr '\0' '\n' < /proc/1/environ | grep "^$var=" || true)"
+  # Same redirection-inside-docker-exec pattern as the LD_PRELOAD check above.
+  val="$(docker exec "$cid" sh -c "tr '\0' '\n' < /proc/1/environ | grep '^$var='" || true)"
   if [[ -n "$val" ]]; then
     check "$val" 0
   else

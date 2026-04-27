@@ -738,16 +738,29 @@ per-pod steady-state RSS and therefore tenants-per-cluster density:
 
 ### When memory grows unexpectedly
 
-1. `kubectl exec <pod> -- curl -s localhost:8000/api/v1/resources/heap-stats`
-   (with an admin token) — read gc stats, top object types, asyncio task
-   count, RSS.
-2. `POST /api/v1/resources/heap-stats/trim` — force a trim and record the
-   before/after delta. If >100 MB is freed immediately, the issue is
-   allocator retention; if near zero, real in-heap retention.
-3. Start tracemalloc via `POST /api/v1/resources/heap-stats/tracemalloc/start`,
-   take a baseline snapshot, reproduce the workload, then hit
-   `GET /api/v1/resources/heap-stats/tracemalloc/diff` to see what the
-   workload retained by file:line.
+The heap-stats endpoints require an admin JWT — pass it via
+`-H "Authorization: Bearer <ADMIN_TOKEN>"`. Replace `<ADMIN_TOKEN>` with a
+valid admin token (obtain via `scripts/generate_test_token.py` or the
+admin UI).
+
+1. Read gc stats, top object types, asyncio task count, RSS:
+   ```
+   kubectl exec <pod> -- curl -s \
+     -H "Authorization: Bearer <ADMIN_TOKEN>" \
+     localhost:8000/api/v1/resources/heap-stats
+   ```
+2. Force a trim and record the before/after delta. If >100 MB is freed
+   immediately, the issue is allocator retention; if near zero, real
+   in-heap retention:
+   ```
+   kubectl exec <pod> -- curl -s -X POST \
+     -H "Authorization: Bearer <ADMIN_TOKEN>" \
+     localhost:8000/api/v1/resources/heap-stats/trim
+   ```
+3. Start tracemalloc via `POST /api/v1/resources/heap-stats/tracemalloc/start`
+   (same `Authorization` header), take a baseline snapshot, reproduce the
+   workload, then hit `GET /api/v1/resources/heap-stats/tracemalloc/diff` to
+   see what the workload retained by file:line.
 4. Grep worker logs for `job_memory_delta` to attribute RSS growth to
    specific workload types or document shapes.
 

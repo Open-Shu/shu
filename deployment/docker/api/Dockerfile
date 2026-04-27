@@ -17,7 +17,7 @@ WORKDIR /app
 # long-running-process RSS retention vs. glibc's default 8×nproc arenas
 # (SHU-731). SHU_DISABLE_JEMALLOC=1 at runtime clears LD_PRELOAD if an
 # operator needs to fall back to glibc for comparison.
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \

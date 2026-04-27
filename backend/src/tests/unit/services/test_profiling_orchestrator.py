@@ -137,12 +137,13 @@ class TestRunForDocument:
         mock_chunks_result.scalars.return_value.all.return_value = chunks
 
         # After profiling, _load_chunk_summaries re-queries — column-only tuples
-        # (chunk_index, summary, topics) per SHU-731. The test keeps the ORM
-        # mocks on .scalars() for any consumer that still uses them, but the
-        # real code path now uses .all().
+        # (chunk_index, summary, topics) per SHU-731. We make .scalars() raise
+        # so any regression that reverts to loading full ORM rows fails the
+        # test loudly instead of silently passing.
         mock_summaries_result = MagicMock()
-        profiled_chunks = [create_mock_chunk(f"c{i}", i, f"Content {i}", summary=f"Summary {i}") for i in range(20)]
-        mock_summaries_result.scalars.return_value.all.return_value = profiled_chunks
+        mock_summaries_result.scalars.side_effect = AssertionError(
+            "regression: _load_chunk_summaries must use column-only .all(), not .scalars() (SHU-731)"
+        )
         mock_summaries_result.all.return_value = [
             (i, f"Summary {i}", []) for i in range(20)
         ]
@@ -175,6 +176,17 @@ class TestRunForDocument:
             SynthesizedQuery(query_text="How does it work?", chunk_index=1),
         ]
 
+        # SHU-731: assert from inside the Phase 2 mock so we prove expunge
+        # ran *before* the long-running LLM call, not just at end of run.
+        # Asserting only after run_for_document completes can't distinguish
+        # "expunged before Phase 2" from "expunged after Phase 2 returned".
+        async def _phase2_side_effect(*_args, **_kwargs):
+            assert mock_db.expunge.call_count == len(chunks), (
+                "SHU-731: chunks must be expunged from the identity map BEFORE "
+                "generate_document_metadata runs, not after"
+            )
+            return doc_profile, synthesized_queries, 100
+
         with (
             patch.object(
                 orchestrator.profiling_service,
@@ -184,7 +196,7 @@ class TestRunForDocument:
             patch.object(
                 orchestrator.profiling_service,
                 "generate_document_metadata",
-                new=AsyncMock(return_value=(doc_profile, synthesized_queries, 100)),
+                new=AsyncMock(side_effect=_phase2_side_effect),
             ),
         ):
             result = await orchestrator.run_for_document("doc-123")
@@ -197,10 +209,6 @@ class TestRunForDocument:
         assert result.chunk_summaries_embedded == 0
         assert result.queries_embedded == 0
         assert mock_db.add.call_count == 2  # 2 queries persisted
-        # SHU-731: every loaded chunk must be expunged from the identity map
-        # before the long-running Phase 2 LLM call so we don't pin ORM rows
-        # (and their `content` columns) for the duration of the round-trip.
-        assert mock_db.expunge.call_count == len(chunks)
         # SHU-731: ProfilingResult no longer carries per-chunk results — the
         # worker never reads them and accumulating was pure retention.
         assert result.chunk_profiles == []
@@ -223,7 +231,10 @@ class TestRunForDocument:
         mock_chunks_result.scalars.return_value.all.return_value = chunks
 
         mock_summaries_result = MagicMock()
-        mock_summaries_result.scalars.return_value.all.return_value = chunks
+        # SHU-731: same column-only contract as test_chunk_aggregation_profiling.
+        mock_summaries_result.scalars.side_effect = AssertionError(
+            "regression: _load_chunk_summaries must use column-only .all(), not .scalars() (SHU-731)"
+        )
         mock_summaries_result.all.return_value = [
             (i, f"Existing summary {i}", []) for i in range(20)
         ]

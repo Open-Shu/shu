@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Upload driver for the memory harness (SHU-731).
+# ruff: noqa: T201 — operator-facing CLI: prints to stdout/stderr are intentional progress signal
+r"""Upload driver for the memory harness (SHU-731).
 
 Uploads a corpus of documents to a running Shu backend and waits for the
 ingestion + profiling pipeline to drain. Designed to be driven by
 ``scripts/memory_bench.sh`` but can be run standalone:
 
-    python scripts/memory_load.py \\
-        --base-url http://localhost:8000 \\
-        --corpus-dir /path/to/pdfs \\
-        --kb-name memory-harness \\
-        --concurrency 4 \\
+    python scripts/memory_load.py \
+        --base-url http://localhost:8000 \
+        --corpus-dir /path/to/pdfs \
+        --kb-name memory-harness \
+        --concurrency 4 \
         --drain-timeout 900
 
 Authentication: pass ``--token`` / ``$SHU_HARNESS_TOKEN`` with a JWT, or
@@ -58,7 +59,10 @@ def _generate_token(shu_repo: Path) -> str:
         raise FileNotFoundError(f"generate_test_token.py not found at {script}")
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(shu_repo / "backend" / "src"))
-    out = subprocess.run(
+    # subprocess.run on a fixed, repo-internal script path with sys.executable —
+    # no untrusted input. S603 flags subprocess use as a category, not a real
+    # vector here.
+    out = subprocess.run(  # noqa: S603
         [sys.executable, str(script)],
         cwd=shu_repo,
         env=env,
@@ -201,7 +205,10 @@ async def _run(args: argparse.Namespace) -> int:
         upload_seconds = time.time() - start_wall
         print(f"[load] upload phase done in {upload_seconds:.1f}s  errors={errors}")
 
-        drain_result: dict = {"drained": False, "reason": "skipped"}
+        # ``None`` is the "skipped" sentinel — distinct from an actual drain
+        # outcome so the success check below can require ``drained is True``
+        # without treating ``--no-drain`` runs as failures.
+        drain_result: dict | None = None
         if not args.no_drain:
             terminal = {s.lower() for s in args.terminal_states.split(",") if s.strip()}
             print(f"[load] draining (timeout={args.drain_timeout}s terminal={sorted(terminal)})")
@@ -214,15 +221,31 @@ async def _run(args: argparse.Namespace) -> int:
         "upload_errors": errors,
         "upload_seconds": upload_seconds,
         "total_seconds": time.time() - start_wall,
-        "drain": drain_result,
+        "drain": drain_result if drain_result is not None else {"skipped": True},
     }
     if args.output:
         Path(args.output).write_text(json.dumps(summary, indent=2, default=str))
     print("[load] summary:", json.dumps(summary, indent=2, default=str))
-    return 0 if errors == 0 and drain_result.get("drained") in (True, False) else 1
+    return _exit_code(errors=errors, no_drain=args.no_drain, drain_result=drain_result)
+
+
+def _exit_code(*, errors: int, no_drain: bool, drain_result: dict | None) -> int:
+    """Resolve the harness exit code.
+
+    Upload errors always fail. With ``--no-drain`` the upload phase is the
+    full success signal. Otherwise only a fully-drained pipeline counts —
+    ``timeout`` and ``listing_unavailable`` are real failures we must not
+    paper over by returning 0.
+    """
+    if errors:
+        return 1
+    if no_drain:
+        return 0
+    return 0 if drain_result is not None and drain_result.get("drained") is True else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser. Split out for testability/introspection."""
     p = argparse.ArgumentParser(description="Memory harness upload driver (SHU-731)")
     p.add_argument("--base-url", default=os.environ.get("SHU_HARNESS_BASE_URL", "http://localhost:8000"))
     p.add_argument("--token", default=None, help="JWT; falls back to SHU_HARNESS_TOKEN env")
@@ -252,6 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI entry point — parse args and run the driver."""
     args = build_parser().parse_args()
     return asyncio.run(_run(args))
 

@@ -16,6 +16,7 @@ import time
 
 import structlog
 from sqlalchemy import delete, select
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
@@ -135,7 +136,7 @@ class ProfilingOrchestrator:
             for _chunk in chunks:
                 try:
                     self.db.expunge(_chunk)
-                except Exception:  # pragma: no cover — already detached
+                except InvalidRequestError:  # pragma: no cover — already detached
                     pass
             chunks.clear()
 
