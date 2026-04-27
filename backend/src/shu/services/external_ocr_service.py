@@ -19,13 +19,19 @@ from ..core.external_model_resolver import ensure_provider_and_model_active
 from ..core.logging import get_logger
 from ..core.ocr_service import OCR_ELIGIBLE_MIME_PREFIXES, OCRResult
 from ..llm.service import LLMService
-from ..models.llm_provider import LLMModel, ModelType
-from .usage_recording import record_llm_usage
+from ..models.llm_provider import ModelType
+from .usage_recording import get_usage_recorder
 
 logger = get_logger(__name__)
 
 _PROVIDER_TYPE_KEY = "generic_completions"
-_PROVIDER_NAME = "Mistral OCR (auto-provisioned)"
+# Must stay in lockstep with the name seeded by
+# backend/scripts/hosting_deployment.py::_seed_mistral_provider. Mistral is a
+# general-purpose provider (chat, embedding, OCR); the row is named for the
+# vendor, not the OCR capability. The "Shu Curated:" prefix is the epic-wide
+# convention (SHU-713) for seeder-created rows so they cannot collide with
+# customer-added entries.
+_PROVIDER_NAME = "Shu Curated: Mistral"
 
 
 def _coerce_non_negative_int(value: Any, fallback: int) -> int:
@@ -203,16 +209,18 @@ class ExternalOCRService:
     ) -> None:
         """Record OCR usage in llm_usage. Best-effort — failures are logged, not raised.
 
-        Cost is sourced from the resolved ``llm_models.cost_per_input_unit`` (synced
-        from ``core/model_pricing.py`` at startup) rather than a module-level constant,
-        so repricing is a one-entry change in ``model_pricing.py`` plus a restart.
+        Cost is computed by ``UsageRecorder.record`` (via ``get_usage_recorder()``)
+        from the resolved model's ``cost_per_input_unit`` — the per-page rate
+        for OCR model_type; see ``core/model_pricing.py``. Passing
+        ``total_cost=Decimal(0)`` triggers the shared DB-rate fallback so OCR
+        uses the same two-tier contract as chat / embedding. Repricing is a
+        one-entry change in ``model_pricing.py`` plus a restart.
 
-        Always logs the raw usage payload so costs can be reconstructed from logs
-        if DB recording ever fails. The computed cost is logged separately once the
-        DB-sourced rate is known.
+        Always logs the raw usage payload so costs can be reconstructed from
+        logs if the DB write fails.
         """
-        # Log raw usage payload first — unconditional, independent of DB state,
-        # so cost reconstruction from logs works even if the DB write later fails.
+        # Log raw usage payload — unconditional, independent of DB state, so
+        # cost reconstruction from logs works even if the DB write later fails.
         logger.info(
             "Mistral OCR usage (raw)",
             extra={
@@ -244,35 +252,20 @@ class ExternalOCRService:
                     )
                     return
 
-                model = await session.get(LLMModel, self._model_id)
-                per_page_rate = model.cost_per_input_unit if model else None
-                if per_page_rate is None:
-                    logger.warning(
-                        "OCR model %r has no cost_per_input_unit set — recording $0. "
-                        "Ensure model_pricing.sync_pricing_to_db ran at startup.",
-                        self._model_name,
-                    )
-                    per_page_rate = Decimal(0)
-
-                total_cost = per_page_rate * page_count
-
-                logger.info(
-                    "Mistral OCR cost computed",
-                    extra={
-                        "model": self._model_name,
-                        "pages_billed": page_count,
-                        "per_page_rate": str(per_page_rate),
-                        "total_cost": str(total_cost),
-                    },
-                )
-
-                await record_llm_usage(
+                # page_count → input_tokens because llm_models.cost_per_input_unit
+                # carries the per-page rate for OCR model_type (unit-agnostic column
+                # rename landed in SHU-700). total_cost=Decimal(0) engages the
+                # DB-rate fallback inside UsageRecorder. A future Mistral
+                # release that returns cost on the wire will naturally hit the
+                # provider-authoritative branch instead, no code change needed.
+                await get_usage_recorder().record(
                     provider_id=self._provider_id,
                     model_id=self._model_id,
                     request_type="ocr",
                     user_id=user_id,
-                    input_cost=total_cost,
-                    total_cost=total_cost,
+                    input_tokens=page_count,
+                    output_tokens=0,
+                    total_cost=Decimal(0),
                     request_metadata={"page_count": page_count},
                     session=session,
                 )

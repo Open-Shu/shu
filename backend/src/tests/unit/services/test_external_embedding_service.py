@@ -11,7 +11,7 @@ Tests cover:
 """
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -308,56 +308,79 @@ class TestErrorHandling:
 
 
 class TestRecordUsageCostContract:
-    """SHU-700: provider-authoritative cost contract — embedding rows must match
-    the chat-path shape so downstream aggregators can identify wire-reported
-    rows uniformly by `input_cost == 0 AND output_cost == 0 AND total_cost > 0`.
+    """Embedding service delegates the two-tier cost contract to UsageRecorder.
+
+    After SHU-715, ExternalEmbeddingService._record_usage does not split costs
+    itself — it passes the wire ``usage.cost`` through as ``total_cost`` and
+    lets the recorder decide between provider-authoritative and DB-rate
+    fallback. These tests assert the caller shape, not the contract itself
+    (that lives in test_usage_recording.py::TestCostResolver).
     """
 
     @pytest.mark.asyncio
-    async def test_wire_cost_recorded_on_total_only(self):
-        """Provider-reported `usage.cost` lands on `total_cost`; input/output stay 0."""
+    async def test_wire_cost_passed_through_as_total_cost(self):
+        """Provider-reported `usage.cost` flows to the recorder via total_cost."""
         from decimal import Decimal
 
         svc = _make_service()
+        fake_recorder = MagicMock()
+        fake_recorder.record = AsyncMock()
 
-        with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
+        with patch(
+            "shu.services.external_embedding_service.get_usage_recorder",
+            return_value=fake_recorder,
+        ):
             await svc._record_usage(
                 {"prompt_tokens": 100, "total_tokens": 100, "cost": "0.00042"},
                 user_id="user-7",
             )
 
-        mock_record.assert_awaited_once()
-        kwargs = mock_record.call_args.kwargs
+        fake_recorder.record.assert_awaited_once()
+        kwargs = fake_recorder.record.call_args.kwargs
         assert kwargs["total_cost"] == Decimal("0.00042")
-        assert kwargs["input_cost"] == Decimal(0)
-        assert kwargs["output_cost"] == Decimal(0)
+        assert kwargs["input_tokens"] == 100
+        assert kwargs["total_tokens"] == 100
         assert kwargs["user_id"] == "user-7"
         assert kwargs["request_type"] == "embedding"
 
     @pytest.mark.asyncio
-    async def test_missing_wire_cost_records_zero(self):
-        """Response without `cost` field (local provider) records all-zero costs, not NULL."""
+    async def test_missing_wire_cost_falls_through_as_zero_total(self):
+        """Response without `cost` field passes total_cost=Decimal(0) to the recorder.
+
+        This is the hook for SHU-715's DB-rate fallback — the recorder sees the
+        sentinel and computes cost from model rates if available, closing the
+        latent gap where embedding used to record $0 regardless of DB pricing.
+        """
         from decimal import Decimal
 
         svc = _make_service()
+        fake_recorder = MagicMock()
+        fake_recorder.record = AsyncMock()
 
-        with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
+        with patch(
+            "shu.services.external_embedding_service.get_usage_recorder",
+            return_value=fake_recorder,
+        ):
             await svc._record_usage({"prompt_tokens": 50, "total_tokens": 50})
 
-        kwargs = mock_record.call_args.kwargs
+        kwargs = fake_recorder.record.call_args.kwargs
         assert kwargs["total_cost"] == Decimal(0)
-        assert kwargs["input_cost"] == Decimal(0)
-        assert kwargs["output_cost"] == Decimal(0)
+        assert kwargs["input_tokens"] == 50
 
     @pytest.mark.asyncio
     async def test_empty_usage_skips_record(self):
-        """No usage block at all (early return path) must not call record_llm_usage."""
+        """No usage block (early return path) must not call the recorder."""
         svc = _make_service()
+        fake_recorder = MagicMock()
+        fake_recorder.record = AsyncMock()
 
-        with patch("shu.services.usage_recording.record_llm_usage", new_callable=AsyncMock) as mock_record:
+        with patch(
+            "shu.services.external_embedding_service.get_usage_recorder",
+            return_value=fake_recorder,
+        ):
             await svc._record_usage(None)
 
-        mock_record.assert_not_called()
+        fake_recorder.record.assert_not_called()
 
 
 class TestInactiveProviderGuard:

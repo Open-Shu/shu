@@ -5,7 +5,6 @@ models, and handling LLM operations with database integration.
 """
 
 import logging
-from decimal import Decimal
 from typing import Any
 
 from cryptography.fernet import Fernet
@@ -27,7 +26,7 @@ from ..core.exceptions import (
     ProviderCreationDisabledError,
     ProviderLockedError,
 )
-from ..models.llm_provider import LLMModel, LLMProvider, LLMUsage, ModelType
+from ..models.llm_provider import LLMModel, LLMProvider, ModelType
 from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
 from .client import UnifiedLLMClient
 
@@ -443,79 +442,6 @@ class LLMService:
         """Determine if model supports vision/image inputs."""
         vision_models = ["gpt-4-vision", "gpt-4-turbo", "claude-3"]
         return any(model in model_name.lower() for model in vision_models)
-
-    async def record_usage(
-        self,
-        provider_id: str,
-        model_id: str,
-        request_type: str,
-        input_tokens: int,
-        output_tokens: int,
-        total_cost: Decimal,
-        user_id: str | None = None,
-        response_time_ms: int | None = None,
-        success: bool = True,
-        error_message: str | None = None,
-        request_metadata: dict[str, Any] | None = None,
-    ) -> LLMUsage:
-        """Record LLM usage for analytics and cost tracking.
-
-        Cost resolution is two-tiered:
-
-        1. **Provider-authoritative** — if the caller passes ``total_cost > 0``,
-           the value is recorded verbatim. ``input_cost`` and ``output_cost``
-           stay at ``Decimal(0)`` because providers return a single total, not
-           a split. This is the hot path for OpenRouter, which returns
-           ``usage.cost`` on the wire.
-
-        2. **DB-rate fallback** — if the caller passes ``total_cost = Decimal(0)``
-           (the sentinel meaning "no wire-reported cost"), cost is computed as
-           ``input_tokens * cost_per_input_unit + output_tokens * cost_per_output_unit``
-           using the resolved ``LLMModel`` row. ``input_cost + output_cost == total_cost``
-           holds on this path.
-
-        When neither path produces a cost (no wire cost, no DB rates — e.g. a
-        local/self-hosted model), all three cost columns are recorded as
-        ``Decimal(0)``.
-        """
-        model = await self.db.get(LLMModel, model_id)
-        input_cost = Decimal("0")
-        output_cost = Decimal("0")
-
-        if total_cost > Decimal("0"):
-            # Provider-authoritative: leave input_cost/output_cost at 0.
-            pass
-        elif model and (model.cost_per_input_unit is not None or model.cost_per_output_unit is not None):
-            # Use `is not None` (not truthiness) so a legitimate Decimal(0) rate on one
-            # side — e.g. a model with free output tokens — doesn't collapse the entire
-            # fallback and silently lose the other side's cost.
-            input_rate = model.cost_per_input_unit if model.cost_per_input_unit is not None else Decimal(0)
-            output_rate = model.cost_per_output_unit if model.cost_per_output_unit is not None else Decimal(0)
-            input_cost = Decimal(str(input_tokens)) * input_rate
-            output_cost = Decimal(str(output_tokens)) * output_rate
-            total_cost = input_cost + output_cost
-
-        usage = LLMUsage(
-            provider_id=provider_id,
-            model_id=model_id,
-            user_id=user_id,
-            request_type=request_type,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
-            input_cost=input_cost,
-            output_cost=output_cost,
-            total_cost=total_cost,
-            response_time_ms=response_time_ms,
-            success=success,
-            error_message=error_message,
-            request_metadata=request_metadata,
-        )
-
-        self.db.add(usage)
-        await self.db.commit()
-
-        return usage
 
     def _encrypt_api_key(self, api_key: str) -> str:
         """Encrypt API key for secure storage."""

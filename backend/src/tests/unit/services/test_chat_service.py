@@ -1506,14 +1506,21 @@ class TestChatServiceExplicitKnowledgeBaseAccess:
 
 
 class TestHandleExceptionUserIdThreading:
-    """SHU-700 regression tests: _handle_exception must forward user_id to record_usage.
+    """SHU-700 regression tests: _handle_exception must forward user_id to
+    the usage recorder.
 
     Streaming callers pass ``conversation.user_id`` (via ``conversation_owner_id``)
-    into ``_handle_exception``; the method must thread it to ``LLMService.record_usage``
-    so failed-chat rows in ``llm_usage`` still attribute to the originating user.
-    Dropping it at this boundary would leave every failed chat attempt with a
-    NULL ``user_id`` despite the caller supplying one — symmetric to the OCR
-    auto/fallback bug caught mid-ticket.
+    into ``_handle_exception``; the method must thread it to the shared
+    ``UsageRecorder`` (SHU-715 consolidation point — previously
+    ``LLMService.record_usage``) so failed-chat rows in ``llm_usage`` still
+    attribute to the originating user. Dropping it at this boundary would
+    leave every failed chat attempt with a NULL ``user_id`` despite the
+    caller supplying one.
+
+    Patches ``get_usage_recorder`` at the caller's binding — chat_service
+    imports the singleton accessor at module load, so replacing it on the
+    ``shu.services.usage_recording`` module would not affect the already-
+    resolved reference inside chat_service.
     """
 
     @pytest.mark.asyncio
@@ -1523,22 +1530,24 @@ class TestHandleExceptionUserIdThreading:
         chat_service = ChatService.__new__(ChatService)
         chat_service.db_session = AsyncMock()
         chat_service.llm_service = MagicMock()
-        chat_service.llm_service.record_usage = AsyncMock()
         chat_service.add_message = AsyncMock()
 
         model = MagicMock()
         model.id = "model-1"
         model.provider_id = "provider-1"
 
-        await chat_service._handle_exception(
-            conversation_id="conv-1",
-            model=model,
-            e=LLMProviderError("boom"),
-            user_id="user-42",
-        )
+        fake_recorder = MagicMock()
+        fake_recorder.record = AsyncMock()
+        with patch("shu.services.chat_service.get_usage_recorder", return_value=fake_recorder):
+            await chat_service._handle_exception(
+                conversation_id="conv-1",
+                model=model,
+                e=LLMProviderError("boom"),
+                user_id="user-42",
+            )
 
-        chat_service.llm_service.record_usage.assert_awaited_once()
-        kwargs = chat_service.llm_service.record_usage.call_args.kwargs
+        fake_recorder.record.assert_awaited_once()
+        kwargs = fake_recorder.record.call_args.kwargs
         assert kwargs["user_id"] == "user-42"
         assert kwargs["success"] is False
         assert kwargs["request_type"] == "chat"
@@ -1551,18 +1560,20 @@ class TestHandleExceptionUserIdThreading:
         chat_service = ChatService.__new__(ChatService)
         chat_service.db_session = AsyncMock()
         chat_service.llm_service = MagicMock()
-        chat_service.llm_service.record_usage = AsyncMock()
         chat_service.add_message = AsyncMock()
 
         model = MagicMock()
         model.id = "model-1"
         model.provider_id = "provider-1"
 
-        await chat_service._handle_exception(
-            conversation_id="conv-1",
-            model=model,
-            e=LLMProviderError("boom"),
-        )
+        fake_recorder = MagicMock()
+        fake_recorder.record = AsyncMock()
+        with patch("shu.services.chat_service.get_usage_recorder", return_value=fake_recorder):
+            await chat_service._handle_exception(
+                conversation_id="conv-1",
+                model=model,
+                e=LLMProviderError("boom"),
+            )
 
-        kwargs = chat_service.llm_service.record_usage.call_args.kwargs
+        kwargs = fake_recorder.record.call_args.kwargs
         assert kwargs["user_id"] is None
