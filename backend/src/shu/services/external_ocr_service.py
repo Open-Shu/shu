@@ -25,12 +25,6 @@ from .usage_recording import get_usage_recorder
 logger = get_logger(__name__)
 
 _PROVIDER_TYPE_KEY = "generic_completions"
-# Must stay in lockstep with the name seeded by
-# backend/scripts/hosting_deployment.py::_seed_mistral_provider. Mistral is a
-# general-purpose provider (chat, embedding, OCR); the row is named for the
-# vendor, not the OCR capability. The "Shu Curated:" prefix is the epic-wide
-# convention (SHU-713) for seeder-created rows so they cannot collide with
-# customer-added entries.
 _PROVIDER_NAME = "Shu Curated: Mistral"
 
 
@@ -166,11 +160,11 @@ class ExternalOCRService:
             await ensure_provider_and_model_active(self._provider_id, self._model_id, call_type="OCR", session=session)
 
     async def _resolve_provider_and_model(self, session) -> bool:
-        """Look up pre-seeded provider and model records for usage tracking.
+        """Look up the Mistral provider and OCR model records for usage tracking.
 
         Returns True if both were found and cached, False otherwise.
-        Provider/model rows must be created by the hosting seed script;
-        this method only performs lookups to avoid races under concurrency.
+        Provider/model rows must already exist in the database; this method
+        only performs lookups to avoid races under concurrency.
         """
         if self._provider_id is not None and self._model_id is not None:
             return True
@@ -180,7 +174,7 @@ class ExternalOCRService:
         provider = await llm_service.get_provider_by_name(_PROVIDER_NAME)
         if provider is None:
             logger.error(
-                "Mistral OCR provider %r not found — seed it via the hosting script",
+                "Mistral OCR provider %r not found in llm_providers — provision it before enabling OCR",
                 _PROVIDER_NAME,
             )
             return False
@@ -193,7 +187,7 @@ class ExternalOCRService:
                 return True
 
         logger.error(
-            "Mistral OCR model %r not found on provider %s — seed it via the hosting script",
+            "Mistral OCR model %r not found on provider %s — provision the OCR model row before enabling OCR",
             self._model_name,
             provider.id,
         )
@@ -240,9 +234,9 @@ class ExternalOCRService:
                     # ops can correlate the raw_usage_info log above with missing llm_usage
                     # entries and drive the seed fix. See SHU-713.
                     logger.error(
-                        "Dropping OCR llm_usage row — Mistral OCR provider/model not seeded. "
+                        "Dropping OCR llm_usage row — Mistral OCR provider/model not provisioned. "
                         "Reconstruct cost from the raw_usage_info log above (pages_billed=%d). "
-                        "Fix by seeding via the hosting script.",
+                        "Provision the OCR provider/model rows to restore usage recording.",
                         page_count,
                         extra={
                             "model": self._model_name,
