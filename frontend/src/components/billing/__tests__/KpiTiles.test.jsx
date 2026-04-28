@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 
-import KpiTiles from '../KpiTiles';
+import KpiTiles, { pickUsedColor } from '../KpiTiles';
 
 const renderTiles = (usageQuery, subscriptionQuery) => {
   const theme = createTheme();
@@ -151,5 +151,34 @@ describe('KpiTiles', () => {
       expect(screen.getByLabelText('Overage: $0.00')).toBeInTheDocument();
       expect(screen.queryByText('—')).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('pickUsedColor', () => {
+  // Locks in the band thresholds: success below 80, warning [80, 100), error
+  // at 100 or above. These are the visual signal the Used tile carries; an
+  // accidental flip during refactor would silently change the alert UX.
+  it('returns "success" at 0%', () => {
+    expect(pickUsedColor(0)).toBe('success');
+  });
+
+  it('returns "success" just below the warning threshold (79%)', () => {
+    expect(pickUsedColor(79)).toBe('success');
+  });
+
+  it('returns "warning" exactly at the warning threshold (80%)', () => {
+    expect(pickUsedColor(80)).toBe('warning');
+  });
+
+  it('returns "warning" just below the error threshold (99%)', () => {
+    expect(pickUsedColor(99)).toBe('warning');
+  });
+
+  it('returns "error" exactly at the error threshold (100%)', () => {
+    expect(pickUsedColor(100)).toBe('error');
+  });
+
+  it('returns "error" past the error threshold (150%)', () => {
+    expect(pickUsedColor(150)).toBe('error');
   });
 });

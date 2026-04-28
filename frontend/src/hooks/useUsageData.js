@@ -75,10 +75,3 @@ export function useUsageData() {
     lastUpdatedAt: usage.dataUpdatedAt || 0,
   };
 }
-
-export const __testing = {
-  USAGE_KEY,
-  SUBSCRIPTION_KEY,
-  MODELS_KEY,
-  PROVIDERS_KEY,
-};

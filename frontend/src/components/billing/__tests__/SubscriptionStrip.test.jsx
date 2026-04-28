@@ -144,6 +144,19 @@ describe('SubscriptionStrip rendering', () => {
     expect(screen.getByText('7 seats')).toBeInTheDocument();
   });
 
+  it('uses the singular "seat" in the chip when there is exactly one seat', () => {
+    renderStrip(
+      okQuery({
+        subscription_status: 'active',
+        user_limit: 1,
+        cancel_at_period_end: false,
+        payment_failed_at: null,
+      })
+    );
+    expect(screen.getByText('1 seat')).toBeInTheDocument();
+    expect(screen.queryByText('1 seats')).not.toBeInTheDocument();
+  });
+
   it('omits the seat chip when neither user_limit nor quantity is present', () => {
     renderStrip(
       okQuery({

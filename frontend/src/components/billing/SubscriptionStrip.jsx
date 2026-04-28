@@ -138,7 +138,9 @@ function SubscriptionStrip({ subscriptionQuery, timezone }) {
         data-testid="subscription-strip-healthy"
       >
         <Chip label="Active" color="success" size="small" />
-        {seats !== null && <Chip label={`${seats} seats`} variant="outlined" size="small" />}
+        {seats !== null && (
+          <Chip label={`${seats} ${seats === 1 ? 'seat' : 'seats'}`} variant="outlined" size="small" />
+        )}
         <Box sx={{ flexGrow: 1 }} />
         <ManageSeatsButton />
       </Stack>

@@ -44,17 +44,22 @@ function readSeats(state) {
 
 /**
  * Pick the LinearProgress color for the Used tile. Bands match the
- * "are we close to overage?" mental model: green-ish until 80%, warn
- * past 80%, error past 100%.
+ * "are we close to overage?" mental model: green until 80%, warn past
+ * 80%, error past 100%. We use the fixed `success` palette here rather
+ * than `primary` so the bar reads consistently regardless of the
+ * tenant's brand color — a primary-red brand made the safe band look
+ * like an alert state.
+ *
+ * Exported for direct unit testing of the boundary behavior.
  */
-function pickUsedColor(percent) {
+export function pickUsedColor(percent) {
   if (percent >= 100) {
     return 'error';
   }
   if (percent >= 80) {
     return 'warning';
   }
-  return 'primary';
+  return 'success';
 }
 
 /**
@@ -114,7 +119,7 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
         usedPercent === null ? null : (
           <LinearProgress
             variant="determinate"
-            value={Math.min(100, usedPercent)}
+            value={Math.max(0, Math.min(100, usedPercent))}
             color={pickUsedColor(usedPercent)}
             aria-label={`${usedPercent}% of included allowance used`}
           />
