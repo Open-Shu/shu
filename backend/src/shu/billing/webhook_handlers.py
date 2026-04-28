@@ -57,6 +57,23 @@ class WebhookHandler(ABC):
         pass
 
 
+def _extract_invoice_subscription_id(invoice: Any) -> str | None:
+    """Pull the subscription id off an invoice across API versions.
+
+    API 2026-03-25.dahlia removed the top-level ``invoice.subscription`` field
+    and moved the reference under ``invoice.parent.subscription_details.subscription``.
+    Fall back to the legacy field for older payloads (and Stripe CLI fixtures
+    pinned to earlier versions).
+    """
+    parent = invoice.get("parent") if hasattr(invoice, "get") else None
+    if parent and parent.get("type") == "subscription_details":
+        details = parent.get("subscription_details") or {}
+        sub = details.get("subscription")
+        if sub:
+            return sub
+    return invoice.get("subscription")
+
+
 class SubscriptionCreatedHandler(WebhookHandler):
     """Handle customer.subscription.created events.
 
@@ -85,7 +102,6 @@ class SubscriptionCreatedHandler(WebhookHandler):
                 "subscription_id": update.stripe_subscription_id,
                 "customer_id": update.stripe_customer_id,
                 "status": update.status,
-                "quantity": update.quantity,
             },
         )
 
@@ -126,7 +142,6 @@ class SubscriptionUpdatedHandler(WebhookHandler):
             extra={
                 "subscription_id": update.stripe_subscription_id,
                 "status": update.status,
-                "quantity": update.quantity,
                 "changed_fields": changes,
                 "cancel_at_period_end": update.cancel_at_period_end,
             },
@@ -187,7 +202,7 @@ class InvoicePaidHandler(WebhookHandler):
     ) -> None:
         invoice = event.data.object
         customer_id = invoice.get("customer")
-        subscription_id = invoice.get("subscription")
+        subscription_id = _extract_invoice_subscription_id(invoice)
         invoice_id = invoice.get("id")
         billing_reason = invoice.get("billing_reason")
         amount_paid = invoice.get("amount_paid", 0) / 100  # cents to dollars
@@ -229,7 +244,7 @@ class InvoicePaymentFailedHandler(WebhookHandler):
     ) -> None:
         invoice = event.data.object
         customer_id = invoice.get("customer")
-        subscription_id = invoice.get("subscription")
+        subscription_id = _extract_invoice_subscription_id(invoice)
         invoice_id = invoice.get("id")
         attempt_count = invoice.get("attempt_count", 0)
 

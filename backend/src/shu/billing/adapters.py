@@ -203,7 +203,6 @@ async def create_subscription_persistence_callback(
                 "subscription_status": update.status,
                 "current_period_start": update.current_period_start,
                 "current_period_end": update.current_period_end,
-                "quantity": update.quantity,
                 "cancel_at_period_end": update.cancel_at_period_end,
             },
             source="webhook:subscription_update",
@@ -310,7 +309,6 @@ async def get_billing_config(db: AsyncSession) -> dict:
         "subscription_status": state.subscription_status,
         "current_period_start": state.current_period_start.isoformat() if state.current_period_start else None,
         "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
-        "quantity": state.quantity,
         "cancel_at_period_end": state.cancel_at_period_end,
         "last_reported_total": state.last_reported_total,
         "last_reported_period_start": state.last_reported_period_start.isoformat()

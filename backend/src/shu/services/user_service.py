@@ -62,9 +62,22 @@ class UserService:
         self.jwt_manager = JWTManager()
         self.settings = get_settings_instance()
 
-    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User | None:
-        """Get user by ID."""
+    async def get_user_by_id(self, user_id: str, db: AsyncSession, *, for_update: bool = False) -> User | None:
+        """Get user by ID.
+
+        Set ``for_update=True`` to acquire a row-level write lock — used by
+        the activation path so two concurrent activate requests can't both
+        pass the ``not user.is_active`` check and double-charge the seat.
+        """
         stmt = select(User).where(User.id == user_id)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_user_by_email(self, email: str, db: AsyncSession) -> User | None:
+        """Get user by email."""
+        stmt = select(User).where(User.email == email)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 

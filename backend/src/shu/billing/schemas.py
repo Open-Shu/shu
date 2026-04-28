@@ -69,7 +69,6 @@ class SubscriptionUpdate(BaseModel):
     stripe_subscription_id: str
     stripe_customer_id: str
     status: str
-    quantity: int
     current_period_start: datetime
     current_period_end: datetime
     cancel_at_period_end: bool = False

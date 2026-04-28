@@ -26,7 +26,6 @@ def _make_state(**kwargs) -> BillingState:
     state.subscription_status = kwargs.get("subscription_status", "pending")
     state.current_period_start = kwargs.get("current_period_start", None)
     state.current_period_end = kwargs.get("current_period_end", None)
-    state.quantity = kwargs.get("quantity", 0)
     state.cancel_at_period_end = kwargs.get("cancel_at_period_end", False)
     state.last_reported_total = kwargs.get("last_reported_total", 0)
     state.last_reported_period_start = kwargs.get("last_reported_period_start", None)
@@ -131,6 +130,24 @@ class TestEnsureSingleton:
         db.add.assert_called_once_with(result)
         db.flush.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_inserted_is_false_on_subsequent_boot(self):
+        """Re-calling with an existing row returns inserted=False.
+
+        Callers use this flag to seed enforcement exactly once per deployment;
+        a false-positive inserted=True here would silently overwrite operator
+        edits on every restart.
+        """
+        state = _make_state(user_limit_enforcement="hard")
+        db = _make_db(state)
+
+        _, inserted_first = await BillingStateService.ensure_singleton(db)
+        _, inserted_second = await BillingStateService.ensure_singleton(db)
+
+        assert inserted_first is False
+        assert inserted_second is False
+        db.add.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # BillingStateService.update
@@ -140,18 +157,18 @@ class TestEnsureSingleton:
 class TestUpdate:
     @pytest.mark.asyncio
     async def test_applies_updates_to_state_row(self):
-        state = _make_state(subscription_status="pending", quantity=0)
+        state = _make_state(subscription_status="pending", billing_email=None)
         db = _make_db(state)
 
         result = await BillingStateService.update(
             db,
-            updates={"subscription_status": "active", "quantity": 5},
+            updates={"subscription_status": "active", "billing_email": "billing@example.com"},
             source="webhook:subscription.updated",
         )
 
         assert result is state
         assert state.subscription_status == "active"
-        assert state.quantity == 5
+        assert state.billing_email == "billing@example.com"
 
     @pytest.mark.asyncio
     async def test_increments_version_on_every_update(self):
@@ -160,7 +177,7 @@ class TestUpdate:
 
         await BillingStateService.update(
             db,
-            updates={"quantity": 10},
+            updates={"subscription_status": "active"},
             source="scheduler:quantity_sync",
         )
 
@@ -169,12 +186,12 @@ class TestUpdate:
 
     @pytest.mark.asyncio
     async def test_creates_audit_row_for_changed_field(self):
-        state = _make_state(quantity=3)
+        state = _make_state(last_reported_total=3)
         db = _make_db(state)
 
         await BillingStateService.update(
             db,
-            updates={"quantity": 7},
+            updates={"last_reported_total": 7},
             source="webhook:subscription.updated",
             stripe_event_id="evt_abc123",
         )
@@ -183,7 +200,7 @@ class TestUpdate:
         assert db.add.call_count == 1
         audit_row = db.add.call_args[0][0]
         assert isinstance(audit_row, BillingStateAudit)
-        assert audit_row.field_name == "quantity"
+        assert audit_row.field_name == "last_reported_total"
         assert audit_row.old_value == 3
         assert audit_row.new_value == 7
         assert audit_row.changed_by == "webhook:subscription.updated"
@@ -204,18 +221,18 @@ class TestUpdate:
 
     @pytest.mark.asyncio
     async def test_creates_one_audit_row_per_changed_field(self):
-        state = _make_state(quantity=2, subscription_status="pending")
+        state = _make_state(cancel_at_period_end=False, subscription_status="pending")
         db = _make_db(state)
 
         await BillingStateService.update(
             db,
-            updates={"quantity": 5, "subscription_status": "active"},
+            updates={"cancel_at_period_end": True, "subscription_status": "active"},
             source="webhook:subscription.updated",
         )
 
         assert db.add.call_count == 2
         audit_fields = {db.add.call_args_list[i][0][0].field_name for i in range(2)}
-        assert audit_fields == {"quantity", "subscription_status"}
+        assert audit_fields == {"cancel_at_period_end", "subscription_status"}
 
     @pytest.mark.asyncio
     async def test_serialises_datetime_in_audit_old_value(self):
@@ -243,7 +260,7 @@ class TestUpdate:
         with pytest.raises(RuntimeError, match="billing_state singleton row missing"):
             await BillingStateService.update(
                 db,
-                updates={"quantity": 5},
+                updates={"subscription_status": "active"},
                 source="webhook:subscription.updated",
             )
 
@@ -251,18 +268,18 @@ class TestUpdate:
 
     @pytest.mark.asyncio
     async def test_skips_unknown_fields_with_warning(self):
-        state = _make_state(quantity=1)
+        state = _make_state(subscription_status="pending")
         db = _make_db(state)
 
         with patch("shu.billing.state_service.logger") as mock_log:
             result = await BillingStateService.update(
                 db,
-                updates={"nonexistent_column": "value", "quantity": 5},
+                updates={"nonexistent_column": "value", "subscription_status": "active"},
                 source="test",
             )
 
         assert result is state
-        assert state.quantity == 5  # known field still applied
+        assert state.subscription_status == "active"  # known field still applied
         mock_log.warning.assert_called()
 
     @pytest.mark.asyncio
@@ -274,7 +291,7 @@ class TestUpdate:
         with pytest.raises(RuntimeError, match="DB exploded"):
             await BillingStateService.update(
                 db,
-                updates={"quantity": 5},
+                updates={"subscription_status": "active"},
                 source="webhook:subscription.updated",
             )
 
@@ -286,7 +303,7 @@ class TestUpdate:
 
         await BillingStateService.update(
             db,
-            updates={"quantity": 3},
+            updates={"subscription_status": "active"},
             source="test",
         )
 
@@ -309,7 +326,7 @@ class TestConcurrentUpdates:
     @pytest.mark.asyncio
     async def test_two_handlers_updating_different_fields_both_persist(self):
         # Shared mutable state — both "sessions" see and update the same object
-        state = _make_state(quantity=3, subscription_status="pending")
+        state = _make_state(billing_email=None, subscription_status="pending")
 
         db_a = _make_db(state)
         db_b = _make_db(state)
@@ -318,7 +335,7 @@ class TestConcurrentUpdates:
         await asyncio.gather(
             BillingStateService.update(
                 db_a,
-                updates={"quantity": 10},
+                updates={"billing_email": "billing@example.com"},
                 source="webhook:subscription.updated",
             ),
             BillingStateService.update(
@@ -329,7 +346,7 @@ class TestConcurrentUpdates:
         )
 
         # Both fields should reflect their respective updates
-        assert state.quantity == 10
+        assert state.billing_email == "billing@example.com"
         assert state.subscription_status == "active"
 
 

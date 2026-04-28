@@ -56,11 +56,9 @@ class TestBillingQuantitySyncSource:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_runs_on_first_tick(self):
-        """Should run on the first tick (no _last_run set)."""
+    async def test_upgrades_when_user_count_exceeds_stripe_quantity(self):
+        """user_count > stripe_qty → call sync_subscription_quantity to match."""
         source = BillingQuantitySyncSource()
-        assert source._last_run is None
-
         mock_db = AsyncMock()
 
         with (
@@ -68,6 +66,38 @@ class TestBillingQuantitySyncSource:
             patch(_P_BILLING_CONFIG) as mock_get_config,
             patch(_P_USER_COUNT) as mock_get_count,
             patch(_P_SERVICE) as mock_svc_cls,
+            patch(_P_FETCH_QTY, new_callable=AsyncMock) as mock_fetch_qty,
+            patch(
+                "shu.billing.state_service.BillingStateService.update",
+                new_callable=AsyncMock,
+            ) as mock_state_update,
+        ):
+            mock_get_settings.return_value = _make_configured_settings()
+            mock_get_config.return_value = {"stripe_subscription_id": "sub_123"}
+            mock_get_count.return_value = 5
+            mock_service = MagicMock()
+            mock_service.sync_subscription_quantity = AsyncMock(return_value=True)
+            mock_svc_cls.return_value = mock_service
+            mock_fetch_qty.return_value = 3  # Stripe has 3, we have 5 active → upgrade
+
+            result = await source.cleanup_stale(mock_db)
+
+        assert result == 1
+        mock_service.sync_subscription_quantity.assert_awaited_once_with("sub_123", 5)
+        mock_state_update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_user_count_equals_stripe_quantity(self):
+        """user_count == stripe_qty → skip. No Stripe write."""
+        source = BillingQuantitySyncSource()
+        mock_db = AsyncMock()
+
+        with (
+            patch(_P_SETTINGS) as mock_get_settings,
+            patch(_P_BILLING_CONFIG) as mock_get_config,
+            patch(_P_USER_COUNT) as mock_get_count,
+            patch(_P_SERVICE) as mock_svc_cls,
+            patch(_P_FETCH_QTY, new_callable=AsyncMock) as mock_fetch_qty,
         ):
             mock_get_settings.return_value = _make_configured_settings()
             mock_get_config.return_value = {"stripe_subscription_id": "sub_123"}
@@ -75,11 +105,12 @@ class TestBillingQuantitySyncSource:
             mock_service = MagicMock()
             mock_service.sync_subscription_quantity = AsyncMock(return_value=False)
             mock_svc_cls.return_value = mock_service
+            mock_fetch_qty.return_value = 3  # parity
 
             result = await source.cleanup_stale(mock_db)
 
-        assert result == 0  # No update needed (sync returned False)
-        assert source._last_run is not None
+        assert result == 0
+        mock_service.sync_subscription_quantity.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_skips_on_downgrade(self):

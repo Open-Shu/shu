@@ -1,13 +1,15 @@
-"""Add deactivation_scheduled_at column to users.
+"""SHU-730 schema changes: deactivation flag + drop cached seat counts.
 
-Records the period-end at which a user was marked for deactivation when a
-seat-decrease was requested while still mid-cycle (SHU-730). The webhook
-rollover handler reads this column on `invoice.paid` /
-`billing_reason=subscription_cycle` and flips `is_active=False` for rows
-whose `deactivation_scheduled_at <= now()`.
+1. Add ``deactivation_scheduled_at`` to ``users``. Records the cycle a user
+   was marked for deactivation when a seat-decrease was requested mid-cycle.
+   The rollover handler flips ``is_active=False`` for flagged rows on
+   ``invoice.paid`` / ``billing_reason=subscription_cycle``. A partial index
+   covers the rollover SELECT without paying to index the ~99% NULL rows.
 
-A partial index covers the rollover SELECT without paying the cost of
-indexing the ~99% of rows whose value is NULL.
+2. Drop ``billing_state.quantity`` (and ``target_quantity`` if a manual
+   ALTER TABLE put it there during dev). Stripe is now the source of truth
+   for seat counts — the cached columns introduced races on every webhook
+   delivery and are no longer read or written.
 
 Revision ID: 008_0011
 Revises: 008_0010
@@ -18,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 
-from migrations.helpers import add_column_if_not_exists, index_exists
+from migrations.helpers import add_column_if_not_exists, drop_column_if_exists, index_exists
 
 # revision identifiers, used by Alembic.
 revision = "008_0011"
@@ -45,7 +47,14 @@ def upgrade() -> None:
             postgresql_where=sa.text("deactivation_scheduled_at IS NOT NULL"),
         )
 
+    drop_column_if_exists(inspector, "billing_state", "quantity")
+    drop_column_if_exists(inspector, "billing_state", "target_quantity")
+
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_users_deactivation_scheduled")
     op.drop_column("users", "deactivation_scheduled_at")
+    op.add_column(
+        "billing_state",
+        sa.Column("quantity", sa.Integer(), nullable=False, server_default=sa.text("0")),
+    )

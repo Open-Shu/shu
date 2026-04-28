@@ -1,10 +1,10 @@
 """Authentication API endpoints for Shu."""
 
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,14 @@ from ..auth import User, UserRole
 from ..auth.password_auth import password_auth_service
 from ..auth.rbac import get_current_user, require_admin
 from ..billing.enforcement import check_user_limit
+from ..billing.seat_service import (
+    SeatMinimumError,
+    SeatService,
+    UserNotFoundError,
+    UserStateError,
+    get_seat_service,
+)
+from ..billing.stripe_client import StripeClientError
 from ..core.rate_limiting import get_rate_limit_service
 from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
@@ -595,16 +603,118 @@ async def update_user(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+    x_seat_charge_confirmed: Annotated[str | None, Header(alias="X-Seat-Charge-Confirmed")] = None,
 ):
-    """Update user role and status (admin only)."""
+    """Update user role and status (admin only).
+
+    A False→True flip on ``is_active`` consumes a seat — same two-phase
+    preflight as ``activate_user`` so the Edit dialog can't bypass the
+    seat charge.
+    """
     try:
-        user = await user_service.update_user_role(user_id, request.role, db)
-        user.is_active = request.is_active
+        # `update_user_role` already commits the role change; we still need
+        # a row lock for the is_active check below to be race-free with a
+        # concurrent activate. Re-load FOR UPDATE after the role write.
+        await user_service.update_user_role(user_id, request.role, db)
+        locked = await user_service.get_user_by_id(user_id, db, for_update=True)
+        if locked is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        # Preflight only when crossing inactive→active. Active→inactive
+        # frees a seat (no Stripe write), and a no-op flip skips both.
+        if request.is_active and not locked.is_active:
+            preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
+            if preflight is not None:
+                return preflight
+        locked.is_active = request.is_active
         await db.commit()
-        await db.refresh(user)
-        return SuccessResponse(data=user.to_dict())
+        await db.refresh(locked)
+        return SuccessResponse(data=locked.to_dict())
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+def _raise_seat_error_http(e: Exception) -> None:
+    """Map SeatService / Stripe domain errors onto HTTP status codes."""
+    if isinstance(e, UserNotFoundError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    if isinstance(e, UserStateError):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    if isinstance(e, SeatMinimumError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if isinstance(e, StripeClientError):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Billing provider error")
+    raise e
+
+
+def _require_seat_service(seat_service: SeatService | None) -> SeatService:
+    """Reject the request when billing isn't configured.
+
+    Use on routes that genuinely cannot run without Stripe (schedule /
+    unschedule deactivation). `create_user` and `activate_user` use the
+    optional dependency directly because they degrade to "no preflight"
+    on self-hosted deploys.
+    """
+    if seat_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Billing is not configured",
+        )
+    return seat_service
+
+
+async def _preflight_seat_charge(
+    db: AsyncSession,
+    seat_service: SeatService | None,
+    confirm_header: str | None,
+) -> JSONResponse | None:
+    """Two-phase 402 preflight for seat-consuming admin writes.
+
+    Returns a 402 JSONResponse with a seat-charge preview when the caller
+    hasn't yet confirmed; returns None when the write may proceed (either
+    no seat charge is needed, or the admin has confirmed and the upgrade
+    has been applied to Stripe).
+
+    WHY: `SeatService.confirm_upgrade` writes Stripe *before* the caller
+    commits the user row. If Stripe fails, `StripeClientError` propagates
+    up and the caller must abort — a committed user without the matching
+    seat on Stripe is worse than a rejected request.
+    """
+    # Self-hosted deploys (no Stripe wired up) get a None seat_service.
+    # Skip the seat preflight entirely — there's no quantity to enforce.
+    if seat_service is None:
+        return None
+    try:
+        limit_status = await check_user_limit(db)
+    except StripeClientError as e:
+        _raise_seat_error_http(e)
+    if not (limit_status.at_limit and limit_status.enforcement == "hard"):
+        return None
+
+    if confirm_header != "true":
+        details: dict[str, Any] = {
+            "user_limit": limit_status.user_limit,
+            "current_count": limit_status.current_count,
+        }
+        preview = await seat_service.preview_upgrade(db)
+        if preview is not None:
+            details["cost_per_seat_usd"] = preview.cost_per_seat_usd
+            details["proration"] = {
+                "amount_usd": preview.amount_usd,
+                "period_end": preview.period_end.isoformat(),
+            }
+        return ShuResponse.error(
+            message="Seat limit reached. Confirm to add one seat and proceed.",
+            code="seat_limit_reached",
+            details=details,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+
+    try:
+        await seat_service.confirm_upgrade(db)
+    except StripeClientError as e:
+        _raise_seat_error_http(e)
+    return None
 
 
 @router.post("/users", response_model=SuccessResponse[dict[str, Any]])
@@ -612,25 +722,38 @@ async def create_user(
     request: CreateUserRequest,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+    x_seat_charge_confirmed: Annotated[str | None, Header(alias="X-Seat-Charge-Confirmed")] = None,
 ):
-    """Create a new user (admin only)."""
+    """Create a new user (admin only).
+
+    Admin-created users are active on creation, which may consume a seat
+    under hard enforcement. In that case the endpoint runs a two-phase
+    preflight: a 402 preview on first call, then a Stripe upgrade when
+    the client re-submits with `X-Seat-Charge-Confirmed: true`.
+    """
     try:
-        limit_status = await check_user_limit(db)
-        if limit_status.at_limit and limit_status.enforcement == "hard":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"User limit ({limit_status.user_limit}) reached. Remove users or upgrade your subscription.",
-            )
-        if limit_status.at_limit and limit_status.enforcement == "soft":
-            logger.warning(
-                "User created above subscription limit",
-                extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
-            )
+        # Pre-validate everything we can deterministically check before any
+        # Stripe write. Catching duplicate-email / missing-password / bad-role
+        # up front means the seat charge in `_preflight_seat_charge` only runs
+        # when the user insert is plausible, so a 400 doesn't leave Stripe
+        # incremented with no corresponding user row.
+        if request.auth_method == "password" and not request.password:
+            raise ValueError("Password is required for password authentication")
+        try:
+            UserRole(request.role)
+        except ValueError as e:
+            raise ValueError(f"Invalid role: {request.role}") from e
+        existing = await user_service.get_user_by_email(request.email, db)
+        if existing is not None:
+            raise ValueError(f"User with email {request.email} already exists")
+
+        preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
+        if preflight is not None:
+            return preflight
 
         if request.auth_method == "password":
-            if not request.password:
-                raise ValueError("Password is required for password authentication")
-
             # Create user with password authentication (admin-created)
             user = await password_auth_service.create_user(
                 email=request.email,
@@ -641,13 +764,6 @@ async def create_user(
                 admin_created=True,  # Admin-created users are active by default
             )
         else:
-            # Create user for SSO (password will be None)
-            # Validate role before creating user
-            try:
-                UserRole(request.role)
-            except ValueError as e:
-                raise ValueError(f"Invalid role: {request.role}") from e
-
             # Admin-created users are active by default
             user = User(
                 email=request.email,
@@ -662,6 +778,10 @@ async def create_user(
                 await db.commit()
                 await db.refresh(user)
             except IntegrityError as e:
+                # Race between our pre-check and INSERT. The seat was already
+                # charged in confirm_upgrade — admin will see this 400 and
+                # the orphaned seat is recoverable via cancel-pending-release
+                # or a retry with a different email.
                 await db.rollback()
                 raise ValueError(f"User with email {request.email} already exists") from e
 
@@ -682,15 +802,30 @@ async def activate_user(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+    x_seat_charge_confirmed: Annotated[str | None, Header(alias="X-Seat-Charge-Confirmed")] = None,
 ):
-    """Activate a user account (admin only)."""
+    """Activate a user account (admin only).
+
+    Activating a pending user consumes a seat, so it runs the same
+    two-phase preflight as create_user when the activation would cross
+    the hard seat limit.
+    """
     try:
-        # Get user by ID
-        user = await user_service.get_user_by_id(user_id, db)
+        # Lock the row so two concurrent activate requests serialise here:
+        # whichever wins commits is_active=True; the loser sees the post-write
+        # state, hits the "already active" branch, and skips a duplicate charge.
+        user = await user_service.get_user_by_id(user_id, db, for_update=True)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        # Activate user
+        # Skip the preflight for already-active users — activation is a no-op
+        # and would otherwise double-charge the admin on a redundant click.
+        if not user.is_active:
+            preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
+            if preflight is not None:
+                return preflight
+
         user.is_active = True
         await db.commit()
         await db.refresh(user)
@@ -736,6 +871,63 @@ async def deactivate_user(
     except Exception as e:
         logger.error(f"User deactivation error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User deactivation failed")
+
+
+@router.post(
+    "/users/{user_id}/schedule-deactivation",
+    response_model=SuccessResponse[dict[str, Any]],
+)
+async def schedule_user_deactivation(
+    user_id: str,
+    _current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+):
+    """Schedule a user's deactivation for the next billing period end (admin only).
+
+    Flags the user locally and schedules the Stripe seat quantity to drop
+    at period end via the SHU-704 primitive. The user stays active (and
+    billed) until the rollover fires.
+    """
+    seat_service = _require_seat_service(seat_service)
+    try:
+        await seat_service.flag_user(db, user_id)
+    except (UserNotFoundError, UserStateError, SeatMinimumError, StripeClientError) as e:
+        _raise_seat_error_http(e)
+
+    user = await user_service.get_user_by_id(user_id, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return SuccessResponse(data=user.to_dict())
+
+
+@router.delete(
+    "/users/{user_id}/schedule-deactivation",
+    response_model=SuccessResponse[dict[str, Any]],
+)
+async def unschedule_user_deactivation(
+    user_id: str,
+    _current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+):
+    """Cancel a previously scheduled deactivation (admin only).
+
+    At parity (no other flagged users), this clears the pending Stripe
+    downgrade via the primitive's release-schedule branch.
+    """
+    seat_service = _require_seat_service(seat_service)
+    try:
+        await seat_service.unflag_user(db, user_id)
+    except (UserNotFoundError, UserStateError, StripeClientError) as e:
+        _raise_seat_error_http(e)
+
+    user = await user_service.get_user_by_id(user_id, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return SuccessResponse(data=user.to_dict())
 
 
 @router.delete("/users/{user_id}", response_model=SuccessResponse[dict[str, str]])

@@ -1,7 +1,14 @@
-"""Tests that user-limit HTTPExceptions propagate as 403, not 500.
+"""Tests that user-limit handling on /register doesn't get swallowed by 500.
 
-Regression test: the try/except Exception in register_user and create_user
-previously swallowed HTTPException and converted it into a 500.
+Regression: the try/except Exception in register_user previously converted
+HTTPException into 500. Under SHU-730, registration creates inactive users
+(active-count enforcement skips them), so the 403 path is essentially
+unreachable in practice — but the propagation guarantee still matters for
+any future scenario where it does fire.
+
+Admin create_user no longer 403s on hard-limit — under SHU-730 it returns
+a 402 with a proration preview via the inline seat-charge preflight.
+That path is covered by test_auth_seat_preflight.py.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,16 +16,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException, status
 
-from shu.api.auth import CreateUserRequest, RegisterRequest, create_user, register_user
+from shu.api.auth import RegisterRequest, register_user
 from shu.billing.enforcement import UserLimitStatus
 
 
 class TestRegisterUserLimitEnforcement:
-    """The 403 from a hard limit must reach the client unchanged."""
+    """If a 403 ever does fire on /register, it must reach the client unchanged."""
 
     @pytest.mark.asyncio
-    async def test_hard_limit_raises_403_not_500(self):
-        """Hard limit should propagate as 403, not be swallowed by the blanket except."""
+    async def test_hard_limit_403_propagates_when_check_returns_at_limit(self):
+        """Forced at_limit=True must produce 403, not 500.
+
+        This is a propagation guarantee, not a real-world scenario: under
+        SHU-730 active-count enforcement, registering an inactive user
+        cannot push current_count >= user_limit. We mock check_user_limit
+        to bypass that and verify the catch-all in register_user still
+        lets HTTPException through.
+        """
         request = RegisterRequest(
             email="new@example.com",
             password="password123!",
@@ -71,34 +85,3 @@ class TestRegisterUserLimitEnforcement:
 
             # Limit check should NOT be called for first user
             mock_check.assert_not_called()
-
-
-class TestCreateUserLimitEnforcement:
-    """Admin create_user must also propagate 403 from hard limits."""
-
-    @pytest.mark.asyncio
-    async def test_hard_limit_raises_403_not_500(self):
-        """Admin create hitting hard limit should 403, not 500."""
-        request = CreateUserRequest(
-            email="new@example.com",
-            password="password123!",
-            name="New User",
-            role="regular_user",
-            auth_method="password",
-        )
-        db = AsyncMock()
-        current_user = MagicMock()
-
-        with patch("shu.api.auth.check_user_limit") as mock_check:
-            mock_check.return_value = UserLimitStatus(
-                enforcement="hard",
-                at_limit=True,
-                current_count=5,
-                user_limit=5,
-            )
-
-            with pytest.raises(HTTPException) as exc_info:
-                await create_user(request, current_user=current_user, db=db)
-
-        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-        assert "User limit (5) reached" in str(exc_info.value.detail)

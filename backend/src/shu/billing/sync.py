@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.config import get_billing_settings
+from shu.billing.stripe_client import find_seat_item
 from shu.core.logging import get_logger
 from shu.core.queue_backend import QueueBackend
 
@@ -32,22 +33,23 @@ _RECONCILIATION_INTERVAL_SECONDS = 86400
 async def _fetch_current_stripe_quantity(service: BillingService, subscription_id: str) -> int | None:
     """Return Stripe's live seat quantity, or None if it can't be determined.
 
-    A None result triggers a skip in the caller — on a Stripe error the
+    A None result triggers a skip in the caller — on any failure the
     upgrade-only safety net deliberately holds rather than writing blind.
+    The broad except covers payload-shape drift in addition to network
+    failure: a missing ``items`` key or a non-numeric quantity should both
+    skip the cycle, not crash the scheduler thread.
     """
-    from shu.billing.stripe_client import _find_seat_item
-
     try:
         subscription = await service._client.get_subscription(subscription_id)
+        if subscription is None:
+            return None
+        seat_item = find_seat_item(subscription)
+        if seat_item is None:
+            return None
+        return int(seat_item["quantity"])
     except Exception:
         logger.warning("Failed to fetch subscription for quantity guard", exc_info=True)
         return None
-    if subscription is None:
-        return None
-    seat_item = _find_seat_item(subscription)
-    if seat_item is None:
-        return None
-    return int(seat_item["quantity"])
 
 
 # =============================================================================
@@ -111,20 +113,6 @@ class BillingQuantitySyncSource:
 
             updated = await service.sync_subscription_quantity(subscription_id, user_count)
 
-            # Always persist the local quantity so billing_state stays current
-            # even when Stripe already had the right value (updated=False).
-            # sync_subscription_quantity raises on error (not-found, no seat item),
-            # so reaching here means Stripe confirmed the subscription is healthy.
-            # _last_run is advanced only after the DB write succeeds so that a
-            # DB failure after a successful Stripe update does not silence the
-            # discrepancy for the full reconciliation interval.
-            from shu.billing.state_service import BillingStateService
-
-            await BillingStateService.update(
-                db,
-                updates={"quantity": user_count},
-                source="scheduler:daily_quantity_reconciliation",
-            )
             self._last_run = now
 
             if updated:
