@@ -16,6 +16,7 @@ import time
 
 import structlog
 from sqlalchemy import delete, select
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import Settings
@@ -24,7 +25,6 @@ from ..core.vector_store import VectorEntry, get_vector_store
 from ..models.document import Document, DocumentChunk, DocumentQuery
 from ..schemas.profiling import (
     ChunkData,
-    ChunkProfileResult,
     ProfilingMode,
     ProfilingResult,
     SynthesizedQuery,
@@ -105,28 +105,55 @@ class ProfilingOrchestrator:
                 chunk_count=len(chunks),
             )
 
+            # Extract the only chunk data we need past Phase 1 — (index → id)
+            # mapping for query provenance resolution in _persist_queries. The
+            # ORM chunk list itself, plus every row's ``content`` column (the
+            # largest field by far), can be released before the long-running
+            # Phase 2 LLM call. Observed: 200 chunks x ~2 KB content each hold
+            # ~400 KB of Python strings + ORM wrappers for the entire Phase 2
+            # duration (10-30s), multiplied by SHU_PROFILING_MAX_CONCURRENT_TASKS.
+            chunk_count = len(chunks)
+            chunk_index_to_id: dict[int, str] = {
+                c.chunk_index: c.id  # type: ignore[misc]
+                for c in chunks
+            }
+
             # Phase 1: Profile chunks in batches, skipping batches where all
             # chunks already have summaries.  Commit after each batch so work
             # is not lost if a later phase fails.
-            chunk_results, phase1_tokens, chunks_skipped, chunks_profiled = await self._profile_chunks_incrementally(
-                chunks, document_id
-            )
+            (
+                phase1_tokens,
+                chunks_skipped,
+                chunks_profiled,
+            ) = await self._profile_chunks_incrementally(chunks, document_id)
             total_tokens += phase1_tokens
+
+            # Release ORM chunks from the SQLAlchemy identity map before Phase
+            # 2 (SHU-731). The identity map otherwise pins every loaded row for
+            # the life of the session, and a profiling run can span tens of
+            # seconds under OpenRouter latency. Per-object expunge keeps the
+            # ``document`` row attached so downstream mark_* calls still work.
+            for _chunk in chunks:
+                try:
+                    self.db.expunge(_chunk)
+                except InvalidRequestError:  # pragma: no cover — already detached
+                    pass
+            chunks.clear()
 
             # Phase 2: Generate document metadata from DB-sourced summaries.
             # Re-read summaries from the database (not in-memory results) so
             # that retries after a metadata-only failure don't need to
-            # re-profile any chunks.
-            await self.db.refresh(document)  # Pick up any chunk commits
+            # re-profile any chunks. Column-only query — does NOT re-populate
+            # the identity map with full ORM rows (SHU-731).
             accumulated_summaries = await self._load_chunk_summaries(document_id)
 
             successful_count = len(accumulated_summaries)
-            coverage_percent = (successful_count / len(chunks)) * 100 if chunks else 100.0
+            coverage_percent = (successful_count / chunk_count) * 100 if chunk_count else 100.0
 
             logger.info(
                 "chunk_profiling_coverage",
                 document_id=document_id,
-                total_chunks=len(chunks),
+                total_chunks=chunk_count,
                 successful_chunks=successful_count,
                 chunks_skipped=chunks_skipped,
                 chunks_profiled=chunks_profiled,
@@ -145,7 +172,7 @@ class ProfilingOrchestrator:
                     document_id=document_id,
                     summary_count=len(accumulated_summaries),
                     metadata_tokens=metadata_tokens,
-                    total_chunks=len(chunks),
+                    total_chunks=chunk_count,
                 )
 
             # Persist document-level profile
@@ -156,7 +183,7 @@ class ProfilingOrchestrator:
             queries_created = 0
             if doc_profile:
                 try:
-                    queries_created = await self._persist_queries(document, synthesized_queries, chunks)
+                    queries_created = await self._persist_queries(document, synthesized_queries, chunk_index_to_id)
                 except Exception as e:
                     await self.db.rollback()
                     logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
@@ -175,7 +202,10 @@ class ProfilingOrchestrator:
             return ProfilingResult(
                 document_id=document_id,
                 document_profile=doc_profile,
-                chunk_profiles=chunk_results,
+                # SHU-731: no longer surface per-chunk results to callers.
+                # The worker never reads this field; accumulating N chunk
+                # results across the Phase 2 LLM call was pure retention.
+                chunk_profiles=[],
                 profiling_mode=ProfilingMode.CHUNK_AGGREGATION,
                 success=doc_profile is not None,
                 error=None if doc_profile else "Failed to generate document profile",
@@ -203,7 +233,7 @@ class ProfilingOrchestrator:
         self,
         chunks: list[DocumentChunk],
         document_id: str,
-    ) -> tuple[list[ChunkProfileResult], int, int, int]:
+    ) -> tuple[int, int, int]:
         """Profile chunks in batches, skipping batches where all chunks are already profiled.
 
         Walks through chunks sequentially in batch-sized windows. If every chunk
@@ -216,11 +246,10 @@ class ProfilingOrchestrator:
             document_id: Document ID for logging.
 
         Returns:
-            Tuple of (all chunk results, total tokens, chunks skipped, chunks profiled).
+            Tuple of (total tokens, chunks skipped, chunks profiled).
 
         """
         batch_size = self.settings.chunk_profiling_batch_size
-        all_results: list[ChunkProfileResult] = []
         total_tokens = 0
         chunks_skipped = 0
         chunks_profiled = 0
@@ -249,7 +278,6 @@ class ProfilingOrchestrator:
                 chunk_data,
             )
             total_tokens += tokens
-            all_results.extend(batch_results)
 
             # Persist this batch immediately
             chunk_map = {c.id: c for c in batch_chunks}
@@ -277,7 +305,7 @@ class ProfilingOrchestrator:
                 tokens=tokens,
             )
 
-        return all_results, total_tokens, chunks_skipped, chunks_profiled
+        return total_tokens, chunks_skipped, chunks_profiled
 
     async def _load_chunk_summaries(self, document_id: str) -> list[str]:
         """Load committed chunk summaries from the database for metadata generation.
@@ -285,23 +313,40 @@ class ProfilingOrchestrator:
         Returns accumulated summary strings in chunk_index order, matching the
         format expected by generate_document_metadata().
 
+        Uses a column-only query (chunk_index/summary/topics) to avoid loading
+        the full DocumentChunk row — crucially skipping the ``content`` column
+        which is by far the largest — and to avoid populating the SQLAlchemy
+        identity map with ORM rows that Phase 2 never otherwise needs (SHU-731).
         """
         stmt = (
-            select(DocumentChunk)
+            select(  # type: ignore[call-overload]
+                DocumentChunk.chunk_index,
+                DocumentChunk.summary,
+                DocumentChunk.topics,
+            )
             .where(DocumentChunk.document_id == document_id)
             .where(DocumentChunk.summary.isnot(None))  # type: ignore[union-attr]
             .order_by(DocumentChunk.chunk_index)
         )
         result = await self.db.execute(stmt)
-        chunks = result.scalars().all()
+        rows = result.all()
 
         accumulated = []
-        for chunk in chunks:
-            summary: str = chunk.summary or ""  # type: ignore[assignment]
+        for row in rows:
+            # Row may be a SQLAlchemy Row (.chunk_index/.summary/.topics) when
+            # executed against a real engine, or a 3-tuple when tests return a
+            # plain iterable. Support both.
+            if hasattr(row, "chunk_index"):
+                chunk_index = row.chunk_index
+                summary = row.summary or ""
+                topics = row.topics if isinstance(row.topics, list) else []
+            else:
+                chunk_index, summary, topics = row
+                summary = summary or ""
+                topics = topics if isinstance(topics, list) else []
             if not summary.strip():
                 continue
-            entry = f"Chunk {chunk.chunk_index}: {summary}"
-            topics: list = chunk.topics if isinstance(chunk.topics, list) else []  # type: ignore[assignment]
+            entry = f"Chunk {chunk_index}: {summary}"
             if topics:
                 entry += f"\n  Topics: {', '.join(topics)}"
             accumulated.append(entry)
@@ -343,7 +388,7 @@ class ProfilingOrchestrator:
         self,
         document: Document,
         queries: list[SynthesizedQuery],
-        chunks: list[DocumentChunk],
+        chunk_index_to_id: dict[int, str] | list[DocumentChunk],
     ) -> int:
         """Persist synthesized queries to the database.
 
@@ -354,7 +399,10 @@ class ProfilingOrchestrator:
         Args:
             document: The document being profiled
             queries: List of SynthesizedQuery with optional chunk_index provenance
-            chunks: Document chunks for chunk_index → chunk_id resolution
+            chunk_index_to_id: Pre-computed ``{chunk_index: chunk_id}`` map, or
+                (legacy) a list of DocumentChunk ORM rows from which the map is
+                derived. The map form lets callers release the ORM chunk list
+                before calling into this method (SHU-731).
 
         Returns:
             Number of queries created
@@ -363,13 +411,20 @@ class ProfilingOrchestrator:
         # Delete existing queries for this document (re-profiling case)
         await self.db.execute(delete(DocumentQuery).where(DocumentQuery.document_id == document.id))
 
-        # Build chunk_index → chunk_id map for provenance resolution
-        chunk_index_to_id: dict[int, str] = {c.chunk_index: c.id for c in chunks}
+        # Accept either the map or a chunk list for callers that haven't been
+        # migrated (e.g. existing unit tests).
+        if isinstance(chunk_index_to_id, dict):
+            index_map: dict[int, str] = chunk_index_to_id
+        else:
+            index_map = {
+                c.chunk_index: c.id  # type: ignore[misc]
+                for c in chunk_index_to_id
+            }
 
         queries_created = 0
         for sq in queries:
             if sq.query_text.strip():
-                source_chunk_id = chunk_index_to_id.get(sq.chunk_index) if sq.chunk_index is not None else None
+                source_chunk_id = index_map.get(sq.chunk_index) if sq.chunk_index is not None else None
                 doc_query = DocumentQuery.create_for_document(
                     document_id=document.id,
                     knowledge_base_id=document.knowledge_base_id,

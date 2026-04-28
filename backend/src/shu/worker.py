@@ -190,24 +190,28 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         await session.commit()
 
         try:
-            # Retrieve file bytes from staging (don't delete yet - need retry safety)
-            file_bytes = await staging_service.retrieve_file(staging_key, delete_after_retrieve=False)
+            # Resolve the staged file to a local path (the staging dir is a
+            # ReadWriteMany mount in production, so "local" is always valid).
+            # The file is NOT deleted here; delete_staged_file fires on success
+            # after the embed job enqueues, and on failure we leave it in place
+            # so the retry can re-open it.
+            staged_path = await staging_service.retrieve_to_path(staging_key)
 
             logger.info(
-                "Retrieved staged file",
+                "Resolved staged file path",
                 extra={
                     "job_id": job.id,
                     "document_id": document_id,
-                    "file_size": len(file_bytes),
+                    "staged_path": str(staged_path),
                 },
             )
 
             from .core.ocr_service import extract_text_with_ocr_fallback
 
             extraction_result = await extract_text_with_ocr_fallback(
-                file_bytes,
-                mime_type,
-                get_config_manager(),
+                mime_type=mime_type,
+                config_manager=get_config_manager(),
+                file_path=str(staged_path),
                 filename=filename,
                 ocr_mode=ocr_mode or "auto",
                 user_id=user_id,
@@ -1068,7 +1072,7 @@ async def _handle_re_embedding_job(job) -> None:
     await handle_re_embedding_job(job)
 
 
-async def process_job(job):
+async def process_job(job):  # noqa: PLR0912 — dispatch table by workload type; flatter than a handler registry here
     """Process a job based on its workload type and payload.
 
     Routes jobs to appropriate handlers based on the queue name (workload type).
@@ -1081,6 +1085,10 @@ async def process_job(job):
         Exception: For transient errors that should trigger retry.
 
     """
+    import time as _time
+
+    from .core.config import get_settings_instance as _get_settings
+    from .core.memory_tools import current_rss_bytes
     from .core.workload_routing import WorkloadType
 
     # Determine workload type from queue name
@@ -1093,47 +1101,69 @@ async def process_job(job):
     if workload_type is None:
         raise ValueError(f"Unknown queue name: {job.queue_name}")
 
-    # Route to appropriate handler
-    if workload_type == WorkloadType.PROFILING:
-        await _handle_profiling_job(job)
+    # Per-job RSS delta logging (SHU-731). Reads /proc/self/status VmRSS —
+    # ~100 µs per sample, cheap enough to keep on by default.
+    log_rss = getattr(_get_settings(), "memory_log_per_job_rss", True)
+    rss_before = current_rss_bytes() if log_rss else 0
+    t_start = _time.time()
 
-    elif workload_type == WorkloadType.INGESTION_OCR:
-        await _handle_ocr_job(job)
+    try:
+        # Route to appropriate handler
+        if workload_type == WorkloadType.PROFILING:
+            await _handle_profiling_job(job)
 
-    elif workload_type == WorkloadType.INGESTION_EMBED:
-        await _handle_embed_job(job)
+        elif workload_type == WorkloadType.INGESTION_OCR:
+            await _handle_ocr_job(job)
 
-    elif workload_type == WorkloadType.RE_EMBEDDING:
-        await _handle_re_embedding_job(job)
+        elif workload_type == WorkloadType.INGESTION_EMBED:
+            await _handle_embed_job(job)
 
-    elif workload_type == WorkloadType.MAINTENANCE:
-        # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)
-        logger.warning(
-            "MAINTENANCE workload handler not yet implemented",
-            extra={
-                "job_id": job.id,
-                "queue": job.queue_name,
-            },
-        )
+        elif workload_type == WorkloadType.RE_EMBEDDING:
+            await _handle_re_embedding_job(job)
 
-    elif workload_type == WorkloadType.INGESTION:
-        # Route based on action in payload
-        action = (job.payload or {}).get("action", "")
-        if action == "plugin_feed_execution":
-            await _handle_plugin_execution_job(job)
+        elif workload_type == WorkloadType.MAINTENANCE:
+            # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)
+            logger.warning(
+                "MAINTENANCE workload handler not yet implemented",
+                extra={
+                    "job_id": job.id,
+                    "queue": job.queue_name,
+                },
+            )
+
+        elif workload_type == WorkloadType.INGESTION:
+            # Route based on action in payload
+            action = (job.payload or {}).get("action", "")
+            if action == "plugin_feed_execution":
+                await _handle_plugin_execution_job(job)
+            else:
+                raise ValueError(f"INGESTION job {job.id} has unknown action: {action!r}")
+
+        elif workload_type == WorkloadType.LLM_WORKFLOW:
+            # Route based on action in payload
+            action = (job.payload or {}).get("action", "")
+            if action == "experience_execution":
+                await _handle_experience_execution_job(job)
+            else:
+                raise ValueError(f"LLM_WORKFLOW job {job.id} has unknown action: {action!r}")
+
         else:
-            raise ValueError(f"INGESTION job {job.id} has unknown action: {action!r}")
-
-    elif workload_type == WorkloadType.LLM_WORKFLOW:
-        # Route based on action in payload
-        action = (job.payload or {}).get("action", "")
-        if action == "experience_execution":
-            await _handle_experience_execution_job(job)
-        else:
-            raise ValueError(f"LLM_WORKFLOW job {job.id} has unknown action: {action!r}")
-
-    else:
-        raise ValueError(f"Unsupported workload type: {workload_type}")
+            raise ValueError(f"Unsupported workload type: {workload_type}")
+    finally:
+        if log_rss:
+            rss_after = current_rss_bytes()
+            logger.info(
+                "job_memory_delta",
+                extra={
+                    "job_id": job.id,
+                    "workload_type": workload_type.value if workload_type else "unknown",
+                    "document_id": (job.payload or {}).get("document_id"),
+                    "rss_before_bytes": rss_before,
+                    "rss_after_bytes": rss_after,
+                    "rss_delta_bytes": rss_after - rss_before,
+                    "duration_ms": int((_time.time() - t_start) * 1000),
+                },
+            )
 
 
 async def _run_log_maintenance() -> None:
@@ -1158,7 +1188,7 @@ async def _run_log_maintenance() -> None:
             break
 
 
-async def run_worker(
+async def run_worker(  # noqa: PLR0915 — linear startup/shutdown sequence; splitting would obscure ordering
     workload_types: set[WorkloadType],
     poll_interval: float = 1.0,
     shutdown_timeout: float = 30.0,
@@ -1193,6 +1223,24 @@ async def run_worker(
     # (which are long-lived but don't run the full unified scheduler)
     # still get midnight rotation and retention cleanup on their log files.
     log_maintenance_task = asyncio.create_task(_run_log_maintenance(), name="worker:log-maintenance")
+
+    # Periodic gc.collect() + malloc_trim(0) (SHU-731). Workers do the bulk
+    # of profiling allocation but never enter the FastAPI lifespan, so we
+    # spawn a parallel trim loop here. Default 60s in all configmaps; set
+    # SHU_MEMORY_TRIM_INTERVAL_SECONDS=0 to disable. malloc_trim is a no-op
+    # under jemalloc but gc.collect() still clears Python gen-2 cycles, so
+    # the loop is useful regardless of allocator.
+    trim_task: asyncio.Task | None = None
+    try:
+        from .core.config import get_settings_instance as _get_settings
+        from .core.memory_tools import periodic_trim_loop as _trim_loop
+
+        trim_interval = getattr(_get_settings(), "memory_trim_interval_seconds", 0.0)
+        if trim_interval and trim_interval > 0:
+            trim_task = asyncio.create_task(_trim_loop(trim_interval), name="worker:memory-trim")
+            logger.info("Memory trim task started (interval=%ss)", trim_interval)
+    except Exception as e:
+        logger.warning("Failed to start memory trim task: %s", e)
 
     # Create worker configuration
     config = WorkerConfig(
@@ -1244,6 +1292,8 @@ async def run_worker(
     finally:
         if not log_maintenance_task.done():
             log_maintenance_task.cancel()
+        if trim_task is not None and not trim_task.done():
+            trim_task.cancel()
         logger.info("Workers shutdown complete")
 
 
@@ -1310,6 +1360,14 @@ Valid workload types:
 
     # Setup logging
     setup_logging()
+
+    # Cap the MuPDF process-global store before any fitz.open in the OCR path
+    # (SHU-710). The API lifespan configures this independently for that process;
+    # dedicated worker processes handle the vast majority of ingestion OCR and
+    # must configure their own cap since they never run the FastAPI lifespan.
+    from .processors.text_extractor import configure_mupdf_store
+
+    configure_mupdf_store()
 
     logger.info(
         "Worker entrypoint starting",

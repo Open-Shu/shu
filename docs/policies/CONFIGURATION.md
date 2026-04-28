@@ -849,6 +849,81 @@ The Shu logging system includes several improvements for better readability:
 - **Structured logging**: JSON format available for production monitoring
 - **Smart filtering**: Only meaningful extra fields are included in logs
 
+## Memory tuning (SHU-731) {#memory}
+
+Shu is a long-lived Python service that allocates and frees a lot of heap
+during ingestion + profiling bursts. Two layers of memory management matter
+for per-pod density; both are driven by settings documented here.
+
+### Allocator layer: jemalloc + MALLOC_ARENA_MAX
+
+The production image `LD_PRELOAD`s jemalloc (installed via `apt install
+libjemalloc2` in `deployment/docker/api/Dockerfile` and wired in by the
+image's `entrypoint.sh`). jemalloc's decay-based release returns freed
+pages to the kernel much more aggressively than glibc's default allocator
+under Python's allocation churn.
+
+`MALLOC_ARENA_MAX=2` is also set. Under glibc this caps the number of
+secondary arenas (default: `8 × nproc`); under jemalloc the variable is
+ignored but we keep it set so A/B comparisons and the `SHU_DISABLE_JEMALLOC=1`
+fallback path remain consistent.
+
+Operators can disable jemalloc at runtime by setting
+`SHU_DISABLE_JEMALLOC=1` — the entrypoint leaves `LD_PRELOAD` unset and the
+process runs on glibc. This is intended for comparison and incident
+response, not for steady-state operation.
+
+### Process layer: periodic gc.collect() + malloc_trim(0)
+
+`SHU_MEMORY_TRIM_INTERVAL_SECONDS=60` starts a background task (in both the
+FastAPI lifespan and the standalone worker entrypoint) that on each tick
+runs `gc.collect()` followed by `malloc_trim(0)` on a worker thread.
+
+Both steps matter:
+
+- `gc.collect()` clears generation-2 reference cycles (Pydantic models,
+  async task frames, SQLAlchemy relationship state). Python's automatic
+  cycle collector reaches gen-2 too slowly under sustained profiling load,
+  so without an explicit call cycles accumulate and `malloc_trim` finds
+  nothing to release. The original SHU-731 implementation skipped this
+  step on the assumption that "lazy collection on allocation is enough"
+  and produced a slow ~6 MB/min creep until corrected.
+- `malloc_trim(0)` returns freed glibc arena pages to the kernel. Python
+  never does this itself.
+
+Combined cost: ~100-120 ms every 60 s ≈ 0.2% wall-clock. Offloaded to a
+worker thread, so the event loop is unblocked during the GIL-released
+phases. No-op under jemalloc (jemalloc has its own decay) and on non-glibc
+libc (musl, macOS).
+
+Set to `0` to disable.
+
+### Diagnostics
+
+- `GET /api/v1/resources/heap-stats` — gc stats, top object types, asyncio
+  task inventory, current RSS, and tracemalloc top-N (when enabled).
+- `POST /api/v1/resources/heap-stats/trim` — force `gc.collect() +
+  malloc_trim(0)`, returns before/after RSS delta.
+- `POST /api/v1/resources/heap-stats/tracemalloc/{start,stop,snapshot}` +
+  `GET /api/v1/resources/heap-stats/tracemalloc/diff` — line-level
+  attribution for what a workload actually allocated.
+- Per-job RSS delta logging: every background job emits a
+  `job_memory_delta` log record with `workload_type`, `document_id`,
+  `rss_before_bytes`, `rss_after_bytes`, `duration_ms`. Disable with
+  `SHU_MEMORY_LOG_PER_JOB_RSS=false` if you don't want it in the stream.
+
+See `scripts/memory_bench.sh` for the local A/B harness (five allocator
+variants, same corpus, same driver).
+
+### Recommended values
+
+| Environment       | MALLOC_ARENA_MAX | SHU_MEMORY_TRIM_INTERVAL_SECONDS |
+| ----------------- | ---------------- | -------------------------------- |
+| local dev (macOS) | unset            | `0` (malloc_trim is a no-op)     |
+| Kubernetes dev    | `2`              | `60`                             |
+| Kubernetes demo   | `2`              | `60`                             |
+| Kubernetes prod   | `2`              | `60`                             |
+
 ## API Documentation
 
 Once the server is running, access the interactive API documentation at:

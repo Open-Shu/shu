@@ -17,6 +17,10 @@ services:
       - SHU_APP_VERSION=0.0.6
       - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
       - PYTHONPATH=/app/src
+      # Memory tuning (SHU-731). See docs/policies/CONFIGURATION.md#memory.
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     ports:
       - "8000:8000"
     volumes:
@@ -55,6 +59,10 @@ services:
       - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
       - PYTHONPATH=/app/src
       - OAUTH_REDIRECT_URI=http://localhost:3000/auth/callback
+      # Memory tuning (SHU-731).
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     ports:
       - "8000:8000"
     volumes:
@@ -148,6 +156,10 @@ services:
       - SHU_WORKER_POLL_INTERVAL=1.0
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
+      # Memory tuning (SHU-731). See docs/policies/CONFIGURATION.md#memory.
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     volumes:
       - shu-data:/app/data
     networks:
@@ -180,6 +192,10 @@ services:
       - SHU_WORKER_POLL_INTERVAL=0.5
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
+      # Memory tuning (SHU-731).
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     volumes:
       - ../../backend/src:/app/src
       - ../../data:/app/data
@@ -219,6 +235,10 @@ services:
       - SHU_WORKER_POLL_INTERVAL=1.0
       - SHU_WORKER_SHUTDOWN_TIMEOUT=30.0
       - PYTHONPATH=/app/src
+      # Memory tuning (SHU-731).
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     volumes:
       - shu-data:/app/data
     networks:
@@ -250,6 +270,10 @@ services:
       - SHU_WORKER_POLL_INTERVAL=1.0
       - SHU_WORKER_SHUTDOWN_TIMEOUT=60.0
       - PYTHONPATH=/app/src
+      # Memory tuning (SHU-731).
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     volumes:
       - shu-data:/app/data
     networks:
@@ -281,6 +305,10 @@ services:
       - SHU_WORKER_POLL_INTERVAL=2.0
       - SHU_WORKER_SHUTDOWN_TIMEOUT=60.0
       - PYTHONPATH=/app/src
+      # Memory tuning (SHU-731).
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
     volumes:
       - shu-data:/app/data
     networks:

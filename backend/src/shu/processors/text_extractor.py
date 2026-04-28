@@ -8,6 +8,9 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -38,6 +41,76 @@ _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
 # fmt: on
 
 VALID_OCR_MODES: frozenset[str] = frozenset({"auto", "always", "never", "fallback", "text_only"})
+
+# MuPDF process-global store ceiling (SHU-710). The store is shared across all
+# concurrent fitz.open() calls, not per-worker. Sizing: per-worker working set
+# for sequential text extraction is ~15-25 MiB (active page + its fonts +
+# display list); at SHU_OCR_MAX_CONCURRENT_JOBS=6 that is ~120 MiB plus a
+# small LRU headroom. Values below ~64 MiB risk thrashing under multi-worker
+# load; values above 256 MiB give diminishing returns for text-only workloads.
+MUPDF_STORE_MAXSIZE_BYTES: int = 128 * 1024 * 1024
+
+
+def configure_mupdf_store() -> None:
+    """Cap the MuPDF process-global store and shrink defaults (SHU-710).
+
+    Must be called once per process before any ``fitz.open`` — from the
+    FastAPI lifespan for the API process, and from the worker entrypoint
+    for dedicated worker processes (where OCR actually runs). Idempotent:
+    safe to call multiple times, though callers should not rely on that.
+
+    Failure is logged and swallowed so misconfiguration does not block
+    process startup; absent the cap, behavior matches pre-SHU-710 MuPDF
+    defaults (unbounded store), which is degraded but not broken.
+    """
+    try:
+        import fitz
+
+        fitz.TOOLS.store_maxsize = MUPDF_STORE_MAXSIZE_BYTES
+        logger.info(
+            "MuPDF store cap configured",
+            extra={"store_maxsize_bytes": MUPDF_STORE_MAXSIZE_BYTES},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to configure MuPDF store cap: {e}")
+
+
+@contextmanager
+def _open_pdf(file_path: str | None, file_content: bytes | None) -> Iterator[Any]:
+    """Open a PDF via path (mmap) when possible, else from in-memory bytes.
+
+    Always closes the document and shrinks the MuPDF process-global store on
+    exit so cached fonts/images from the closed doc are evicted before the
+    next extraction begins (SHU-710). The store is process-global, so
+    without shrink it staircases toward the cap and forces eviction under
+    LRU pressure — shrink returns it to near-baseline between documents.
+
+    ``filetype="pdf"`` is passed explicitly because staged files are named
+    ``.bin`` (the staging-service convention) and fitz's default
+    extension-based type detection would otherwise fall back to magic-byte
+    sniffing. These extraction methods are only reached after upstream
+    routing has confirmed the document is a PDF.
+    """
+    import fitz
+
+    if file_path and os.path.exists(file_path):
+        doc = fitz.open(file_path, filetype="pdf")
+    elif file_content is not None:
+        doc = fitz.open(stream=BytesIO(file_content), filetype="pdf")
+    else:
+        raise ValueError("_open_pdf requires either file_path or file_content")
+    try:
+        yield doc
+    finally:
+        try:
+            doc.close()
+        finally:
+            try:
+                fitz.TOOLS.store_shrink(100)
+            except Exception:
+                # store_shrink is best-effort: a failure here must not mask
+                # an earlier extraction exception or block cleanup.
+                pass
 
 
 class UnsupportedFileFormatError(Exception):
@@ -258,6 +331,7 @@ class TextExtractor:
         *,
         file_bytes: bytes | None = None,
         file_path: str | None = None,
+        filename: str | None = None,
         mime_type: str | None = None,
         ocr_mode: str | None = None,
         kb_config: dict[str, Any] | None = None,
@@ -321,20 +395,47 @@ class TextExtractor:
             )
 
         # --- Resolve file extension ---
+        # Priority: explicit filename hint → real file_path suffix → mime_type → magic bytes.
+        # `.bin` is the staging-service convention for opaque blobs and carries no type
+        # information; treat it as absent wherever it appears so the next source takes over.
         file_ext = ""
-        if file_path:
-            file_ext = Path(file_path).suffix.lower()
-        if not file_ext and mime_type:
-            file_ext = normalize_extension(mime_type)
-            # normalize_extension returns ".bin" for unknowns — treat as empty
+        if filename:
+            file_ext = Path(filename).suffix.lower()
             if file_ext == ".bin":
                 file_ext = ""
-        if not file_ext and file_bytes is not None:
-            file_ext = detect_extension_from_bytes(file_bytes) or ".txt"
-            logger.debug(
-                "No file extension found, using fallback",
-                extra={"file_path": file_path, "fallback_extension": file_ext},
-            )
+        if not file_ext and file_path:
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext == ".bin":
+                file_ext = ""
+        if not file_ext and mime_type:
+            file_ext = normalize_extension(mime_type)
+            if file_ext == ".bin":
+                file_ext = ""
+        if not file_ext:
+            # Magic-byte sniff: from in-memory bytes if we have them, else from the file head.
+            sniffed: str | None = None
+            if file_bytes is not None:
+                sniffed = detect_extension_from_bytes(file_bytes)
+            elif file_path and os.path.exists(file_path):
+                try:
+                    with open(file_path, "rb") as _fh:
+                        sniffed = detect_extension_from_bytes(_fh.read(16))
+                except OSError:
+                    sniffed = None
+            if sniffed:
+                file_ext = sniffed
+                logger.debug(
+                    "No file extension from filename/path/mime, recovered from magic bytes",
+                    extra={"file_path": file_path, "recovered_extension": file_ext},
+                )
+            elif file_bytes is not None:
+                # Preserves pre-SHU-710 behavior: degrade to .txt so the extractor can try
+                # a best-effort plain-text read instead of hard-failing on missing mime.
+                file_ext = ".txt"
+                logger.warning(
+                    "No file extension resolvable; defaulting to .txt for best-effort extraction",
+                    extra={"file_path": file_path, "mime_type": mime_type, "upload_filename": filename},
+                )
 
         if file_ext not in self.supported_extensions:
             logger.warning(
@@ -704,40 +805,30 @@ class TextExtractor:
         def _extract_text_only():
             """Extract PDF text without OCR."""
             try:
-                from io import BytesIO
+                with _open_pdf(file_path, file_content) as doc:
+                    total_pages = len(doc)
+                    logger.debug(f"PDF has {total_pages} pages", extra={"file_path": file_path})
 
-                import fitz
-
-                # Open PDF document
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
-
-                total_pages = len(doc)
-                logger.debug(f"PDF has {total_pages} pages", extra={"file_path": file_path})
-
-                # Initialize progress
-                if progress_callback:
-                    progress_callback(0, total_pages)
-
-                text = ""
-                for page_num in range(total_pages):
-                    # Extract text from page
-                    page = doc.load_page(page_num)
-                    page_text = page.get_text()
-
-                    if page_text.strip():
-                        text += page_text + "\n"
-
-                    # Update progress after each page
                     if progress_callback:
-                        progress_callback(page_num + 1, total_pages)
+                        progress_callback(0, total_pages)
 
-                    logger.debug(
-                        f"Processed page {page_num + 1}/{total_pages}",
-                        extra={"file_path": file_path, "page_text_length": len(page_text)},
-                    )
+                    text = ""
+                    for page_num in range(total_pages):
+                        page = doc.load_page(page_num)
+                        page_text = page.get_text()
 
-                doc.close()
-                return text.strip()
+                        if page_text.strip():
+                            text += page_text + "\n"
+
+                        if progress_callback:
+                            progress_callback(page_num + 1, total_pages)
+
+                        logger.debug(
+                            f"Processed page {page_num + 1}/{total_pages}",
+                            extra={"file_path": file_path, "page_text_length": len(page_text)},
+                        )
+
+                    return text.strip()
 
             except Exception as e:
                 logger.error(f"PDF text extraction failed: {e}", extra={"file_path": file_path})
@@ -758,35 +849,27 @@ class TextExtractor:
 
         def _extract_text_only():
             """Extract text without OCR in a separate thread."""
-            from io import BytesIO
-
-            import fitz
-
             try:
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
+                with _open_pdf(file_path, file_content) as doc:
+                    text = ""
+                    total_pages = len(doc)
 
-                text = ""
-                total_pages = len(doc)
+                    for page_num in range(total_pages):
+                        if self._current_sync_job_id and self.is_job_cancelled(self._current_sync_job_id):
+                            logger.info(
+                                f"Fast extraction cancelled for job {self._current_sync_job_id}, stopping at page {page_num + 1}"
+                            )
+                            break
 
-                for page_num in range(total_pages):
-                    # Check for job cancellation
-                    if self._current_sync_job_id and self.is_job_cancelled(self._current_sync_job_id):
-                        logger.info(
-                            f"Fast extraction cancelled for job {self._current_sync_job_id}, stopping at page {page_num + 1}"
-                        )
-                        break
+                        page = doc.load_page(page_num)
+                        page_text = page.get_text()
 
-                    # Extract text from page
-                    page = doc.load_page(page_num)
-                    page_text = page.get_text()
+                        if page_text.strip():
+                            text += page_text + "\n"
 
-                    if page_text.strip():
-                        text += page_text + "\n"
+                        logger.debug(f"Processed page {page_num + 1}/{total_pages} | page_text_length={len(page_text)}")
 
-                    logger.debug(f"Processed page {page_num + 1}/{total_pages} | page_text_length={len(page_text)}")
-
-                doc.close()
-                return text.strip()
+                    return text.strip()
 
             except Exception as e:
                 logger.error(f"Fast PDF extraction failed: {e}", extra={"file_path": file_path})
@@ -819,48 +902,40 @@ class TextExtractor:
         start_time = time.time()
 
         try:
-            from io import BytesIO
-
-            import fitz
-
-            # Open PDF — worker-level concurrency limiting ensures at most
+            # Worker-level concurrency limiting ensures at most
             # SHU_OCR_MAX_CONCURRENT_JOBS are processing OCR simultaneously.
-            doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
+            with _open_pdf(file_path, file_content) as doc:
+                total_pages = len(doc)
+                logger.info(
+                    f"Starting direct OCR processing for {total_pages} pages",
+                    extra={"file_path": file_path},
+                )
 
-            total_pages = len(doc)
-            logger.info(
-                f"Starting direct OCR processing for {total_pages} pages",
-                extra={"file_path": file_path},
-            )
-
-            # Process with OCR (EasyOCR with Tesseract fallback)
-            try:
-                text, method, confidence = await self._process_pdf_with_ocr_direct(doc, file_path, progress_callback)
-                # Record the actual engine so extract_text() can report it accurately.
-                engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
-                self._last_ocr_engine = engine_map.get(method, method)
-                if text.strip():
-                    processing_time = time.time() - start_time
-                    logger.info(
-                        "OCR processing successful",
-                        extra={
-                            "file_path": file_path,
-                            "engine": self._last_ocr_engine,
-                            "confidence": confidence,
-                            "processing_time": processing_time,
-                            "pages": total_pages,
-                        },
+                try:
+                    text, method, confidence = await self._process_pdf_with_ocr_direct(
+                        doc, file_path, progress_callback
                     )
-                    doc.close()
-                    return text, confidence
-            except Exception as e:
-                logger.error(f"OCR processing failed: {e}", extra={"file_path": file_path})
-                doc.close()
-                return "", 0.0
+                    engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
+                    self._last_ocr_engine = engine_map.get(method, method)
+                    if text.strip():
+                        processing_time = time.time() - start_time
+                        logger.info(
+                            "OCR processing successful",
+                            extra={
+                                "file_path": file_path,
+                                "engine": self._last_ocr_engine,
+                                "confidence": confidence,
+                                "processing_time": processing_time,
+                                "pages": total_pages,
+                            },
+                        )
+                        return text, confidence
+                except Exception as e:
+                    logger.error(f"OCR processing failed: {e}", extra={"file_path": file_path})
+                    return "", 0.0
 
-            doc.close()
-            logger.error("All direct OCR methods failed", extra={"file_path": file_path})
-            return "", 0.0
+                logger.error("All direct OCR methods failed", extra={"file_path": file_path})
+                return "", 0.0
 
         except Exception as e:
             logger.error(f"Direct OCR processing failed: {e}", extra={"file_path": file_path})

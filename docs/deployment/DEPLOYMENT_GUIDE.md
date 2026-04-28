@@ -717,6 +717,58 @@ In-memory queues are only suitable for development and single-node deployments w
 
 ---
 
+## Memory and per-pod sizing (SHU-731)
+
+Shu pods are long-lived Python processes that allocate heap aggressively
+under ingestion + profiling bursts. Two settings meaningfully affect
+per-pod steady-state RSS and therefore tenants-per-cluster density:
+
+- **`MALLOC_ARENA_MAX=2`** — caps glibc secondary arenas. Without this,
+  each worker thread can reserve a 64 MiB arena that never returns to the
+  kernel. Already set in `shu-deploy/kubernetes/*/configmap*.yaml`.
+- **`SHU_MEMORY_TRIM_INTERVAL_SECONDS=60`** — runs `gc.collect() +
+  malloc_trim(0)` on a background task. Both steps required: `gc.collect()`
+  clears Python gen-2 reference cycles that accumulate during sustained
+  profiling, and `malloc_trim` returns freed pages to the kernel. Already
+  set in `shu-deploy/kubernetes/*/configmap*.yaml`.
+- **`SHU_DISABLE_JEMALLOC=1`** — falls back to glibc. Lab measurement on
+  the SHU-710-shaped workload showed glibc + arena cap + periodic trim
+  beats jemalloc by ~120 MB working set. libjemalloc remains installed in
+  the image; clear this var to A/B back to jemalloc.
+
+### When memory grows unexpectedly
+
+The heap-stats endpoints require an admin JWT — pass it via
+`-H "Authorization: Bearer <ADMIN_TOKEN>"`. Replace `<ADMIN_TOKEN>` with a
+valid admin token (obtain via `scripts/generate_test_token.py` or the
+admin UI).
+
+1. Read gc stats, top object types, asyncio task count, RSS:
+   ```
+   kubectl exec <pod> -- curl -s \
+     -H "Authorization: Bearer <ADMIN_TOKEN>" \
+     localhost:8000/api/v1/resources/heap-stats
+   ```
+2. Force a trim and record the before/after delta. If >100 MB is freed
+   immediately, the issue is allocator retention; if near zero, real
+   in-heap retention:
+   ```
+   kubectl exec <pod> -- curl -s -X POST \
+     -H "Authorization: Bearer <ADMIN_TOKEN>" \
+     localhost:8000/api/v1/resources/heap-stats/trim
+   ```
+3. Start tracemalloc via `POST /api/v1/resources/heap-stats/tracemalloc/start`
+   (same `Authorization` header), take a baseline snapshot, reproduce the
+   workload, then hit `GET /api/v1/resources/heap-stats/tracemalloc/diff` to
+   see what the workload retained by file:line.
+4. Grep worker logs for `job_memory_delta` to attribute RSS growth to
+   specific workload types or document shapes.
+
+Local reproduction: `scripts/memory_bench.sh` runs five allocator variants
+against a local corpus and prints a pre/post-trim RSS table.
+
+---
+
 ## Additional Resources
 
 - **Architecture Overview**: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)

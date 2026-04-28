@@ -193,6 +193,16 @@ class Settings(BaseSettings):
     worker_poll_interval: float = Field(1.0, alias="SHU_WORKER_POLL_INTERVAL")  # seconds
     worker_shutdown_timeout: float = Field(30.0, alias="SHU_WORKER_SHUTDOWN_TIMEOUT")  # seconds
 
+    # Memory tuning (SHU-731)
+    # Interval between background malloc_trim(0) calls that return freed glibc
+    # arena pages to the kernel. 0 disables the loop. Recommended for
+    # production tenants: 60-120s. No-op on non-glibc libc or when jemalloc
+    # is preloaded (jemalloc releases memory via its own decay mechanism).
+    memory_trim_interval_seconds: float = Field(0.0, alias="SHU_MEMORY_TRIM_INTERVAL_SECONDS")
+    # If set, log VmRSS delta for every processed job with workload_type +
+    # document_id. Cheap (~100 µs/sample) — on in all non-local environments.
+    memory_log_per_job_rss: bool = Field(True, alias="SHU_MEMORY_LOG_PER_JOB_RSS")
+
     # Disk-based ingestion staging directory
     ingestion_staging_dir: str = Field("./data/ingestion", alias="SHU_INGESTION_STAGING_DIR")
     ingestion_staging_max_age_hours: int = Field(24, alias="SHU_INGESTION_STAGING_MAX_AGE_HOURS")
