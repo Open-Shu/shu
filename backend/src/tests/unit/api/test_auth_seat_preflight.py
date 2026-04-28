@@ -159,8 +159,14 @@ class TestCreateUserPreflight:
         seat_service.confirm_upgrade.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_stripe_upgrade_failure_aborts_before_user_insert(self):
-        """Stripe failure during confirm_upgrade → HTTPException, no user creation."""
+    async def test_stripe_upgrade_failure_rolls_back_flushed_user(self):
+        """Stripe failure during confirm_upgrade → 502, flushed user rolled back.
+
+        Under the flush-then-Stripe-then-commit pattern, the user row is
+        already flushed (and the unique-email constraint acquired) before
+        the Stripe call. A Stripe failure must roll back the flush so no
+        orphan user lingers and no orphan seat is left behind.
+        """
         request = CreateUserRequest(
             email="new@example.com", password="pw12345678", name="New", auth_method="password"
         )
@@ -190,7 +196,11 @@ class TestCreateUserPreflight:
                 )
 
         assert exc_info.value.status_code == 502
-        mock_pw.create_user.assert_not_awaited()
+        # Flush ran (acquired the unique-email constraint) but commit didn't.
+        mock_pw.create_user.assert_awaited_once()
+        assert mock_pw.create_user.call_args.kwargs["flush_only"] is True
+        db.rollback.assert_awaited()
+        db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_preview_failure_returns_402_without_proration_block(self):
@@ -299,6 +309,101 @@ class TestCreateUserPreflight:
         seat_service.confirm_upgrade.assert_not_awaited()
         mock_pw.create_user.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_last_open_seat_does_not_charge_after_flush(self):
+        """N-1 active users + N seats: new user fits, no Stripe charge.
+
+        Regression: phase-2 ``confirm_upgrade`` previously re-checked
+        ``check_user_limit`` *after* the flush. The flushed user counts as
+        active, so 2-of-3 active becomes 3-of-3 → at_limit=True → upgrade
+        triggered to 4 seats. The fix captures the at-limit decision in
+        phase 1 (pre-flush) and passes it through.
+        """
+        request = CreateUserRequest(
+            email="fits@example.com", password="pw12345678", name="F", auth_method="password"
+        )
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service()
+
+        mock_user = MagicMock()
+        mock_user.to_dict.return_value = {"email": "fits@example.com"}
+
+        with (
+            # Pre-flush: 2 active out of 3 seats — open seat exists, at_limit=False.
+            patch(
+                "shu.api.auth.check_user_limit",
+                return_value=UserLimitStatus(
+                    enforcement="hard", at_limit=False, current_count=2, user_limit=3
+                ),
+            ),
+            patch("shu.api.auth.password_auth_service") as mock_pw,
+        ):
+            mock_pw.create_user = AsyncMock(return_value=mock_user)
+            await create_user(
+                request,
+                current_user=current_user,
+                db=db,
+                user_service=_make_user_service(),
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        # No Stripe upgrade — the new user fit the open seat.
+        seat_service.confirm_upgrade.assert_not_awaited()
+        # Flush ran (the user was inserted) and a single commit closed the txn.
+        mock_pw.create_user.assert_awaited_once()
+        assert mock_pw.create_user.call_args.kwargs["flush_only"] is True
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_flush_integrity_error_aborts_before_stripe_charge(self):
+        """Concurrent insert that snuck past the pre-check must abort cleanly.
+
+        The pre-check at the top of ``create_user`` is fast-fail, not a lock;
+        a parallel request can still INSERT the same email between our SELECT
+        and our flush. Under the new ordering, the flush raises IntegrityError
+        and we 400 *without* calling Stripe. Without this, the seat would be
+        charged with no corresponding user.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        request = CreateUserRequest(
+            email="raced@example.com", password="pw12345678", name="R", auth_method="password"
+        )
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service(preview=_make_preview())
+
+        with (
+            patch(
+                "shu.api.auth.check_user_limit",
+                return_value=UserLimitStatus(
+                    enforcement="hard", at_limit=True, current_count=3, user_limit=3
+                ),
+            ),
+            patch("shu.api.auth.password_auth_service") as mock_pw,
+        ):
+            # Pre-check returns no existing user, but the flush hits the unique
+            # constraint because a parallel request just inserted the same email.
+            mock_pw.create_user = AsyncMock(
+                side_effect=IntegrityError("INSERT", {}, Exception("duplicate"))
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_user(
+                    request,
+                    current_user=current_user,
+                    db=db,
+                    user_service=_make_user_service(),  # pre-check says "no existing"
+                    seat_service=seat_service,
+                    x_seat_charge_confirmed="true",
+                )
+
+        assert exc_info.value.status_code == 400
+        seat_service.confirm_upgrade.assert_not_awaited()
+        db.rollback.assert_awaited()
+
 
 class TestActivateUserPreflight:
     @pytest.mark.asyncio
@@ -358,3 +463,111 @@ class TestActivateUserPreflight:
 
         seat_service.preview_upgrade.assert_not_awaited()
         seat_service.confirm_upgrade.assert_not_awaited()
+
+
+class TestUpdateUserPreflight:
+    """PUT /auth/users/{id} runs the same preflight on inactive→active flips."""
+
+    @pytest.mark.asyncio
+    async def test_inactive_to_active_at_limit_returns_402(self):
+        """A False→True flip on is_active triggers the seat-charge preflight."""
+        from shu.api.auth import UserUpdateRequest, update_user
+
+        request = UserUpdateRequest(role="regular_user", is_active=True)
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service(preview=_make_preview())
+
+        locked = MagicMock()
+        locked.is_active = False
+        locked.role = "regular_user"
+        user_service = MagicMock()
+        user_service.get_user_by_id = AsyncMock(return_value=locked)
+
+        with patch(
+            "shu.api.auth.check_user_limit",
+            return_value=UserLimitStatus(
+                enforcement="hard", at_limit=True, current_count=3, user_limit=3
+            ),
+        ):
+            response = await update_user(
+                "42",
+                request,
+                current_user=current_user,
+                db=db,
+                user_service=user_service,
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        assert response.status_code == 402
+
+    @pytest.mark.asyncio
+    async def test_402_cancel_does_not_partially_commit_role_change(self):
+        """Returning 402 must NOT have committed the role edit."""
+        from shu.api.auth import UserUpdateRequest, update_user
+
+        request = UserUpdateRequest(role="admin", is_active=True)
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service(preview=_make_preview())
+
+        locked = MagicMock()
+        locked.is_active = False
+        locked.role = "regular_user"
+        user_service = MagicMock()
+        user_service.get_user_by_id = AsyncMock(return_value=locked)
+
+        with patch(
+            "shu.api.auth.check_user_limit",
+            return_value=UserLimitStatus(
+                enforcement="hard", at_limit=True, current_count=3, user_limit=3
+            ),
+        ):
+            response = await update_user(
+                "42",
+                request,
+                current_user=current_user,
+                db=db,
+                user_service=user_service,
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        assert response.status_code == 402
+        # Crucially: no commit happened on the 402 path. If commit ran, the
+        # role would have stuck even though the seat charge was rejected.
+        db.commit.assert_not_awaited()
+        # And the role on the in-memory locked row was never touched either.
+        assert locked.role == "regular_user"
+
+    @pytest.mark.asyncio
+    async def test_no_op_active_state_skips_preflight(self):
+        """Already-active user with same role → no preflight, no Stripe calls."""
+        from shu.api.auth import UserUpdateRequest, update_user
+
+        request = UserUpdateRequest(role="regular_user", is_active=True)
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service()
+
+        locked = MagicMock()
+        locked.is_active = True  # already active — preflight should skip
+        locked.role = "regular_user"
+        user_service = MagicMock()
+        user_service.get_user_by_id = AsyncMock(return_value=locked)
+
+        with patch("shu.api.auth.check_user_limit", side_effect=AssertionError("should not be called")):
+            await update_user(
+                "42",
+                request,
+                current_user=current_user,
+                db=db,
+                user_service=user_service,
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        seat_service.preview_upgrade.assert_not_awaited()
+        seat_service.confirm_upgrade.assert_not_awaited()
+        db.commit.assert_awaited()

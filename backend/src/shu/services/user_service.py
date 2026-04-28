@@ -87,26 +87,6 @@ class UserService:
         result = await db.execute(stmt)
         return result.scalars().all()
 
-    async def update_user_role(self, user_id: str, new_role: str, db: AsyncSession) -> User:
-        """Update user role (admin only)."""
-        stmt = select(User).where(User.id == user_id)
-        result = await db.execute(stmt)
-        user = result.scalar_one_or_none()
-
-        if not user:
-            raise ValueError("User not found")
-
-        # Validate role
-        try:
-            UserRole(new_role)
-        except ValueError as e:
-            raise ValueError("Invalid role") from e
-
-        user.role = new_role
-        await db.commit()
-        await db.refresh(user)
-        return user
-
     async def delete_user(self, user_id: str, current_user_id: str, db: AsyncSession) -> bool:
         """Delete user (admin only)."""
         # Prevent self-deletion

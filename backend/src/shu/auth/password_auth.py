@@ -134,8 +134,13 @@ class PasswordAuthService:
         role: str = "regular_user",
         db: AsyncSession = None,
         admin_created: bool = False,
+        flush_only: bool = False,
     ) -> User:
-        """Create a new user with password authentication."""
+        """Create a new user with password authentication.
+
+        ``flush_only=True`` flushes the row (acquiring the unique-email
+        constraint) without committing — used by the admin create path.
+        """
         # Check if user already exists
         stmt = select(User).where(User.email == email)
         result = await db.execute(stmt)
@@ -171,8 +176,11 @@ class PasswordAuthService:
         )
 
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        if flush_only:
+            await db.flush()
+        else:
+            await db.commit()
+            await db.refresh(user)
 
         status = "active" if is_active else "inactive (requires admin activation)"
         logger.info(f"Created password-authenticated user: {email} with role: {role}, status: {status}")

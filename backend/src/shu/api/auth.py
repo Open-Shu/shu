@@ -613,19 +613,28 @@ async def update_user(
     seat charge.
     """
     try:
-        # `update_user_role` already commits the role change; we still need
-        # a row lock for the is_active check below to be race-free with a
-        # concurrent activate. Re-load FOR UPDATE after the role write.
-        await user_service.update_user_role(user_id, request.role, db)
+        # Lock + validate before any write so a 402 cancel doesn't leave the
+        # role change committed. Previously `update_user_role` committed first
+        # and the preflight ran after, so an admin who saw the 402 and bailed
+        # still had their role edit stick.
         locked = await user_service.get_user_by_id(user_id, db, for_update=True)
         if locked is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        try:
+            UserRole(request.role)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid role: {request.role}") from e
+
         # Preflight only when crossing inactive→active. Active→inactive
         # frees a seat (no Stripe write), and a no-op flip skips both.
         if request.is_active and not locked.is_active:
             preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
             if preflight is not None:
                 return preflight
+
+        # Single commit covers role + is_active so the row never lands in a
+        # half-edited state.
+        locked.role = request.role
         locked.is_active = request.is_active
         await db.commit()
         await db.refresh(locked)
@@ -663,33 +672,31 @@ def _require_seat_service(seat_service: SeatService | None) -> SeatService:
     return seat_service
 
 
-async def _preflight_seat_charge(
+async def _seat_charge_preview(
     db: AsyncSession,
     seat_service: SeatService | None,
     confirm_header: str | None,
-) -> JSONResponse | None:
-    """Two-phase 402 preflight for seat-consuming admin writes.
+) -> tuple[JSONResponse | None, bool]:
+    """Phase 1 of the seat-charge preflight.
 
-    Returns a 402 JSONResponse with a seat-charge preview when the caller
-    hasn't yet confirmed; returns None when the write may proceed (either
-    no seat charge is needed, or the admin has confirmed and the upgrade
-    has been applied to Stripe).
-
-    WHY: `SeatService.confirm_upgrade` writes Stripe *before* the caller
-    commits the user row. If Stripe fails, `StripeClientError` propagates
-    up and the caller must abort — a committed user without the matching
-    seat on Stripe is worse than a rejected request.
+    Returns ``(response, charge_required)`` where:
+    - ``response`` is a 402 JSONResponse to return immediately, or ``None``
+      to proceed with the write.
+    - ``charge_required`` is ``True`` only when the caller must invoke
+      ``_seat_charge_confirm`` *after* its DB write. This is captured here
+      so the caller doesn't re-check ``check_user_limit`` post-write — that
+      second check would see the just-flushed/updated user and falsely
+      conclude an upgrade is needed even when the new user fits an open
+      seat.
     """
-    # Self-hosted deploys (no Stripe wired up) get a None seat_service.
-    # Skip the seat preflight entirely — there's no quantity to enforce.
     if seat_service is None:
-        return None
+        return None, False
     try:
         limit_status = await check_user_limit(db)
     except StripeClientError as e:
         _raise_seat_error_http(e)
     if not (limit_status.at_limit and limit_status.enforcement == "hard"):
-        return None
+        return None, False
 
     if confirm_header != "true":
         details: dict[str, Any] = {
@@ -703,17 +710,54 @@ async def _preflight_seat_charge(
                 "amount_usd": preview.amount_usd,
                 "period_end": preview.period_end.isoformat(),
             }
-        return ShuResponse.error(
+        envelope = ShuResponse.error(
             message="Seat limit reached. Confirm to add one seat and proceed.",
             code="seat_limit_reached",
             details=details,
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
         )
+        # Caller returns this 402 immediately — charge_required is moot here.
+        return envelope, False
 
+    # Header confirmed: caller must invoke confirm_upgrade after its DB write.
+    return None, True
+
+
+async def _seat_charge_confirm(
+    db: AsyncSession,
+    seat_service: SeatService | None,
+) -> None:
+    """Phase 2 — apply the Stripe upgrade. Caller has already decided this is needed.
+
+    No re-check of ``check_user_limit`` here on purpose: the phase-1 caller
+    captured the decision before any DB write. Re-checking now would count
+    a freshly-flushed user as already consuming a seat and trigger an
+    unnecessary upgrade when the new user exactly fits the last open seat.
+    """
+    if seat_service is None:
+        return
     try:
         await seat_service.confirm_upgrade(db)
     except StripeClientError as e:
         _raise_seat_error_http(e)
+
+
+async def _preflight_seat_charge(
+    db: AsyncSession,
+    seat_service: SeatService | None,
+    confirm_header: str | None,
+) -> JSONResponse | None:
+    """Run both preflight phases for callers that don't need to interleave a DB write.
+
+    ``activate_user`` and ``update_user`` both check-then-commit a single
+    UPDATE, so they can run preview and confirm back-to-back. ``create_user``
+    splits these to wedge a flushed INSERT between them — see its body.
+    """
+    preview, charge_required = await _seat_charge_preview(db, seat_service, confirm_header)
+    if preview is not None:
+        return preview
+    if charge_required:
+        await _seat_charge_confirm(db, seat_service)
     return None
 
 
@@ -735,10 +779,9 @@ async def create_user(
     """
     try:
         # Pre-validate everything we can deterministically check before any
-        # Stripe write. Catching duplicate-email / missing-password / bad-role
-        # up front means the seat charge in `_preflight_seat_charge` only runs
-        # when the user insert is plausible, so a 400 doesn't leave Stripe
-        # incremented with no corresponding user row.
+        # DB or Stripe write. Pre-checks fail fast on the obvious cases;
+        # the FLUSH below catches the narrow concurrent-INSERT race that
+        # could slip past the email pre-check.
         if request.auth_method == "password" and not request.password:
             raise ValueError("Password is required for password authentication")
         try:
@@ -749,42 +792,59 @@ async def create_user(
         if existing is not None:
             raise ValueError(f"User with email {request.email} already exists")
 
-        preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
-        if preflight is not None:
-            return preflight
+        # Phase 1: capture the seat-charge decision *before* any DB write.
+        # We can't re-check check_user_limit after the flush — the flushed
+        # user would be counted as active and falsely flip at_limit, so a
+        # tenant going from N-1 active to N seats would get charged for a
+        # second extra seat even though the new user fits the last open one.
+        preview, charge_required = await _seat_charge_preview(db, seat_service, x_seat_charge_confirmed)
+        if preview is not None:
+            return preview
 
-        if request.auth_method == "password":
-            # Create user with password authentication (admin-created)
-            user = await password_auth_service.create_user(
-                email=request.email,
-                password=request.password,
-                name=request.name,
-                role=request.role,
-                db=db,
-                admin_created=True,  # Admin-created users are active by default
-            )
-        else:
-            # Admin-created users are active by default
-            user = User(
-                email=request.email,
-                name=request.name,
-                auth_method=request.auth_method,
-                role=request.role,
-                is_active=True,  # Admin-created users are active
-            )
-            db.add(user)
+        # Phase 2: flush the user INSERT first so the unique-email constraint
+        # fires *before* Stripe is charged. If a concurrent request inserted
+        # the same email between our pre-check and here, the flush raises
+        # IntegrityError and we abort with no seat charge. If the flush
+        # succeeds, only then do we charge Stripe; if Stripe fails we roll
+        # back the insert. The remaining narrow window is "Stripe succeeds,
+        # commit fails" — same edge case the design accepted as unavoidable
+        # without 2PC.
+        try:
+            if request.auth_method == "password":
+                user = await password_auth_service.create_user(
+                    email=request.email,
+                    password=request.password,
+                    name=request.name,
+                    role=request.role,
+                    db=db,
+                    admin_created=True,
+                    flush_only=True,
+                )
+            else:
+                user = User(
+                    email=request.email,
+                    name=request.name,
+                    auth_method=request.auth_method,
+                    role=request.role,
+                    is_active=True,
+                )
+                db.add(user)
+                await db.flush()
+        except IntegrityError as e:
+            await db.rollback()
+            raise ValueError(f"User with email {request.email} already exists") from e
 
+        if charge_required:
             try:
-                await db.commit()
-                await db.refresh(user)
-            except IntegrityError as e:
-                # Race between our pre-check and INSERT. The seat was already
-                # charged in confirm_upgrade — admin will see this 400 and
-                # the orphaned seat is recoverable via cancel-pending-release
-                # or a retry with a different email.
+                await _seat_charge_confirm(db, seat_service)
+            except HTTPException:
+                # Stripe failed (mapped to 502 inside the helper). Roll back
+                # the flushed user — no orphan row, no orphan seat.
                 await db.rollback()
-                raise ValueError(f"User with email {request.email} already exists") from e
+                raise
 
+        await db.commit()
+        await db.refresh(user)
         return SuccessResponse(data=user.to_dict())
 
     except HTTPException:

@@ -99,7 +99,9 @@ def _make_services(
     )
 
     state_service = MagicMock()
-    state_service.get = AsyncMock(return_value=state or _make_state())
+    resolved_state = state or _make_state()
+    state_service.get = AsyncMock(return_value=resolved_state)
+    state_service.get_for_update = AsyncMock(return_value=resolved_state)
     state_service.update = AsyncMock()
 
     return SeatService(stripe_client=stripe_client, state_service=state_service), stripe_client, state_service
@@ -224,7 +226,11 @@ class TestConfirmUpgrade:
     @pytest.mark.asyncio
     async def test_confirm_upgrade_raises_when_no_subscription(self):
         service, _, state_service = _make_services()
-        state_service.get = AsyncMock(return_value=_make_state(subscription_id=None))
+        # confirm_upgrade now reads state through the locked path; override
+        # both helpers so the "subscription_id missing" branch is reachable.
+        empty_state = _make_state(subscription_id=None)
+        state_service.get = AsyncMock(return_value=empty_state)
+        state_service.get_for_update = AsyncMock(return_value=empty_state)
         with pytest.raises(StripeClientError):
             await service.confirm_upgrade(AsyncMock())
 
@@ -626,3 +632,79 @@ class TestRollover:
 
         with pytest.raises(StripeClientError):
             await service.rollover(AsyncMock(), _SUB_ID, "evt_missing")
+
+
+class TestSeatMutationLocking:
+    """Every seat-mutation path must acquire ``billing_state.get_for_update``.
+
+    Two admins flagging different users (or one flagging while another
+    releases) would otherwise both compute from the same pre-write Stripe
+    state and leave Stripe target inconsistent with the final flag set.
+    """
+
+    @pytest.mark.asyncio
+    async def test_confirm_upgrade_locks_billing_state(self):
+        service, _, state_service = _make_services(target_quantity=3)
+        await service.confirm_upgrade(AsyncMock())
+        state_service.get_for_update.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_flag_user_locks_billing_state(self):
+        service, _, state_service = _make_services(target_quantity=3)
+        user = _make_user(user_id=7, is_active=True)
+        db = _make_db(user)
+
+        active_patch, flagged_patch = _patch_flag_inputs(active_count=3, flagged_count=0)
+        with active_patch, flagged_patch:
+            await service.flag_user(db, user_id=7)
+
+        state_service.get_for_update.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unflag_user_locks_billing_state(self):
+        service, _, state_service = _make_services(quantity=3, target_quantity=2)
+        user = _make_user(user_id=7, is_active=True, flagged_at=datetime.now(UTC))
+        db = _make_db(user)
+
+        await service.unflag_user(db, user_id=7)
+        state_service.get_for_update.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_release_open_seat_locks_billing_state(self):
+        service, _, state_service = _make_services(target_quantity=4)
+        db = _make_db()
+        active_patch, limit_patch = _patch_seat_module(active_count=2)
+        with active_patch, limit_patch:
+            await service.release_open_seat(db)
+        state_service.get_for_update.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancel_pending_release_locks_billing_state(self):
+        service, stripe_client, state_service = _make_services(quantity=5, target_quantity=5)
+        stripe_client.release_subscription_schedule = AsyncMock()
+
+        active_patch, limit_patch = _patch_seat_module(
+            limit_status=MagicMock(
+                enforcement="hard", at_limit=False, current_count=4, user_limit=5
+            )
+        )
+        db = _make_db()
+        with active_patch, limit_patch:
+            await service.cancel_pending_release(db)
+        state_service.get_for_update.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rollover_locks_billing_state(self):
+        service, _, state_service = _make_services(quantity=2)
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.flush = AsyncMock()
+        flagged_result = MagicMock()
+        flagged_result.scalars.return_value.all.return_value = []
+        count_result = MagicMock()
+        count_result.scalar.return_value = 0
+        update_result = MagicMock()
+        db.execute = AsyncMock(side_effect=[flagged_result, count_result, update_result])
+
+        await service.rollover(db, _SUB_ID, "evt_lock")
+        state_service.get_for_update.assert_awaited()

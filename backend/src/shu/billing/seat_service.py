@@ -135,7 +135,7 @@ class SeatService:
         offset. Two Stripe calls when a reduction was pending; one otherwise.
         No DB writes for seat counts — Stripe is the source of truth.
         """
-        sub_id = await self._subscription_id(db)
+        sub_id = await self._lock_state_for_mutation(db)
         live, target, _ = await self.stripe_client.get_subscription_seat_state(sub_id)
         pending_reduction = max(0, live - target)
         new_live = live + 1
@@ -172,7 +172,7 @@ class SeatService:
         if not user.is_active:
             raise UserStateError(f"User {user_id} is not active; cannot flag")
 
-        sub_id = await self._subscription_id(db)
+        sub_id = await self._lock_state_for_mutation(db)
         _, current_target, _ = await self.stripe_client.get_subscription_seat_state(sub_id)
 
         active_count = await get_active_user_count(db)
@@ -205,7 +205,7 @@ class SeatService:
         if user.deactivation_scheduled_at is None:
             raise UserStateError(f"User {user_id} is not currently flagged")
 
-        sub_id = await self._subscription_id(db)
+        sub_id = await self._lock_state_for_mutation(db)
         live, current_target, _ = await self.stripe_client.get_subscription_seat_state(sub_id)
         new_target = min(live, current_target + 1)
 
@@ -223,7 +223,7 @@ class SeatService:
         admins should flag specific users instead. Frontend disables the
         button when no headroom; this check is the defensive backstop.
         """
-        sub_id = await self._subscription_id(db)
+        sub_id = await self._lock_state_for_mutation(db)
         _, current_target, _ = await self.stripe_client.get_subscription_seat_state(sub_id)
         new_target = current_target - 1
         if new_target < 1:
@@ -241,7 +241,7 @@ class SeatService:
 
     async def cancel_pending_release(self, db: AsyncSession) -> UserLimitStatus:
         """Wipe all pending downgrade work — release schedule + clear all flags."""
-        sub_id = await self._subscription_id(db)
+        sub_id = await self._lock_state_for_mutation(db)
         _, _, schedule_id = await self.stripe_client.get_subscription_seat_state(sub_id)
         if schedule_id:
             await self.stripe_client.release_subscription_schedule(schedule_id)
@@ -278,6 +278,10 @@ class SeatService:
         no flagged rows, (2) finds active_count <= quantity, and (3) matches
         zero rows — all three branches no-op without any dedup table.
         """
+        # Hold the billing_state lock for the same reason the admin paths do —
+        # serialize rollover against any concurrent flag/unflag/release the
+        # admin may fire while the webhook is in flight.
+        await self.state_service.get_for_update(db)
         subscription = await self.stripe_client.get_subscription(subscription_id)
         if subscription is None:
             raise StripeClientError(f"Subscription {subscription_id!r} not found")
@@ -336,8 +340,27 @@ class SeatService:
         await db.commit()
 
     async def _subscription_id(self, db: AsyncSession) -> str:
-        """Return the configured Stripe subscription id, or raise."""
+        """Return the configured Stripe subscription id, or raise.
+
+        Read-only — does not acquire a lock. Use ``_lock_state_for_mutation``
+        for paths that read-Stripe-then-write, so concurrent admin actions
+        don't both compute from stale state.
+        """
         state = await self.state_service.get(db)
+        if state is None or not state.stripe_subscription_id:
+            raise StripeClientError("No subscription configured")
+        return state.stripe_subscription_id
+
+    async def _lock_state_for_mutation(self, db: AsyncSession) -> str:
+        """Serialize seat-mutation paths via ``SELECT ... FOR UPDATE`` on billing_state.
+
+        Returns the subscription id. The lock is held until the caller's
+        transaction commits or rolls back. Mirrors ``check_user_limit``'s
+        existing serialization on the user-create path so that flag /
+        unflag / release / cancel / confirm / rollover can't race each
+        other and leave Stripe target inconsistent with local flags.
+        """
+        state = await self.state_service.get_for_update(db)
         if state is None or not state.stripe_subscription_id:
             raise StripeClientError("No subscription configured")
         return state.stripe_subscription_id

@@ -6,9 +6,9 @@ const USD_DECIMALS = 2;
 /**
  * Phase-2 consent modal for inline seat charges.
  *
- * Opens when a create-user or activate-user call returns 402 with
- * `error.code === "seat_limit_reached"`. The primary action retries the
- * original request with `X-Seat-Charge-Confirmed: true`, which the
+ * Opens when a create-user, activate-user, or update-user call returns 402
+ * with `error.code === "seat_limit_reached"`. The primary action retries
+ * the original request with `X-Seat-Charge-Confirmed: true`, which the
  * backend treats as "admin saw the preview and approved the charge."
  *
  * There is deliberately no Stripe Portal button here — the Portal is
@@ -53,7 +53,7 @@ const SeatLimitModal = ({ open, onClose, onConfirm, details, isConfirming }) => 
       <DialogContent>
         <Box sx={{ pt: 1 }}>
           <Typography variant="body1" gutterBottom>
-            Creating this user will add 1 seat to your subscription.
+            This change will add 1 seat to your subscription.
           </Typography>
           {priceCopy && (
             <Typography variant="body1" gutterBottom>
