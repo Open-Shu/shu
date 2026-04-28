@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Box, Button, IconButton, Paper, Skeleton, Stack, Tooltip, Typography } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
@@ -15,6 +15,15 @@ const SECTION_HEADING_SX = {
 };
 
 function PageHeader({ usageQuery, lastUpdatedAt, onRefresh, timezone }) {
+  // Tick every minute so the "Last updated X ago" caption recomputes against
+  // the current clock even when no other state has changed. Without this the
+  // string stays frozen at whatever it was on the last render.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   let subtitle;
   if (usageQuery.isLoading) {
     subtitle = <Skeleton width={280} />;
@@ -117,7 +126,11 @@ function CostUsagePage() {
             <Typography variant="overline" sx={SECTION_HEADING_SX}>
               Summary
             </Typography>
-            {usage.isError ? <UsageErrorAlert onRefresh={refetch} /> : <KpiTiles usageQuery={usage} />}
+            {usage.isError ? (
+              <UsageErrorAlert onRefresh={refetch} />
+            ) : (
+              <KpiTiles usageQuery={usage} subscriptionQuery={subscription} />
+            )}
           </Stack>
         </Paper>
 

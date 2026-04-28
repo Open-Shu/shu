@@ -4,28 +4,25 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 import SubscriptionStrip, { selectSubscriptionView } from '../SubscriptionStrip';
-
-vi.mock('../../../services/api', async () => {
-  const actual = await vi.importActual('../../../services/api');
-  return {
-    ...actual,
-    billingAPI: {
-      getPortalUrl: vi.fn(),
-    },
-  };
-});
-
-import { billingAPI } from '../../../services/api';
 
 const renderStrip = (subscriptionQuery, timezone = 'UTC') => {
   const theme = createTheme();
   return render(
     <ThemeProvider theme={theme}>
-      <SubscriptionStrip subscriptionQuery={subscriptionQuery} timezone={timezone} />
+      <MemoryRouter initialEntries={['/admin/billing/usage']}>
+        <Routes>
+          <Route
+            path="/admin/billing/usage"
+            element={<SubscriptionStrip subscriptionQuery={subscriptionQuery} timezone={timezone} />}
+          />
+          <Route path="/admin/users" element={<div data-testid="user-management-landing">user-mgmt</div>} />
+        </Routes>
+      </MemoryRouter>
     </ThemeProvider>
   );
 };
@@ -120,11 +117,11 @@ describe('SubscriptionStrip rendering', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders healthy strip with chips and Manage button', () => {
+  it('renders healthy strip with chips and Manage button using user_limit (the API field)', () => {
     renderStrip(
       okQuery({
         subscription_status: 'active',
-        quantity: 5,
+        user_limit: 5,
         cancel_at_period_end: false,
         payment_failed_at: null,
       })
@@ -132,10 +129,22 @@ describe('SubscriptionStrip rendering', () => {
     expect(screen.getByTestId('subscription-strip-healthy')).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('5 seats')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /manage subscription in stripe/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /manage seats/i })).toBeInTheDocument();
   });
 
-  it('omits the seat chip when quantity is missing', () => {
+  it('also accepts quantity as a fallback (matches the underlying DB column name)', () => {
+    renderStrip(
+      okQuery({
+        subscription_status: 'active',
+        quantity: 7,
+        cancel_at_period_end: false,
+        payment_failed_at: null,
+      })
+    );
+    expect(screen.getByText('7 seats')).toBeInTheDocument();
+  });
+
+  it('omits the seat chip when neither user_limit nor quantity is present', () => {
     renderStrip(
       okQuery({
         subscription_status: 'active',
@@ -143,7 +152,21 @@ describe('SubscriptionStrip rendering', () => {
         payment_failed_at: null,
       })
     );
-    expect(screen.queryByText(/seats/i)).not.toBeInTheDocument();
+    // Match chip pattern "<N> seat(s)" specifically, not the "Manage Seats" button.
+    expect(screen.queryByText(/^\d+ seats?$/i)).not.toBeInTheDocument();
+  });
+
+  it('omits the seat chip when user_limit is zero (no real subscription quantity)', () => {
+    renderStrip(
+      okQuery({
+        subscription_status: 'active',
+        user_limit: 0,
+        cancel_at_period_end: false,
+        payment_failed_at: null,
+      })
+    );
+    // Match chip pattern "<N> seat(s)" specifically, not the "Manage Seats" button.
+    expect(screen.queryByText(/^\d+ seats?$/i)).not.toBeInTheDocument();
   });
 
   it('renders payment-failed Alert with the date interpolated', () => {
@@ -175,20 +198,16 @@ describe('SubscriptionStrip rendering', () => {
     expect(strip).toHaveTextContent('Subscription will not renew. Service ends May 1, 2026');
   });
 
-  it('renders Manage in Stripe button inside the unhealthy Alert action slot', () => {
+  it('does not render the Manage Seats button in unhealthy modes', () => {
+    // Unhealthy variants drop the action button entirely — Manage Seats doesn't
+    // help with payment failures / cancellation, and the recovery surface for
+    // those states is still TBD.
     renderStrip(okQuery({ subscription_status: 'canceled', current_period_end: '2026-05-01T00:00:00Z' }));
-    const button = screen.getByRole('button', { name: /manage subscription in stripe/i });
-    expect(button).toBeInTheDocument();
-    // The button should be inside the Alert (which has the unhealthy testid)
-    expect(screen.getByTestId('subscription-strip-unhealthy')).toContainElement(button);
+    expect(screen.getByTestId('subscription-strip-unhealthy')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /manage seats/i })).not.toBeInTheDocument();
   });
 
-  it('opens the portal URL in a new tab when the Manage button is clicked', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    billingAPI.getPortalUrl.mockResolvedValue({
-      data: { data: { url: 'https://billing.stripe.com/p/session/abc' } },
-    });
-
+  it('navigates to /admin/users when the Manage Seats button is clicked (healthy mode)', () => {
     renderStrip(
       okQuery({
         subscription_status: 'active',
@@ -196,26 +215,7 @@ describe('SubscriptionStrip rendering', () => {
         payment_failed_at: null,
       })
     );
-    fireEvent.click(screen.getByRole('button', { name: /manage subscription in stripe/i }));
-
-    await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://billing.stripe.com/p/session/abc', '_blank', 'noopener,noreferrer')
-    );
-    openSpy.mockRestore();
-  });
-
-  it('shows a snackbar error when the portal call fails', async () => {
-    billingAPI.getPortalUrl.mockRejectedValue(new Error('500 boom'));
-
-    renderStrip(
-      okQuery({
-        subscription_status: 'active',
-        cancel_at_period_end: false,
-        payment_failed_at: null,
-      })
-    );
-    fireEvent.click(screen.getByRole('button', { name: /manage subscription in stripe/i }));
-
-    await waitFor(() => expect(screen.getByText(/could not open the billing portal/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /manage seats/i }));
+    expect(screen.getByTestId('user-management-landing')).toBeInTheDocument();
   });
 });

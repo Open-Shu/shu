@@ -17,8 +17,14 @@ import { billingAPI, llmAPI, extractDataFromResponse } from '../services/api';
 
 const USAGE_KEY = ['billing-usage'];
 const SUBSCRIPTION_KEY = ['billing-subscription'];
-const MODELS_KEY = ['llm-models'];
-const PROVIDERS_KEY = ['llm-providers'];
+// Namespaced keys for the model/provider lookups. Other components
+// (ModernChat, LLMProviders, LLMTester, ModelConfigurations) cache
+// these under unscoped keys (`'llm-models'` / `'llm-providers'`) but
+// with a different fetcher shape (raw axios response, no envelope
+// unwrap). Sharing the key would cause cache collisions where the
+// data shape depends on which consumer ran most recently.
+const MODELS_KEY = ['billing-llm-models'];
+const PROVIDERS_KEY = ['billing-llm-providers'];
 
 const SUBSCRIPTION_STALE_MS = 60 * 1000;
 const REFERENCE_STALE_MS = 5 * 60 * 1000;

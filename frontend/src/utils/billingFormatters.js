@@ -13,6 +13,20 @@ import log from './log';
 
 const PLACEHOLDER = '—';
 
+/**
+ * USD per seat included in the monthly subscription, per the SHU-663 epic.
+ * Today this is hardcoded; SHU-704 will surface the actual Stripe Credit
+ * Grant size on the /billing/subscription response, at which point this
+ * fallback should defer to the API value.
+ */
+export const INCLUDED_USAGE_PER_SEAT_USD = 50;
+
+/**
+ * Markup multiplier applied to overage above the included allowance, per
+ * the SHU-663 epic ("Overage billed at actual provider cost + 30%").
+ */
+export const OVERAGE_MARKUP_MULTIPLIER = 1.3;
+
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',

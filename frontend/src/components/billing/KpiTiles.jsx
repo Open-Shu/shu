@@ -1,81 +1,137 @@
-import { Card, CardContent, Grid, Skeleton, Tooltip, Typography } from '@mui/material';
+import { Box, Card, CardContent, Grid, LinearProgress, Skeleton, Typography } from '@mui/material';
 
-import { formatCurrency, formatCompactTokens, formatFullTokens } from '../../utils/billingFormatters';
+import { formatCurrency, INCLUDED_USAGE_PER_SEAT_USD, OVERAGE_MARKUP_MULTIPLIER } from '../../utils/billingFormatters';
 
 const PLACEHOLDER = '—';
 
-function KpiTile({ label, value, ariaLabel, tooltip }) {
-  const content = (
+function KpiTile({ label, value, ariaLabel, valueColor, subline, bottom }) {
+  return (
     <Card variant="outlined" sx={{ height: '100%' }}>
       <CardContent>
         <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: '0.08em' }}>
           {label}
         </Typography>
-        <Typography variant="h4" sx={{ fontWeight: 600, mt: 0.5 }} aria-label={ariaLabel}>
+        <Typography
+          variant="h4"
+          sx={{ fontWeight: 600, mt: 0.5, color: valueColor || 'text.primary' }}
+          aria-label={ariaLabel}
+        >
           {value}
         </Typography>
+        {subline && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            {subline}
+          </Typography>
+        )}
+        {bottom && <Box sx={{ mt: 1 }}>{bottom}</Box>}
       </CardContent>
     </Card>
   );
+}
 
-  if (!tooltip) {
-    return content;
+/**
+ * Read the seat count from a /billing/subscription response. The API
+ * exposes the field as `user_limit` (renamed from the underlying
+ * billing_state.quantity column). Tolerate both shapes for robustness.
+ */
+function readSeats(state) {
+  if (!state) {
+    return null;
   }
-  return (
-    <Tooltip title={tooltip} arrow>
-      {content}
-    </Tooltip>
-  );
+  const raw = typeof state.user_limit === 'number' ? state.user_limit : state.quantity;
+  return typeof raw === 'number' && raw > 0 ? raw : null;
+}
+
+/**
+ * Pick the LinearProgress color for the Used tile. Bands match the
+ * "are we close to overage?" mental model: green-ish until 80%, warn
+ * past 80%, error past 100%.
+ */
+function pickUsedColor(percent) {
+  if (percent >= 100) {
+    return 'error';
+  }
+  if (percent >= 80) {
+    return 'warning';
+  }
+  return 'primary';
 }
 
 /**
  * KPI summary tiles for the Cost & Usage page.
  *
- * - When loading: four skeleton tiles of the same dimensions as loaded tiles.
- * - When `current_period_unknown` is true: tiles render the em-dash placeholder.
- * - Otherwise: tiles render Total Cost, Input Tokens, Output Tokens, and a
- *   computed Requests count (sum of `by_model[].request_count`).
+ * Tiles are scoped to the financial story:
+ *   1. Usage Cost — provider cost incurred this period
+ *   2. Included Allowance — seats × $50, the per-period included pool
+ *   3. Used — % of allowance consumed, with progress bar
+ *   4. Overage — $0 within allowance, otherwise the dollar overage with
+ *      the +30% upcharged amount as a sub-line
+ *
+ * Volume metrics (token counts, request counts) intentionally do not
+ * appear here in v1 — they are visible per-row in the Cost by Model
+ * table, where the granularity is more useful.
  */
-function KpiTiles({ usageQuery }) {
-  const isLoading = usageQuery.isLoading;
-  const isPeriodUnknown = !!usageQuery.data && usageQuery.data.current_period_unknown === true;
-  const data = usageQuery.data || {};
+function KpiTiles({ usageQuery, subscriptionQuery }) {
+  const isLoading = usageQuery.isLoading || (subscriptionQuery && subscriptionQuery.isLoading);
 
-  const totalCost = isPeriodUnknown ? null : data.total_cost_usd;
-  const totalInput = isPeriodUnknown ? null : data.total_input_tokens;
-  const totalOutput = isPeriodUnknown ? null : data.total_output_tokens;
-  const totalRequests = isPeriodUnknown
-    ? null
-    : Array.isArray(data.by_model)
-      ? data.by_model.reduce((sum, row) => sum + (row.request_count || 0), 0)
-      : 0;
+  const usageData = usageQuery.data || {};
+  const subscriptionData = (subscriptionQuery && subscriptionQuery.data) || {};
+
+  const isPeriodUnknown = usageData.current_period_unknown === true;
+  const usageCost = isPeriodUnknown ? null : (usageData.total_cost_usd ?? 0);
+  const seats = isPeriodUnknown ? null : readSeats(subscriptionData);
+  const allowance = seats !== null ? seats * INCLUDED_USAGE_PER_SEAT_USD : null;
+
+  const haveBudgetMath = usageCost !== null && allowance !== null && allowance > 0;
+  const usedPercent = haveBudgetMath ? Math.round((usageCost / allowance) * 100) : null;
+  const overage = haveBudgetMath ? Math.max(0, usageCost - allowance) : null;
+  const overageCharge = overage !== null ? overage * OVERAGE_MARKUP_MULTIPLIER : null;
 
   const tiles = [
     {
       key: 'cost',
-      label: 'Total Cost',
-      value: isPeriodUnknown ? PLACEHOLDER : formatCurrency(totalCost),
-      ariaLabel: isPeriodUnknown ? 'Total cost: not available' : `Total cost: ${formatCurrency(totalCost)}`,
+      label: 'Usage Cost',
+      value: usageCost === null ? PLACEHOLDER : formatCurrency(usageCost),
+      ariaLabel: usageCost === null ? 'Usage cost: not available' : `Usage cost: ${formatCurrency(usageCost)}`,
     },
     {
-      key: 'input',
-      label: 'Input Tokens',
-      value: isPeriodUnknown ? PLACEHOLDER : formatCompactTokens(totalInput),
-      ariaLabel: isPeriodUnknown ? 'Input tokens: not available' : `Input tokens: ${formatFullTokens(totalInput)}`,
-      tooltip: isPeriodUnknown ? null : formatFullTokens(totalInput),
+      key: 'allowance',
+      label: 'Included Allowance',
+      value: allowance === null ? PLACEHOLDER : formatCurrency(allowance),
+      ariaLabel:
+        allowance === null ? 'Included allowance: not available' : `Included allowance: ${formatCurrency(allowance)}`,
+      subline:
+        seats !== null
+          ? `${seats} ${seats === 1 ? 'seat' : 'seats'} × ${formatCurrency(INCLUDED_USAGE_PER_SEAT_USD)}`
+          : null,
     },
     {
-      key: 'output',
-      label: 'Output Tokens',
-      value: isPeriodUnknown ? PLACEHOLDER : formatCompactTokens(totalOutput),
-      ariaLabel: isPeriodUnknown ? 'Output tokens: not available' : `Output tokens: ${formatFullTokens(totalOutput)}`,
-      tooltip: isPeriodUnknown ? null : formatFullTokens(totalOutput),
+      key: 'used',
+      label: 'Used',
+      value: usedPercent === null ? PLACEHOLDER : `${usedPercent}%`,
+      ariaLabel: usedPercent === null ? 'Allowance used: not available' : `Allowance used: ${usedPercent}%`,
+      bottom:
+        usedPercent === null ? null : (
+          <LinearProgress
+            variant="determinate"
+            value={Math.min(100, usedPercent)}
+            color={pickUsedColor(usedPercent)}
+            aria-label={`${usedPercent}% of included allowance used`}
+          />
+        ),
     },
     {
-      key: 'requests',
-      label: 'Requests',
-      value: isPeriodUnknown ? PLACEHOLDER : formatFullTokens(totalRequests),
-      ariaLabel: isPeriodUnknown ? 'Requests: not available' : `Requests: ${formatFullTokens(totalRequests)}`,
+      key: 'overage',
+      label: 'Overage',
+      value: overage === null ? PLACEHOLDER : formatCurrency(overage),
+      ariaLabel: overage === null ? 'Overage: not available' : `Overage: ${formatCurrency(overage)}`,
+      valueColor: overage !== null && overage > 0 ? 'error.main' : undefined,
+      subline:
+        overage === null
+          ? null
+          : overage > 0
+            ? `charged at ${formatCurrency(overageCharge)} (+30%)`
+            : 'within allowance',
     },
   ];
 
@@ -84,9 +140,16 @@ function KpiTiles({ usageQuery }) {
       {tiles.map((tile) => (
         <Grid item xs={12} sm={6} md={3} key={tile.key}>
           {isLoading ? (
-            <Skeleton variant="rounded" height={88} />
+            <Skeleton variant="rounded" height={108} />
           ) : (
-            <KpiTile label={tile.label} value={tile.value} ariaLabel={tile.ariaLabel} tooltip={tile.tooltip} />
+            <KpiTile
+              label={tile.label}
+              value={tile.value}
+              ariaLabel={tile.ariaLabel}
+              valueColor={tile.valueColor}
+              subline={tile.subline}
+              bottom={tile.bottom}
+            />
           )}
         </Grid>
       ))}

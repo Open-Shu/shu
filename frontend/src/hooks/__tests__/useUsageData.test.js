@@ -142,7 +142,7 @@ describe('useUsageData', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith(['billing-usage']);
     expect(invalidateSpy).toHaveBeenCalledWith(['billing-subscription']);
-    expect(invalidateSpy).not.toHaveBeenCalledWith(['llm-models']);
-    expect(invalidateSpy).not.toHaveBeenCalledWith(['llm-providers']);
+    expect(invalidateSpy).not.toHaveBeenCalledWith(['billing-llm-models']);
+    expect(invalidateSpy).not.toHaveBeenCalledWith(['billing-llm-providers']);
   });
 });

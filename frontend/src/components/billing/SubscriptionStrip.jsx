@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { Alert, Box, Button, Chip, CircularProgress, Skeleton, Snackbar, Stack } from '@mui/material';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import { Alert, Box, Button, Chip, Skeleton, Stack } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 
-import { billingAPI, extractDataFromResponse } from '../../services/api';
 import log from '../../utils/log';
 import { formatDateInTimezone } from '../../utils/timezoneFormatter';
+
+const SEAT_MANAGEMENT_PATH = '/admin/users';
 
 /**
  * Pure helper that maps a `/billing/subscription` response to one of:
@@ -88,51 +88,12 @@ function unhealthyAlertConfig(view, state, timezone) {
   }
 }
 
-function ManageInStripeButton({ size = 'small', variant = 'outlined' }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const handleClick = async () => {
-    setLoading(true);
-    try {
-      const response = await billingAPI.getPortalUrl();
-      const data = extractDataFromResponse(response);
-      const url = data?.url;
-      if (!url) {
-        throw new Error('Portal URL missing from response');
-      }
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (err) {
-      log.error('Failed to open Stripe portal', err);
-      setError('Could not open the billing portal. Try again in a moment.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+function ManageSeatsButton({ size = 'small', variant = 'outlined' }) {
+  const navigate = useNavigate();
   return (
-    <>
-      <Button
-        size={size}
-        variant={variant}
-        onClick={handleClick}
-        disabled={loading}
-        endIcon={loading ? <CircularProgress size={14} /> : <OpenInNewIcon fontSize="small" />}
-        aria-label="Manage subscription in Stripe"
-      >
-        Manage in Stripe
-      </Button>
-      <Snackbar
-        open={Boolean(error)}
-        autoHideDuration={4000}
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert severity="error" onClose={() => setError(null)} sx={{ width: '100%' }}>
-          {error}
-        </Alert>
-      </Snackbar>
-    </>
+    <Button size={size} variant={variant} onClick={() => navigate(SEAT_MANAGEMENT_PATH)} aria-label="Manage seats">
+      Manage Seats
+    </Button>
   );
 }
 
@@ -161,7 +122,11 @@ function SubscriptionStrip({ subscriptionQuery, timezone }) {
   }
 
   if (view === 'healthy') {
-    const seats = typeof state.quantity === 'number' ? state.quantity : null;
+    // The endpoint exposes the seat count as `user_limit` (renamed from the
+    // underlying billing_state.quantity column). Tolerate both shapes so this
+    // keeps working if the response contract ever returns to `quantity`.
+    const rawSeats = typeof state.user_limit === 'number' ? state.user_limit : state.quantity;
+    const seats = typeof rawSeats === 'number' && rawSeats > 0 ? rawSeats : null;
     return (
       <Stack
         direction="row"
@@ -175,18 +140,18 @@ function SubscriptionStrip({ subscriptionQuery, timezone }) {
         <Chip label="Active" color="success" size="small" />
         {seats !== null && <Chip label={`${seats} seats`} variant="outlined" size="small" />}
         <Box sx={{ flexGrow: 1 }} />
-        <ManageInStripeButton />
+        <ManageSeatsButton />
       </Stack>
     );
   }
 
+  // Unhealthy modes intentionally render no action button. Manage Seats does
+  // not help recover from payment failure / past due / cancellation, and the
+  // recovery surface for those states is still TBD — see SHU-734 wishlist.
+  // The Alert message stands on its own.
   const { severity, message } = unhealthyAlertConfig(view, state, timezone);
   return (
-    <Alert
-      severity={severity}
-      action={<ManageInStripeButton size="small" />}
-      data-testid="subscription-strip-unhealthy"
-    >
+    <Alert severity={severity} data-testid="subscription-strip-unhealthy">
       {message}
     </Alert>
   );
