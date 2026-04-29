@@ -114,6 +114,23 @@ sample_rss_kb() {
   ps -o rss= -p "$1" 2>/dev/null | tr -d ' ' || true
 }
 
+# Returns "<rss_kb> <pcpu> <cputime_s>" for the pid. cputime is cumulative
+# CPU seconds since process start; sample-to-sample deltas divided by the
+# sampling interval give per-window cores used (which is what spikes look
+# like). pcpu is the OS's decay-averaged %; it lags spike onset by tens of
+# seconds but is cheap and matches what `top` shows.
+sample_proc() {
+  # `ps -o time=` formats as HH:MM:SS.s or MM:SS.s — convert to seconds.
+  ps -o rss=,pcpu=,time= -p "$1" 2>/dev/null | awk '
+    NF >= 3 {
+      n = split($3, parts, ":")
+      cputime = 0
+      for (i = 1; i <= n; i++) cputime = cputime * 60 + parts[i]
+      print $1, $2, cputime
+    }
+  '
+}
+
 wait_ready() {
   local port="$1" tries=120
   for ((i = 0; i < tries; i++)); do
@@ -160,12 +177,17 @@ run_variant() {
   (
     local start_s
     start_s="$(date +%s)"
-    echo "t_s,rss_kb" > "$variant_dir/rss.csv"
+    echo "t_s,rss_kb,pcpu_avg,cputime_s" > "$variant_dir/proc.csv"
     while kill -0 "$srv_pid" 2>/dev/null; do
-      local now rss
+      local now line rss pcpu cputime
       now="$(date +%s)"
-      rss="$(sample_rss_kb "$srv_pid")"
-      [[ -n "$rss" ]] && echo "$((now - start_s)),${rss}" >> "$variant_dir/rss.csv"
+      line="$(sample_proc "$srv_pid")"
+      if [[ -n "$line" ]]; then
+        rss="$(echo "$line" | awk '{print $1}')"
+        pcpu="$(echo "$line" | awk '{print $2}')"
+        cputime="$(echo "$line" | awk '{print $3}')"
+        echo "$((now - start_s)),${rss},${pcpu},${cputime}" >> "$variant_dir/proc.csv"
+      fi
       sleep 2
     done
   ) &
@@ -204,27 +226,45 @@ run_variant() {
   kill "$sampler_pid" 2>/dev/null || true
   trap - EXIT
 
-  local peak_kb=0
-  if [[ -f "$variant_dir/rss.csv" ]]; then
-    peak_kb="$(awk -F, 'NR>1 && $2+0 > m {m=$2+0} END {print m+0}' "$variant_dir/rss.csv")"
+  local peak_kb=0 peak_pcpu=0 peak_cores=0
+  if [[ -f "$variant_dir/proc.csv" ]]; then
+    peak_kb="$(awk -F, 'NR>1 && $2+0 > m {m=$2+0} END {print m+0}' "$variant_dir/proc.csv")"
+    peak_pcpu="$(awk -F, 'NR>1 && $3+0 > m {m=$3+0} END {printf "%.1f", m+0}' "$variant_dir/proc.csv")"
+    # Per-window cores used: delta(cputime_s) / delta(t_s), max across windows.
+    # Captures spike intensity that pcpu's decay-average smooths out.
+    peak_cores="$(awk -F, '
+      NR == 2 { prev_t=$1; prev_c=$4; next }
+      NR > 2 {
+        dt = $1 - prev_t
+        dc = $4 - prev_c
+        if (dt > 0) {
+          cores = dc / dt
+          if (cores > m) m = cores
+        }
+        prev_t = $1; prev_c = $4
+      }
+      END { printf "%.2f", m+0 }
+    ' "$variant_dir/proc.csv")"
   fi
 
-  printf '%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$variant" \
     "${peak_kb:-0}" \
     "${pre_rss:-0}" \
     "${post_rss:-0}" \
+    "${peak_pcpu:-0}" \
+    "${peak_cores:-0}" \
     "$load_rc" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     >> "$RUN_DIR/variants.csv"
 
-  echo "==> [$variant] done  peak=${peak_kb}kB pre_trim=${pre_rss}kB post_trim=${post_rss}kB"
+  echo "==> [$variant] done  peak_rss=${peak_kb}kB pre_trim=${pre_rss}kB post_trim=${post_rss}kB peak_pcpu=${peak_pcpu}% peak_cores=${peak_cores}"
 }
 
 TS="$(date +%Y%m%dT%H%M%S)"
 RUN_DIR="$OUT_DIR/$TS"
 mkdir -p "$RUN_DIR"
-echo "variant,peak_rss_kb,pre_trim_rss_kb,post_trim_rss_kb,load_rc,finished_at_utc" > "$RUN_DIR/variants.csv"
+echo "variant,peak_rss_kb,pre_trim_rss_kb,post_trim_rss_kb,peak_pcpu,peak_cores,load_rc,finished_at_utc" > "$RUN_DIR/variants.csv"
 
 echo "==> run dir: $RUN_DIR"
 echo "==> corpus:  $CORPUS_DIR"

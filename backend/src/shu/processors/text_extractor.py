@@ -834,13 +834,13 @@ class TextExtractor:
                     if progress_callback:
                         progress_callback(0, total_pages)
 
-                    text = ""
+                    parts: list[str] = []
                     for page_num in range(total_pages):
                         page = doc.load_page(page_num)
                         page_text = page.get_text()
 
                         if page_text.strip():
-                            text += page_text + "\n"
+                            parts.append(page_text)
 
                         if progress_callback:
                             progress_callback(page_num + 1, total_pages)
@@ -850,7 +850,7 @@ class TextExtractor:
                             extra={"file_path": file_path, "page_text_length": len(page_text)},
                         )
 
-                    return text.strip()
+                    return "\n".join(parts).strip()
 
             except Exception as e:
                 logger.error(f"PDF text extraction failed: {e}", extra={"file_path": file_path})
@@ -964,7 +964,7 @@ class TextExtractor:
         # Process pages with EasyOCR
         import fitz  # Add missing import
 
-        text = ""
+        page_outputs: list[str] = []
         confidence_scores = []
         total_pages = len(doc)
 
@@ -1116,17 +1116,19 @@ class TextExtractor:
 
                     # Handle EasyOCR result format
                     if hasattr(ocr, "readtext"):  # EasyOCR format
+                        detections: list[str] = []
                         for detection in result:
                             if len(detection) >= 3:
                                 _bbox, text_content, confidence = detection
-                                page_text += text_content + " "
+                                detections.append(text_content)
                                 page_confidences.append(confidence)
+                        page_text = " ".join(detections)
                     else:
                         # Unknown format - log warning and skip
                         logger.warning(f"Unknown OCR result format on page {page_num + 1}")
                         page_text = ""
 
-                    text += page_text + "\n"
+                    page_outputs.append(page_text)
                     confidence_scores.extend(page_confidences)
 
                 # Update progress - page completed
@@ -1152,12 +1154,12 @@ class TextExtractor:
                     progress_callback(page_num + 1, total_pages, page_time, 0)
 
                 # Add empty text for failed page to maintain page count
-                text += f"[OCR failed on page {page_num + 1}]\n"
+                page_outputs.append(f"[OCR failed on page {page_num + 1}]")
                 continue
 
         avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
 
-        return text.strip(), "ocr", avg_confidence
+        return "\n".join(page_outputs).strip(), "ocr", avg_confidence
 
     def _process_pdf_with_tesseract_direct(self, doc, file_path: str, progress_callback=None):
         """Process PDF with Tesseract directly (no process isolation)."""
@@ -1170,7 +1172,7 @@ class TextExtractor:
         except ImportError as e:
             raise Exception(f"Tesseract dependencies not available: {e}")
 
-        text = ""
+        page_outputs: list[str] = []
         total_pages = len(doc)
 
         for page_num in range(total_pages):
@@ -1192,7 +1194,7 @@ class TextExtractor:
             try:
                 image = Image.open(io.BytesIO(img_data))
                 page_text = pytesseract.image_to_string(image, config="--psm 6")
-                text += page_text + "\n"
+                page_outputs.append(page_text)
 
                 # Update progress
                 if progress_callback:
@@ -1202,7 +1204,8 @@ class TextExtractor:
                 logger.warning(f"Tesseract failed on page {page_num + 1}: {e}")
                 continue
 
-        return text.strip(), "tesseract_direct", self._calculate_text_quality(text.strip())
+        text = "\n".join(page_outputs).strip()
+        return text, "tesseract_direct", self._calculate_text_quality(text)
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text by removing problematic characters."""
@@ -1275,10 +1278,10 @@ class TextExtractor:
 
                 doc = docx.Document(BytesIO(file_content)) if file_content else docx.Document(file_path)
 
-                text = ""
+                parts: list[str] = []
                 for paragraph in doc.paragraphs:
                     if paragraph.text.strip():
-                        text += paragraph.text + "\n"
+                        parts.append(paragraph.text)
 
                 # Also extract text from tables with proper formatting
                 for table in doc.tables:
@@ -1295,9 +1298,9 @@ class TextExtractor:
                             table_text.append(" | ".join(row_text))
 
                     if table_text:
-                        text += "\n[Table]\n" + "\n".join(table_text) + "\n[/Table]\n"
+                        parts.append("\n[Table]\n" + "\n".join(table_text) + "\n[/Table]")
 
-                return text.strip()
+                return "\n".join(parts).strip()
             except Exception as e:
                 logger.debug(f"python-docx extraction failed: {e!s}")
                 return None
