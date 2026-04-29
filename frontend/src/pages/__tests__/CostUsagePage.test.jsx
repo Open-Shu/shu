@@ -120,10 +120,12 @@ describe('CostUsagePage', () => {
   });
 
   it('renders KPI tiles and Cost by Model when usage data is available', () => {
+    // Round numbers chosen so the post-markup math renders cleanly:
+    // total_cost_usd $100 × 1.3 = $130.00 in the Usage Cost tile.
     useUsageData.mockReturnValue(
       baseHookReturn({
         usage: okQuery({
-          total_cost_usd: 45.32,
+          total_cost_usd: 100,
           total_input_tokens: 1_250_000,
           total_output_tokens: 850_000,
           period_start: '2026-04-15T12:00:00Z',
@@ -142,8 +144,11 @@ describe('CostUsagePage', () => {
       })
     );
     renderPage();
-    expect(screen.getByText('$45.32')).toBeInTheDocument();
+    // Usage Cost tile renders the post-markup billed cost.
+    expect(screen.getByText('$130.00')).toBeInTheDocument();
+    // Cost by Model table renders raw per-row cost (markup not applied per row).
     expect(screen.getByText('Claude Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('$22.50')).toBeInTheDocument();
   });
 
   it('clicking the refresh button calls refetch', () => {

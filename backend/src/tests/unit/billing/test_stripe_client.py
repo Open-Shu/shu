@@ -1,5 +1,6 @@
 """Tests for StripeClient — focuses on parsing/mapping at the Stripe boundary."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -827,3 +828,132 @@ class TestGetActiveCreditGrantTotalUsd:
         result = await client.get_active_credit_grant_total_usd("cus_abc")
 
         assert result == Decimal("150.00")
+
+
+# =============================================================================
+# Subscription markup multiplier (read-only, derived from metered Price)
+# =============================================================================
+
+
+def _make_subscription_with_metered_price(
+    *,
+    unit_amount_decimal: str | None = "0.00013",
+    include_metered: bool = True,
+):
+    """Build a mock subscription with an optional metered item carrying a unit price.
+
+    The metered Price's ``unit_amount_decimal`` drives the markup math:
+        markup = unit_amount_decimal_cents * 10_000
+
+    Set ``include_metered=False`` to exercise the no-metered-item branch.
+    Set ``unit_amount_decimal=None`` to exercise the missing-decimal branch
+    (e.g., a tiered pricing model).
+    """
+    items: list[dict[str, Any]] = [
+        {
+            "id": "si_seat",
+            "quantity": 5,
+            "price": {"id": "price_seat", "recurring": {"usage_type": "licensed"}},
+        }
+    ]
+    if include_metered:
+        metered_price: dict[str, Any] = {
+            "id": "price_meter",
+            "recurring": {"usage_type": "metered"},
+        }
+        if unit_amount_decimal is not None:
+            metered_price["unit_amount_decimal"] = unit_amount_decimal
+        items.append({"id": "si_meter", "quantity": 1, "price": metered_price})
+    data = {"items": {"data": items}}
+    sub = MagicMock()
+    sub.__getitem__ = lambda self, key: data[key]
+    sub.__contains__ = lambda self, key: key in data
+    sub.get = lambda key, default=None: data.get(key, default)
+    return sub
+
+
+class TestGetSubscriptionMarkupMultiplier:
+    """Tests for deriving the customer markup ratio from the metered Price."""
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_one_point_three_for_thirteen_microcents(self, mock_stripe):
+        """unit_amount_decimal=0.00013 cents/unit → markup 1.3 (provider cost + 30%)."""
+        sub = _make_subscription_with_metered_price(unit_amount_decimal="0.00013")
+        mock_stripe.Subscription.retrieve_async = AsyncMock(return_value=sub)
+
+        client = StripeClient(_make_settings())
+        result = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert result == Decimal("1.3000")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_one_point_five_for_fifteen_microcents(self, mock_stripe):
+        """A different markup (e.g., +50%) is computed correctly from the price."""
+        sub = _make_subscription_with_metered_price(unit_amount_decimal="0.00015")
+        mock_stripe.Subscription.retrieve_async = AsyncMock(return_value=sub)
+
+        client = StripeClient(_make_settings())
+        result = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert result == Decimal("1.5000")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_none_when_no_metered_item(self, mock_stripe):
+        """Subscription with only a licensed seat → no markup to compute."""
+        sub = _make_subscription_with_metered_price(include_metered=False)
+        mock_stripe.Subscription.retrieve_async = AsyncMock(return_value=sub)
+
+        client = StripeClient(_make_settings())
+        result = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_none_when_metered_price_lacks_unit_amount_decimal(self, mock_stripe):
+        """Tiered pricing models lack a flat unit_amount_decimal → fall back."""
+        sub = _make_subscription_with_metered_price(unit_amount_decimal=None)
+        mock_stripe.Subscription.retrieve_async = AsyncMock(return_value=sub)
+
+        client = StripeClient(_make_settings())
+        result = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_none_for_unparseable_unit_amount_decimal(self, mock_stripe):
+        """A garbage value (shouldn't happen but defensive) → None instead of crash."""
+        sub = _make_subscription_with_metered_price(unit_amount_decimal="not-a-number")
+        mock_stripe.Subscription.retrieve_async = AsyncMock(return_value=sub)
+
+        client = StripeClient(_make_settings())
+        result = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_none_for_zero_unit_amount(self, mock_stripe):
+        """A zero unit price would yield markup=0; treat as not-meaningful and return None."""
+        sub = _make_subscription_with_metered_price(unit_amount_decimal="0")
+        mock_stripe.Subscription.retrieve_async = AsyncMock(return_value=sub)
+
+        client = StripeClient(_make_settings())
+        result = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_stripe_error_raises_stripe_client_error(self, mock_stripe):
+        """A Stripe API failure on the retrieve call surfaces as StripeClientError."""
+        mock_stripe.StripeError = Exception
+        mock_stripe.Subscription.retrieve_async = AsyncMock(side_effect=Exception("boom"))
+
+        client = StripeClient(_make_settings())
+        with pytest.raises(StripeClientError, match="Failed to retrieve subscription for markup"):
+            await client.get_subscription_markup_multiplier("sub_abc")

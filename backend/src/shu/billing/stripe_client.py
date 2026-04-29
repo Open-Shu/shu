@@ -7,7 +7,7 @@ module uses this client rather than importing stripe directly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import stripe
@@ -741,6 +741,68 @@ class StripeClient:
             )
             raise StripeClientError(f"Failed to list credit grants: {e}", e) from e
 
+    async def get_subscription_markup_multiplier(self, subscription_id: str) -> Decimal | None:
+        """Compute the customer-billed markup ratio from the subscription's metered Price.
+
+        The meter reports raw provider cost in microdollars (1 unit = 1e-6 USD).
+        The metered Price's `unit_amount_decimal` is in cents (1e-2 USD) per
+        unit. The dimensionless markup is therefore the price-cents-per-unit
+        scaled by the unit ratio (1e-2 / 1e-6 = 1e4):
+
+            markup = unit_amount_decimal_cents * 10_000
+
+        For example, $0.0000013/unit (= 0.00013 cents per unit) yields a
+        markup of 1.3.
+
+        Returns None when:
+        - the subscription has no metered item,
+        - the metered Price has no `unit_amount_decimal` (e.g., a tiered
+          pricing model — flag with a follow-up if you ever switch to
+          tiered, since this method silently falls back to the caller's
+          default in that case),
+        - the value cannot be parsed as a Decimal,
+        - or the parsed value is non-positive.
+
+        Raises StripeClientError on any Stripe API failure so display-only
+        callers can degrade.
+        """
+        try:
+            subscription = await stripe.Subscription.retrieve_async(
+                subscription_id,
+                expand=["items.data.price"],
+            )
+        except stripe.StripeError as e:
+            logger.error(
+                "Failed to retrieve subscription for markup",
+                extra={"subscription_id": subscription_id, "error": str(e)},
+            )
+            raise StripeClientError(f"Failed to retrieve subscription for markup: {e}", e) from e
+
+        metered_item = next(
+            (item for item in subscription["items"]["data"] if _is_metered(item["price"])),
+            None,
+        )
+        if metered_item is None:
+            return None
+
+        price = metered_item["price"]
+        unit_amount_decimal = price.get("unit_amount_decimal")
+        if unit_amount_decimal is None:
+            # Tiered prices lack a flat unit_amount_decimal — caller falls
+            # back to the hardcoded constant. Add explicit tiered support
+            # here if Shu ever adopts a tiered metered price.
+            return None
+
+        try:
+            cents_per_meter_unit = Decimal(str(unit_amount_decimal))
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+
+        # Meter reports microdollars (10^-6 USD); unit_amount_decimal is in
+        # cents (10^-2 USD). Ratio is 10^4 to reach the dimensionless markup.
+        markup = cents_per_meter_unit * Decimal(10_000)
+        return markup if markup > 0 else None
+
     # =========================================================================
     # Webhooks
     # =========================================================================
@@ -857,6 +919,20 @@ def _is_licensed(price: Any) -> bool:
     if "usage_type" not in recurring:
         return False
     return recurring["usage_type"] == "licensed"
+
+
+def _is_metered(price: Any) -> bool:
+    """Return True when the price is a metered usage price.
+
+    Mirror of ``_is_licensed`` for the consumption side of Shu's two-item
+    subscription layout (licensed seat + metered usage).
+    """
+    if "recurring" not in price or price["recurring"] is None:
+        return False
+    recurring = price["recurring"]
+    if "usage_type" not in recurring:
+        return False
+    return recurring["usage_type"] == "metered"
 
 
 def _stamp_quantity(items: list[dict[str, Any]], qty: int) -> list[dict[str, Any]]:

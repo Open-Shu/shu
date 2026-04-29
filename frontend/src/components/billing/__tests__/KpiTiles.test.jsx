@@ -1,12 +1,19 @@
 /**
  * Tests for the KpiTiles component.
  *
- * The four tiles tell a financial story keyed off the SHU-663 epic:
- *   Usage Cost · Included Allowance · Used (%) · Overage ($).
+ * The four tiles tell a financial story keyed off the SHU-663 epic. Stripe's
+ * metered Price has the +30% markup baked into its unit_amount_decimal, so
+ * usage events invoice at 1.3× provider cost — not just usage above the
+ * included allowance. The tiles reflect that:
  *
- * Allowance = seats × $50 (hardcoded constant until SHU-704 surfaces it
- * from the API). Overage is charged at cost × 1.30 per the epic's +30%
- * markup.
+ *   Usage Cost (billed: provider × markup)
+ *   Included Allowance (seats × $50 fallback, or live Stripe credit grants)
+ *   Used (% of allowance consumed by the billed cost)
+ *   Additional Charges (max(0, billed − allowance))
+ *
+ * Markup defaults to 1.3 from USAGE_MARKUP_MULTIPLIER, but the dashboard
+ * prefers the API-supplied `usage_markup_multiplier` when present (derived
+ * from the metered Price's unit_amount_decimal).
  */
 
 import React from 'react';
@@ -28,7 +35,7 @@ const renderTiles = (usageQuery, subscriptionQuery) => {
 const okQuery = (data) => ({ data, isLoading: false, isError: false });
 const loadingQuery = () => ({ data: undefined, isLoading: true, isError: false });
 
-const subWithSeats = (seats) => okQuery({ subscription_status: 'active', user_limit: seats });
+const subWithSeats = (seats, extra = {}) => okQuery({ subscription_status: 'active', user_limit: seats, ...extra });
 
 describe('KpiTiles', () => {
   describe('loading', () => {
@@ -49,24 +56,41 @@ describe('KpiTiles', () => {
       expect(screen.getByText('Usage Cost')).toBeInTheDocument();
       expect(screen.getByText('Included Allowance')).toBeInTheDocument();
       expect(screen.getByText('Used')).toBeInTheDocument();
-      expect(screen.getByText('Overage')).toBeInTheDocument();
+      expect(screen.getByText('Additional Charges')).toBeInTheDocument();
     });
   });
 
   describe('Usage Cost tile', () => {
-    it('formats Usage Cost as currency', () => {
-      renderTiles(okQuery({ total_cost_usd: 45.32, by_model: [] }), subWithSeats(5));
-      expect(screen.getByText('$45.32')).toBeInTheDocument();
+    it('renders the billed cost (provider cost × markup) as the headline', () => {
+      // $100.00 raw × 1.3 = $130.00 billed.
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5));
+      expect(screen.getByText('$130.00')).toBeInTheDocument();
     });
 
-    it('renders sub-cent costs without rounding to $0.00', () => {
+    it('shows raw provider cost and markup percent in the sub-line', () => {
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5));
+      expect(screen.getByText('$100.00 provider cost, billed at +30%')).toBeInTheDocument();
+    });
+
+    it('skips the sub-line when usage is zero (nothing meaningful to explain)', () => {
+      renderTiles(okQuery({ total_cost_usd: 0, by_model: [] }), subWithSeats(5));
+      expect(screen.queryByText(/provider cost, billed at/)).not.toBeInTheDocument();
+    });
+
+    it('renders sub-cent billed costs without rounding to $0.00', () => {
+      // $0.0042 × 1.3 = $0.00546 → 4-digit precision renders as $0.0055.
       renderTiles(okQuery({ total_cost_usd: 0.0042, by_model: [] }), subWithSeats(5));
-      expect(screen.getByText('$0.0042')).toBeInTheDocument();
+      expect(screen.getByText('$0.0055')).toBeInTheDocument();
     });
 
-    it('renders zero usage as $0.00', () => {
+    it('renders zero usage as $0.00 with no sub-line', () => {
       renderTiles(okQuery({ total_cost_usd: 0, by_model: [] }), subWithSeats(5));
       expect(screen.getByLabelText('Usage cost: $0.00')).toBeInTheDocument();
+    });
+
+    it('aria-label reflects the billed (post-markup) cost, not the raw provider cost', () => {
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5));
+      expect(screen.getByLabelText('Usage cost: $130.00')).toBeInTheDocument();
     });
   });
 
@@ -83,9 +107,6 @@ describe('KpiTiles', () => {
     });
 
     it('prefers included_usd_per_period from the API over the seats fallback', () => {
-      // API returns $300 even though seats × $50 would compute $250 — exercises
-      // the path where Stripe credit grants take precedence (e.g., a prorated
-      // mid-cycle delta grant from a seat upgrade was applied).
       renderTiles(
         okQuery({ total_cost_usd: 0, by_model: [] }),
         okQuery({
@@ -95,12 +116,11 @@ describe('KpiTiles', () => {
         })
       );
       expect(screen.getByLabelText('Included allowance: $300.00')).toBeInTheDocument();
-      expect(screen.getByText('from active Stripe credit grants')).toBeInTheDocument();
+      expect(screen.getByText('from active credit grants')).toBeInTheDocument();
       expect(screen.queryByText(/seats × \$50/)).not.toBeInTheDocument();
     });
 
     it('falls back to seats × $50 when included_usd_per_period is null', () => {
-      // null = API surfaced "we couldn't determine" (Stripe outage or no grants).
       renderTiles(
         okQuery({ total_cost_usd: 0, by_model: [] }),
         okQuery({ subscription_status: 'active', user_limit: 5, included_usd_per_period: null })
@@ -110,8 +130,6 @@ describe('KpiTiles', () => {
     });
 
     it('falls back to seats × $50 when included_usd_per_period is zero', () => {
-      // 0 = Stripe returned successfully but no active grants — same UX as
-      // null, since SHU-704 issuance hasn't happened yet in dev.
       renderTiles(
         okQuery({ total_cost_usd: 0, by_model: [] }),
         okQuery({ subscription_status: 'active', user_limit: 5, included_usd_per_period: 0 })
@@ -127,10 +145,10 @@ describe('KpiTiles', () => {
   });
 
   describe('Used tile', () => {
-    it('renders integer percent computed from usage / allowance', () => {
-      // $50 / $250 (5 seats) = 20%
+    it('renders integer percent computed from billed cost / allowance', () => {
+      // $50 raw × 1.3 = $65 billed; $65 / $250 (5 seats) = 26%.
       renderTiles(okQuery({ total_cost_usd: 50, by_model: [] }), subWithSeats(5));
-      expect(screen.getByLabelText('Allowance used: 20%')).toBeInTheDocument();
+      expect(screen.getByLabelText('Allowance used: 26%')).toBeInTheDocument();
     });
 
     it('renders a LinearProgress bar inside the tile when allowance is known', () => {
@@ -139,12 +157,12 @@ describe('KpiTiles', () => {
     });
 
     it('clamps the bar at 100% even when actual usage exceeds allowance', () => {
-      // $300 / $250 = 120%, but the bar value should max out at 100.
+      // $300 raw × 1.3 = $390 billed; $390 / $250 = 156%; bar clamps at 100,
+      // text shows the actual value.
       const { container } = renderTiles(okQuery({ total_cost_usd: 300, by_model: [] }), subWithSeats(5));
       const bar = container.querySelector('.MuiLinearProgress-root');
       expect(bar).toBeTruthy();
-      // The numeric percent text still shows the actual value (120%).
-      expect(screen.getByLabelText('Allowance used: 120%')).toBeInTheDocument();
+      expect(screen.getByLabelText('Allowance used: 156%')).toBeInTheDocument();
     });
 
     it('falls back to placeholder when seats are unknown', () => {
@@ -153,23 +171,52 @@ describe('KpiTiles', () => {
     });
   });
 
-  describe('Overage tile', () => {
-    it('shows $0.00 with "within allowance" sub-caption when usage <= allowance', () => {
-      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5));
-      expect(screen.getByLabelText('Overage: $0.00')).toBeInTheDocument();
-      expect(screen.getByText('within allowance')).toBeInTheDocument();
+  describe('Additional Charges tile', () => {
+    it('shows $0.00 with "covered by allowance" copy when billed cost <= allowance', () => {
+      // $150 raw × 1.3 = $195 billed; allowance $250 → no additional charges.
+      renderTiles(okQuery({ total_cost_usd: 150, by_model: [] }), subWithSeats(5));
+      expect(screen.getByLabelText('Additional charges: $0.00')).toBeInTheDocument();
+      expect(screen.getByText('covered by allowance')).toBeInTheDocument();
     });
 
-    it('shows the dollar overage with +30% upcharged sub-line when usage > allowance', () => {
-      // Usage $300, allowance $250 → overage $50 → charged $65 with +30%.
+    it('shows the billed-over-allowance dollar amount with "above included allowance" copy', () => {
+      // $300 raw × 1.3 = $390 billed; allowance $250 → $140 additional.
       renderTiles(okQuery({ total_cost_usd: 300, by_model: [] }), subWithSeats(5));
-      expect(screen.getByLabelText('Overage: $50.00')).toBeInTheDocument();
-      expect(screen.getByText('charged at $65.00 (+30%)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Additional charges: $140.00')).toBeInTheDocument();
+      expect(screen.getByText('above included allowance')).toBeInTheDocument();
     });
 
     it('falls back to placeholder when seats are unknown', () => {
       renderTiles(okQuery({ total_cost_usd: 10, by_model: [] }), okQuery({ subscription_status: 'active' }));
-      expect(screen.getByLabelText('Overage: not available')).toBeInTheDocument();
+      expect(screen.getByLabelText('Additional charges: not available')).toBeInTheDocument();
+    });
+  });
+
+  describe('usage_markup_multiplier (API-driven markup)', () => {
+    it('prefers usage_markup_multiplier from the API over the constant fallback', () => {
+      // API supplies a 1.5× markup; raw $100 → billed $150 → 60% of $250.
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5, { usage_markup_multiplier: 1.5 }));
+      expect(screen.getByText('$150.00')).toBeInTheDocument();
+      expect(screen.getByText('$100.00 provider cost, billed at +50%')).toBeInTheDocument();
+      expect(screen.getByLabelText('Allowance used: 60%')).toBeInTheDocument();
+    });
+
+    it('falls back to the constant when API multiplier is null', () => {
+      // API explicitly null → use 1.3 constant; raw $100 → billed $130.
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5, { usage_markup_multiplier: null }));
+      expect(screen.getByText('$130.00')).toBeInTheDocument();
+      expect(screen.getByText('$100.00 provider cost, billed at +30%')).toBeInTheDocument();
+    });
+
+    it('falls back to the constant when API multiplier is zero (defensive)', () => {
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5, { usage_markup_multiplier: 0 }));
+      expect(screen.getByText('$130.00')).toBeInTheDocument();
+    });
+
+    it('falls back to the constant when the API field is absent entirely', () => {
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5));
+      expect(screen.getByText('$130.00')).toBeInTheDocument();
+      expect(screen.getByText('$100.00 provider cost, billed at +30%')).toBeInTheDocument();
     });
   });
 
@@ -182,11 +229,11 @@ describe('KpiTiles', () => {
   });
 
   describe('zero usage', () => {
-    it('renders explicit zeros (not placeholders) for usage cost / used / overage', () => {
+    it('renders explicit zeros (not placeholders) for usage cost / used / additional charges', () => {
       renderTiles(okQuery({ total_cost_usd: 0, by_model: [] }), subWithSeats(5));
       expect(screen.getByLabelText('Usage cost: $0.00')).toBeInTheDocument();
       expect(screen.getByLabelText('Allowance used: 0%')).toBeInTheDocument();
-      expect(screen.getByLabelText('Overage: $0.00')).toBeInTheDocument();
+      expect(screen.getByLabelText('Additional charges: $0.00')).toBeInTheDocument();
       expect(screen.queryByText('—')).not.toBeInTheDocument();
     });
   });

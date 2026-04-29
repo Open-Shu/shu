@@ -177,6 +177,21 @@ async def get_subscription_status(
                     extra={"customer_id": customer_id, "error": str(e)},
                 )
 
+        # Pull the customer-billed markup ratio from the metered Price's
+        # unit_amount_decimal. Same display-only contract as included_usd:
+        # log + null on failure, frontend falls back to a constant.
+        usage_markup_multiplier: float | None = None
+        if subscription_id and stripe_client is not None:
+            try:
+                markup = await stripe_client.get_subscription_markup_multiplier(subscription_id)
+                if markup is not None:
+                    usage_markup_multiplier = float(markup)
+            except StripeClientError as e:
+                logger.warning(
+                    "Failed to fetch usage markup; falls back to client-side constant",
+                    extra={"subscription_id": subscription_id, "error": str(e)},
+                )
+
         payload.update(
             {
                 "stripe_customer_id": billing_config.get("stripe_customer_id"),
@@ -186,6 +201,7 @@ async def get_subscription_status(
                 "current_period_end": billing_config.get("current_period_end"),
                 "cancel_at_period_end": billing_config.get("cancel_at_period_end", False),
                 "included_usd_per_period": included_usd_per_period,
+                "usage_markup_multiplier": usage_markup_multiplier,
             }
         )
 

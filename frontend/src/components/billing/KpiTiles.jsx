@@ -1,6 +1,6 @@
 import { Box, Card, CardContent, Grid, LinearProgress, Skeleton, Typography } from '@mui/material';
 
-import { formatCurrency, INCLUDED_USAGE_PER_SEAT_USD, OVERAGE_MARKUP_MULTIPLIER } from '../../utils/billingFormatters';
+import { formatCurrency, INCLUDED_USAGE_PER_SEAT_USD, USAGE_MARKUP_MULTIPLIER } from '../../utils/billingFormatters';
 
 const PLACEHOLDER = '—';
 
@@ -65,12 +65,21 @@ export function pickUsedColor(percent) {
 /**
  * KPI summary tiles for the Cost & Usage page.
  *
- * Tiles are scoped to the financial story:
- *   1. Usage Cost — provider cost incurred this period
- *   2. Included Allowance — seats × $50, the per-period included pool
- *   3. Used — % of allowance consumed, with progress bar
- *   4. Overage — $0 within allowance, otherwise the dollar overage with
- *      the +30% upcharged amount as a sub-line
+ * Tiles tell the financial story keyed off the SHU-663 epic's pricing
+ * model. Stripe's metered Price has a +30% markup baked into its
+ * unit_amount_decimal, so every usage event invoices at 1.3× provider
+ * cost — not just usage above the included allowance. The tiles
+ * reflect that reality:
+ *
+ *   1. Usage Cost — billed cost (provider cost × markup); the headline
+ *      is what counts against the allowance and what hits the invoice.
+ *      Sub-line shows the raw provider cost and markup percentage.
+ *   2. Included Allowance — per-period pool, sourced from active Stripe
+ *      credit grants when available, falling back to seats × $50.
+ *   3. Used — billed_cost / allowance, with a color-banded progress bar.
+ *   4. Additional Charges — max(0, billed_cost − allowance); the dollar
+ *      amount that lands on the invoice beyond the included credit. The
+ *      copy stays calm when usage is within allowance.
  *
  * Volume metrics (token counts, request counts) intentionally do not
  * appear here in v1 — they are visible per-row in the Cost by Model
@@ -86,6 +95,14 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
   const usageCost = isPeriodUnknown ? null : (usageData.total_cost_usd ?? 0);
   const seats = isPeriodUnknown ? null : readSeats(subscriptionData);
 
+  // Prefer the live Stripe markup derived from the metered Price's
+  // unit_amount_decimal. Fall back to the constant when the Stripe call
+  // fails or the subscription has no metered item (dev / pre-Stripe).
+  const apiMarkup = subscriptionData.usage_markup_multiplier;
+  const markup = typeof apiMarkup === 'number' && apiMarkup > 0 ? apiMarkup : USAGE_MARKUP_MULTIPLIER;
+  const markupPercent = Math.round((markup - 1) * 100);
+  const billedCost = usageCost !== null ? usageCost * markup : null;
+
   // Prefer the live Stripe credit-grant total when the API exposes it;
   // fall back to the seats × $50 estimate when grants haven't been issued
   // yet (control plane SHU-704 not run, dev without grants, etc.) or when
@@ -94,17 +111,23 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
   const allowanceFromApi = typeof apiAllowance === 'number' && apiAllowance > 0;
   const allowance = allowanceFromApi ? apiAllowance : seats !== null ? seats * INCLUDED_USAGE_PER_SEAT_USD : null;
 
-  const haveBudgetMath = usageCost !== null && allowance !== null && allowance > 0;
-  const usedPercent = haveBudgetMath ? Math.round((usageCost / allowance) * 100) : null;
-  const overage = haveBudgetMath ? Math.max(0, usageCost - allowance) : null;
-  const overageCharge = overage !== null ? overage * OVERAGE_MARKUP_MULTIPLIER : null;
+  const haveBudgetMath = billedCost !== null && allowance !== null && allowance > 0;
+  const usedPercent = haveBudgetMath ? Math.round((billedCost / allowance) * 100) : null;
+  const additionalCharges = haveBudgetMath ? Math.max(0, billedCost - allowance) : null;
 
   const tiles = [
     {
       key: 'cost',
       label: 'Usage Cost',
-      value: usageCost === null ? PLACEHOLDER : formatCurrency(usageCost),
-      ariaLabel: usageCost === null ? 'Usage cost: not available' : `Usage cost: ${formatCurrency(usageCost)}`,
+      value: billedCost === null ? PLACEHOLDER : formatCurrency(billedCost),
+      ariaLabel: billedCost === null ? 'Usage cost: not available' : `Usage cost: ${formatCurrency(billedCost)}`,
+      // Sub-line explains the relationship between raw provider cost and
+      // the billed headline. Skipped at zero usage (nothing meaningful to
+      // explain) and when the period is unknown.
+      subline:
+        billedCost !== null && usageCost !== null && usageCost > 0
+          ? `${formatCurrency(usageCost)} provider cost, billed at +${markupPercent}%`
+          : null,
     },
     {
       key: 'allowance',
@@ -113,7 +136,7 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
       ariaLabel:
         allowance === null ? 'Included allowance: not available' : `Included allowance: ${formatCurrency(allowance)}`,
       subline: allowanceFromApi
-        ? 'from active Stripe credit grants'
+        ? 'from active credit grants'
         : seats !== null
           ? `${seats} ${seats === 1 ? 'seat' : 'seats'} × ${formatCurrency(INCLUDED_USAGE_PER_SEAT_USD)}`
           : null,
@@ -134,17 +157,16 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
         ),
     },
     {
-      key: 'overage',
-      label: 'Overage',
-      value: overage === null ? PLACEHOLDER : formatCurrency(overage),
-      ariaLabel: overage === null ? 'Overage: not available' : `Overage: ${formatCurrency(overage)}`,
-      valueColor: overage !== null && overage > 0 ? 'error.main' : undefined,
+      key: 'additional',
+      label: 'Additional Charges',
+      value: additionalCharges === null ? PLACEHOLDER : formatCurrency(additionalCharges),
+      ariaLabel:
+        additionalCharges === null
+          ? 'Additional charges: not available'
+          : `Additional charges: ${formatCurrency(additionalCharges)}`,
+      valueColor: additionalCharges !== null && additionalCharges > 0 ? 'error.main' : undefined,
       subline:
-        overage === null
-          ? null
-          : overage > 0
-            ? `charged at ${formatCurrency(overageCharge)} (+30%)`
-            : 'within allowance',
+        additionalCharges === null ? null : additionalCharges > 0 ? 'above included allowance' : 'covered by allowance',
     },
   ];
 

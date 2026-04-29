@@ -28,10 +28,19 @@ const PLACEHOLDER = '—';
 export const INCLUDED_USAGE_PER_SEAT_USD = 50;
 
 /**
- * Markup multiplier applied to overage above the included allowance, per
- * the SHU-663 epic ("Overage billed at actual provider cost + 30%").
+ * Markup multiplier applied to all metered usage, per the SHU-663 epic
+ * ("+30% over actual provider cost"). Stripe's metered Price has the
+ * markup baked into its unit_amount_decimal, so every usage event
+ * invoices at this multiple of the raw provider cost — not just the
+ * portion above the included allowance.
+ *
+ * This is the **fallback** path. The dashboard prefers the live
+ * `usage_markup_multiplier` field on `/billing/subscription`, which is
+ * computed from the metered Price's unit_amount_decimal at request
+ * time. The constant is used only when the Stripe call fails or when
+ * the subscription has no metered item (dev / pre-Stripe environments).
  */
-export const OVERAGE_MARKUP_MULTIPLIER = 1.3;
+export const USAGE_MARKUP_MULTIPLIER = 1.3;
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
