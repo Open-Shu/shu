@@ -271,9 +271,11 @@ export const authAPI = {
   exchangeMicrosoftLogin: (code) => api.post('/auth/microsoft/exchange-login', { code }),
 };
 
-// Billing endpoints
+// Billing endpoints (subscription state, seat management, Cost & Usage dashboard)
 export const billingAPI = {
+  getUsage: () => api.get('/billing/usage'),
   getSubscription: () => api.get('/billing/subscription'),
+  getPortalUrl: () => api.get('/billing/portal'),
   releaseSeat: () => api.post('/billing/seats/release'),
   cancelPendingRelease: () => api.post('/billing/seats/cancel-release'),
 };
@@ -678,13 +680,6 @@ export const experiencesAPI = {
 // Setup status endpoint for QuickStart wizard
 export const setupAPI = {
   getStatus: () => api.get('/config/setup-status'),
-};
-
-// Billing endpoints (Cost & Usage dashboard)
-export const billingAPI = {
-  getUsage: () => api.get('/billing/usage'),
-  getSubscription: () => api.get('/billing/subscription'),
-  getPortalUrl: () => api.get('/billing/portal'),
 };
 
 export default api;
