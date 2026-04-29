@@ -198,7 +198,7 @@ class MockHostHttp:
 
 class MockHostKb:
     """Mock host.kb capability for knowledge base operations.
-    
+
     Matches the real KbCapability interface from shu/plugins/host/kb_capability.py.
     """
 
@@ -318,7 +318,7 @@ class MockHostKb:
         ko: dict[str, Any]
     ) -> str:
         """Mock KO upsert.
-        
+
         Matches real KbCapability.upsert_knowledge_object signature.
         """
         record = {"kb_id": knowledge_base_id, "ko": ko}
@@ -523,4 +523,3 @@ class MockHost:
         self.cursor = MockHostCursor()
         self.log = MockHostLog()
         self.utils = MockHostUtils()
-

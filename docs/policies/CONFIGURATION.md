@@ -58,7 +58,12 @@ Policy:
 - Frontend: attachment upload errors must be surfaced to the user (inline alert/toast)
 
 Configuration:
-- Source ocr_mode: 'always' | 'auto' | 'fallback' | 'never' (default 'auto' with PDFs forced through OCR path)
+
+- Source ocr_mode: 'auto' | 'always' | 'never' — see `core.ocr_modes.OcrMode`. Default 'auto':
+  - For PDFs: the per-page real-text classifier (`core.ocr_routing.classify_pdf`) decides per document whether to run OCR.
+  - For OCR-eligible image MIME types (PNG/JPG/etc.): always OCR (no per-page geometry to classify).
+  - For non-OCR-eligible types (DOCX/txt/html/...): always text extraction.
+- Classifier thresholds: `SHU_OCR_PAGE_MARGIN_RATIO` (default 0.125) and `SHU_OCR_TEXT_PAGE_FRACTION` (default 0.5) — see `scripts/ocr_routing_calibration_report.md` for the calibration evidence.
 - Global defaults live in config.py and ConfigurationManager; API endpoints should inject config via get_config_manager_dependency
 
 Auditing/Logging:

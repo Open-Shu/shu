@@ -96,6 +96,10 @@ class TestOCRHandlerStagingCleanupFailure:
 
         job = _make_ocr_job()
 
+        # Stub the SHU-728 routing classifier so the test doesn't have to
+        # produce a real on-disk PDF for the fake staging path.
+        from shu.core.ocr_routing import RoutingDecision
+
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
             patch("shu.core.cache_backend.get_cache_backend", AsyncMock(return_value=AsyncMock())),
@@ -103,6 +107,17 @@ class TestOCRHandlerStagingCleanupFailure:
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
             patch("shu.core.ocr_service.TextExtractor", return_value=mock_extractor),
+            patch(
+                "shu.core.ocr_service._classify_pdf_for_routing",
+                new=AsyncMock(
+                    return_value=(
+                        RoutingDecision(
+                            use_ocr=False, real_text_fraction=1.0, page_count=1, pages=[], reason="stub"
+                        ),
+                        None,
+                    )
+                ),
+            ),
         ):
             from shu.worker import _handle_ocr_job
 
@@ -146,6 +161,8 @@ class TestOCRHandlerStagingCleanupFailure:
 
         job = _make_ocr_job()
 
+        from shu.core.ocr_routing import RoutingDecision
+
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
             patch("shu.core.cache_backend.get_cache_backend", AsyncMock(return_value=AsyncMock())),
@@ -153,6 +170,17 @@ class TestOCRHandlerStagingCleanupFailure:
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
             patch("shu.core.ocr_service.TextExtractor", return_value=mock_extractor),
+            patch(
+                "shu.core.ocr_service._classify_pdf_for_routing",
+                new=AsyncMock(
+                    return_value=(
+                        RoutingDecision(
+                            use_ocr=False, real_text_fraction=1.0, page_count=1, pages=[], reason="stub"
+                        ),
+                        None,
+                    )
+                ),
+            ),
         ):
             from shu.worker import _handle_ocr_job
 

@@ -20,7 +20,14 @@ from shu.core.ocr_service import (
 class _ConformingOCRService:
     """Minimal class that satisfies the OCRService protocol."""
 
-    async def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
+    async def extract_text(
+        self,
+        *,
+        file_bytes: bytes | None = None,
+        file_path: str | None = None,
+        mime_type: str,
+        user_id: str | None = None,
+    ) -> OCRResult:
         return OCRResult(text="hello", engine="test")
 
 

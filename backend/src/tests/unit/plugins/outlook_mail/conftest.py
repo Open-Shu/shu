@@ -8,11 +8,11 @@ from plugins.shu_outlook_mail.plugin import OutlookMailPlugin
 
 class HttpRequestFailed(Exception):
     """Copy of HttpRequestFailed from shu.plugins.host.exceptions.
-    
+
     This is a standalone copy to avoid circular import issues when running
     unit tests. It has the exact same interface as the real class so the
     plugin's exception handling works correctly.
-    
+
     The real class is at: shu/backend/src/shu/plugins/host/exceptions.py
     """
     def __init__(self, status_code: int, url: str, body: object = None, headers: dict = None):
@@ -90,14 +90,14 @@ class HttpRequestFailed(Exception):
 def wrap_graph_response(body_data: dict, status_code: int = 200) -> dict:
     """
     Wrap Graph API response data in the format returned by http_capability.py.
-    
+
     The http_capability.py returns responses in the format:
     {"status_code": ..., "headers": {...}, "body": <actual_api_response>}
-    
+
     Args:
         body_data: The actual Graph API response (with "value", "@odata.nextLink", etc.)
         status_code: HTTP status code (default 200)
-        
+
     Returns:
         Response dict in the format expected by the plugin
     """
@@ -147,7 +147,7 @@ def mock_host():
 def create_mock_host_with_messages(messages=None, track_requests=False):
     """
     Factory function to create mock host with sample messages.
-    
+
     Args:
         messages: List of message dicts to return from fetch
         track_requests: If True, track fetch calls in http.fetch_calls list
@@ -265,7 +265,7 @@ def create_sample_message(
 def create_sample_messages(count=3, sender_distribution=None):
     """
     Create multiple sample messages.
-    
+
     Args:
         count: Number of messages to create
         sender_distribution: Optional dict mapping sender emails to count of messages

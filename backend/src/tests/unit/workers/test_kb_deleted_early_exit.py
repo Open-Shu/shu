@@ -212,6 +212,10 @@ class TestOCRHandlerKBDeletedEarlyExit:
 
         job = _make_ocr_job()
 
+        # SHU-728: stub the routing classifier so the test doesn't need a real
+        # PDF on disk at the fake staging path.
+        from shu.core.ocr_routing import RoutingDecision
+
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
             patch("shu.core.cache_backend.get_cache_backend", AsyncMock(return_value=AsyncMock())),
@@ -219,6 +223,17 @@ class TestOCRHandlerKBDeletedEarlyExit:
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
             patch("shu.core.ocr_service.TextExtractor", return_value=mock_extractor),
+            patch(
+                "shu.core.ocr_service._classify_pdf_for_routing",
+                new=AsyncMock(
+                    return_value=(
+                        RoutingDecision(
+                            use_ocr=False, real_text_fraction=1.0, page_count=1, pages=[], reason="stub"
+                        ),
+                        None,
+                    )
+                ),
+            ),
         ):
             from shu.worker import _handle_ocr_job
 

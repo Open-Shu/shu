@@ -545,10 +545,12 @@ class Settings(BaseSettings):
     mistral_ocr_base_url: str = Field("https://api.mistral.ai/v1", alias="SHU_MISTRAL_OCR_BASE_URL")
     mistral_ocr_model: str = Field("mistral-ocr-latest", alias="SHU_MISTRAL_OCR_MODEL")
 
-    # Minimum character count from fast text extraction before OCR is skipped.
-    # Scanned PDFs with tiny garbage text layers produce < 50 chars; raising
-    # this triggers OCR more aggressively, lowering it trusts the text layer.
-    ocr_fallback_min_text_length: int = Field(50, alias="SHU_OCR_FALLBACK_MIN_TEXT_LENGTH")
+    # OCR routing classifier thresholds (SHU-728). The classifier is per-page
+    # geometric — see core/ocr_routing.py for the rule and scripts/
+    # ocr_routing_calibration_report.md for the calibration evidence behind
+    # these defaults.
+    ocr_page_margin_ratio: float = Field(0.125, alias="SHU_OCR_PAGE_MARGIN_RATIO")
+    ocr_text_page_fraction: float = Field(0.5, alias="SHU_OCR_TEXT_PAGE_FRACTION")
 
     @field_validator("database_url")
     @classmethod

@@ -117,6 +117,8 @@ max-returns = 15
 "__init__.py" = ["F401", "D"]
 # Allow print statements in scripts
 "backend/scripts/*.py" = ["T20"]
+# Top-level dev/calibration tools — same allowances as backend/scripts
+"scripts/*.py" = ["T20", "D103"]
 # Relax rules for tests
 "tests/**/*.py" = ["ARG", "PLR2004", "S", "D", "ANN"]
 "backend/src/tests/**/*.py" = ["ARG", "PLR2004", "S", "D", "ANN"]
