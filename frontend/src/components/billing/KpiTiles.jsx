@@ -85,7 +85,14 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
   const isPeriodUnknown = usageData.current_period_unknown === true;
   const usageCost = isPeriodUnknown ? null : (usageData.total_cost_usd ?? 0);
   const seats = isPeriodUnknown ? null : readSeats(subscriptionData);
-  const allowance = seats !== null ? seats * INCLUDED_USAGE_PER_SEAT_USD : null;
+
+  // Prefer the live Stripe credit-grant total when the API exposes it;
+  // fall back to the seats × $50 estimate when grants haven't been issued
+  // yet (control plane SHU-704 not run, dev without grants, etc.) or when
+  // Stripe was unreachable on the request.
+  const apiAllowance = isPeriodUnknown ? null : subscriptionData.included_usd_per_period;
+  const allowanceFromApi = typeof apiAllowance === 'number' && apiAllowance > 0;
+  const allowance = allowanceFromApi ? apiAllowance : seats !== null ? seats * INCLUDED_USAGE_PER_SEAT_USD : null;
 
   const haveBudgetMath = usageCost !== null && allowance !== null && allowance > 0;
   const usedPercent = haveBudgetMath ? Math.round((usageCost / allowance) * 100) : null;
@@ -105,8 +112,9 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
       value: allowance === null ? PLACEHOLDER : formatCurrency(allowance),
       ariaLabel:
         allowance === null ? 'Included allowance: not available' : `Included allowance: ${formatCurrency(allowance)}`,
-      subline:
-        seats !== null
+      subline: allowanceFromApi
+        ? 'from active Stripe credit grants'
+        : seats !== null
           ? `${seats} ${seats === 1 ? 'seat' : 'seats'} × ${formatCurrency(INCLUDED_USAGE_PER_SEAT_USD)}`
           : null,
     },

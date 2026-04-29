@@ -71,18 +71,56 @@ describe('KpiTiles', () => {
   });
 
   describe('Included Allowance tile', () => {
-    it('renders allowance as seats × $50 with sub-caption', () => {
+    it('renders allowance as seats × $50 with sub-caption (fallback path)', () => {
       renderTiles(okQuery({ total_cost_usd: 0, by_model: [] }), subWithSeats(5));
       expect(screen.getByLabelText('Included allowance: $250.00')).toBeInTheDocument();
       expect(screen.getByText('5 seats × $50.00')).toBeInTheDocument();
     });
 
-    it('uses the singular "seat" when quantity is 1', () => {
+    it('uses the singular "seat" when quantity is 1 (fallback path)', () => {
       renderTiles(okQuery({ total_cost_usd: 0, by_model: [] }), subWithSeats(1));
       expect(screen.getByText('1 seat × $50.00')).toBeInTheDocument();
     });
 
-    it('falls back to the placeholder when seats are unknown', () => {
+    it('prefers included_usd_per_period from the API over the seats fallback', () => {
+      // API returns $300 even though seats × $50 would compute $250 — exercises
+      // the path where Stripe credit grants take precedence (e.g., a prorated
+      // mid-cycle delta grant from a seat upgrade was applied).
+      renderTiles(
+        okQuery({ total_cost_usd: 0, by_model: [] }),
+        okQuery({
+          subscription_status: 'active',
+          user_limit: 5,
+          included_usd_per_period: 300,
+        })
+      );
+      expect(screen.getByLabelText('Included allowance: $300.00')).toBeInTheDocument();
+      expect(screen.getByText('from active Stripe credit grants')).toBeInTheDocument();
+      expect(screen.queryByText(/seats × \$50/)).not.toBeInTheDocument();
+    });
+
+    it('falls back to seats × $50 when included_usd_per_period is null', () => {
+      // null = API surfaced "we couldn't determine" (Stripe outage or no grants).
+      renderTiles(
+        okQuery({ total_cost_usd: 0, by_model: [] }),
+        okQuery({ subscription_status: 'active', user_limit: 5, included_usd_per_period: null })
+      );
+      expect(screen.getByLabelText('Included allowance: $250.00')).toBeInTheDocument();
+      expect(screen.getByText('5 seats × $50.00')).toBeInTheDocument();
+    });
+
+    it('falls back to seats × $50 when included_usd_per_period is zero', () => {
+      // 0 = Stripe returned successfully but no active grants — same UX as
+      // null, since SHU-704 issuance hasn't happened yet in dev.
+      renderTiles(
+        okQuery({ total_cost_usd: 0, by_model: [] }),
+        okQuery({ subscription_status: 'active', user_limit: 5, included_usd_per_period: 0 })
+      );
+      expect(screen.getByLabelText('Included allowance: $250.00')).toBeInTheDocument();
+      expect(screen.getByText('5 seats × $50.00')).toBeInTheDocument();
+    });
+
+    it('falls back to the placeholder when seats are unknown and no API value', () => {
       renderTiles(okQuery({ total_cost_usd: 10, by_model: [] }), okQuery({ subscription_status: 'active' }));
       expect(screen.getByLabelText('Included allowance: not available')).toBeInTheDocument();
     });

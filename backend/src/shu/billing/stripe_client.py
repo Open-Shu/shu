@@ -7,6 +7,7 @@ module uses this client rather than importing stripe directly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import stripe
@@ -667,6 +668,78 @@ class StripeClient:
                 },
             )
             raise StripeClientError(f"Failed to get meter summary: {e}", e) from e
+
+    # =========================================================================
+    # Credit Grants (read-only)
+    # =========================================================================
+    #
+    # Issuance of credit grants happens in the Shu Control Plane (see
+    # shu-control-plane/src/control_plane/billing/credit_service.py) on
+    # subscription lifecycle webhooks. Tenants only need to read the
+    # current state for display — that's what this method does.
+
+    async def get_active_credit_grant_total_usd(self, customer_id: str) -> Decimal:
+        """Sum the dollar value of currently-active credit grants on a customer.
+
+        "Active" means: not voided, and either has no expiry or expires after now.
+        Filters expired and voided grants out of the total. Includes grants
+        regardless of metadata, so manually-created Stripe Dashboard test
+        grants count alongside system-issued ones — relevant for dev / UAT
+        environments before the control plane has issued grants of its own.
+
+        Args:
+            customer_id: Stripe customer ID
+
+        Returns:
+            Total dollar amount as a Decimal quantized to cents. Returns
+            Decimal('0.00') when there are no active grants — a successful
+            zero result, distinct from a Stripe error (which raises).
+
+        Raises:
+            StripeClientError: when the Stripe API call fails. Callers that
+                want display-only behavior should catch this and degrade
+                gracefully (e.g., fall back to a client-side estimate).
+
+        """
+        try:
+            total_cents = 0
+            last_id: str | None = None
+            now_ts = int(datetime.now(UTC).timestamp())
+            while True:
+                kwargs: dict[str, Any] = {"customer": customer_id, "limit": 100}
+                if last_id is not None:
+                    kwargs["starting_after"] = last_id
+
+                page = await stripe.billing.CreditGrant.list_async(**kwargs)
+
+                for grant in page.data:
+                    if getattr(grant, "voided_at", None):
+                        continue
+                    expires_at = getattr(grant, "expires_at", None)
+                    if expires_at is not None and expires_at <= now_ts:
+                        continue
+                    amount = getattr(grant, "amount", None)
+                    monetary = getattr(amount, "monetary", None) if amount is not None else None
+                    value = getattr(monetary, "value", None) if monetary is not None else None
+                    if value is not None:
+                        total_cents += int(value)
+
+                if not getattr(page, "has_more", False) or not page.data:
+                    break
+
+                last_id = page.data[-1].id
+
+            return (Decimal(total_cents) / Decimal(100)).quantize(Decimal("0.01"))
+
+        except stripe.StripeError as e:
+            logger.error(
+                "Failed to list credit grants",
+                extra={
+                    "customer_id": customer_id,
+                    "error": str(e),
+                },
+            )
+            raise StripeClientError(f"Failed to list credit grants: {e}", e) from e
 
     # =========================================================================
     # Webhooks

@@ -15,9 +15,15 @@ const PLACEHOLDER = '—';
 
 /**
  * USD per seat included in the monthly subscription, per the SHU-663 epic.
- * Today this is hardcoded; SHU-704 will surface the actual Stripe Credit
- * Grant size on the /billing/subscription response, at which point this
- * fallback should defer to the API value.
+ *
+ * This is now the **fallback** path — the dashboard prefers the live
+ * `included_usd_per_period` field on `/billing/subscription` (which sums
+ * active Stripe Credit Grants for the customer). The constant is used
+ * only when no grants exist yet (e.g., dev environments before the
+ * control plane has issued them) or when the Stripe call fails.
+ *
+ * Issuance lives in shu-control-plane/billing/credit_service.py (SHU-704);
+ * the read path lives in StripeClient.get_active_credit_grant_total_usd.
  */
 export const INCLUDED_USAGE_PER_SEAT_USD = 50;
 

@@ -658,3 +658,172 @@ class TestUpdateSubscriptionQuantityErrors:
         client = StripeClient(_make_settings())
         with pytest.raises(StripeClientError, match="has no licensed seat item"):
             await client.update_subscription_quantity("sub_abc", target=5)
+
+
+# =============================================================================
+# Credit Grants (read-only)
+# =============================================================================
+#
+# Issuance happens in the Shu Control Plane. The tenant-side client only
+# reads the active total for display. These tests cover the active filter
+# (voided / expired excluded), pagination, and the StripeError → StripeClientError
+# translation that lets routers degrade gracefully on a Stripe outage.
+
+from decimal import Decimal
+
+
+def _make_grant(*, value_cents: int, voided_at=None, expires_at=None):
+    """Build a Stripe CreditGrant-shaped MagicMock with monetary amount and lifecycle fields.
+
+    Mirrors the Stripe API shape: amount.monetary.value (cents),
+    voided_at (timestamp or None), expires_at (timestamp or None).
+    """
+    grant = MagicMock()
+    grant.voided_at = voided_at
+    grant.expires_at = expires_at
+    grant.amount = MagicMock()
+    grant.amount.monetary = MagicMock()
+    grant.amount.monetary.value = value_cents
+    return grant
+
+
+def _make_page(grants, *, has_more=False, last_id="cg_last"):
+    """Build a Stripe list-result-shaped MagicMock."""
+    page = MagicMock()
+    page.data = grants
+    page.has_more = has_more
+    if grants:
+        # Mirror Stripe's behavior — last item carries the cursor id used for
+        # `starting_after` on the next page.
+        grants[-1].id = last_id
+    return page
+
+
+class TestGetActiveCreditGrantTotalUsd:
+    """Tests for summing active credit grant amounts on a customer."""
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_returns_zero_when_no_grants(self, mock_stripe):
+        """Empty grant list returns Decimal('0.00') without raising."""
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(return_value=_make_page([]))
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("0.00")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_sums_active_grants_in_dollars(self, mock_stripe):
+        """Cents are converted to dollars and summed across grants."""
+        # 25000 + 5000 = 30000 cents = $300.00
+        # Future expiry; not voided.
+        future = 9_999_999_999
+        grants = [
+            _make_grant(value_cents=25_000, expires_at=future),
+            _make_grant(value_cents=5_000, expires_at=future),
+        ]
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(return_value=_make_page(grants))
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("300.00")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_excludes_voided_grants(self, mock_stripe):
+        """Grants with a voided_at timestamp are skipped entirely."""
+        future = 9_999_999_999
+        grants = [
+            _make_grant(value_cents=25_000, expires_at=future),
+            _make_grant(value_cents=10_000, expires_at=future, voided_at=1_700_000_000),
+        ]
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(return_value=_make_page(grants))
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("250.00")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_excludes_expired_grants(self, mock_stripe):
+        """Grants with expires_at in the past are skipped."""
+        future = 9_999_999_999
+        past = 1  # epoch + 1 second; far in the past
+        grants = [
+            _make_grant(value_cents=25_000, expires_at=future),
+            _make_grant(value_cents=10_000, expires_at=past),
+        ]
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(return_value=_make_page(grants))
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("250.00")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_includes_grants_with_no_expiry(self, mock_stripe):
+        """Grants with expires_at = None (perpetual) count as active."""
+        grants = [_make_grant(value_cents=12_345, expires_at=None)]
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(return_value=_make_page(grants))
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("123.45")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_paginates_via_starting_after(self, mock_stripe):
+        """Multi-page result follows page.has_more and uses last id as starting_after."""
+        future = 9_999_999_999
+        page1_grants = [_make_grant(value_cents=10_000, expires_at=future)]
+        page2_grants = [_make_grant(value_cents=20_000, expires_at=future)]
+        page1 = _make_page(page1_grants, has_more=True, last_id="cg_page1_last")
+        page2 = _make_page(page2_grants, has_more=False, last_id="cg_page2_last")
+
+        list_async = AsyncMock(side_effect=[page1, page2])
+        mock_stripe.billing.CreditGrant.list_async = list_async
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("300.00")
+        # Two pages → two calls; the second is parameterized with starting_after.
+        assert list_async.call_count == 2
+        first_call_kwargs = list_async.await_args_list[0].kwargs
+        second_call_kwargs = list_async.await_args_list[1].kwargs
+        assert "starting_after" not in first_call_kwargs
+        assert second_call_kwargs.get("starting_after") == "cg_page1_last"
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_stripe_error_raises_stripe_client_error(self, mock_stripe):
+        """Stripe API failures bubble as StripeClientError so callers can degrade."""
+        mock_stripe.StripeError = Exception
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(side_effect=Exception("boom"))
+
+        client = StripeClient(_make_settings())
+        with pytest.raises(StripeClientError, match="Failed to list credit grants"):
+            await client.get_active_credit_grant_total_usd("cus_abc")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_handles_grant_with_missing_amount_fields_gracefully(self, mock_stripe):
+        """A grant with no monetary amount block contributes 0 rather than crashing."""
+        future = 9_999_999_999
+        broken = MagicMock()
+        broken.voided_at = None
+        broken.expires_at = future
+        broken.amount = None  # absent
+        good = _make_grant(value_cents=15_000, expires_at=future)
+        mock_stripe.billing.CreditGrant.list_async = AsyncMock(return_value=_make_page([broken, good]))
+
+        client = StripeClient(_make_settings())
+        result = await client.get_active_credit_grant_total_usd("cus_abc")
+
+        assert result == Decimal("150.00")
