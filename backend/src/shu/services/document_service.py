@@ -7,7 +7,7 @@ including CRUD operations, processing, and multi-source support.
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.exceptions import DocumentNotFoundError
+from ..core.exceptions import DocumentNotFoundError, KnowledgeBaseNotFoundError
 from ..core.logging import get_logger
 from ..models.document import Document, DocumentChunk, DocumentStatus
 from ..schemas.document import (
@@ -358,7 +358,7 @@ class DocumentService:
         kb_service = KnowledgeBaseService(self.db)
         kb = await kb_service.fetch_raw_knowledge_base(knowledge_base_id)
         if not kb:
-            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+            raise KnowledgeBaseNotFoundError(knowledge_base_id)
 
         embedding_service = await get_embedding_service()
         rag = RAGProcessingService(embedding_service)

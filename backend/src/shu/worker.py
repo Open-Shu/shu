@@ -344,12 +344,13 @@ async def _handle_embed_job(job) -> None:
     raise ValueError(f"Unknown INGESTION_EMBED action: {action!r}")
 
 
-async def _handle_content_embed_job(job) -> None:
+async def _handle_content_embed_job(job) -> None:  # noqa: PLR0915
     """Handle chunk content embedding (the original embed job logic)."""
     from sqlalchemy import select
 
     from .core.config import get_settings_instance
     from .core.database import get_async_session_local
+    from .core.exceptions import KnowledgeBaseNotFoundError
     from .models.document import Document, DocumentStatus
     from .services.document_service import DocumentService
 
@@ -433,8 +434,10 @@ async def _handle_content_embed_job(job) -> None:
                     document.content,  # type: ignore[arg-type]
                     user_id=user_id,
                 )
-            except ValueError as kb_err:
+            except KnowledgeBaseNotFoundError as kb_err:
                 # KB was deleted between OCR and embed stages — permanent failure, no retry.
+                # Distinguished from provider/transient errors (which fall through to the
+                # outer Exception handler for queue-driven retry) by the typed exception.
                 logger.error(
                     "Knowledge base not found for embed job, failing permanently",
                     extra={

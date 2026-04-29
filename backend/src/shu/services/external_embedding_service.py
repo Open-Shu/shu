@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from ..core.exceptions import EmbeddingProviderError
 from ..core.external_model_resolver import ensure_provider_and_model_active
 from ..core.logging import get_logger
 from ..core.safe_decimal import safe_decimal
@@ -67,9 +68,9 @@ class ExternalEmbeddingService:
     async def embed_query(self, text: str, *, user_id: str | None = None) -> list[float]:
         results = await self._embed_batch([text], prefix=self._query_prefix, user_id=user_id)
         if not results:
-            raise ValueError(
-                f"embed_texts returned no results for query text "
-                f"(model={self._model_name}, input_length={len(text)})"
+            raise EmbeddingProviderError(
+                model_name=self._model_name,
+                reason=f"embed_texts returned no results for query text (input_length={len(text)})",
             )
         return results[0]
 
@@ -85,8 +86,9 @@ class ExternalEmbeddingService:
         response_data = await self._call_embeddings_api(texts, prefix=prefix)
         entries = response_data.get("data") or []
         if len(entries) != len(texts):
-            raise ValueError(
-                f"Embedding API returned {len(entries)} results for {len(texts)} inputs (model={self._model_name})"
+            raise EmbeddingProviderError(
+                model_name=self._model_name,
+                reason=f"Embedding API returned {len(entries)} results for {len(texts)} inputs",
             )
         entries = sorted(entries, key=lambda e: e["index"])
         await self._record_usage(response_data.get("usage"), user_id=user_id)
