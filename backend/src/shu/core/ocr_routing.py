@@ -65,10 +65,12 @@ class PageSignals:
 class RoutingThresholds:
     """Tunable thresholds for the classifier.
 
-    Defaults match the calibrated values from `scripts/
-    ocr_routing_calibration_report.md`. Production callers normally use
-    `RoutingThresholds.from_settings()` to honour runtime overrides via
-    `SHU_OCR_PAGE_MARGIN_RATIO` and `SHU_OCR_TEXT_PAGE_FRACTION`.
+    Defaults are calibrated empirically against `docs/.pdf-corpus/`. Run
+    `scripts/ocr_routing_calibrate.py --sweep` to regenerate the
+    margin/fraction agreement table for the current corpus and classifier
+    code. Production callers normally use `RoutingThresholds.from_settings()`
+    to honour runtime overrides via `SHU_OCR_PAGE_MARGIN_RATIO` and
+    `SHU_OCR_TEXT_PAGE_FRACTION`.
     """
 
     page_margin_ratio: float = 0.125

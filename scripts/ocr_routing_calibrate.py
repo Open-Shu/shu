@@ -132,8 +132,16 @@ def _sweep(corpus: list[Path], labels: dict[str, dict]) -> None:
     margins = [0.0, 0.05, 0.10, 0.125, 0.15, 0.20]
     fractions = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
-    # Cache classifier signals so we only run fitz once per (pdf, margin).
-    cache: dict[tuple[str, float], dict] = {}
+    # Cache classifier results per (pdf, margin, fraction). Sampling-based
+    # classification (SHU-739 fix #3) can take different paths at different
+    # `fraction` values — the ambiguous band shifts with fraction, so a doc
+    # whose sampled real-text fraction is 0.55 gets a sampled decision at
+    # threshold=0.5 (outside band) but falls back to a full scan at
+    # threshold=0.7 (inside band 0.55-0.85), potentially producing a
+    # different `real_text_fraction`. Including `fraction` in the cache key
+    # ensures each row in the sweep table reflects what the production
+    # classifier would actually do at that threshold.
+    cache: dict[tuple[str, float, float], dict] = {}
 
     print(f"{'margin':>7s}  {'fraction':>9s}  {'correct':>8s}  {'labeled':>8s}  {'pct':>5s}")
     print("-" * 50)
@@ -147,20 +155,18 @@ def _sweep(corpus: list[Path], labels: dict[str, dict]) -> None:
                 label = labels.get(pdf.name)
                 if label is None:
                     continue
-                key = (pdf.name, margin)
+                key = (pdf.name, margin, frac)
                 if key not in cache:
                     try:
                         cache[key] = _classify_one(pdf, thresholds)
                     except Exception as e:
                         # Don't silently drop a fixture from the sweep — print to
                         # stderr so the operator sees which file misbehaved at
-                        # which margin. The cache key is left unset so the next
-                        # margin level retries.
-                        print(f"sweep error  {pdf.name} (margin={margin}): {e}", file=sys.stderr)
+                        # which (margin, fraction). The cache key is left unset
+                        # so a future invocation retries.
+                        print(f"sweep error  {pdf.name} (margin={margin}, fraction={frac}): {e}", file=sys.stderr)
                         continue
-                # The fraction-aggregation can be re-derived from the cached result
-                # by replaying the threshold against `real_text_fraction`.
-                use_ocr = cache[key]["real_text_fraction"] < frac
+                use_ocr = cache[key]["use_ocr"]
                 labeled += 1
                 if use_ocr == label["should_ocr"]:
                     correct += 1
@@ -188,7 +194,13 @@ def main() -> int:
         print(f"error: {target} does not exist", file=sys.stderr)
         return 1
 
-    thresholds = RoutingThresholds(page_margin_ratio=args.margin, text_page_fraction=args.fraction)
+    # Start from production runtime defaults (sample_size, sample_min_pages,
+    # ambiguous_band) so this script exercises the same classifier shape as
+    # the live system; override only the geometric thresholds the CLI exposes.
+    from dataclasses import replace
+
+    base = RoutingThresholds.from_settings()
+    thresholds = replace(base, page_margin_ratio=args.margin, text_page_fraction=args.fraction)
 
     if target.is_file():
         result = _classify_one(target, thresholds)

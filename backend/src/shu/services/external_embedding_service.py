@@ -70,7 +70,7 @@ class ExternalEmbeddingService:
         if not results:
             raise EmbeddingProviderError(
                 model_name=self._model_name,
-                reason=f"embed_texts returned no results for query text (input_length={len(text)})",
+                reason=f"embed_query returned no results (input_length={len(text)})",
             )
         return results[0]
 

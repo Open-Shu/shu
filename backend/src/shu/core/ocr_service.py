@@ -190,15 +190,39 @@ async def classify_pdf_routing(file_path: str | None, file_bytes: bytes | None) 
     """Run `classify_pdf` and return the routing decision (SHU-739).
 
     Used by the `_handle_classify_job` worker to decide which downstream
-    stage (INGESTION_TEXT or INGESTION_OCR) to enqueue. Closes the fitz
-    handle before returning — unlike `_classify_pdf_for_routing`, the
-    decision is the only thing crossing the job boundary, so there's no
-    handle to keep alive.
+    stage (INGESTION_TEXT or INGESTION_OCR) to enqueue. The `fitz.Document`
+    is opened, scanned, and closed entirely inside one executor task — the
+    handle never crosses thread boundaries, satisfying PyMuPDF's
+    single-thread rule. The decision is the only thing returned to the
+    event loop.
+
+    NOTE: this is a stricter contract than the legacy
+    `_classify_pdf_for_routing` (which opens on the event-loop thread,
+    classifies in an executor, and returns the live doc to the caller).
+    The legacy function is retained for `extract_text_with_ocr_fallback`'s
+    in-process plugin path, which still hands the open doc off to
+    `TextExtractor`. Reworking that hand-off is a separate ticket.
     """
+    import asyncio
+
     thresholds = RoutingThresholds.from_settings()
-    decision, doc = await _classify_pdf_for_routing(file_path, file_bytes, thresholds)
-    _close_routing_doc(doc)
-    return decision
+
+    def _open_classify_close() -> RoutingDecision:
+        doc = fitz.open(file_path) if file_path is not None else fitz.open(stream=file_bytes, filetype="pdf")
+        try:
+            return classify_pdf(doc, thresholds)
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+            try:
+                fitz.TOOLS.store_shrink(100)
+            except Exception:
+                pass
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _open_classify_close)
 
 
 async def extract_text_only(

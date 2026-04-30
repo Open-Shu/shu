@@ -40,6 +40,11 @@ def coerce_ocr_mode(value: str | OcrMode | None, default: OcrMode = OcrMode.AUTO
         return value
     if not value:
         return default
+    if not isinstance(value, str):
+        # Type hint says str | OcrMode | None; an int/list/dict here means a
+        # bad caller. Match the existing leniency contract and return default
+        # rather than AttributeError on .strip().
+        return default
     s = value.strip().lower()
     try:
         return OcrMode(s)

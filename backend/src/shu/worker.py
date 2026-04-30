@@ -287,7 +287,7 @@ async def _run_extraction_pipeline(  # noqa: PLR0915
                         "error": str(e),
                     },
                 )
-                document.mark_error(f"Text extraction failed after {job.attempts} attempts: {e}")
+                document.mark_error(f"{label} failed after {job.attempts} attempts: {e}")
                 await session.commit()
             raise
 

@@ -63,7 +63,7 @@ Configuration:
   - For PDFs: the per-page real-text classifier (`core.ocr_routing.classify_pdf`) decides per document whether to run OCR.
   - For OCR-eligible image MIME types (PNG/JPG/etc.): always OCR (no per-page geometry to classify).
   - For non-OCR-eligible types (DOCX/txt/html/...): always text extraction.
-- Classifier thresholds: `SHU_OCR_PAGE_MARGIN_RATIO` (default 0.125) and `SHU_OCR_TEXT_PAGE_FRACTION` (default 0.5) — see `scripts/ocr_routing_calibration_report.md` for the calibration evidence.
+- Classifier thresholds: `SHU_OCR_PAGE_MARGIN_RATIO` (default 0.125) and `SHU_OCR_TEXT_PAGE_FRACTION` (default 0.5). To verify these against the current corpus and classifier code, run `scripts/ocr_routing_calibrate.py --sweep` (output can be redirected to `ocr_routing_calibration_report.md` if you want a checkpoint).
 - Classifier sampling (SHU-739 fix #3): `SHU_OCR_CLASSIFY_SAMPLE_SIZE`, `SHU_OCR_CLASSIFY_SAMPLE_MIN_PAGES`, `SHU_OCR_CLASSIFY_AMBIGUOUS_BAND`. Long documents are classified from a stratified sample of `SAMPLE_SIZE` pages instead of a full per-page scan. If the sampled real-text fraction sits inside `(text_page_fraction ± AMBIGUOUS_BAND)` the classifier falls back to the full scan. Set `SAMPLE_SIZE=0` to disable sampling; set `SAMPLE_MIN_PAGES=0` to apply sampling regardless of document length. Defaults in `core/config.py`.
 - Global defaults live in config.py and ConfigurationManager; API endpoints should inject config via get_config_manager_dependency
 
@@ -371,10 +371,13 @@ python -m shu.worker
 python -m shu.worker --concurrency 4
 
 # Start a worker for specific workload types only
-python -m shu.worker --workload-types INGESTION,PROFILING
+python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED,PROFILING
 
 # Start multiple specialized workers (in separate terminals/containers)
-python -m shu.worker --workload-types INGESTION --concurrency 4
+# Document-ingestion workers must consume the full pipeline:
+#   INGESTION (plugin feeds), INGESTION_CLASSIFY (PDF routing classifier),
+#   INGESTION_TEXT (text extraction), INGESTION_OCR (OCR), INGESTION_EMBED (embedding)
+python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED --concurrency 4
 python -m shu.worker --workload-types LLM_WORKFLOW --concurrency 2
 python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
@@ -402,8 +405,9 @@ SHU_WORKERS_ENABLED=false  # Disable workers in API process
 python -m uvicorn shu.main:app --app-dir backend/src
 
 # Deploy specialized worker replicas
-# Container A1-AN: Ingestion workers (scale based on document volume)
-python -m shu.worker --workload-types INGESTION
+# Container A1-AN: Ingestion workers — must cover the full ingestion pipeline
+# (plugin feeds, classifier routing, text extraction, OCR, embedding)
+python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED
 
 # Container B1-BN: LLM workers (scale based on LLM request volume)
 python -m shu.worker --workload-types LLM_WORKFLOW
@@ -419,7 +423,7 @@ python -m shu.worker --workload-types MAINTENANCE,PROFILING
 
 # Kubernetes example:
 # - api: 3 replicas, SHU_WORKERS_ENABLED=false
-# - worker-ingestion: 5 replicas, --workload-types INGESTION
+# - worker-ingestion: 5 replicas, --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED
 # - worker-llm: 2 replicas, --workload-types LLM_WORKFLOW
 # - worker-maintenance: 1 replica, --workload-types MAINTENANCE,PROFILING
 ```

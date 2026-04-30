@@ -885,8 +885,13 @@ class TextExtractor:
                     return "\n".join(parts).strip()
 
             except Exception as e:
+                # Re-raise so callers (e.g. extract_text_with_ocr_fallback)
+                # can detect the failure and route to the OCR fallback path.
+                # Previously this returned "" silently, which masked the
+                # failure as a successful empty extraction and prevented
+                # the fallback from firing on corrupt-PDF inputs.
                 logger.error(f"PDF text extraction failed: {e}", extra={"file_path": file_path})
-                return ""
+                raise
 
         # Run in executor to avoid blocking
         result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
