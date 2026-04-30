@@ -218,6 +218,19 @@ describe('KpiTiles', () => {
       expect(screen.getByText('$130.00')).toBeInTheDocument();
       expect(screen.getByText('$100.00 provider cost, billed at +30%')).toBeInTheDocument();
     });
+
+    it('rounds the markup percent to the nearest integer for fractional multipliers', () => {
+      // markup 1.234 → (1.234 − 1) × 100 = 23.4 → rounds to 23.
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5, { usage_markup_multiplier: 1.234 }));
+      expect(screen.getByText('$100.00 provider cost, billed at +23%')).toBeInTheDocument();
+    });
+
+    it('rounds half-up at the percent boundary (1.235 → +24%)', () => {
+      // markup 1.235 → (1.235 − 1) × 100 = 23.5 → Math.round rounds half-away-from-zero
+      // for positive numbers in V8/JSC, yielding 24. Locks in the rounding direction.
+      renderTiles(okQuery({ total_cost_usd: 100, by_model: [] }), subWithSeats(5, { usage_markup_multiplier: 1.235 }));
+      expect(screen.getByText('$100.00 provider cost, billed at +24%')).toBeInTheDocument();
+    });
   });
 
   describe('current_period_unknown', () => {

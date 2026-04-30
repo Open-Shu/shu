@@ -104,9 +104,9 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
   const billedCost = usageCost !== null ? usageCost * markup : null;
 
   // Prefer the live Stripe credit-grant total when the API exposes it;
-  // fall back to the seats × $50 estimate when grants haven't been issued
-  // yet (control plane SHU-704 not run, dev without grants, etc.) or when
-  // Stripe was unreachable on the request.
+  // fall back to the seats × $50 estimate when the API doesn't supply a
+  // positive value (no grants issued yet, Stripe error, missing field —
+  // any reason the allowance can't be determined from Stripe).
   const apiAllowance = isPeriodUnknown ? null : subscriptionData.included_usd_per_period;
   const allowanceFromApi = typeof apiAllowance === 'number' && apiAllowance > 0;
   const allowance = allowanceFromApi ? apiAllowance : seats !== null ? seats * INCLUDED_USAGE_PER_SEAT_USD : null;
@@ -122,12 +122,10 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
       value: billedCost === null ? PLACEHOLDER : formatCurrency(billedCost),
       ariaLabel: billedCost === null ? 'Usage cost: not available' : `Usage cost: ${formatCurrency(billedCost)}`,
       // Sub-line explains the relationship between raw provider cost and
-      // the billed headline. Skipped at zero usage (nothing meaningful to
-      // explain) and when the period is unknown.
-      subline:
-        billedCost !== null && usageCost !== null && usageCost > 0
-          ? `${formatCurrency(usageCost)} provider cost, billed at +${markupPercent}%`
-          : null,
+      // the billed headline. The `usageCost > 0` check covers both "period
+      // unknown" (usageCost is null, null > 0 is false) and "zero usage"
+      // (nothing meaningful to explain) in one expression.
+      subline: usageCost > 0 ? `${formatCurrency(usageCost)} provider cost, billed at +${markupPercent}%` : null,
     },
     {
       key: 'allowance',
