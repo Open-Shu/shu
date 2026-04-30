@@ -218,7 +218,8 @@ services:
   # IMPORTANT: Set SHU_WORKERS_ENABLED=false on shu-api when using these.
   # ==========================================================================
 
-  # Ingestion worker: handles INGESTION, INGESTION_OCR, INGESTION_EMBED queues
+  # Ingestion worker: handles INGESTION, INGESTION_CLASSIFY, INGESTION_TEXT,
+  # INGESTION_OCR, INGESTION_EMBED — the full ingestion-stage pipeline
   shu-worker-ingestion:
     build:
       context: ../..
@@ -246,7 +247,7 @@ services:
     restart: unless-stopped
     profiles:
       - workers
-    command: ["python", "-m", "shu.worker", "--workload-types=INGESTION,INGESTION_OCR,INGESTION_EMBED"]
+    command: ["python", "-m", "shu.worker", "--workload-types=INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED"]
     depends_on:
       shu-db-migrate:
         condition: service_completed_successfully

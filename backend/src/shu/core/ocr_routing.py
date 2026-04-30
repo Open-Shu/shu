@@ -80,6 +80,20 @@ class RoutingThresholds:
     """Document is routed to OCR iff
     (pages with real text) / (total pages) < this threshold."""
 
+    sample_size: int = 10
+    """SHU-739 fix #3: number of stratified pages to sample before falling
+    back to the full scan. 0 disables sampling (always full scan)."""
+
+    sample_min_pages: int = 30
+    """Documents shorter than this skip sampling — the existing early-exit
+    handles short docs quickly enough that sampling adds no benefit."""
+
+    ambiguous_band: float = 0.15
+    """Half-width of the ambiguous band around `text_page_fraction`. If the
+    sampled real-text fraction lands inside (text_page_fraction - band,
+    text_page_fraction + band), the classifier falls back to the full
+    per-page scan."""
+
     @classmethod
     def from_settings(cls) -> RoutingThresholds:
         """Resolve thresholds from runtime settings."""
@@ -91,6 +105,9 @@ class RoutingThresholds:
         return cls(
             page_margin_ratio=settings.ocr_page_margin_ratio,
             text_page_fraction=settings.ocr_text_page_fraction,
+            sample_size=settings.ocr_classify_sample_size,
+            sample_min_pages=settings.ocr_classify_sample_min_pages,
+            ambiguous_band=settings.ocr_classify_ambiguous_band,
         )
 
 
@@ -129,7 +146,13 @@ def page_has_real_text(page: fitz.Page, margin_ratio: float) -> PageSignals:
     has_real = False
 
     # get_text("blocks") returns list of (x0, y0, x1, y1, text, block_no, block_type)
+    # block_type: 0 = text, 1 = image. Image blocks must be skipped — block[4]
+    # for an image is a placeholder string like "<image: ...>" that would pass
+    # the strip+replacement-char checks and falsely register an image-only
+    # page as "real text".
     for block in page.get_text("blocks"):
+        if len(block) < 7 or block[6] != 0:
+            continue
         x0, y0, x1, y1, text = block[0], block[1], block[2], block[3], block[4]
         stripped = text.strip()
         if not stripped:
@@ -149,6 +172,89 @@ def page_has_real_text(page: fitz.Page, margin_ratio: float) -> PageSignals:
     )
 
 
+def _stratified_sample_indices(page_count: int, sample_size: int) -> list[int]:
+    """Pick `sample_size` page indices stratified across the document (SHU-739).
+
+    Splits the sample into thirds: head, middle, tail. The head and tail thirds
+    are contiguous from the document edges; the middle third is evenly spaced
+    through the interior. Indices are returned sorted ascending and deduped.
+
+    For a 482-page book at sample_size=10 this yields roughly:
+      head:   [0, 1, 2, 3]      (first 4)
+      middle: [120, 240, 360]   (3 evenly-spaced interior)
+      tail:   [479, 480, 481]   (last 3)
+    """
+    if sample_size <= 0 or page_count <= sample_size:
+        # Sample bigger than doc: just scan everything.
+        return list(range(page_count))
+
+    head_n = sample_size // 3 + (sample_size % 3 > 0)  # bias head when not divisible
+    tail_n = sample_size // 3 + (sample_size % 3 > 1)
+    middle_n = sample_size - head_n - tail_n
+
+    indices: set[int] = set()
+    indices.update(range(min(head_n, page_count)))
+    indices.update(range(max(0, page_count - tail_n), page_count))
+    if middle_n > 0:
+        # Evenly spaced through the interior, excluding head and tail regions.
+        interior_start = head_n
+        interior_end = max(head_n, page_count - tail_n - 1)
+        interior_span = max(1, interior_end - interior_start)
+        for k in range(middle_n):
+            # Distribute middle samples in the interior at evenly-spaced
+            # fractions, avoiding the bookends already covered above.
+            frac = (k + 1) / (middle_n + 1)
+            indices.add(interior_start + round(frac * interior_span))
+    return sorted(indices)
+
+
+def _classify_pdf_sampled(doc: fitz.Document, thresholds: RoutingThresholds) -> RoutingDecision | None:
+    """Try to decide using a stratified page sample (SHU-739 fix #3).
+
+    Returns a `RoutingDecision` if the sample's real-text fraction falls
+    cleanly outside the ambiguous band around `text_page_fraction`. Returns
+    `None` if the sample is ambiguous and the caller should fall back to
+    the full per-page scan.
+    """
+    page_count = doc.page_count
+    sample_indices = _stratified_sample_indices(page_count, thresholds.sample_size)
+    if not sample_indices:
+        return None
+
+    sampled_signals: list[PageSignals] = []
+    real_text_in_sample = 0
+    for idx in sample_indices:
+        sig = page_has_real_text(doc.load_page(idx), thresholds.page_margin_ratio)
+        sampled_signals.append(sig)
+        if sig.has_real_text:
+            real_text_in_sample += 1
+
+    sample_fraction = real_text_in_sample / len(sample_indices)
+    threshold = thresholds.text_page_fraction
+    band = thresholds.ambiguous_band
+
+    # Inside the ambiguous band — defer to the full scan.
+    if (threshold - band) < sample_fraction < (threshold + band):
+        return None
+
+    use_ocr = sample_fraction < threshold
+    op = "<" if use_ocr else ">="
+    reason = (
+        f"sampled_fraction={sample_fraction:.3f} {op} threshold={threshold:.3f} "
+        f"({real_text_in_sample}/{len(sample_indices)} sampled pages with real text "
+        f"of {page_count} total — outside ambiguous band ±{band:.2f})"
+    )
+    return RoutingDecision(
+        use_ocr=use_ocr,
+        # Report the sample fraction as the document's estimated fraction;
+        # consumers reading this for diagnostics need to know it's a sample.
+        real_text_fraction=sample_fraction,
+        page_count=page_count,
+        pages=sampled_signals,
+        reason=reason,
+    )
+
+
 def classify_pdf(doc: fitz.Document, thresholds: RoutingThresholds) -> RoutingDecision:
     """Decide whether a PDF should be OCR'd or text-extracted.
 
@@ -162,7 +268,16 @@ def classify_pdf(doc: fitz.Document, thresholds: RoutingThresholds) -> RoutingDe
     PDFs (dense scientific text is the slow end, scanned image-only pages
     are the fast end).
 
-    The scan exits early as soon as the decision is locked:
+    SHU-739 fix #3: for documents with `page_count >= sample_min_pages`,
+    a stratified sample of `sample_size` pages is checked first. If the
+    sample's real-text fraction falls outside the ambiguous band around
+    `text_page_fraction`, the sample's verdict is returned directly —
+    cutting per-job CPU from O(page_count) to O(sample_size) on the
+    common case where the document is decisively one or the other.
+    Documents shorter than `sample_min_pages` and ambiguous-sample
+    documents fall through to the full per-page scan with early-exit.
+
+    The full scan exits early as soon as the decision is locked:
     - If the running real-text count reaches `text_page_fraction * total`,
       OCR can't be triggered no matter what the remaining pages say —
       route to TEXT and stop.
@@ -181,6 +296,16 @@ def classify_pdf(doc: fitz.Document, thresholds: RoutingThresholds) -> RoutingDe
             pages=[],
             reason="empty_document",
         )
+
+    # SHU-739 fix #3: try sampling first for long documents.
+    # `sample_size=0` disables sampling entirely; `sample_min_pages=0` enables
+    # sampling for all documents regardless of length (the `>= 0` is trivially
+    # true). Together these match the documented config semantics.
+    if thresholds.sample_size > 0 and page_count >= thresholds.sample_min_pages:
+        sampled = _classify_pdf_sampled(doc, thresholds)
+        if sampled is not None:
+            return sampled
+        # Sample was ambiguous — fall through to the full scan below.
 
     # Real-text pages required to *avoid* OCR.
     # use_ocr = real/total < T  ↔  use_ocr=False iff real >= total*T

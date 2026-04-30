@@ -64,7 +64,19 @@ Configuration:
   - For OCR-eligible image MIME types (PNG/JPG/etc.): always OCR (no per-page geometry to classify).
   - For non-OCR-eligible types (DOCX/txt/html/...): always text extraction.
 - Classifier thresholds: `SHU_OCR_PAGE_MARGIN_RATIO` (default 0.125) and `SHU_OCR_TEXT_PAGE_FRACTION` (default 0.5) — see `scripts/ocr_routing_calibration_report.md` for the calibration evidence.
+- Classifier sampling (SHU-739 fix #3): `SHU_OCR_CLASSIFY_SAMPLE_SIZE`, `SHU_OCR_CLASSIFY_SAMPLE_MIN_PAGES`, `SHU_OCR_CLASSIFY_AMBIGUOUS_BAND`. Long documents are classified from a stratified sample of `SAMPLE_SIZE` pages instead of a full per-page scan. If the sampled real-text fraction sits inside `(text_page_fraction ± AMBIGUOUS_BAND)` the classifier falls back to the full scan. Set `SAMPLE_SIZE=0` to disable sampling; set `SAMPLE_MIN_PAGES=0` to apply sampling regardless of document length. Defaults in `core/config.py`.
 - Global defaults live in config.py and ConfigurationManager; API endpoints should inject config via get_config_manager_dependency
+
+### Per-stage ingestion concurrency caps (SHU-739)
+
+Each ingestion stage runs under its own per-process semaphore so the classifier scan, text extraction, and OCR call don't share a single concurrency budget. Operators tune these caps based on the per-process CPU and memory budget for their deployment; the defaults are conservative and assume a constrained per-process budget.
+
+- `SHU_INGESTION_CLASSIFY_MAX_CONCURRENT_JOBS`: caps concurrent PDF text-vs-OCR classifier scans. A single classifier scan can saturate one core; serialising avoids a synchronized multi-classifier CPU spike at burst start.
+- `SHU_INGESTION_TEXT_MAX_CONCURRENT_JOBS`: caps concurrent text-extraction jobs. Per-job working-set during text extraction can be substantial on long PDFs; running one at a time bounds the in-process memory floor.
+- `SHU_OCR_MAX_CONCURRENT_JOBS`: caps concurrent OCR jobs. Network-bound; the legitimate throughput bottleneck.
+- `SHU_PROFILING_MAX_CONCURRENT_TASKS`: caps concurrent profiling LLM calls.
+
+Defaults for these are set conservatively in `core/config.py` — check there for current values rather than relying on this doc to track them.
 
 Auditing/Logging:
 - Log extraction method, engine, and durations; do not log raw content
@@ -413,9 +425,12 @@ python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
 
 ##### WorkloadType Reference
-- **INGESTION**: Document ingestion and indexing tasks (legacy, general ingestion)
-- **INGESTION_OCR**: OCR/text extraction stage of document pipeline (first stage of async ingestion)
-- **INGESTION_EMBED**: Embedding stage of document pipeline (chunking, embedding generation, vector storage)
+
+- **INGESTION**: Plugin feed ingestion (Gmail, Google Drive, etc.)
+- **INGESTION_CLASSIFY** *(SHU-739)*: PDF text-vs-OCR routing classifier. PDFs in `auto` mode enter here first; the classifier decides between TEXT and OCR and enqueues the next stage. Capped tightly to bound the synchronized CPU spike at burst start.
+- **INGESTION_TEXT** *(SHU-739)*: Born-digital PDF text extraction + DOCX / plain-text / HTML extraction. The non-OCR path. Capped tightly to bound the per-job working-set spike from concurrent extractions.
+- **INGESTION_OCR**: OCR stage of document pipeline. Network-bound. Capped via `SHU_OCR_MAX_CONCURRENT_JOBS` — the legitimate throughput bottleneck.
+- **INGESTION_EMBED**: Embedding stage of document pipeline (chunking, embedding generation, vector storage).
 - **LLM_WORKFLOW**: LLM-based workflows and chat processing
 - **MAINTENANCE**: Scheduled tasks, cleanup, and system maintenance
 - **PROFILING**: Document profiling (LLM-based analysis)

@@ -98,6 +98,14 @@ class WorkloadCapacityLimiter:
         if settings.ocr_max_concurrent_jobs > 0:
             limits[WorkloadType.INGESTION_OCR] = settings.ocr_max_concurrent_jobs
 
+        # Classifier concurrency limit (SHU-739)
+        if settings.ingestion_classify_max_concurrent_jobs > 0:
+            limits[WorkloadType.INGESTION_CLASSIFY] = settings.ingestion_classify_max_concurrent_jobs
+
+        # Text-extraction concurrency limit (SHU-739)
+        if settings.ingestion_text_max_concurrent_jobs > 0:
+            limits[WorkloadType.INGESTION_TEXT] = settings.ingestion_text_max_concurrent_jobs
+
         # Profiling concurrency limit
         if settings.profiling_max_concurrent_tasks > 0:
             limits[WorkloadType.PROFILING] = settings.profiling_max_concurrent_tasks

@@ -8,10 +8,14 @@ Three tools for three jobs. Pick the right one for what you're trying to learn.
 > latter number is what reflects burst spikes. `memory_bench_lab.sh` reads
 > `/sys/fs/cgroup/cpu.stat` (cgroup v2) or `cpuacct.usage` (v1) and reports
 > the same per-window `peak_cores`. The burst corpus is
-> `shu/docs/.pdf-corpus/` (27 PDFs as of 2026-04-29). The effective in-flight
-> concurrency during a burst is `SHU_OCR_MAX_CONCURRENT_JOBS` (default 6),
-> not `SHU_WORKER_CONCURRENCY` — the classifier and text extraction both run
-> inside the `INGESTION_OCR` job, so they share the OCR cap.
+> `docs/.pdf-corpus/` (27 PDFs as of 2026-04-29). After the SHU-739 queue
+> split, the in-flight concurrency at each ingestion stage is gated by its
+> own per-process semaphore: `SHU_INGESTION_CLASSIFY_MAX_CONCURRENT_JOBS`
+> for the classifier, `SHU_INGESTION_TEXT_MAX_CONCURRENT_JOBS` for text
+> extraction, and `SHU_OCR_MAX_CONCURRENT_JOBS` for the OCR call — not
+> `SHU_WORKER_CONCURRENCY`. The upload driver's `--concurrency` flag
+> controls how fast the queue fills, not how fast jobs are processed; the
+> per-stage caps decide that.
 
 | Tool | Environment | Use for | Authoritative? |
 | --- | --- | --- | --- |
@@ -45,7 +49,7 @@ make up-dev
     --drain-timeout 1200
 ```
 
-The `--concurrency 6` matches the effective in-flight cap so the upload driver mirrors the natural burst shape. Per-sample columns in `proc.csv`: `t_s, rss_kb, pcpu_avg, cputime_s`. `peak_cores` in `variants.csv` is the max per-window cores used over the run (delta cputime / delta interval); this is the number that captures the synchronized spike.
+The `--concurrency 6` is the upload-driver concurrency — how many parallel uploads the harness pushes — not the in-flight processing concurrency, which is per-stage capped (see the protocol blockquote above). Six parallel uploads is enough to populate the queue quickly so downstream stages see saturation. Per-sample columns in `proc.csv`: `t_s, rss_kb, pcpu_avg, cputime_s`. `peak_cores` in `variants.csv` is the max per-window cores used over the run (delta cputime / delta interval); this is the number that captures the synchronized spike.
 
 Allocator variants (`glibc-default`, `glibc-arena2`, `jemalloc`, `jemalloc-trim`, `glibc-arena2-trim`) run on this harness too, but:
 
@@ -76,7 +80,7 @@ Not a performance test. Run after every Dockerfile / entrypoint / compose touch.
 
 ## 3. `memory_bench_lab.sh` — authoritative sizing in Kubernetes
 
-Purpose: the real gate. Runs each variant against a live deployment, patching the configmap + rolling the deployment + sampling `kubectl top pod` + hitting the admin endpoints.
+Purpose: the real gate. Runs each variant against a live deployment, patching the configmap + rolling the deployment + sampling per-pod cgroup stats directly via `kubectl exec` + hitting the admin endpoints.
 
 Generate the admin token from inside the lab pod (the deployed image ships
 `scripts/generate_test_token.py`):

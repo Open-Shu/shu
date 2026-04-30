@@ -143,6 +143,127 @@ def reset_ocr_service() -> None:
     _ocr_service = None
 
 
+def select_initial_workload_type(mime_type: str, ocr_mode: str | OcrMode):
+    """Decide which workload queue an upload should enter (SHU-739).
+
+    Returns the right `WorkloadType` for the upload path to enqueue based on
+    MIME type and the requested OCR mode. The split lets each stage run under
+    its own per-process semaphore, which decouples the synchronized classifier
+    spike and the per-doc text-extraction memory peak from the OCR throughput
+    cap.
+
+    Routing:
+        | MIME                         | NEVER | ALWAYS | AUTO     |
+        | ---------------------------- | ----- | ------ | -------- |
+        | non-OCR-eligible (DOCX, txt) | TEXT  | TEXT   | TEXT     |
+        | OCR-eligible non-PDF (image) | TEXT  | OCR    | OCR      |
+        | PDF                          | TEXT  | OCR    | CLASSIFY |
+
+    The CLASSIFY queue is only entered for PDFs in AUTO mode; the classifier
+    decides between TEXT and OCR for that document and enqueues the next
+    stage. Other rows skip CLASSIFY because there's nothing to decide.
+    """
+    from .ocr_modes import coerce_ocr_mode
+    from .workload_routing import WorkloadType
+
+    # Lenient coercion at the upload boundary — None/empty/unknown fall back
+    # to AUTO, matching the existing plugin-host policy.
+    effective_mode = coerce_ocr_mode(ocr_mode)
+
+    if effective_mode is OcrMode.NEVER:
+        return WorkloadType.INGESTION_TEXT
+
+    if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
+        return WorkloadType.INGESTION_TEXT
+
+    if effective_mode is OcrMode.ALWAYS:
+        return WorkloadType.INGESTION_OCR
+
+    # AUTO: PDFs go through the classifier; OCR-eligible non-PDFs (images) go
+    # straight to OCR because there's no per-page text geometry to classify.
+    if mime_type == "application/pdf":
+        return WorkloadType.INGESTION_CLASSIFY
+    return WorkloadType.INGESTION_OCR
+
+
+async def classify_pdf_routing(file_path: str | None, file_bytes: bytes | None) -> RoutingDecision:
+    """Run `classify_pdf` and return the routing decision (SHU-739).
+
+    Used by the `_handle_classify_job` worker to decide which downstream
+    stage (INGESTION_TEXT or INGESTION_OCR) to enqueue. Closes the fitz
+    handle before returning — unlike `_classify_pdf_for_routing`, the
+    decision is the only thing crossing the job boundary, so there's no
+    handle to keep alive.
+    """
+    thresholds = RoutingThresholds.from_settings()
+    decision, doc = await _classify_pdf_for_routing(file_path, file_bytes, thresholds)
+    _close_routing_doc(doc)
+    return decision
+
+
+async def extract_text_only(
+    *,
+    mime_type: str,
+    config_manager: ConfigurationManager,
+    file_bytes: bytes | None = None,
+    file_path: str | None = None,
+    filename: str | None = None,
+) -> dict:
+    """Non-OCR text extraction entry point used by `_handle_text_extract_job`.
+
+    Used after `select_initial_workload_type` (or the classifier) routed the
+    document to the text-only path. Calls `TextExtractor` with `ocr_mode=NEVER`
+    so OCR is never attempted, regardless of the original upload mode.
+    """
+    extractor_kwargs: dict = {"mime_type": mime_type, "ocr_mode": OcrMode.NEVER.value}
+    if filename:
+        extractor_kwargs["filename"] = filename
+    if file_path is not None:
+        extractor_kwargs["file_path"] = file_path
+    else:
+        extractor_kwargs["file_bytes"] = file_bytes
+    return await TextExtractor(config_manager=config_manager).extract_text(**extractor_kwargs)
+
+
+async def extract_via_ocr(
+    *,
+    mime_type: str,
+    file_bytes: bytes | None = None,
+    file_path: str | None = None,
+    user_id: str | None = None,
+    ocr_mode: OcrMode = OcrMode.AUTO,
+) -> dict:
+    """OCR-only extraction entry point used by `_handle_ocr_job` (SHU-739).
+
+    The post-split `_handle_ocr_job` calls this directly — no classifier
+    preamble, no fallback to text extraction. The classifier (or the upload
+    path's MIME-aware routing) has already decided OCR is the right choice
+    by the time this runs.
+
+    Falls back to text extraction only when `mime_type` is not OCR-eligible,
+    matching the existing safety check in `extract_text_with_ocr_fallback`.
+    """
+    if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
+        # Defensive: callers should not have routed a non-OCR-eligible MIME
+        # here, but if they did, fall back to text extraction rather than
+        # sending garbage to an OCR provider.
+        logger.warning(
+            "extract_via_ocr called with non-OCR-eligible mime %s, falling back to text extraction",
+            mime_type,
+        )
+        from .config import get_config_manager
+
+        return await extract_text_only(
+            mime_type=mime_type,
+            config_manager=get_config_manager(),
+            file_bytes=file_bytes,
+            file_path=file_path,
+        )
+    return await _run_ocr_service(
+        mime_type, ocr_mode.value, file_bytes=file_bytes, file_path=file_path, user_id=user_id
+    )
+
+
 async def extract_text_with_ocr_fallback(  # noqa: PLR0912 — dispatcher: branches map to mode x mime-type x decision combos
     *,
     mime_type: str,
@@ -265,8 +386,6 @@ async def extract_text_with_ocr_fallback(  # noqa: PLR0912 — dispatcher: branc
         try:
             return await TextExtractor(config_manager=config_manager).extract_text(**extractor_kwargs, fitz_doc=doc)
         except Exception as exc:
-            if mime_type not in OCR_ELIGIBLE_MIME_PREFIXES:
-                raise
             # Classifier said this PDF had real text but extraction failed
             # (corrupt text layer, parser bug, etc.). Pre-SHU-728 the
             # equivalent path silently rerouted to OCR; we preserve that
@@ -319,7 +438,15 @@ async def _classify_pdf_for_routing(
 
     doc = fitz.open(file_path) if file_path is not None else fitz.open(stream=file_bytes, filetype="pdf")
     loop = asyncio.get_running_loop()
-    decision = await loop.run_in_executor(None, classify_pdf, doc, thresholds)
+    try:
+        decision = await loop.run_in_executor(None, classify_pdf, doc, thresholds)
+    except BaseException:
+        # Classifier raised (corrupt PDF, fitz internal, etc.). The caller
+        # only takes ownership of `doc` on the success path, so close it
+        # here to avoid leaking the MuPDF native handle and to fire the
+        # store_shrink that `_close_routing_doc` does in its finally.
+        _close_routing_doc(doc)
+        raise
     return decision, doc
 
 

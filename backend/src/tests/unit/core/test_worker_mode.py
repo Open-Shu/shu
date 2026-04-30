@@ -209,7 +209,10 @@ def test_parse_workload_types_all():
 
     Validates: Requirements 7.4
     """
-    result = parse_workload_types("INGESTION,INGESTION_OCR,INGESTION_EMBED,LLM_WORKFLOW,MAINTENANCE,PROFILING,RE_EMBEDDING")
+    result = parse_workload_types(
+        "INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED,"
+        "LLM_WORKFLOW,MAINTENANCE,PROFILING,RE_EMBEDDING"
+    )
     assert result == set(WorkloadType)
 
 

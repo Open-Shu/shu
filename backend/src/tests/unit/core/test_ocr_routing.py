@@ -231,10 +231,11 @@ class TestClassifyPdfEarlyExit:
         finally:
             doc.close()
 
-    def test_no_early_exit_when_decision_undetermined_until_last_page(self, thresholds):
+    def test_early_exit_at_text_lock_threshold(self, thresholds):
         """A doc where every odd page has text and every even page is blank
-        forces the loop to reach the final page before locking. `pages` is
-        complete and the reason string contains no early-exit marker."""
+        locks TEXT exactly when scanned == needed (real_text_pages=2 >=
+        needed=2.0 at page 3). Page 4 is not visited and the reason string
+        records the early exit."""
         doc = fitz.open()
         # 4 pages: text, blank, text, blank → fraction = 0.5 → TEXT (locked at page 3)
         # but locked exactly when scanned == needed, not earlier.
@@ -299,3 +300,160 @@ def test_corpus_classifier_matches_ground_truth(pdf_path: Path, should_ocr: bool
         f"{pdf_path.name}: expected use_ocr={should_ocr} ({reason}); "
         f"got use_ocr={decision.use_ocr}, fraction={decision.real_text_fraction:.3f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# SHU-739 fix #3: stratified sampling with ambiguous-band fallback
+# ---------------------------------------------------------------------------
+
+
+class TestStratifiedSampleIndices:
+    """Unit tests for the helper that picks which pages to scan in sample mode."""
+
+    def test_sample_smaller_than_doc_picks_distinct_pages(self):
+        from shu.core.ocr_routing import _stratified_sample_indices
+
+        indices = _stratified_sample_indices(page_count=482, sample_size=10)
+        assert len(indices) == len(set(indices)) == 10
+        assert indices == sorted(indices)
+        # Head and tail must be hit
+        assert 0 in indices
+        assert 481 in indices
+
+    def test_sample_at_least_as_big_as_doc_returns_all_pages(self):
+        from shu.core.ocr_routing import _stratified_sample_indices
+
+        assert _stratified_sample_indices(page_count=5, sample_size=10) == [0, 1, 2, 3, 4]
+        assert _stratified_sample_indices(page_count=10, sample_size=10) == list(range(10))
+
+    def test_sample_size_zero_returns_full_range(self):
+        from shu.core.ocr_routing import _stratified_sample_indices
+
+        assert _stratified_sample_indices(page_count=100, sample_size=0) == list(range(100))
+
+
+class TestSamplingClassifier:
+    """SHU-739 fix #3: long documents that are decisively text-or-OCR get
+    classified from a 10-page sample instead of a full 241-page scan."""
+
+    def _build_doc(self, *, page_count: int, real_text_indices: set[int]):
+        """Make a fake fitz.Document where specific page indices have real text."""
+        from unittest.mock import MagicMock
+
+        doc = MagicMock()
+        doc.page_count = page_count
+
+        def load_page(i: int):
+            if i in real_text_indices:
+                # Centered block within the interior margin
+                return _fake_page([(200, 300, 500, 500, "real body text")])
+            return _fake_page([])  # empty
+
+        doc.load_page.side_effect = load_page
+        return doc
+
+    def test_long_decisively_text_doc_uses_sample_path(self):
+        """482-page born-digital book: every sampled page has text. Sample fraction = 1.0,
+        which is > threshold + band, so the sample decision sticks. Full scan is skipped."""
+        from shu.core.ocr_routing import classify_pdf
+
+        thresholds = RoutingThresholds(
+            page_margin_ratio=0.125,
+            text_page_fraction=0.5,
+            sample_size=10,
+            sample_min_pages=30,
+            ambiguous_band=0.15,
+        )
+        # Mark all 482 pages as having real text
+        doc = self._build_doc(page_count=482, real_text_indices=set(range(482)))
+        decision = classify_pdf(doc, thresholds)
+
+        assert decision.use_ocr is False
+        assert decision.real_text_fraction == 1.0
+        assert "sampled_fraction" in decision.reason
+        # Crucially: only the 10 sample pages were loaded, not 241+
+        assert doc.load_page.call_count == 10
+
+    def test_long_decisively_ocr_doc_uses_sample_path(self):
+        """482-page scanned book: every sampled page is empty. Sample fraction = 0.0,
+        which is < threshold - band, so OCR is chosen from the sample alone."""
+        from shu.core.ocr_routing import classify_pdf
+
+        thresholds = RoutingThresholds(
+            page_margin_ratio=0.125,
+            text_page_fraction=0.5,
+            sample_size=10,
+            sample_min_pages=30,
+            ambiguous_band=0.15,
+        )
+        doc = self._build_doc(page_count=482, real_text_indices=set())
+        decision = classify_pdf(doc, thresholds)
+
+        assert decision.use_ocr is True
+        assert decision.real_text_fraction == 0.0
+        assert "sampled_fraction" in decision.reason
+        assert doc.load_page.call_count == 10
+
+    def test_ambiguous_sample_falls_back_to_full_scan(self):
+        """A doc with exactly 50% real text in the sample sits inside the band
+        and triggers a full per-page scan, with the actual decision based on
+        the full ground truth."""
+        from shu.core.ocr_routing import classify_pdf
+
+        thresholds = RoutingThresholds(
+            page_margin_ratio=0.125,
+            text_page_fraction=0.5,
+            sample_size=10,
+            sample_min_pages=30,
+            ambiguous_band=0.15,
+        )
+        # 60-page doc, every other page real-text → fraction = 0.5 (perfectly ambiguous).
+        # Both the sample and the full scan see fraction=0.5, but the sample
+        # triggers fallback so we exercise the full-scan path.
+        real_text = {i for i in range(60) if i % 2 == 0}
+        doc = self._build_doc(page_count=60, real_text_indices=real_text)
+        decision = classify_pdf(doc, thresholds)
+
+        # Sample loaded 10 pages, then the full scan loaded all 60.
+        # Implementation may re-load pages already sampled — we just check
+        # at minimum the full-scan total of 60 is reached.
+        assert doc.load_page.call_count >= 60
+        # The reason string for the full scan path uses "real_text_fraction=...",
+        # not "sampled_fraction=..." — confirms we didn't return the sample decision.
+        assert "sampled_fraction" not in decision.reason
+
+    def test_short_doc_skips_sampling(self):
+        """Documents under sample_min_pages always do the full scan."""
+        from shu.core.ocr_routing import classify_pdf
+
+        thresholds = RoutingThresholds(
+            page_margin_ratio=0.125,
+            text_page_fraction=0.5,
+            sample_size=10,
+            sample_min_pages=30,
+            ambiguous_band=0.15,
+        )
+        # 20 pages: under sample_min_pages, sampling is skipped entirely.
+        doc = self._build_doc(page_count=20, real_text_indices=set(range(20)))
+        decision = classify_pdf(doc, thresholds)
+
+        assert decision.use_ocr is False
+        # No "sampled_fraction" — full-scan path was used (early-exit at page 10).
+        assert "sampled_fraction" not in decision.reason
+
+    def test_sampling_disabled_via_zero_sample_size(self):
+        """Setting sample_size=0 disables sampling regardless of doc length."""
+        from shu.core.ocr_routing import classify_pdf
+
+        thresholds = RoutingThresholds(
+            page_margin_ratio=0.125,
+            text_page_fraction=0.5,
+            sample_size=0,
+            sample_min_pages=30,
+            ambiguous_band=0.15,
+        )
+        doc = self._build_doc(page_count=482, real_text_indices=set(range(482)))
+        decision = classify_pdf(doc, thresholds)
+
+        assert decision.use_ocr is False
+        assert "sampled_fraction" not in decision.reason

@@ -825,7 +825,26 @@ class TextExtractor:
         logger.debug("Extracting PDF text only (no OCR)", extra={"file_path": file_path})
 
         def _extract_text_only():
-            """Extract PDF text without OCR."""
+            """Extract PDF text without OCR.
+
+            SHU-739 fix #4 (revised): per-page MuPDF cache eviction.
+            `fitz.TOOLS.store_shrink(100)` is called after each page so the
+            MuPDF store doesn't accumulate font tables / character maps /
+            parsed content streams across all pages of a single document.
+            SHU-710 already calls store_shrink at document close; this adds
+            the per-iteration call to bound the in-loop store size.
+
+            (An earlier version of this fix also wrote pages to a temp file
+            to bound Python-heap accumulation, but lab measurement showed
+            no working-set benefit — the savings were offset by Linux file
+            cache. Reverted in favour of the simpler list+join shape from
+            fix #1, keeping only the per-page store_shrink.)
+            """
+            try:
+                import fitz as _fitz
+            except ImportError:
+                _fitz = None  # `_open_pdf` will raise the same import error
+
             try:
                 with _open_pdf(file_path, file_content, doc=fitz_doc) as doc:
                     total_pages = len(doc)
@@ -841,6 +860,19 @@ class TextExtractor:
 
                         if page_text.strip():
                             parts.append(page_text)
+
+                        # Explicit per-page MuPDF cleanup: release cached
+                        # font tables, character maps, and content streams
+                        # that the page parsed. SHU-710 caps the store
+                        # globally; this call forces release between pages
+                        # so the in-loop cache doesn't balloon to doc-size.
+                        # Best-effort — failures here must not mask
+                        # extraction success.
+                        if _fitz is not None:
+                            try:
+                                _fitz.TOOLS.store_shrink(100)
+                            except Exception:
+                                pass
 
                         if progress_callback:
                             progress_callback(page_num + 1, total_pages)
