@@ -950,10 +950,38 @@ class TestGetSubscriptionMarkupMultiplier:
     @pytest.mark.asyncio
     @patch("shu.billing.stripe_client.stripe")
     async def test_stripe_error_raises_stripe_client_error(self, mock_stripe):
-        """A Stripe API failure on the retrieve call surfaces as StripeClientError."""
+        """A Stripe API failure on the retrieve call surfaces as StripeClientError.
+
+        The error message originates in ``get_subscription`` (the shared
+        wrapper) since this method now delegates to it for the cache benefit.
+        """
         mock_stripe.StripeError = Exception
+        mock_stripe.InvalidRequestError = ValueError  # placeholder; not raised here
         mock_stripe.Subscription.retrieve_async = AsyncMock(side_effect=Exception("boom"))
 
         client = StripeClient(_make_settings())
-        with pytest.raises(StripeClientError, match="Failed to retrieve subscription for markup"):
+        with pytest.raises(StripeClientError, match="Failed to retrieve subscription"):
             await client.get_subscription_markup_multiplier("sub_abc")
+
+    @pytest.mark.asyncio
+    @patch("shu.billing.stripe_client.stripe")
+    async def test_subscription_is_cached_across_methods_on_same_client(self, mock_stripe):
+        """Two methods on the same StripeClient share a single Stripe retrieve.
+
+        Locks in the per-request memoization optimization — if the cache
+        breaks, a second Stripe API call would happen on the same request,
+        regressing the consolidation work.
+        """
+        sub = _make_subscription_with_metered_price(unit_amount_decimal="0.00013")
+        retrieve = AsyncMock(return_value=sub)
+        mock_stripe.Subscription.retrieve_async = retrieve
+
+        client = StripeClient(_make_settings())
+        # First retrieve via the wrapper.
+        first = await client.get_subscription("sub_abc")
+        # Second consumer (markup) reuses the cached object.
+        markup = await client.get_subscription_markup_multiplier("sub_abc")
+
+        assert first is sub
+        assert markup == Decimal("1.3000")
+        assert retrieve.await_count == 1

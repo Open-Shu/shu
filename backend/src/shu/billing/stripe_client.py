@@ -50,6 +50,13 @@ class StripeClient:
 
     def __init__(self, settings: BillingSettings | None = None) -> None:
         self._settings = settings or get_billing_settings()
+        # Per-request memoization for `get_subscription`. StripeClient
+        # instances are short-lived (constructed per-request in the router,
+        # per-call in enforcement/sync), so the cache cannot leak across
+        # requests. Two methods on the same request — seat-state and
+        # markup-multiplier — both need the same Subscription object;
+        # caching here folds them into one Stripe API call.
+        self._subscription_cache: dict[str, Subscription] = {}
         self._validate_config()
         self._configure_stripe()
 
@@ -149,15 +156,35 @@ class StripeClient:
     # =========================================================================
 
     async def get_subscription(self, subscription_id: str) -> Subscription | None:
-        """Retrieve a subscription by ID."""
+        """Retrieve a subscription by ID.
+
+        Returns None when Stripe responds "no such subscription" so callers
+        can decide whether the absence is fatal. Other Stripe errors raise
+        StripeClientError.
+
+        The retrieved Subscription is cached on this StripeClient instance
+        for the lifetime of the instance (one request / operation). Multiple
+        callers within the same request share one Stripe API call. Always
+        expanded with ``items.data.price`` so price-derived lookups (markup
+        multiplier) don't need a second fetch — the bandwidth cost is small
+        and the latency win compounds across the dashboard's call sites.
+        """
+        cached = self._subscription_cache.get(subscription_id)
+        if cached is not None:
+            return cached
         try:
-            return await stripe.Subscription.retrieve_async(subscription_id)
+            sub = await stripe.Subscription.retrieve_async(
+                subscription_id,
+                expand=["items.data.price"],
+            )
         except stripe.InvalidRequestError as e:
             if "No such subscription" in str(e):
                 return None
             raise StripeClientError(f"Failed to retrieve subscription: {e}", e) from e
         except stripe.StripeError as e:
             raise StripeClientError(f"Failed to retrieve subscription: {e}", e) from e
+        self._subscription_cache[subscription_id] = sub
+        return sub
 
     async def get_upcoming_invoice(
         self,
@@ -755,6 +782,9 @@ class StripeClient:
         markup of 1.3.
 
         Returns None when:
+        - the subscription doesn't exist (treated quietly so callers can
+          fall back to a constant — though in practice an upstream call
+          like ``get_subscription_seat_state`` would have already raised),
         - the subscription has no metered item,
         - the metered Price has no `unit_amount_decimal` (e.g., a tiered
           pricing model — flag with a follow-up if you ever switch to
@@ -764,19 +794,14 @@ class StripeClient:
         - or the parsed value is non-positive.
 
         Raises StripeClientError on any Stripe API failure so display-only
-        callers can degrade.
+        callers can degrade. Delegates to ``self.get_subscription`` so when
+        another method on the same StripeClient has already retrieved the
+        subscription this request, the cached object is reused (no extra
+        Stripe round-trip).
         """
-        try:
-            subscription = await stripe.Subscription.retrieve_async(
-                subscription_id,
-                expand=["items.data.price"],
-            )
-        except stripe.StripeError as e:
-            logger.error(
-                "Failed to retrieve subscription for markup",
-                extra={"subscription_id": subscription_id, "error": str(e)},
-            )
-            raise StripeClientError(f"Failed to retrieve subscription for markup: {e}", e) from e
+        subscription = await self.get_subscription(subscription_id)
+        if subscription is None:
+            return None
 
         metered_item = next(
             (item for item in subscription["items"]["data"] if _is_metered(item["price"])),
