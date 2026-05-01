@@ -8,18 +8,28 @@ wrong value sees it during deploy verification, not during a payment
 failure).
 
 This module owns transport classification only. Stale-while-error policy
-and TTL caching live in `state_cache.py` — the consumer (SHU-703
+and TTL caching live in `billing_state_cache.py` — the consumer (SHU-703
 enforcement) talks to the cache, never directly to this client.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime
+from typing import Annotated, Any
 from uuid import UUID
 
 import httpx
+from pydantic import (
+    AwareDatetime,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
+from pydantic.dataclasses import dataclass
 
 from shu.billing.router_envelope import (
     SIGNATURE_HEADER,
@@ -28,11 +38,35 @@ from shu.billing.router_envelope import (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, config=ConfigDict(extra="ignore"))
 class BillingState:
-    openrouter_key_disabled: bool
-    payment_failed_at: datetime | None
-    payment_grace_days: int
+    """Frozen CP billing-state record — also the wire-validation schema.
+
+    The strict field types are load-bearing: a CP version-skew that sends
+    `"false"` (string) for openrouter_key_disabled would otherwise flow
+    through as truthy and lock healthy users out of OCR. AwareDatetime +
+    the validator below reject Unix timestamps and naive datetimes —
+    downstream tz-aware arithmetic would crash on naive values.
+    """
+
+    openrouter_key_disabled: StrictBool
+    payment_failed_at: AwareDatetime | None
+    payment_grace_days: Annotated[StrictInt, Field(ge=0)]
+
+    @field_validator("payment_failed_at", mode="before")
+    @classmethod
+    def _reject_unix_timestamp(cls, v: object) -> object:
+        # AwareDatetime in lax mode coerces Unix timestamps (int/float) to
+        # UTC datetimes — that masks a CP wire-format drift. Strings (parsed
+        # by pydantic) and datetime instances (direct construction) pass
+        # through. bool is a subclass of int, but AwareDatetime rejects it
+        # downstream so no special-casing here.
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            raise TypeError(f"payment_failed_at must be ISO string or datetime, " f"not {type(v).__name__}")
+        return v
+
+
+_BILLING_STATE_ADAPTER = TypeAdapter(BillingState)
 
 
 # Cold-start fallback when the cache has never observed a successful
@@ -64,6 +98,16 @@ class CpUnexpectedStatus(CpClientError):
         super().__init__(f"CP returned status {status}: {body}")
         self.status = status
         self.body = body
+
+
+class CpMalformedResponse(CpClientError):
+    """CP returned 2xx with a body that does not match the expected schema.
+
+    Surfacing this as a CpClientError keeps the cache's stale-while-error
+    fail-open path active when CP misbehaves at the application layer
+    (corrupted JSON, missing fields, type drift) rather than letting the
+    raw parse exception escape to consumers.
+    """
 
 
 class CpClient:
@@ -98,12 +142,16 @@ class CpClient:
         except httpx.RequestError as exc:
             raise CpUnreachable(f"CP unreachable: {exc}") from exc
 
-        if response.status_code == 200:
-            return self._parse(response.json())
         if response.status_code == 401:
             self._log_auth_failure()
             raise CpAuthFailed(f"CP rejected signature for tenant poll at {self._path}")
-        raise CpUnexpectedStatus(response.status_code, response.text)
+        if response.status_code != 200:
+            raise CpUnexpectedStatus(response.status_code, response.text)
+
+        try:
+            return self._parse(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise CpMalformedResponse(f"CP returned a malformed billing-state body: {exc}") from exc
 
     def _log_auth_failure(self) -> None:
         if not self._auth_failure_seen:
@@ -118,10 +166,5 @@ class CpClient:
             self._logger.warning("CP returned 401 for billing-state poll", extra={"path": self._path})
 
     @staticmethod
-    def _parse(payload: dict) -> BillingState:
-        raw_failed_at = payload["payment_failed_at"]
-        return BillingState(
-            openrouter_key_disabled=payload["openrouter_key_disabled"],
-            payment_failed_at=(datetime.fromisoformat(raw_failed_at) if raw_failed_at is not None else None),
-            payment_grace_days=payload["payment_grace_days"],
-        )
+    def _parse(payload: Any) -> BillingState:
+        return _BILLING_STATE_ADAPTER.validate_python(payload)

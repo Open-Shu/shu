@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -24,6 +25,7 @@ from shu.billing.cp_client import (
     BillingState,
     CpAuthFailed,
     CpClient,
+    CpMalformedResponse,
     CpUnexpectedStatus,
     CpUnreachable,
 )
@@ -193,4 +195,112 @@ async def test_connect_error_raises_cp_unreachable() -> None:
     http_client = _http_client_raising(httpx.ConnectError("refused"))
 
     with pytest.raises(CpUnreachable):
+        await _make_client(http_client).fetch_billing_state()
+
+
+# Malformed-200 paths: a buggy or version-skewed CP can return 200 with a
+# body that doesn't match the contract. The cache only catches CpClientError,
+# so without the wrap these would escape to consumers and break fail-open.
+
+
+def _malformed_json_response() -> MagicMock:
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.json = MagicMock(side_effect=json.JSONDecodeError("nope", "doc", 0))
+    return response
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_raises_cp_malformed_response() -> None:
+    http_client = _http_client_returning(_malformed_json_response())
+
+    with pytest.raises(CpMalformedResponse):
+        await _make_client(http_client).fetch_billing_state()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # Missing payment_failed_at
+        {"openrouter_key_disabled": False, "payment_grace_days": 0},
+        # Missing openrouter_key_disabled
+        {"payment_failed_at": None, "payment_grace_days": 0},
+        # Missing payment_grace_days
+        {"openrouter_key_disabled": False, "payment_failed_at": None},
+    ],
+    ids=["missing-failed-at", "missing-disabled", "missing-grace-days"],
+)
+async def test_missing_field_raises_cp_malformed_response(payload: dict) -> None:
+    http_client = _http_client_returning(_ok_response(payload))
+
+    with pytest.raises(CpMalformedResponse):
+        await _make_client(http_client).fetch_billing_state()
+
+
+@pytest.mark.asyncio
+async def test_bad_iso_datetime_raises_cp_malformed_response() -> None:
+    http_client = _http_client_returning(
+        _ok_response(
+            {
+                "openrouter_key_disabled": False,
+                "payment_failed_at": "not-a-date",
+                "payment_grace_days": 0,
+            }
+        )
+    )
+
+    with pytest.raises(CpMalformedResponse):
+        await _make_client(http_client).fetch_billing_state()
+
+
+@pytest.mark.asyncio
+async def test_list_payload_raises_cp_malformed_response() -> None:
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.json = MagicMock(return_value=["not", "a", "dict"])
+    http_client = _http_client_returning(response)
+
+    with pytest.raises(CpMalformedResponse):
+        await _make_client(http_client).fetch_billing_state()
+
+
+# Type-drift coverage: the schema is StrictBool / NonNegativeInt /
+# AwareDatetime so a CP version-skew that sends string-encoded booleans /
+# ints, naive datetimes, or negative grace_days surfaces as
+# CpMalformedResponse rather than silently corrupting downstream
+# enforcement (e.g. truthy "false" string locking healthy users out, or
+# naive timestamps crashing tz-aware arithmetic).
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # String for bool → would be truthy if not validated
+        {"openrouter_key_disabled": "false", "payment_failed_at": None, "payment_grace_days": 0},
+        # Int for bool — pydantic StrictBool rejects 0/1 too
+        {"openrouter_key_disabled": 0, "payment_failed_at": None, "payment_grace_days": 0},
+        # String for int → would break int comparison/arithmetic
+        {"openrouter_key_disabled": False, "payment_failed_at": None, "payment_grace_days": "7"},
+        # Negative grace_days → contract violation
+        {"openrouter_key_disabled": False, "payment_failed_at": None, "payment_grace_days": -1},
+        # Naive datetime → would crash tz-aware downstream arithmetic
+        {"openrouter_key_disabled": False, "payment_failed_at": "2026-04-30T12:34:56", "payment_grace_days": 0},
+        # Non-string for the datetime field
+        {"openrouter_key_disabled": False, "payment_failed_at": 1714478096, "payment_grace_days": 0},
+    ],
+    ids=[
+        "string-for-bool",
+        "int-for-bool",
+        "string-for-int",
+        "negative-grace-days",
+        "naive-datetime",
+        "int-for-datetime",
+    ],
+)
+async def test_type_drift_raises_cp_malformed_response(payload: dict) -> None:
+    http_client = _http_client_returning(_ok_response(payload))
+
+    with pytest.raises(CpMalformedResponse):
         await _make_client(http_client).fetch_billing_state()

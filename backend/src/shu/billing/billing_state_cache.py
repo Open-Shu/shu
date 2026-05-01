@@ -3,10 +3,12 @@
 The cache is the single value consumers see. Policy lives entirely here:
     - Fresh hit (within TTL): return cached value, no fetch.
     - Stale or empty + CP success: update both fields, return new value.
-    - Stale + CP failure: keep the last successful value, leave
-      `_last_success_at` untouched (so the next call retries on the next
-      TTL boundary, not a delayed one), log a warning, return the stale
-      value to the caller. No exceptions propagated.
+    - Stale + CP failure: serve cached (or HEALTHY_DEFAULT on cold start),
+      and arm a one-TTL backoff window. While the backoff is armed, no
+      further CP fetches happen — every get() short-circuits to the
+      cached value or default. Without this, every call past the
+      success-TTL would re-enter the fetch branch and serialize 5s
+      timeouts under the lock during a CP outage.
     - Cold start (no prior success) + CP failure: return HEALTHY_DEFAULT.
 
 The fail-open trade-off is deliberate (see SHU-743 Notes): CP outages
@@ -17,9 +19,8 @@ is gated at OpenRouter, so the leak window is OCR-only.
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -47,15 +48,19 @@ class BillingStateCache:
         self,
         client: CpClient,
         ttl_seconds: int,
-        logger: logging.Logger,
         clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._client = client
         self._ttl_seconds = ttl_seconds
-        self._logger = logger
         self._clock = clock
         self._value: BillingState | None = None
         self._last_success_at: datetime | None = None
+        # Set on every failed fetch attempt to `now + ttl`. While the clock
+        # is before this deadline, get() short-circuits without hitting CP —
+        # capping the failure-retry rate at one CP attempt per TTL during
+        # an outage. Without it, every call past the success-TTL would
+        # re-enter the fetch branch and serialize 5s timeouts under the lock.
+        self._next_retry_after: datetime | None = None
         # Single-flight: concurrent get() callers wait on this lock instead
         # of stampeding CP. The freshness re-check inside the lock prevents
         # waiters from triggering a redundant fetch after the holder succeeds.
@@ -67,10 +72,13 @@ class BillingStateCache:
                 # type-narrowed: _is_fresh implies a prior success, so _value is set.
                 assert self._value is not None
                 return self._value
+            if self._is_in_failure_backoff():
+                return self._value if self._value is not None else HEALTHY_DEFAULT
 
             try:
                 value = await self._client.fetch_billing_state()
             except CpClientError as exc:
+                self._next_retry_after = self._clock() + timedelta(seconds=self._ttl_seconds)
                 return self._serve_stale_or_default(exc)
 
             self._value = value
@@ -83,13 +91,14 @@ class BillingStateCache:
         age = (self._clock() - self._last_success_at).total_seconds()
         return age < self._ttl_seconds
 
+    def _is_in_failure_backoff(self) -> bool:
+        return self._next_retry_after is not None and self._clock() < self._next_retry_after
+
     def _serve_stale_or_default(self, exc: CpClientError) -> BillingState:
-        # Note: _last_success_at is deliberately NOT advanced here. Advancing
-        # it would push the next retry out by another full TTL window even
-        # though we never got fresh state — the goal is to retry on the next
-        # boundary based on the LAST successful fetch, not the last attempt.
+        # _last_success_at is deliberately NOT advanced on failure; the retry
+        # cadence is bounded by _next_retry_after instead.
         if self._value is not None:
-            self._logger.warning(
+            _logger.warning(
                 "CP unreachable, serving stale billing state",
                 extra={
                     "last_success_at": self._last_success_at.isoformat() if self._last_success_at else None,
@@ -97,7 +106,7 @@ class BillingStateCache:
                 },
             )
             return self._value
-        self._logger.warning(
+        _logger.warning(
             "CP unreachable on cold start, serving healthy default",
             extra={"exc_type": type(exc).__name__},
         )
@@ -111,6 +120,11 @@ async def initialize_billing_state_cache(app: FastAPI) -> None:
     Skipped on self-hosted / dev deployments where CP isn't configured —
     presence of all three of `tenant_id`, `router_shared_secret`, and
     `cp_base_url` is the signal that the tenant is meant to talk to CP.
+
+    `app.state.billing_state_cache` is always set after this returns —
+    either to a `BillingStateCache` instance or to `None`. Consumers can
+    then check for `None` deterministically rather than handling
+    AttributeError.
     """
     settings = get_settings_instance()
     billing_settings = get_billing_settings()
@@ -119,27 +133,28 @@ async def initialize_billing_state_cache(app: FastAPI) -> None:
             "CP billing-state cache disabled — tenant_id, router secret, or "
             "CP base URL not configured (self-hosted / dev)"
         )
+        app.state.billing_state_cache = None
         return
 
+    # Set None up-front so any failure below still leaves a discoverable attr.
+    app.state.billing_state_cache = None
     try:
         http_client = await get_http_client()
-        client = CpClient(
-            base_url=billing_settings.cp_base_url,
-            tenant_id=UUID(settings.tenant_id),
-            shared_secret=billing_settings.router_shared_secret,
-            http_client=http_client,
-            logger=get_logger("shu.billing.cp_client"),
-        )
         cache = BillingStateCache(
-            client=client,
+            client=CpClient(
+                base_url=billing_settings.cp_base_url,
+                tenant_id=UUID(settings.tenant_id),
+                shared_secret=billing_settings.router_shared_secret,
+                http_client=http_client,
+                logger=get_logger("shu.billing.cp_client"),
+            ),
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
-            logger=get_logger("shu.billing.billing_state_cache"),
         )
-        # Eager fetch absorbs CP unreachability via stale-while-error, so this
-        # never raises a CpClientError. Any exception here is a misconfiguration
-        # (bad UUID, broken httpx, etc.) caught by the outer try/except.
-        await cache.get()
+        # Assign before the eager fetch so a programmer error in get() still
+        # leaves the cache reachable. CpClientError is absorbed inside get();
+        # only programmer errors (bad UUID, broken httpx, etc.) reach here.
         app.state.billing_state_cache = cache
-        _logger.info("CP billing-state cache initialized: %s", await cache.get())
+        cache = await cache.get()
+        _logger.info("CP billing-state cache initialized: %s", cache)
     except Exception as e:
         _logger.warning(f"CP billing-state cache initialization failed: {e}")

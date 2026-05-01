@@ -17,14 +17,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from shu.billing.billing_state_cache import BillingStateCache
 from shu.billing.cp_client import (
     HEALTHY_DEFAULT,
     BillingState,
+    CpAuthFailed,
     CpClient,
     CpUnreachable,
 )
-from shu.billing.billing_state_cache import BillingStateCache
 
+# Module logger name used by BillingStateCache — caplog filters target this.
+_CACHE_LOGGER = "shu.billing.billing_state_cache"
 
 _T0 = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
 _TTL = 60
@@ -64,6 +67,24 @@ def _stepping_clock(start: datetime, step: timedelta) -> Callable[[], datetime]:
     return lambda: next(iterator)
 
 
+class _ManualClock:
+    """Clock controlled explicitly by the test, decoupled from call count.
+
+    Use this when the test needs to reason about TTL/backoff boundaries —
+    `_stepping_clock` advances on every call and breaks when production
+    code adds or removes a clock read.
+    """
+
+    def __init__(self, start: datetime) -> None:
+        self._now = start
+
+    def __call__(self) -> datetime:
+        return self._now
+
+    def advance(self, delta: timedelta) -> None:
+        self._now += delta
+
+
 def _make_cache(
     client: MagicMock,
     *,
@@ -73,7 +94,6 @@ def _make_cache(
     return BillingStateCache(
         client=client,
         ttl_seconds=ttl,
-        logger=logging.getLogger("test_state_cache"),
         clock=clock if clock is not None else lambda: _T0,
     )
 
@@ -144,7 +164,7 @@ async def test_cold_start_with_cp_failure_returns_healthy_default(
 ) -> None:
     client = _stub_client(side_effects=[CpUnreachable("down")])
 
-    with caplog.at_level(logging.WARNING, logger="test_state_cache"):
+    with caplog.at_level(logging.WARNING, logger=_CACHE_LOGGER):
         result = await _make_cache(client).get()
 
     assert result == HEALTHY_DEFAULT
@@ -163,7 +183,7 @@ async def test_warm_cache_with_cp_failure_serves_stale_value(
 
     await cache.get()  # cold-start success populates the cache.
 
-    with caplog.at_level(logging.WARNING, logger="test_state_cache"):
+    with caplog.at_level(logging.WARNING, logger=_CACHE_LOGGER):
         # Second call lands past TTL with CP failing.
         result = await cache.get()
 
@@ -216,4 +236,82 @@ async def test_configured_ttl_governs_freshness_window(ttl: int) -> None:
 
     assert await cache.get() == s1
     assert await cache.get() == s2
+    assert client.fetch_billing_state.await_count == 2
+
+
+# Failure backoff: after a failed fetch attempt, the cache must NOT retry CP
+# until one full TTL has elapsed since the failure. The naive implementation
+# (without _next_retry_after) re-fetches on every call past the success-TTL,
+# turning a CP outage into one serialized 5s timeout per consumer call.
+
+
+@pytest.mark.asyncio
+async def test_cold_start_failure_suppresses_retries_within_backoff_window() -> None:
+    client = _stub_client(side_effects=[CpUnreachable("down"), CpUnreachable("down")])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == HEALTHY_DEFAULT  # @ T0: first attempt fails
+
+    clock.advance(timedelta(seconds=_TTL // 2))  # well within backoff
+    assert await cache.get() == HEALTHY_DEFAULT  # served without fetch
+
+    assert client.fetch_billing_state.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_cache_failure_suppresses_retries_within_backoff_window() -> None:
+    seeded = _state(disabled=True)
+    client = _stub_client(
+        side_effects=[seeded, CpUnreachable("down"), CpUnreachable("still down")]
+    )
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == seeded  # cold-start success @ T0
+
+    clock.advance(timedelta(seconds=_TTL + 1))  # past success-TTL
+    assert await cache.get() == seeded  # one fetch, fails, serves stale
+
+    clock.advance(timedelta(seconds=_TTL // 2))  # within failure backoff
+    assert await cache.get() == seeded  # served stale, no fetch
+
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failure_backoff_expires_one_ttl_after_the_failed_attempt() -> None:
+    s1, s2 = _state(disabled=True), _state(disabled=False)
+    client = _stub_client(side_effects=[s1, CpUnreachable("blip"), s2])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == s1  # success @ T0
+
+    clock.advance(timedelta(seconds=_TTL + 1))  # past success-TTL
+    assert await cache.get() == s1  # fetch fails, serves stale, arms backoff
+
+    clock.advance(timedelta(seconds=_TTL + 1))  # past backoff window
+    assert await cache.get() == s2  # CP recovered, cache replaced
+
+    assert client.fetch_billing_state.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_cp_auth_failed_is_treated_identically_to_unreachable() -> None:
+    """Spec task 10(i): CpAuthFailed must trigger stale-while-error fail-open
+    just like CpUnreachable — CP returning 401 (operator misconfig) must not
+    lock customers out.
+    """
+    seeded = _state(disabled=False)
+    client = _stub_client(side_effects=[seeded, CpAuthFailed("bad sig")])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == seeded
+    clock.advance(timedelta(seconds=_TTL + 1))
+    assert await cache.get() == seeded  # served stale, not raised
+
+    clock.advance(timedelta(seconds=_TTL // 2))
+    assert await cache.get() == seeded  # within backoff, no fetch
     assert client.fetch_billing_state.await_count == 2
