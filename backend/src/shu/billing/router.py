@@ -346,16 +346,23 @@ async def handle_webhook(
 )
 async def get_billing_config_endpoint(
     settings: Annotated[BillingSettings, Depends(get_billing_settings_dependency)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
     """Get public billing configuration.
 
     Returns configuration that's safe to expose to the frontend,
-    such as the Stripe publishable key.
+    such as the Stripe publishable key. Admins additionally get a live
+    ``validation_issues`` list — same shape as the startup log lines —
+    so they can re-inspect after env-var changes without scraping logs.
     """
-    return ShuResponse.success(
-        {
-            "configured": settings.is_configured,
-            "publishable_key": settings.publishable_key,
-            "mode": settings.mode,
-        }
-    )
+    payload: dict[str, object] = {
+        "configured": settings.is_configured,
+        "publishable_key": settings.publishable_key,
+        "mode": settings.mode,
+    }
+    if current_user.can_manage_users():
+        try:
+            payload["validation_issues"] = settings.validate_configuration() if settings.is_configured else []
+        except Exception:
+            payload["validation_issues"] = []
+    return ShuResponse.success(payload)
