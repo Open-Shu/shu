@@ -258,12 +258,23 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Model pricing sync failed: {e}")
 
+    # Surface billing-config issues (or self-hosted state) at boot — silent
+    # misconfig used to take until first request to manifest. This runs in its
+    # own try/except so a downstream DB-seed failure can't suppress the config
+    # diagnostics; validation is pure and DB-independent.
+    try:
+        from .billing.config import get_billing_settings, log_billing_validation
+
+        log_billing_validation(get_billing_settings())
+    except Exception as e:
+        logger.warning(f"billing config validation failed: {e}")
+
     # Ensure the billing_state singleton row exists, then seed from env vars.
     # These run in separate transaction scopes: ensure_singleton commits via
     # session.begin() context exit; seed_from_config → BillingStateService.update()
     # always commits its own transaction and must not run inside an outer begin().
     try:
-        from .billing.config import get_billing_settings, log_billing_validation
+        from .billing.config import get_billing_settings
         from .billing.state_service import BillingStateService
         from .core.database import get_async_session_local
 
@@ -273,9 +284,6 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             async with session.begin():
                 await BillingStateService.ensure_singleton(session)
             await BillingStateService.seed_from_config(session, billing_settings)
-        # Surface configuration issues (or self-hosted state) at boot — silent
-        # misconfig used to take until first request to manifest.
-        log_billing_validation(billing_settings)
     except Exception as e:
         logger.warning(f"billing_state init failed: {e}")
 
