@@ -33,16 +33,14 @@ User Preferences → Model Config → Knowledge Base Config → Global Defaults
 
 ### Version and Build Metadata
 
-The application exposes version/build information via environment variables that are typically baked in at build-time by the Makefile and GitHub Actions. These are read by Settings and surfaced at `/api/v1/system/version` and in readiness checks.
+The application exposes version/build information via environment variables that the Makefile bakes in at build-time. These are read by Settings and surfaced at `/api/v1/system/version` and in readiness checks.
 
 - SHU_APP_VERSION: SemVer of the build (e.g., 1.2.3). Defaults to 0.0.0-dev for local builds without tags.
 - SHU_GIT_SHA: Short commit SHA for the build (e.g., abc1234). Defaults to unknown.
 - SHU_BUILD_TIMESTAMP: UTC ISO8601 timestamp when the image was built.
 - SHU_DB_RELEASE: Expected Alembic baseline that this image is built against (latest numeric squashed revision like 002). Readiness fails (503) if runtime DB alembic_version does not match this value.
 
-Notes:
-- These values should not be set manually in normal workflows; they are supplied by the build.
-- For local builds, Makefile derives a reasonable VERSION from git tags or falls back to dev format, and detects DB_RELEASE from alembic/versions.
+The Makefile derives `SHU_APP_VERSION` from git tags (or falls back to `0.0.0-dev`) and detects `SHU_DB_RELEASE` from `alembic/versions`. Don't set these by hand in normal workflows.
 
 
 ## OCR Processing Policy (Documents & Attachments)
@@ -385,7 +383,8 @@ python -m shu.worker --workload-types MAINTENANCE,PROFILING
 
 ##### Horizontal Scaling Scenarios
 
-**Scenario 1: Single-Node Development/Bare-Metal**
+###### Scenario 1: Single-Node Development/Bare-Metal
+
 ```bash
 # No Redis needed, workers run in-process
 SHU_WORKERS_ENABLED=true  # or unset (default)
@@ -393,41 +392,27 @@ SHU_WORKERS_ENABLED=true  # or unset (default)
 python -m uvicorn shu.main:app --app-dir backend/src
 ```
 
-**Scenario 2: Horizontally-Scaled Production**
+###### Scenario 2: Multi-Process / Multi-Container
+
+If you need to scale workers separately from the API (e.g. ingestion bursts that shouldn't tie up HTTP capacity), run them as separate processes against a shared Redis:
+
 ```bash
-# Redis required for cross-process communication. If Redis is down or unreachable,
-# the queue/cache factories will raise connection errors rather than silently
+# Redis is required for cross-process queue/cache. If Redis is unreachable,
+# the queue/cache factories raise connection errors rather than silently
 # falling back to in-memory implementations.
 SHU_REDIS_URL=redis://redis:6379/0
-SHU_WORKERS_ENABLED=false  # Disable workers in API process
+SHU_WORKERS_ENABLED=false  # API process serves HTTP only
 
-# Deploy API replicas (no workers)
-# Container 1-N: API only
+# API process(es)
 python -m uvicorn shu.main:app --app-dir backend/src
 
-# Deploy specialized worker replicas
-# Container A1-AN: Ingestion workers — must cover the full ingestion pipeline
-# (plugin feeds, classifier routing, text extraction, OCR, embedding)
+# Worker process(es) — split or combine workload types as needed
 python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED
-
-# Container B1-BN: LLM workers (scale based on LLM request volume)
 python -m shu.worker --workload-types LLM_WORKFLOW
-
-# Container C1-CN: Maintenance workers (typically 1-2 replicas)
 python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
 
-**Scenario 3: Mixed Workload Scaling**
-```bash
-# Scale ingestion workers independently from LLM workers
-# Useful when document ingestion spikes don't correlate with chat usage
-
-# Kubernetes example:
-# - api: 3 replicas, SHU_WORKERS_ENABLED=false
-# - worker-ingestion: 5 replicas, --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED
-# - worker-llm: 2 replicas, --workload-types LLM_WORKFLOW
-# - worker-maintenance: 1 replica, --workload-types MAINTENANCE,PROFILING
-```
+The split above is illustrative; consolidate workload types onto a single worker if your load doesn't warrant separation. See the WorkloadType reference below for what each type covers.
 
 ##### WorkloadType Reference
 
@@ -778,9 +763,10 @@ npm start
 ## Production Deployment
 
 ### 1. Database Setup
-- Use a managed PostgreSQL service (AWS RDS, Google Cloud SQL, etc.)
-- Ensure pgvector extension is installed
-- Set up proper backup and monitoring
+
+- Run PostgreSQL on whatever infrastructure suits your deployment (self-managed Postgres, container, or a managed service if you prefer)
+- Ensure the pgvector extension is installed and enabled in the Shu database
+- Set up backups and basic monitoring appropriate to your environment
 
 ### 2. Environment Configuration
 - Use environment variables for sensitive configuration
@@ -942,12 +928,10 @@ variants, same corpus, same driver).
 
 ### Recommended values
 
-| Environment       | MALLOC_ARENA_MAX | SHU_MEMORY_TRIM_INTERVAL_SECONDS |
-| ----------------- | ---------------- | -------------------------------- |
-| local dev (macOS) | unset            | `0` (malloc_trim is a no-op)     |
-| Kubernetes dev    | `2`              | `60`                             |
-| Kubernetes demo   | `2`              | `60`                             |
-| Kubernetes prod   | `2`              | `60`                             |
+| Environment                              | MALLOC_ARENA_MAX | SHU_MEMORY_TRIM_INTERVAL_SECONDS |
+| ---------------------------------------- | ---------------- | -------------------------------- |
+| Local dev (macOS / non-glibc)            | unset            | `0` (malloc_trim is a no-op)     |
+| Linux container / VM (glibc, any tier)   | `2`              | `60`                             |
 
 ## API Documentation
 
