@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.core.exceptions import KnowledgeBaseNotFoundError
 from shu.models.document import DocumentStatus
 
 
@@ -55,9 +56,9 @@ class TestEmbedHandlerKBNotFound:
     @pytest.mark.asyncio
     async def test_kb_not_found_marks_document_error_and_returns(self):
         """
-        When process_and_update_chunks raises ValueError (KB not found),
-        the document is marked ERROR and the handler returns without raising.
-        No retry will occur.
+        When process_and_update_chunks raises KnowledgeBaseNotFoundError
+        (KB deleted between OCR and embed stages), the document is marked
+        ERROR and the handler returns without raising. No retry will occur.
         """
         mock_document = MagicMock()
         mock_document.id = "doc-123"
@@ -70,7 +71,7 @@ class TestEmbedHandlerKBNotFound:
 
         mock_doc_service = MagicMock()
         mock_doc_service.process_and_update_chunks = AsyncMock(
-            side_effect=ValueError("Knowledge base kb-456 not found")
+            side_effect=KnowledgeBaseNotFoundError("kb-456")
         )
 
         mock_settings = MagicMock()
@@ -109,7 +110,7 @@ class TestEmbedHandlerKBNotFound:
 
         mock_doc_service = MagicMock()
         mock_doc_service.process_and_update_chunks = AsyncMock(
-            side_effect=ValueError("Knowledge base not found")
+            side_effect=KnowledgeBaseNotFoundError("kb-456")
         )
 
         mock_settings = MagicMock()
@@ -245,3 +246,110 @@ class TestEmbedHandlerEmbeddingStatusBeforeProcessing:
             f"commit must happen before processing, "
             f"but commit was at {commit_after_embedding_idx}, processing at {process_idx}"
         )
+
+
+class TestEmbedHandlerEmbeddingProviderError:
+    """SHU-740: distinguish transient provider failures from terminal errors.
+
+    Provider failures (mismatched-count responses, empty results) must
+    re-raise so the queue's retry/backoff fires; only at max-attempts does
+    the document transition to ERROR with a processing_error that names
+    the provider failure rather than blaming the KB.
+    """
+
+    @pytest.mark.asyncio
+    async def test_provider_error_below_max_attempts_re_raises_for_retry(self):
+        """
+        EmbeddingProviderError on a job with attempts < max_attempts must
+        re-raise so the queue retries. Document must NOT be marked ERROR
+        and must NOT have the misleading "Knowledge base not found" wording
+        applied to processing_error.
+        """
+        from shu.core.exceptions import EmbeddingProviderError
+
+        mock_document = MagicMock()
+        mock_document.id = "doc-123"
+        mock_document.title = "Test Doc"
+        mock_document.content = "Some content"
+        mock_document.update_status = MagicMock()
+        mock_document.mark_error = MagicMock()
+
+        mock_session_local, _ = _make_session_with_document(mock_document)
+
+        mock_doc_service = MagicMock()
+        mock_doc_service.process_and_update_chunks = AsyncMock(
+            side_effect=EmbeddingProviderError(
+                model_name="openai/text-embedding-3-small",
+                reason="Embedding API returned 0 results for 60 inputs",
+            )
+        )
+
+        mock_settings = MagicMock()
+        mock_settings.enable_document_profiling = False
+
+        job = _make_embed_job()
+        job.attempts = 1  # Below max_attempts (3) — must retry
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
+            patch("shu.core.config.get_settings_instance", return_value=mock_settings),
+            patch("shu.services.document_service.DocumentService", return_value=mock_doc_service),
+            pytest.raises(EmbeddingProviderError),
+        ):
+            from shu.worker import _handle_embed_job
+
+            await _handle_embed_job(job)
+
+        mock_document.mark_error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_provider_error_at_max_attempts_marks_error_with_provider_message(self):
+        """
+        EmbeddingProviderError on a job at max_attempts must mark the
+        document ERROR with a processing_error that names the actual
+        provider failure (model + result/input counts), not the KB.
+        """
+        from shu.core.exceptions import EmbeddingProviderError
+
+        mock_document = MagicMock()
+        mock_document.id = "doc-123"
+        mock_document.title = "Test Doc"
+        mock_document.content = "Some content"
+        mock_document.update_status = MagicMock()
+        mock_document.mark_error = MagicMock()
+
+        mock_session_local, mock_session = _make_session_with_document(mock_document)
+
+        mock_doc_service = MagicMock()
+        mock_doc_service.process_and_update_chunks = AsyncMock(
+            side_effect=EmbeddingProviderError(
+                model_name="openai/text-embedding-3-small",
+                reason="Embedding API returned 0 results for 60 inputs",
+            )
+        )
+
+        mock_settings = MagicMock()
+        mock_settings.enable_document_profiling = False
+
+        job = _make_embed_job()
+        job.attempts = 3
+        job.max_attempts = 3
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
+            patch("shu.core.config.get_settings_instance", return_value=mock_settings),
+            patch("shu.services.document_service.DocumentService", return_value=mock_doc_service),
+            pytest.raises(EmbeddingProviderError),
+        ):
+            from shu.worker import _handle_embed_job
+
+            await _handle_embed_job(job)
+
+        mock_document.mark_error.assert_called_once()
+        error_msg = mock_document.mark_error.call_args[0][0]
+        # Names the actual provider failure
+        assert "openai/text-embedding-3-small" in error_msg
+        assert "0 results for 60 inputs" in error_msg
+        # Does NOT misattribute to a missing KB
+        assert "knowledge base not found" not in error_msg.lower()
+        mock_session.commit.assert_called()

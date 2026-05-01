@@ -47,7 +47,7 @@ ocr_payload_strategy = st.fixed_dictionaries(
         ),
     },
     optional={
-        "ocr_mode": st.sampled_from(["auto", "text_only", "ocr_only", None]),
+        "ocr_mode": st.sampled_from(["auto", "always", "never", None]),
         "source_id": st.text(min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("L", "N", "P"))),
     },
 )

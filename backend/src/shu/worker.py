@@ -93,25 +93,33 @@ def parse_workload_types(workload_types_str: str) -> set[WorkloadType]:
     return workload_types
 
 
-# TODO: Refactor this function. It's too complex (number of branches and statements).
-async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
-    """Handle an INGESTION_OCR workload job.
+async def _run_extraction_pipeline(  # noqa: PLR0915
+    job,
+    *,
+    extract_fn,
+    label: str,
+) -> None:
+    """Shared pipeline for INGESTION_OCR and INGESTION_TEXT (SHU-739).
 
-    Retrieves file bytes from staging, extracts text using OCR/text extraction,
-    updates the Document with content and extraction metadata, and enqueues
-    the next pipeline stage (INGESTION_EMBED).
+    Loads the document and KB, sets EXTRACTING, calls the workload-specific
+    ``extract_fn`` with the staged file, persists the result, enqueues
+    INGESTION_EMBED, cleans up staging, and handles retries.
+
+    The split is at the extraction-call boundary — text-only and OCR-only
+    jobs share everything else. ``label`` is the human-readable workload
+    name for log lines and error messages.
 
     Args:
         job: The job containing document_id, staging_key, filename, mime_type,
             and knowledge_base_id in payload.
-
-    Raises:
-        ValueError: If required fields are missing from payload.
-        FileStagingError: If staged file cannot be retrieved.
-        Exception: If text extraction fails (triggers retry).
+        extract_fn: An async callable that runs the extraction.
+            Called as ``await extract_fn(file_path, filename, mime_type,
+            ocr_mode, user_id)`` and must return ``{"text": str,
+            "metadata": dict}``.
+        label: Human-readable workload name (e.g. "OCR", "TEXT") used in
+            log messages and error strings.
 
     """
-    from .core.config import get_config_manager
     from .core.database import get_async_session_local
     from .core.queue_backend import get_queue_backend
     from .core.workload_routing import WorkloadType, enqueue_job
@@ -121,29 +129,29 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
     # Validate required payload fields
     document_id = job.payload.get("document_id")
     if not document_id:
-        raise ValueError("INGESTION_OCR job missing document_id in payload")
+        raise ValueError(f"INGESTION_{label} job missing document_id in payload")
 
     knowledge_base_id = job.payload.get("knowledge_base_id")
     if not knowledge_base_id:
-        raise ValueError("INGESTION_OCR job missing knowledge_base_id in payload")
+        raise ValueError(f"INGESTION_{label} job missing knowledge_base_id in payload")
 
     staging_key = job.payload.get("staging_key")
     if not staging_key:
-        raise ValueError("INGESTION_OCR job missing staging_key in payload")
+        raise ValueError(f"INGESTION_{label} job missing staging_key in payload")
 
     filename = job.payload.get("filename")
     if not filename:
-        raise ValueError("INGESTION_OCR job missing filename in payload")
+        raise ValueError(f"INGESTION_{label} job missing filename in payload")
 
     mime_type = job.payload.get("mime_type")
     if not mime_type:
-        raise ValueError("INGESTION_OCR job missing mime_type in payload")
+        raise ValueError(f"INGESTION_{label} job missing mime_type in payload")
 
     ocr_mode = job.payload.get("ocr_mode")
     user_id = job.payload.get("user_id")
 
     logger.info(
-        "Processing OCR job",
+        f"Processing {label} job",
         extra={
             "job_id": job.id,
             "document_id": document_id,
@@ -156,7 +164,6 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
     staging_service = FileStagingService()
 
     async with session_local() as session:
-        # Get document and update status to EXTRACTING
         from sqlalchemy import select
 
         from .models.knowledge_base import KnowledgeBase
@@ -165,55 +172,48 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
         document = result.scalar_one_or_none()
 
         if not document:
-            # Document was deleted after job was enqueued — permanent failure, no retry.
             logger.error(
-                "Document not found for OCR job, failing permanently",
+                f"Document not found for {label} job, failing permanently",
                 extra={"job_id": job.id, "document_id": document_id},
             )
+            # Match the KB-deleted branch's cleanup: the staged blob is
+            # orphaned now that the document is gone. Maintenance source
+            # would eventually catch it; deleting here is symmetric and
+            # avoids the wait. Best-effort — non-fatal on failure.
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception:
+                pass
             return
 
-        # Check KB existence before retrieving staged bytes — frees staging memory immediately
-        # if the KB was deleted while this job was queued.
         kb = await session.get(KnowledgeBase, knowledge_base_id)
         if kb is None:
             logger.info(
-                "Knowledge base deleted, discarding OCR job without retry",
+                f"Knowledge base deleted, discarding {label} job without retry",
                 extra={"job_id": job.id, "document_id": document_id, "knowledge_base_id": knowledge_base_id},
             )
             try:
                 await staging_service.delete_staged_file(staging_key)
             except Exception:
-                pass  # Non-fatal; orphaned files are cleaned up by IngestionStagingMaintenanceSource
+                pass
             return
 
         document.update_status(DocumentStatus.EXTRACTING)
         await session.commit()
 
         try:
-            # Resolve the staged file to a local path (the staging dir is a
-            # ReadWriteMany mount in production, so "local" is always valid).
-            # The file is NOT deleted here; delete_staged_file fires on success
-            # after the embed job enqueues, and on failure we leave it in place
-            # so the retry can re-open it.
             staged_path = await staging_service.retrieve_to_path(staging_key)
 
             logger.info(
                 "Resolved staged file path",
-                extra={
-                    "job_id": job.id,
-                    "document_id": document_id,
-                    "staged_path": str(staged_path),
-                },
+                extra={"job_id": job.id, "document_id": document_id, "staged_path": str(staged_path)},
             )
 
-            from .core.ocr_service import extract_text_with_ocr_fallback
-
-            extraction_result = await extract_text_with_ocr_fallback(
-                mime_type=mime_type,
-                config_manager=get_config_manager(),
+            extraction_result = await extract_fn(
                 file_path=str(staged_path),
                 filename=filename,
-                ocr_mode=ocr_mode or "auto",
+                mime_type=mime_type,
+                ocr_mode=ocr_mode,
                 user_id=user_id,
             )
             extracted_text = extraction_result.get("text", "")
@@ -230,7 +230,6 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 },
             )
 
-            # Update document with extracted content and metadata
             document.content = extracted_text
             document.extraction_method = extraction_metadata.get("method")
             document.extraction_engine = extraction_metadata.get("engine")
@@ -239,9 +238,6 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             document.extraction_metadata = extraction_metadata.get("details")
             await session.commit()
 
-            # Enqueue INGESTION_EMBED job for next stage.
-            # Commit EMBEDDING status only after enqueue succeeds to avoid a window
-            # where the document is EMBEDDING with no job in the queue.
             queue = await get_queue_backend()
             await enqueue_job(
                 queue,
@@ -259,14 +255,12 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
             document.update_status(DocumentStatus.EMBEDDING)
             await session.commit()
 
-            # Clean up staged file now that extraction succeeded.
-            # Failure here is non-fatal — orphaned files are cleaned by
-            # IngestionStagingMaintenanceSource.
             try:
                 await staging_service.delete_staged_file(staging_key)
             except Exception as cleanup_err:
                 logger.warning(
-                    "Failed to delete staged file after successful OCR (non-fatal, orphaned files cleaned by maintenance job)",
+                    f"Failed to delete staged file after successful {label} "
+                    "(non-fatal, orphaned files cleaned by maintenance job)",
                     extra={
                         "job_id": job.id,
                         "document_id": document_id,
@@ -276,32 +270,23 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                 )
 
             logger.info(
-                "OCR job completed, enqueued embedding job",
-                extra={
-                    "job_id": job.id,
-                    "document_id": document_id,
-                },
+                f"{label} job completed, enqueued embedding job",
+                extra={"job_id": job.id, "document_id": document_id},
             )
 
         except FileStagingError as e:
-            # Permanent error - file not found in staging
             logger.error(
                 "File staging error",
-                extra={
-                    "job_id": job.id,
-                    "document_id": document_id,
-                    "error": str(e),
-                },
+                extra={"job_id": job.id, "document_id": document_id, "error": str(e)},
             )
             document.mark_error(f"{_ERR_FILE_STAGING} {e}")
             await session.commit()
             raise
 
         except Exception as e:
-            # Check if we've exhausted retries
             if job.attempts >= job.max_attempts:
                 logger.error(
-                    "OCR job failed after max attempts",
+                    f"{label} job failed after max attempts",
                     extra={
                         "job_id": job.id,
                         "document_id": document_id,
@@ -310,7 +295,164 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
                         "error": str(e),
                     },
                 )
-                document.mark_error(f"Text extraction failed after {job.attempts} attempts: {e}")
+                document.mark_error(f"{label} failed after {job.attempts} attempts: {e}")
+                await session.commit()
+            raise
+
+
+async def _handle_ocr_job(job) -> None:
+    """Handle an INGESTION_OCR workload job (OCR-only, no classifier)."""
+    from .core.ocr_service import extract_via_ocr
+
+    async def _ocr_extract(*, file_path, filename, mime_type, ocr_mode, user_id):
+        from .core.ocr_modes import coerce_ocr_mode
+
+        return await extract_via_ocr(
+            mime_type=mime_type,
+            file_path=file_path,
+            user_id=user_id,
+            ocr_mode=coerce_ocr_mode(ocr_mode),
+        )
+
+    await _run_extraction_pipeline(job, extract_fn=_ocr_extract, label="OCR")
+
+
+async def _handle_text_extract_job(job) -> None:
+    """Handle an INGESTION_TEXT workload job (text-only extraction, no OCR).
+
+    SHU-739: this is the post-classifier text-extraction path. Capped at
+    SHU_INGESTION_TEXT_MAX_CONCURRENT_JOBS (default 1) to bound the
+    working-set spike from concurrent born-digital PDF extractions.
+    """
+    from .core.config import get_config_manager
+    from .core.ocr_service import extract_text_only
+
+    async def _text_extract(*, file_path, filename, mime_type, ocr_mode, user_id):
+        return await extract_text_only(
+            mime_type=mime_type,
+            config_manager=get_config_manager(),
+            file_path=file_path,
+            filename=filename,
+        )
+
+    await _run_extraction_pipeline(job, extract_fn=_text_extract, label="TEXT")
+
+
+async def _handle_classify_job(job) -> None:  # noqa: PLR0915
+    """Handle an INGESTION_CLASSIFY workload job (SHU-739).
+
+    Runs the SHU-728 PDF text-vs-OCR classifier and enqueues either an
+    INGESTION_TEXT or INGESTION_OCR job for the actual extraction. Capped
+    at SHU_INGESTION_CLASSIFY_MAX_CONCURRENT_JOBS (default 1) to bound the
+    synchronized CPU spike from multiple concurrent classifier scans at
+    burst start.
+
+    The classifier reads the file, makes a routing decision, and exits.
+    No document content is written here — the next-stage job does the
+    actual extraction. The staged file is left in place; whichever
+    downstream stage runs (TEXT or OCR) is responsible for cleaning it up.
+    """
+    from sqlalchemy import select
+
+    from .core.database import get_async_session_local
+    from .core.ocr_service import classify_pdf_routing
+    from .core.queue_backend import get_queue_backend
+    from .core.workload_routing import WorkloadType, enqueue_job
+    from .models.document import Document
+    from .models.knowledge_base import KnowledgeBase
+    from .services.file_staging_service import FileStagingError, FileStagingService
+
+    document_id = job.payload.get("document_id")
+    if not document_id:
+        raise ValueError("INGESTION_CLASSIFY job missing document_id in payload")
+    knowledge_base_id = job.payload.get("knowledge_base_id")
+    if not knowledge_base_id:
+        raise ValueError("INGESTION_CLASSIFY job missing knowledge_base_id in payload")
+    staging_key = job.payload.get("staging_key")
+    if not staging_key:
+        raise ValueError("INGESTION_CLASSIFY job missing staging_key in payload")
+
+    logger.info(
+        "Processing CLASSIFY job",
+        extra={
+            "job_id": job.id,
+            "document_id": document_id,
+            "knowledge_base_id": knowledge_base_id,
+            "file_name": job.payload.get("filename"),
+        },
+    )
+
+    session_local = get_async_session_local()
+    staging_service = FileStagingService()
+
+    async with session_local() as session:
+        result = await session.execute(select(Document).where(Document.id == document_id))
+        document = result.scalar_one_or_none()
+        if not document:
+            logger.error(
+                "Document not found for CLASSIFY job, failing permanently",
+                extra={"job_id": job.id, "document_id": document_id},
+            )
+            return
+
+        kb = await session.get(KnowledgeBase, knowledge_base_id)
+        if kb is None:
+            logger.info(
+                "Knowledge base deleted, discarding CLASSIFY job without retry",
+                extra={"job_id": job.id, "document_id": document_id, "knowledge_base_id": knowledge_base_id},
+            )
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception:
+                pass
+            return
+
+        try:
+            staged_path = await staging_service.retrieve_to_path(staging_key)
+            decision = await classify_pdf_routing(file_path=str(staged_path), file_bytes=None)
+            next_workload = WorkloadType.INGESTION_OCR if decision.use_ocr else WorkloadType.INGESTION_TEXT
+
+            queue = await get_queue_backend()
+            await enqueue_job(
+                queue,
+                next_workload,
+                payload=job.payload,  # forward the full payload unchanged
+                max_attempts=3,
+                visibility_timeout=600,
+            )
+
+            logger.info(
+                "ocr_routing.classify_job_routed",
+                extra={
+                    "job_id": job.id,
+                    "document_id": document_id,
+                    "next_workload": next_workload.value,
+                    "decision_reason": decision.reason,
+                    "real_text_fraction": decision.real_text_fraction,
+                    "page_count": decision.page_count,
+                },
+            )
+        except FileStagingError as e:
+            logger.error(
+                "File staging error during classify",
+                extra={"job_id": job.id, "document_id": document_id, "error": str(e)},
+            )
+            document.mark_error(f"{_ERR_FILE_STAGING} {e}")
+            await session.commit()
+            raise
+        except Exception as e:
+            if job.attempts >= job.max_attempts:
+                logger.error(
+                    "CLASSIFY job failed after max attempts",
+                    extra={
+                        "job_id": job.id,
+                        "document_id": document_id,
+                        "attempts": job.attempts,
+                        "max_attempts": job.max_attempts,
+                        "error": str(e),
+                    },
+                )
+                document.mark_error(f"Classification failed after {job.attempts} attempts: {e}")
                 await session.commit()
             raise
 
@@ -344,12 +486,13 @@ async def _handle_embed_job(job) -> None:
     raise ValueError(f"Unknown INGESTION_EMBED action: {action!r}")
 
 
-async def _handle_content_embed_job(job) -> None:
+async def _handle_content_embed_job(job) -> None:  # noqa: PLR0915
     """Handle chunk content embedding (the original embed job logic)."""
     from sqlalchemy import select
 
     from .core.config import get_settings_instance
     from .core.database import get_async_session_local
+    from .core.exceptions import KnowledgeBaseNotFoundError
     from .models.document import Document, DocumentStatus
     from .services.document_service import DocumentService
 
@@ -433,8 +576,10 @@ async def _handle_content_embed_job(job) -> None:
                     document.content,  # type: ignore[arg-type]
                     user_id=user_id,
                 )
-            except ValueError as kb_err:
+            except KnowledgeBaseNotFoundError as kb_err:
                 # KB was deleted between OCR and embed stages — permanent failure, no retry.
+                # Distinguished from provider/transient errors (which fall through to the
+                # outer Exception handler for queue-driven retry) by the typed exception.
                 logger.error(
                     "Knowledge base not found for embed job, failing permanently",
                     extra={
@@ -1111,6 +1256,12 @@ async def process_job(job):  # noqa: PLR0912 — dispatch table by workload type
         # Route to appropriate handler
         if workload_type == WorkloadType.PROFILING:
             await _handle_profiling_job(job)
+
+        elif workload_type == WorkloadType.INGESTION_CLASSIFY:
+            await _handle_classify_job(job)
+
+        elif workload_type == WorkloadType.INGESTION_TEXT:
+            await _handle_text_extract_job(job)
 
         elif workload_type == WorkloadType.INGESTION_OCR:
             await _handle_ocr_job(job)

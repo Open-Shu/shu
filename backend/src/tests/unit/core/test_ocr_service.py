@@ -20,7 +20,14 @@ from shu.core.ocr_service import (
 class _ConformingOCRService:
     """Minimal class that satisfies the OCRService protocol."""
 
-    async def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
+    async def extract_text(
+        self,
+        *,
+        file_bytes: bytes | None = None,
+        file_path: str | None = None,
+        mime_type: str,
+        user_id: str | None = None,
+    ) -> OCRResult:
         return OCRResult(text="hello", engine="test")
 
 
@@ -150,3 +157,75 @@ class TestGetOCRService:
         svc2 = get_ocr_service()
 
         assert svc1 is svc2
+
+
+class TestSelectInitialWorkloadType:
+    """SHU-739: routing decision at upload time picks the right queue.
+
+    Truth table:
+
+        | MIME                         | NEVER | ALWAYS | AUTO     |
+        | ---------------------------- | ----- | ------ | -------- |
+        | non-OCR-eligible (DOCX, txt) | TEXT  | TEXT   | TEXT     |
+        | OCR-eligible non-PDF (image) | TEXT  | OCR    | OCR      |
+        | PDF                          | TEXT  | OCR    | CLASSIFY |
+    """
+
+    def test_pdf_auto_routes_to_classify(self):
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        assert select_initial_workload_type("application/pdf", "auto") == WorkloadType.INGESTION_CLASSIFY
+
+    def test_pdf_always_routes_to_ocr(self):
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        assert select_initial_workload_type("application/pdf", "always") == WorkloadType.INGESTION_OCR
+
+    def test_pdf_never_routes_to_text(self):
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        assert select_initial_workload_type("application/pdf", "never") == WorkloadType.INGESTION_TEXT
+
+    def test_image_auto_routes_to_ocr_directly(self):
+        """Images have no per-page geometry to classify, so AUTO skips CLASSIFY."""
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        assert select_initial_workload_type("image/png", "auto") == WorkloadType.INGESTION_OCR
+        assert select_initial_workload_type("image/jpeg", "always") == WorkloadType.INGESTION_OCR
+
+    def test_image_never_routes_to_text(self):
+        """NEVER + image is unusual but specified: text path."""
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        assert select_initial_workload_type("image/png", "never") == WorkloadType.INGESTION_TEXT
+
+    def test_non_ocr_eligible_always_routes_to_text(self):
+        """DOCX, plain text, etc. never go to OCR regardless of mode."""
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        for mode in ("auto", "always", "never"):
+            assert (
+                select_initial_workload_type(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", mode
+                )
+                == WorkloadType.INGESTION_TEXT
+            )
+            assert select_initial_workload_type("text/plain", mode) == WorkloadType.INGESTION_TEXT
+
+    def test_empty_or_unknown_mode_falls_back_to_auto(self):
+        """Untrusted upload-path inputs use lenient coercion (matches plugin host)."""
+        from shu.core.ocr_service import select_initial_workload_type
+        from shu.core.workload_routing import WorkloadType
+
+        # Empty string → AUTO → PDF gets classifier
+        assert select_initial_workload_type("application/pdf", "") == WorkloadType.INGESTION_CLASSIFY
+        # None → AUTO
+        assert select_initial_workload_type("application/pdf", None) == WorkloadType.INGESTION_CLASSIFY
+        # Unknown value → AUTO
+        assert select_initial_workload_type("application/pdf", "bogus") == WorkloadType.INGESTION_CLASSIFY

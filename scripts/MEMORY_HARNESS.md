@@ -1,6 +1,21 @@
-# Memory harness (SHU-731)
+# Memory + CPU harness (SHU-731, extended for SHU-739)
 
 Three tools for three jobs. Pick the right one for what you're trying to learn.
+
+> **SHU-739 protocol additions.** The harness now samples CPU alongside RSS:
+> `memory_bench.sh` records `pcpu_avg` (decay-averaged % from `ps`) and a
+> per-window `peak_cores` derived from cumulative CPU-time deltas — that
+> latter number is what reflects burst spikes. `memory_bench_lab.sh` reads
+> `/sys/fs/cgroup/cpu.stat` (cgroup v2) or `cpuacct.usage` (v1) and reports
+> the same per-window `peak_cores`. The burst corpus is
+> `docs/.pdf-corpus/` (27 PDFs as of 2026-04-29). After the SHU-739 queue
+> split, the in-flight concurrency at each ingestion stage is gated by its
+> own per-process semaphore: `SHU_INGESTION_CLASSIFY_MAX_CONCURRENT_JOBS`
+> for the classifier, `SHU_INGESTION_TEXT_MAX_CONCURRENT_JOBS` for text
+> extraction, and `SHU_OCR_MAX_CONCURRENT_JOBS` for the OCR call — not
+> `SHU_WORKER_CONCURRENCY`. The upload driver's `--concurrency` flag
+> controls how fast the queue fills, not how fast jobs are processed; the
+> per-stage caps decide that.
 
 | Tool | Environment | Use for | Authoritative? |
 | --- | --- | --- | --- |
@@ -21,7 +36,20 @@ make up-dev                      # Postgres + Redis only
     --drain-timeout 600
 ```
 
-The `baseline` and `post-fix` variants apply no env overrides — you switch Python code via `git checkout` between runs, same corpus, same driver. Compare peak + post-trim RSS from `variants.csv`.
+The `baseline` and `post-fix` variants apply no env overrides — you switch Python code via `git checkout` between runs, same corpus, same driver. Compare peak + post-trim RSS, plus `peak_pcpu` (decay-averaged) and `peak_cores` (per-window, spike-sensitive), from `variants.csv`.
+
+For SHU-739 burst measurements, the canonical command is:
+
+```bash
+make up-dev
+./scripts/memory_bench.sh \
+    --corpus-dir docs/.pdf-corpus \
+    --variants baseline,post-fix \
+    --concurrency 6 \
+    --drain-timeout 1200
+```
+
+The `--concurrency 6` is the upload-driver concurrency — how many parallel uploads the harness pushes — not the in-flight processing concurrency, which is per-stage capped (see the protocol blockquote above). Six parallel uploads is enough to populate the queue quickly so downstream stages see saturation. Per-sample columns in `proc.csv`: `t_s, rss_kb, pcpu_avg, cputime_s`. `peak_cores` in `variants.csv` is the max per-window cores used over the run (delta cputime / delta interval); this is the number that captures the synchronized spike.
 
 Allocator variants (`glibc-default`, `glibc-arena2`, `jemalloc`, `jemalloc-trim`, `glibc-arena2-trim`) run on this harness too, but:
 
@@ -52,10 +80,22 @@ Not a performance test. Run after every Dockerfile / entrypoint / compose touch.
 
 ## 3. `memory_bench_lab.sh` — authoritative sizing in Kubernetes
 
-Purpose: the real gate. Runs each variant against a live deployment, patching the configmap + rolling the deployment + sampling `kubectl top pod` + hitting the admin endpoints.
+Purpose: the real gate. Runs each variant against a live deployment, patching the configmap + rolling the deployment + sampling per-pod cgroup stats directly via `kubectl exec` + hitting the admin endpoints.
+
+Generate the admin token from inside the lab pod (the deployed image ships
+`scripts/generate_test_token.py`):
 
 ```bash
-export SHU_LAB_ADMIN_TOKEN=eyJhbGciOi...   # admin JWT
+POD=$(kubectl -n shu-billing-lab get pod -l app=shu-api \
+        -o jsonpath='{.items[0].metadata.name}')
+export SHU_LAB_ADMIN_TOKEN=$(kubectl exec -n shu-billing-lab "$POD" -- \
+        python /app/scripts/generate_test_token.py \
+        | awk '/^Token:/ {print $2}')
+```
+
+Then invoke the harness:
+
+```bash
 ./scripts/memory_bench_lab.sh \
     --corpus-dir data/attachments \
     --namespace shu-billing-lab \
@@ -66,11 +106,22 @@ export SHU_LAB_ADMIN_TOKEN=eyJhbGciOi...   # admin JWT
     --drain-timeout 1200
 ```
 
+For SHU-739 burst measurements (single variant matching prod, instrumented CPU + RSS):
+
+```bash
+./scripts/memory_bench_lab.sh \
+    --corpus-dir docs/.pdf-corpus \
+    --namespace shu-billing-lab \
+    --variants glibc-arena2-trim \
+    --concurrency 6 \
+    --drain-timeout 1800
+```
+
 Per-variant it:
 
 1. Writes + applies a targeted `kubectl patch configmap` (`MALLOC_ARENA_MAX`, `SHU_MEMORY_TRIM_INTERVAL_SECONDS`, `SHU_DISABLE_JEMALLOC`).
 2. `kubectl rollout restart deploy` and waits for healthy rollout.
-3. Samples `kubectl top pod` every 5s (Kubernetes working-set metric — what OOM decisions are made on).
+3. Samples per-pod `/proc/1/status` (VmRSS), `memory.{current,stat}` (working set — what kubelet OOM decisions are made on), and `cpu.stat` / `cpuacct.usage` (cumulative CPU usec) every 5s via `kubectl exec`. The post-run summary derives `peak_cores` from the cgroup CPU-usage deltas — same definition as the native harness, so numbers compare directly.
 4. Runs the upload driver through the cluster gateway.
 5. Captures `/api/v1/resources/heap-stats` (pre) + `/heap-stats/trim` (post) for RSS + freed-bytes delta.
 6. Pulls pod logs — `job_memory_delta` lines, per-job, for offline attribution.

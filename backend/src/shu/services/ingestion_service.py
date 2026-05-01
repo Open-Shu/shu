@@ -473,7 +473,7 @@ async def ingest_document(  # noqa: PLR0915
 
     """
     from ..core.queue_backend import get_queue_backend
-    from ..core.workload_routing import WorkloadType, enqueue_job
+    from ..core.workload_routing import enqueue_job
     from ..models.document import DocumentStatus
     from ..schemas.document import DocumentCreate
     from .file_staging_service import FileStagingService
@@ -567,14 +567,20 @@ async def ingest_document(  # noqa: PLR0915
         await db.commit()
         await db.refresh(document)
 
-    # Stage file bytes and enqueue OCR job
+    # Stage file bytes and enqueue the right initial-stage job.
+    # SHU-739: classifier / text / OCR each run on their own queue with
+    # their own semaphore cap. `select_initial_workload_type` picks the
+    # right entry point based on MIME + ocr_mode so the upload path
+    # stops uniformly enqueueing INGESTION_OCR for everything.
     staging_key = None
     staging_service = None
     try:
         staging_service = FileStagingService()
         staging_key = await staging_service.stage_file(document.id, file_bytes)
 
-        # Enqueue OCR job
+        from ..core.ocr_service import select_initial_workload_type
+
+        initial_workload = select_initial_workload_type(mime_type, ocr_mode)
         queue = await get_queue_backend()
         job_payload = {
             "document_id": document.id,
@@ -590,7 +596,7 @@ async def ingest_document(  # noqa: PLR0915
 
         await enqueue_job(
             queue,
-            WorkloadType.INGESTION_OCR,
+            initial_workload,
             payload=job_payload,
             max_attempts=3,
             visibility_timeout=600,  # 10 minutes for large PDFs

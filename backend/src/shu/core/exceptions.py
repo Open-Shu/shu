@@ -164,6 +164,22 @@ class EmbeddingModelError(ShuException):
         )
 
 
+class EmbeddingProviderError(EmbeddingModelError):
+    """Raised when an upstream embedding provider returns a malformed or
+    incomplete response (e.g. fewer entries than requested inputs).
+
+    Distinguished from generic ``EmbeddingModelError`` because the failure
+    mode is intermittent provider behaviour that warrants retry, not a
+    terminal model-config problem. Embed-job handlers catch this separately
+    so the queue's retry/backoff machinery fires; only at max-attempts do
+    documents transition to a terminal ERROR.
+    """
+
+    def __init__(self, model_name: str, reason: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(model_name=model_name, reason=reason, details=details)
+        self.error_code = "EMBEDDING_PROVIDER_ERROR"
+
+
 # Google Drive Exceptions
 class GoogleDriveError(ShuException):
     """Raised when there's an error with Google Drive operations."""

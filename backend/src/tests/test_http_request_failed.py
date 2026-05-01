@@ -133,4 +133,3 @@ class TestProviderErrorCode:
     def test_returns_none_for_non_dict_body(self):
         e = HttpRequestFailed(500, "https://api.example.com", "Error string")
         assert e.provider_error_code is None
-

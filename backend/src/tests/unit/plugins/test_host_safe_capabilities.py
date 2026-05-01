@@ -236,4 +236,3 @@ class TestUtilsCapabilityFilterSafe:
         kept, errors = await utils.filter_safe([1, 2, 3], always_false)
         assert kept == []
         assert errors == []
-
