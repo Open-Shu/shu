@@ -27,6 +27,7 @@ import ExperienceEditor from './components/ExperienceEditor';
 import BrandingSettings from './components/admin/BrandingSettings';
 import DashboardPage from './pages/DashboardPage';
 import ExperienceDetailPage from './pages/ExperienceDetailPage';
+import CostUsagePage from './pages/CostUsagePage';
 
 // User Components
 import ModernChat from './components/ModernChat';
@@ -301,6 +302,16 @@ const AuthenticatedApp = () => {
               <RoleBasedRoute adminOnly>
                 <ProtectedRoute requiredRole="admin">
                   <UserGroups />
+                </ProtectedRoute>
+              </RoleBasedRoute>
+            }
+          />
+          <Route
+            path="/admin/billing/usage"
+            element={
+              <RoleBasedRoute adminOnly>
+                <ProtectedRoute requiredRole="admin">
+                  <CostUsagePage />
                 </ProtectedRoute>
               </RoleBasedRoute>
             }

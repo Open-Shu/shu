@@ -42,6 +42,12 @@ logger = get_logger(__name__)
 _STREAM_CHUNK_SIZE = 192 * 1024
 
 _PROVIDER_TYPE_KEY = "generic_completions"
+# Must stay in lockstep with the name seeded by the hosted-deployment
+# provisioning script (now in the private shu-deploy repo, moved by
+# SHU-736). Mistral is a general-purpose vendor (chat, embedding, OCR);
+# the row is named for the vendor, not the OCR capability. The
+# "Shu Curated:" prefix is the epic-wide convention (SHU-713) for
+# seeder-created rows so they cannot collide with customer-added entries.
 _PROVIDER_NAME = "Shu Curated: Mistral"
 
 

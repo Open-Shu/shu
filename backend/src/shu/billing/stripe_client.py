@@ -7,6 +7,7 @@ module uses this client rather than importing stripe directly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import stripe
@@ -49,6 +50,13 @@ class StripeClient:
 
     def __init__(self, settings: BillingSettings | None = None) -> None:
         self._settings = settings or get_billing_settings()
+        # Per-request memoization for `get_subscription`. StripeClient
+        # instances are short-lived (constructed per-request in the router,
+        # per-call in enforcement/sync), so the cache cannot leak across
+        # requests. Two methods on the same request — seat-state and
+        # markup-multiplier — both need the same Subscription object;
+        # caching here folds them into one Stripe API call.
+        self._subscription_cache: dict[str, Subscription] = {}
         self._validate_config()
         self._configure_stripe()
 
@@ -148,15 +156,35 @@ class StripeClient:
     # =========================================================================
 
     async def get_subscription(self, subscription_id: str) -> Subscription | None:
-        """Retrieve a subscription by ID."""
+        """Retrieve a subscription by ID.
+
+        Returns None when Stripe responds "no such subscription" so callers
+        can decide whether the absence is fatal. Other Stripe errors raise
+        StripeClientError.
+
+        The retrieved Subscription is cached on this StripeClient instance
+        for the lifetime of the instance (one request / operation). Multiple
+        callers within the same request share one Stripe API call. Always
+        expanded with ``items.data.price`` so price-derived lookups (markup
+        multiplier) don't need a second fetch — the bandwidth cost is small
+        and the latency win compounds across the dashboard's call sites.
+        """
+        cached = self._subscription_cache.get(subscription_id)
+        if cached is not None:
+            return cached
         try:
-            return await stripe.Subscription.retrieve_async(subscription_id)
+            sub = await stripe.Subscription.retrieve_async(
+                subscription_id,
+                expand=["items.data.price"],
+            )
         except stripe.InvalidRequestError as e:
             if "No such subscription" in str(e):
                 return None
             raise StripeClientError(f"Failed to retrieve subscription: {e}", e) from e
         except stripe.StripeError as e:
             raise StripeClientError(f"Failed to retrieve subscription: {e}", e) from e
+        self._subscription_cache[subscription_id] = sub
+        return sub
 
     async def get_upcoming_invoice(
         self,
@@ -669,6 +697,138 @@ class StripeClient:
             raise StripeClientError(f"Failed to get meter summary: {e}", e) from e
 
     # =========================================================================
+    # Credit Grants (read-only)
+    # =========================================================================
+    #
+    # Issuance of credit grants happens in the Shu Control Plane (see
+    # shu-control-plane/src/control_plane/billing/credit_service.py) on
+    # subscription lifecycle webhooks. Tenants only need to read the
+    # current state for display — that's what this method does.
+
+    async def get_active_credit_grant_total_usd(self, customer_id: str) -> Decimal:
+        """Sum the dollar value of currently-active credit grants on a customer.
+
+        "Active" means: not voided, and either has no expiry or expires after now.
+        Filters expired and voided grants out of the total. Includes grants
+        regardless of metadata, so manually-created Stripe Dashboard test
+        grants count alongside system-issued ones — relevant for dev / UAT
+        environments before the control plane has issued grants of its own.
+
+        Args:
+            customer_id: Stripe customer ID
+
+        Returns:
+            Total dollar amount as a Decimal quantized to cents. Returns
+            Decimal('0.00') when there are no active grants — a successful
+            zero result, distinct from a Stripe error (which raises).
+
+        Raises:
+            StripeClientError: when the Stripe API call fails. Callers that
+                want display-only behavior should catch this and degrade
+                gracefully (e.g., fall back to a client-side estimate).
+
+        """
+        try:
+            total_cents = 0
+            last_id: str | None = None
+            now_ts = int(datetime.now(UTC).timestamp())
+            while True:
+                kwargs: dict[str, Any] = {"customer": customer_id, "limit": 100}
+                if last_id is not None:
+                    kwargs["starting_after"] = last_id
+
+                page = await stripe.billing.CreditGrant.list_async(**kwargs)
+
+                for grant in page.data:
+                    if getattr(grant, "voided_at", None):
+                        continue
+                    expires_at = getattr(grant, "expires_at", None)
+                    if expires_at is not None and expires_at <= now_ts:
+                        continue
+                    amount = getattr(grant, "amount", None)
+                    monetary = getattr(amount, "monetary", None) if amount is not None else None
+                    value = getattr(monetary, "value", None) if monetary is not None else None
+                    if value is not None:
+                        total_cents += int(value)
+
+                if not getattr(page, "has_more", False) or not page.data:
+                    break
+
+                last_id = page.data[-1].id
+
+            return (Decimal(total_cents) / Decimal(100)).quantize(Decimal("0.01"))
+
+        except stripe.StripeError as e:
+            logger.error(
+                "Failed to list credit grants",
+                extra={
+                    "customer_id": customer_id,
+                    "error": str(e),
+                },
+            )
+            raise StripeClientError(f"Failed to list credit grants: {e}", e) from e
+
+    async def get_subscription_markup_multiplier(self, subscription_id: str) -> Decimal | None:
+        """Compute the customer-billed markup ratio from the subscription's metered Price.
+
+        The meter reports raw provider cost in microdollars (1 unit = 1e-6 USD).
+        The metered Price's `unit_amount_decimal` is in cents (1e-2 USD) per
+        unit. The dimensionless markup is therefore the price-cents-per-unit
+        scaled by the unit ratio (1e-2 / 1e-6 = 1e4):
+
+            markup = unit_amount_decimal_cents * 10_000
+
+        For example, $0.0000013/unit (= 0.00013 cents per unit) yields a
+        markup of 1.3.
+
+        Returns None when:
+        - the subscription doesn't exist (treated quietly so callers can
+          fall back to a constant — though in practice an upstream call
+          like ``get_subscription_seat_state`` would have already raised),
+        - the subscription has no metered item,
+        - the metered Price has no `unit_amount_decimal` (e.g., a tiered
+          pricing model — flag with a follow-up if you ever switch to
+          tiered, since this method silently falls back to the caller's
+          default in that case),
+        - the value cannot be parsed as a Decimal,
+        - or the parsed value is non-positive.
+
+        Raises StripeClientError on any Stripe API failure so display-only
+        callers can degrade. Delegates to ``self.get_subscription`` so when
+        another method on the same StripeClient has already retrieved the
+        subscription this request, the cached object is reused (no extra
+        Stripe round-trip).
+        """
+        subscription = await self.get_subscription(subscription_id)
+        if subscription is None:
+            return None
+
+        metered_item = next(
+            (item for item in subscription["items"]["data"] if _is_metered(item["price"])),
+            None,
+        )
+        if metered_item is None:
+            return None
+
+        price = metered_item["price"]
+        unit_amount_decimal = price.get("unit_amount_decimal")
+        if unit_amount_decimal is None:
+            # Tiered prices lack a flat unit_amount_decimal — caller falls
+            # back to the hardcoded constant. Add explicit tiered support
+            # here if Shu ever adopts a tiered metered price.
+            return None
+
+        try:
+            cents_per_meter_unit = Decimal(str(unit_amount_decimal))
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+
+        # Meter reports microdollars (10^-6 USD); unit_amount_decimal is in
+        # cents (10^-2 USD). Ratio is 10^4 to reach the dimensionless markup.
+        markup = cents_per_meter_unit * Decimal(10_000)
+        return markup if markup > 0 else None
+
+    # =========================================================================
     # Webhooks
     # =========================================================================
     #
@@ -784,6 +944,20 @@ def _is_licensed(price: Any) -> bool:
     if "usage_type" not in recurring:
         return False
     return recurring["usage_type"] == "licensed"
+
+
+def _is_metered(price: Any) -> bool:
+    """Return True when the price is a metered usage price.
+
+    Mirror of ``_is_licensed`` for the consumption side of Shu's two-item
+    subscription layout (licensed seat + metered usage).
+    """
+    if "recurring" not in price or price["recurring"] is None:
+        return False
+    recurring = price["recurring"]
+    if "usage_type" not in recurring:
+        return False
+    return recurring["usage_type"] == "metered"
 
 
 def _stamp_quantity(items: list[dict[str, Any]], qty: int) -> list[dict[str, Any]]:
