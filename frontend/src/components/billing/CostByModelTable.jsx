@@ -40,8 +40,16 @@ export function buildModelRow(rawRow, modelsMap, totalCost) {
     if (resolved && resolved.display_name) {
       displayName = resolved.display_name;
       providerName = resolved.provider_name || null;
+    } else if (rawRow.model_name) {
+      // Backend snapshots `model_name` per usage row at insert time (SHU-727)
+      // specifically so deleted models still surface a readable label here.
+      // Prefer this over a truncated UUID when the live catalog can't resolve
+      // the id (e.g., model was deleted; lookup hasn't loaded yet).
+      displayName = rawRow.model_name;
     } else {
-      // Fallback to a short truncated UUID so admins can still cross-reference.
+      // Last-resort fallback when the row predates the snapshot column or
+      // the snapshot is empty. Short truncated UUID still lets admins
+      // cross-reference against the database.
       const id = String(rawRow.model_id);
       displayName = id.length > 12 ? `model_${id.slice(0, 8)}` : `model_${id}`;
     }
@@ -127,11 +135,16 @@ const EmptyState = ({ children }) => (
 
 /**
  * Cost by Model table — sorted by cost desc with `<LinearProgress>` share
- * bars, falling back to truncated UUIDs for unresolved model_ids and
- * pinning "Unattributed" rows to the bottom.
+ * bars and "Unattributed" rows pinned to the bottom.
+ *
+ * Render is gated only on the usage query, not on the models/providers
+ * lookup. Each row's label resolves through three tiers (live catalog
+ * display name → backend snapshot model_name → truncated UUID) so the
+ * table can display meaningful labels even before /llm/models loads or
+ * for models that have since been deleted.
  */
-function CostByModelTable({ usageQuery, modelsMap, modelsLoading }) {
-  if (usageQuery.isLoading || modelsLoading) {
+function CostByModelTable({ usageQuery, modelsMap }) {
+  if (usageQuery.isLoading) {
     return (
       <Box>
         <Skeleton variant="rounded" height={48} sx={{ mb: 1 }} />

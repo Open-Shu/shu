@@ -9,11 +9,11 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 
 import CostByModelTable, { buildModelRow, orderRows } from '../CostByModelTable';
 
-const renderTable = (usageQuery, modelsMap = new Map(), modelsLoading = false) => {
+const renderTable = (usageQuery, modelsMap = new Map()) => {
   const theme = createTheme();
   return render(
     <ThemeProvider theme={theme}>
-      <CostByModelTable usageQuery={usageQuery} modelsMap={modelsMap} modelsLoading={modelsLoading} />
+      <CostByModelTable usageQuery={usageQuery} modelsMap={modelsMap} />
     </ThemeProvider>
   );
 };
@@ -38,12 +38,34 @@ describe('buildModelRow', () => {
     expect(row.isUnattributed).toBe(false);
   });
 
-  it('falls back to a truncated UUID when the model id does not resolve', () => {
+  it('falls back to the backend snapshot model_name when the catalog lookup misses', () => {
+    // Models that have been deleted from llm_models still surface a readable
+    // label via the per-row snapshot column populated at insert time (SHU-727).
+    const raw = {
+      model_id: 'a3f9b2d4-c1e5-4a8c-9f3e-2d6b8c4a1e7f',
+      model_name: 'claude-haiku-4-5-20251001',
+      cost_usd: 1,
+    };
+    const row = buildModelRow(raw, new Map(), 10);
+    expect(row.displayName).toBe('claude-haiku-4-5-20251001');
+    expect(row.providerName).toBeNull();
+    expect(row.isUnattributed).toBe(false);
+  });
+
+  it('falls back to a truncated UUID only when neither the catalog nor the snapshot has a name', () => {
     const raw = { model_id: 'a3f9b2d4-c1e5-4a8c-9f3e-2d6b8c4a1e7f', cost_usd: 1 };
     const row = buildModelRow(raw, new Map(), 10);
     expect(row.displayName).toBe('model_a3f9b2d4');
     expect(row.providerName).toBeNull();
     expect(row.isUnattributed).toBe(false);
+  });
+
+  it('prefers the live catalog display_name over the snapshot model_name when both are present', () => {
+    const map = new Map([['m-1', { display_name: 'Claude Haiku 4.5', provider_name: 'anthropic' }]]);
+    const raw = { model_id: 'm-1', model_name: 'claude-haiku-4-5-20251001', cost_usd: 1 };
+    const row = buildModelRow(raw, map, 10);
+    expect(row.displayName).toBe('Claude Haiku 4.5');
+    expect(row.providerName).toBe('anthropic');
   });
 
   it('treats null model_id as Unattributed', () => {
@@ -82,15 +104,34 @@ describe('orderRows', () => {
 });
 
 describe('CostByModelTable rendering', () => {
-  it('renders skeleton placeholders while loading', () => {
-    const { container } = renderTable({ data: undefined, isLoading: true, isError: false }, new Map(), false);
+  it('renders skeleton placeholders while usage is loading', () => {
+    const { container } = renderTable({ data: undefined, isLoading: true, isError: false }, new Map());
     // Header skeleton + 5 row skeletons = 6 total.
     expect(container.querySelectorAll('.MuiSkeleton-root').length).toBe(6);
   });
 
-  it('renders skeleton while modelsMap is still loading', () => {
-    const { container } = renderTable(okQuery({ total_cost_usd: 0, by_model: [] }), new Map(), true);
-    expect(container.querySelectorAll('.MuiSkeleton-root').length).toBe(6);
+  it('renders rows with snapshot model_name even when the modelsMap is still empty', () => {
+    // The table no longer waits on the models/providers fetches — rows
+    // surface immediately using the backend snapshot, then upgrade to
+    // catalog display_name when modelsMap arrives.
+    renderTable(
+      okQuery({
+        total_cost_usd: 5,
+        by_model: [
+          {
+            model_id: 'm-1',
+            model_name: 'claude-haiku-4-5',
+            cost_usd: 5,
+            input_tokens: 0,
+            output_tokens: 0,
+            request_count: 0,
+          },
+        ],
+      }),
+      new Map() // catalog hasn't loaded yet
+    );
+    expect(screen.getByText('claude-haiku-4-5')).toBeInTheDocument();
+    expect(screen.queryByText(/^model_/)).not.toBeInTheDocument();
   });
 
   it('shows the period-unknown placeholder copy', () => {

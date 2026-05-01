@@ -102,7 +102,7 @@ function UsageErrorAlert({ onRefresh }) {
  * error, and empty states.
  */
 function CostUsagePage() {
-  const { usage, subscription, modelsMap, modelsLoading, refetch, lastUpdatedAt } = useUsageData();
+  const { usage, subscription, modelsMap, refetch, lastUpdatedAt } = useUsageData();
 
   // Resolve the user's local timezone once. v2 may swap this for a user
   // preference if/when one exists.
@@ -142,7 +142,7 @@ function CostUsagePage() {
             {usage.isError ? (
               <UsageErrorAlert onRefresh={refetch} />
             ) : (
-              <CostByModelTable usageQuery={usage} modelsMap={modelsMap} modelsLoading={modelsLoading} />
+              <CostByModelTable usageQuery={usage} modelsMap={modelsMap} />
             )}
           </Stack>
         </Paper>
