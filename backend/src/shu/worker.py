@@ -176,6 +176,14 @@ async def _run_extraction_pipeline(  # noqa: PLR0915
                 f"Document not found for {label} job, failing permanently",
                 extra={"job_id": job.id, "document_id": document_id},
             )
+            # Match the KB-deleted branch's cleanup: the staged blob is
+            # orphaned now that the document is gone. Maintenance source
+            # would eventually catch it; deleting here is symmetric and
+            # avoids the wait. Best-effort — non-fatal on failure.
+            try:
+                await staging_service.delete_staged_file(staging_key)
+            except Exception:
+                pass
             return
 
         kb = await session.get(KnowledgeBase, knowledge_base_id)

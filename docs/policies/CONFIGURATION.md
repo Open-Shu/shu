@@ -49,10 +49,11 @@ Notes:
 
 Limitations/Known Issues:
 - OCR quality varies by engine; EasyOCR with Tesseract fallback is used; noisy scans may yield little text
-- OCR is compute‑heavy; progress callbacks are optional but PDFs are routed through OCR logic regardless
+- OCR is compute‑heavy; progress callbacks are optional. PDFs are routed by the per-page real-text classifier (`core.ocr_routing.classify_pdf`) when `ocr_mode='auto'`; the classifier itself is also CPU-bound on long documents (mitigated by the sampling knobs documented below).
 
 Policy:
-- PDFs: Always treat as OCR candidates; do not try to guess if OCR is needed
+
+- PDFs: routed per-document by `ocr_mode` (see `core.ocr_modes.OcrMode`). `auto` (default) runs the per-page real-text classifier and chooses OCR or text extraction; `always` forces OCR; `never` forces text extraction. Run `scripts/ocr_routing_calibrate.py --sweep` to verify the classifier's decisions against a labelled corpus.
 - Text‑based files (docx, txt, html, etc.): Use fast text extraction only; do not OCR by default
 - Empty content handling: allowed only for OCR/PDF paths; text‑based files with empty extraction are skipped
 - Frontend: attachment upload errors must be surfaced to the user (inline alert/toast)
