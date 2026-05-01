@@ -62,9 +62,22 @@ class UserService:
         self.jwt_manager = JWTManager()
         self.settings = get_settings_instance()
 
-    async def get_user_by_id(self, user_id: str, db: AsyncSession) -> User | None:
-        """Get user by ID."""
+    async def get_user_by_id(self, user_id: str, db: AsyncSession, *, for_update: bool = False) -> User | None:
+        """Get user by ID.
+
+        Set ``for_update=True`` to acquire a row-level write lock — used by
+        the activation path so two concurrent activate requests can't both
+        pass the ``not user.is_active`` check and double-charge the seat.
+        """
         stmt = select(User).where(User.id == user_id)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_user_by_email(self, email: str, db: AsyncSession) -> User | None:
+        """Get user by email."""
+        stmt = select(User).where(User.email == email)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -73,26 +86,6 @@ class UserService:
         stmt = select(User).order_by(User.is_active.desc(), User.name.asc())
         result = await db.execute(stmt)
         return result.scalars().all()
-
-    async def update_user_role(self, user_id: str, new_role: str, db: AsyncSession) -> User:
-        """Update user role (admin only)."""
-        stmt = select(User).where(User.id == user_id)
-        result = await db.execute(stmt)
-        user = result.scalar_one_or_none()
-
-        if not user:
-            raise ValueError("User not found")
-
-        # Validate role
-        try:
-            UserRole(new_role)
-        except ValueError as e:
-            raise ValueError("Invalid role") from e
-
-        user.role = new_role
-        await db.commit()
-        await db.refresh(user)
-        return user
 
     async def delete_user(self, user_id: str, current_user_id: str, db: AsyncSession) -> bool:
         """Delete user (admin only)."""

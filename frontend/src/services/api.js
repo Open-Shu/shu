@@ -247,17 +247,35 @@ export const authAPI = {
   refresh: (refreshToken) => api.post('/auth/refresh', { refresh_token: refreshToken }),
   getCurrentUser: () => api.get('/auth/me'),
   getUsers: () => api.get('/auth/users'),
-  createUser: (userData) => api.post('/auth/users', userData),
-  updateUser: (userId, data) => api.put(`/auth/users/${userId}`, data),
+  createUser: (userData, { confirmSeatCharge = false } = {}) =>
+    api.post('/auth/users', userData, {
+      headers: confirmSeatCharge ? { 'X-Seat-Charge-Confirmed': 'true' } : undefined,
+    }),
+  updateUser: (userId, data, { confirmSeatCharge = false } = {}) =>
+    api.put(`/auth/users/${userId}`, data, {
+      headers: confirmSeatCharge ? { 'X-Seat-Charge-Confirmed': 'true' } : undefined,
+    }),
   deleteUser: (userId) => api.delete(`/auth/users/${userId}`),
-  activateUser: (userId) => api.patch(`/auth/users/${userId}/activate`),
+  activateUser: (userId, { confirmSeatCharge = false } = {}) =>
+    api.patch(`/auth/users/${userId}/activate`, undefined, {
+      headers: confirmSeatCharge ? { 'X-Seat-Charge-Confirmed': 'true' } : undefined,
+    }),
   deactivateUser: (userId) => api.patch(`/auth/users/${userId}/deactivate`),
+  scheduleUserDeactivation: (userId) => api.post(`/auth/users/${userId}/schedule-deactivation`),
+  unscheduleUserDeactivation: (userId) => api.delete(`/auth/users/${userId}/schedule-deactivation`),
 
   changePassword: (data) => api.put('/auth/change-password', data),
   resetUserPassword: (userId) => api.post(`/auth/users/${userId}/reset-password`),
 
   exchangeGoogleLogin: (code) => api.post('/auth/google/exchange-login', { code }),
   exchangeMicrosoftLogin: (code) => api.post('/auth/microsoft/exchange-login', { code }),
+};
+
+// Billing endpoints
+export const billingAPI = {
+  getSubscription: () => api.get('/billing/subscription'),
+  releaseSeat: () => api.post('/billing/seats/release'),
+  cancelPendingRelease: () => api.post('/billing/seats/cancel-release'),
 };
 
 // Health endpoints

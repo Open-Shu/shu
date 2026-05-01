@@ -1,11 +1,10 @@
 """Authentication API endpoints for Shu."""
 
-import asyncio
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +15,14 @@ from ..auth import User, UserRole
 from ..auth.password_auth import password_auth_service
 from ..auth.rbac import get_current_user, require_admin
 from ..billing.enforcement import check_user_limit
-from ..billing.sync import trigger_quantity_sync
+from ..billing.seat_service import (
+    SeatMinimumError,
+    SeatService,
+    UserNotFoundError,
+    UserStateError,
+    get_seat_service,
+)
+from ..billing.stripe_client import StripeClientError
 from ..core.rate_limiting import get_rate_limit_service
 from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
@@ -167,7 +173,6 @@ async def login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -233,7 +238,6 @@ async def register_user(
             db=db,
             admin_created=is_admin,
         )
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Return success message without tokens (user is inactive)
         return SuccessResponse(
@@ -488,7 +492,6 @@ async def google_exchange_login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -566,7 +569,6 @@ async def microsoft_exchange_login(
 
         # Authenticate or create user using unified SSO method
         user = await user_service.authenticate_or_create_sso_user(provider_info, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -601,16 +603,162 @@ async def update_user(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+    x_seat_charge_confirmed: Annotated[str | None, Header(alias="X-Seat-Charge-Confirmed")] = None,
 ):
-    """Update user role and status (admin only)."""
+    """Update user role and status (admin only).
+
+    A False→True flip on ``is_active`` consumes a seat — same two-phase
+    preflight as ``activate_user`` so the Edit dialog can't bypass the
+    seat charge.
+    """
     try:
-        user = await user_service.update_user_role(user_id, request.role, db)
-        user.is_active = request.is_active
+        # Lock + validate before any write so a 402 cancel doesn't leave the
+        # role change committed. Previously `update_user_role` committed first
+        # and the preflight ran after, so an admin who saw the 402 and bailed
+        # still had their role edit stick.
+        locked = await user_service.get_user_by_id(user_id, db, for_update=True)
+        if locked is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        try:
+            UserRole(request.role)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid role: {request.role}") from e
+
+        # Preflight only when crossing inactive→active. Active→inactive
+        # frees a seat (no Stripe write), and a no-op flip skips both.
+        if request.is_active and not locked.is_active:
+            preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
+            if preflight is not None:
+                return preflight
+
+        # Single commit covers role + is_active so the row never lands in a
+        # half-edited state.
+        locked.role = request.role
+        locked.is_active = request.is_active
         await db.commit()
-        await db.refresh(user)
-        return SuccessResponse(data=user.to_dict())
+        await db.refresh(locked)
+        return SuccessResponse(data=locked.to_dict())
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+def _raise_seat_error_http(e: Exception) -> None:
+    """Map SeatService / Stripe domain errors onto HTTP status codes."""
+    if isinstance(e, UserNotFoundError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    if isinstance(e, UserStateError):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    if isinstance(e, SeatMinimumError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if isinstance(e, StripeClientError):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Billing provider error")
+    raise e
+
+
+def _require_seat_service(seat_service: SeatService | None) -> SeatService:
+    """Reject the request when billing isn't configured.
+
+    Use on routes that genuinely cannot run without Stripe (schedule /
+    unschedule deactivation). `create_user` and `activate_user` use the
+    optional dependency directly because they degrade to "no preflight"
+    on self-hosted deploys.
+    """
+    if seat_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Billing is not configured",
+        )
+    return seat_service
+
+
+async def _seat_charge_preview(
+    db: AsyncSession,
+    seat_service: SeatService | None,
+    confirm_header: str | None,
+) -> tuple[JSONResponse | None, bool]:
+    """Phase 1 of the seat-charge preflight.
+
+    Returns ``(response, charge_required)`` where:
+    - ``response`` is a 402 JSONResponse to return immediately, or ``None``
+      to proceed with the write.
+    - ``charge_required`` is ``True`` only when the caller must invoke
+      ``_seat_charge_confirm`` *after* its DB write. This is captured here
+      so the caller doesn't re-check ``check_user_limit`` post-write — that
+      second check would see the just-flushed/updated user and falsely
+      conclude an upgrade is needed even when the new user fits an open
+      seat.
+    """
+    if seat_service is None:
+        return None, False
+    try:
+        limit_status = await check_user_limit(db)
+    except StripeClientError as e:
+        _raise_seat_error_http(e)
+    if not (limit_status.at_limit and limit_status.enforcement == "hard"):
+        return None, False
+
+    if confirm_header != "true":
+        details: dict[str, Any] = {
+            "user_limit": limit_status.user_limit,
+            "current_count": limit_status.current_count,
+        }
+        preview = await seat_service.preview_upgrade(db)
+        if preview is not None:
+            details["cost_per_seat_usd"] = preview.cost_per_seat_usd
+            details["proration"] = {
+                "amount_usd": preview.amount_usd,
+                "period_end": preview.period_end.isoformat(),
+            }
+        envelope = ShuResponse.error(
+            message="Seat limit reached. Confirm to add one seat and proceed.",
+            code="seat_limit_reached",
+            details=details,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+        # Caller returns this 402 immediately — charge_required is moot here.
+        return envelope, False
+
+    # Header confirmed: caller must invoke confirm_upgrade after its DB write.
+    return None, True
+
+
+async def _seat_charge_confirm(
+    db: AsyncSession,
+    seat_service: SeatService | None,
+) -> None:
+    """Phase 2 — apply the Stripe upgrade. Caller has already decided this is needed.
+
+    No re-check of ``check_user_limit`` here on purpose: the phase-1 caller
+    captured the decision before any DB write. Re-checking now would count
+    a freshly-flushed user as already consuming a seat and trigger an
+    unnecessary upgrade when the new user exactly fits the last open seat.
+    """
+    if seat_service is None:
+        return
+    try:
+        await seat_service.confirm_upgrade(db)
+    except StripeClientError as e:
+        _raise_seat_error_http(e)
+
+
+async def _preflight_seat_charge(
+    db: AsyncSession,
+    seat_service: SeatService | None,
+    confirm_header: str | None,
+) -> JSONResponse | None:
+    """Run both preflight phases for callers that don't need to interleave a DB write.
+
+    ``activate_user`` and ``update_user`` both check-then-commit a single
+    UPDATE, so they can run preview and confirm back-to-back. ``create_user``
+    splits these to wedge a flushed INSERT between them — see its body.
+    """
+    preview, charge_required = await _seat_charge_preview(db, seat_service, confirm_header)
+    if preview is not None:
+        return preview
+    if charge_required:
+        await _seat_charge_confirm(db, seat_service)
+    return None
 
 
 @router.post("/users", response_model=SuccessResponse[dict[str, Any]])
@@ -618,60 +766,85 @@ async def create_user(
     request: CreateUserRequest,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+    x_seat_charge_confirmed: Annotated[str | None, Header(alias="X-Seat-Charge-Confirmed")] = None,
 ):
-    """Create a new user (admin only)."""
+    """Create a new user (admin only).
+
+    Admin-created users are active on creation, which may consume a seat
+    under hard enforcement. In that case the endpoint runs a two-phase
+    preflight: a 402 preview on first call, then a Stripe upgrade when
+    the client re-submits with `X-Seat-Charge-Confirmed: true`.
+    """
     try:
-        limit_status = await check_user_limit(db)
-        if limit_status.at_limit and limit_status.enforcement == "hard":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"User limit ({limit_status.user_limit}) reached. Remove users or upgrade your subscription.",
-            )
-        if limit_status.at_limit and limit_status.enforcement == "soft":
-            logger.warning(
-                "User created above subscription limit",
-                extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
-            )
+        # Pre-validate everything we can deterministically check before any
+        # DB or Stripe write. Pre-checks fail fast on the obvious cases;
+        # the FLUSH below catches the narrow concurrent-INSERT race that
+        # could slip past the email pre-check.
+        if request.auth_method == "password" and not request.password:
+            raise ValueError("Password is required for password authentication")
+        try:
+            UserRole(request.role)
+        except ValueError as e:
+            raise ValueError(f"Invalid role: {request.role}") from e
+        existing = await user_service.get_user_by_email(request.email, db)
+        if existing is not None:
+            raise ValueError(f"User with email {request.email} already exists")
 
-        if request.auth_method == "password":
-            if not request.password:
-                raise ValueError("Password is required for password authentication")
+        # Phase 1: capture the seat-charge decision *before* any DB write.
+        # We can't re-check check_user_limit after the flush — the flushed
+        # user would be counted as active and falsely flip at_limit, so a
+        # tenant going from N-1 active to N seats would get charged for a
+        # second extra seat even though the new user fits the last open one.
+        preview, charge_required = await _seat_charge_preview(db, seat_service, x_seat_charge_confirmed)
+        if preview is not None:
+            return preview
 
-            # Create user with password authentication (admin-created)
-            user = await password_auth_service.create_user(
-                email=request.email,
-                password=request.password,
-                name=request.name,
-                role=request.role,
-                db=db,
-                admin_created=True,  # Admin-created users are active by default
-            )
-        else:
-            # Create user for SSO (password will be None)
-            # Validate role before creating user
+        # Phase 2: flush the user INSERT first so the unique-email constraint
+        # fires *before* Stripe is charged. If a concurrent request inserted
+        # the same email between our pre-check and here, the flush raises
+        # IntegrityError and we abort with no seat charge. If the flush
+        # succeeds, only then do we charge Stripe; if Stripe fails we roll
+        # back the insert. The remaining narrow window is "Stripe succeeds,
+        # commit fails" — same edge case the design accepted as unavoidable
+        # without 2PC.
+        try:
+            if request.auth_method == "password":
+                user = await password_auth_service.create_user(
+                    email=request.email,
+                    password=request.password,
+                    name=request.name,
+                    role=request.role,
+                    db=db,
+                    admin_created=True,
+                    flush_only=True,
+                )
+            else:
+                user = User(
+                    email=request.email,
+                    name=request.name,
+                    auth_method=request.auth_method,
+                    role=request.role,
+                    is_active=True,
+                )
+                db.add(user)
+                await db.flush()
+        except IntegrityError as e:
+            await db.rollback()
+            raise ValueError(f"User with email {request.email} already exists") from e
+
+        if charge_required:
             try:
-                UserRole(request.role)
-            except ValueError as e:
-                raise ValueError(f"Invalid role: {request.role}") from e
-
-            # Admin-created users are active by default
-            user = User(
-                email=request.email,
-                name=request.name,
-                auth_method=request.auth_method,
-                role=request.role,
-                is_active=True,  # Admin-created users are active
-            )
-            db.add(user)
-
-            try:
-                await db.commit()
-                await db.refresh(user)
-            except IntegrityError as e:
+                await _seat_charge_confirm(db, seat_service)
+            except HTTPException:
+                # Stripe failed (mapped to 502 inside the helper). Roll back
+                # the flushed user — no orphan row, no orphan seat.
                 await db.rollback()
-                raise ValueError(f"User with email {request.email} already exists") from e
+                raise
 
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
+        await db.commit()
+        await db.refresh(user)
         return SuccessResponse(data=user.to_dict())
 
     except HTTPException:
@@ -689,15 +862,30 @@ async def activate_user(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+    x_seat_charge_confirmed: Annotated[str | None, Header(alias="X-Seat-Charge-Confirmed")] = None,
 ):
-    """Activate a user account (admin only)."""
+    """Activate a user account (admin only).
+
+    Activating a pending user consumes a seat, so it runs the same
+    two-phase preflight as create_user when the activation would cross
+    the hard seat limit.
+    """
     try:
-        # Get user by ID
-        user = await user_service.get_user_by_id(user_id, db)
+        # Lock the row so two concurrent activate requests serialise here:
+        # whichever wins commits is_active=True; the loser sees the post-write
+        # state, hits the "already active" branch, and skips a duplicate charge.
+        user = await user_service.get_user_by_id(user_id, db, for_update=True)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        # Activate user
+        # Skip the preflight for already-active users — activation is a no-op
+        # and would otherwise double-charge the admin on a redundant click.
+        if not user.is_active:
+            preflight = await _preflight_seat_charge(db, seat_service, x_seat_charge_confirmed)
+            if preflight is not None:
+                return preflight
+
         user.is_active = True
         await db.commit()
         await db.refresh(user)
@@ -745,6 +933,63 @@ async def deactivate_user(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User deactivation failed")
 
 
+@router.post(
+    "/users/{user_id}/schedule-deactivation",
+    response_model=SuccessResponse[dict[str, Any]],
+)
+async def schedule_user_deactivation(
+    user_id: str,
+    _current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+):
+    """Schedule a user's deactivation for the next billing period end (admin only).
+
+    Flags the user locally and schedules the Stripe seat quantity to drop
+    at period end via the SHU-704 primitive. The user stays active (and
+    billed) until the rollover fires.
+    """
+    seat_service = _require_seat_service(seat_service)
+    try:
+        await seat_service.flag_user(db, user_id)
+    except (UserNotFoundError, UserStateError, SeatMinimumError, StripeClientError) as e:
+        _raise_seat_error_http(e)
+
+    user = await user_service.get_user_by_id(user_id, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return SuccessResponse(data=user.to_dict())
+
+
+@router.delete(
+    "/users/{user_id}/schedule-deactivation",
+    response_model=SuccessResponse[dict[str, Any]],
+)
+async def unschedule_user_deactivation(
+    user_id: str,
+    _current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    user_service: UserService = Depends(get_user_service),
+    seat_service: SeatService | None = Depends(get_seat_service),
+):
+    """Cancel a previously scheduled deactivation (admin only).
+
+    At parity (no other flagged users), this clears the pending Stripe
+    downgrade via the primitive's release-schedule branch.
+    """
+    seat_service = _require_seat_service(seat_service)
+    try:
+        await seat_service.unflag_user(db, user_id)
+    except (UserNotFoundError, UserStateError, StripeClientError) as e:
+        _raise_seat_error_http(e)
+
+    user = await user_service.get_user_by_id(user_id, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return SuccessResponse(data=user.to_dict())
+
+
 @router.delete("/users/{user_id}", response_model=SuccessResponse[dict[str, str]])
 async def delete_user(
     user_id: str,
@@ -755,7 +1000,6 @@ async def delete_user(
     """Delete user (admin only)."""
     try:
         await user_service.delete_user(user_id, current_user.id, db)
-        asyncio.create_task(trigger_quantity_sync())  # noqa: RUF006
         return SuccessResponse(data={"message": "User deleted successfully"})
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

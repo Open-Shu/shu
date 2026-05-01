@@ -8,6 +8,7 @@ import pytest
 
 from shu.billing.adapters import (
     UsageProviderImpl,
+    create_cycle_rollover_callback,
     create_payment_failed_callback,
     create_subscription_persistence_callback,
     get_billing_config,
@@ -26,7 +27,6 @@ def _make_billing_state(**kwargs) -> BillingState:
     state.subscription_status = kwargs.get("subscription_status", "active")
     state.current_period_start = kwargs.get("current_period_start", datetime(2026, 4, 1, tzinfo=UTC))
     state.current_period_end = kwargs.get("current_period_end", datetime(2026, 5, 1, tzinfo=UTC))
-    state.quantity = kwargs.get("quantity", 5)
     state.cancel_at_period_end = kwargs.get("cancel_at_period_end", False)
     state.last_reported_total = kwargs.get("last_reported_total", 0)
     state.last_reported_period_start = kwargs.get("last_reported_period_start", None)
@@ -55,7 +55,8 @@ class TestGetBillingConfig:
         assert result["subscription_status"] == "active"
         assert result["current_period_start"] == "2026-04-01T00:00:00+00:00"
         assert result["current_period_end"] == "2026-05-01T00:00:00+00:00"
-        assert result["quantity"] == 5
+        assert "quantity" not in result
+        assert "target_quantity" not in result
 
     @pytest.mark.asyncio
     async def test_returns_empty_dict_when_no_singleton(self):
@@ -145,7 +146,8 @@ class TestSubscriptionPersistenceCallback:
         assert updates["stripe_subscription_id"] == "sub_123"
         assert updates["stripe_customer_id"] == "cus_456"
         assert updates["subscription_status"] == "active"
-        assert updates["quantity"] == 5
+        assert "quantity" not in updates
+        assert "target_quantity" not in updates
         assert updates["current_period_start"] == period_start
         assert updates["current_period_end"] == period_end
 
@@ -404,3 +406,31 @@ class TestUsageProviderImpl:
         compiled_sql = str(stmt.compile()).lower()
         assert "join llm_providers" in compiled_sql
         assert "is_system_managed" in compiled_sql
+
+
+class TestCreateCycleRolloverCallback:
+    """Callback wraps SeatService.rollover + filters on billing_reason."""
+
+    @pytest.mark.asyncio
+    async def test_invokes_rollover_when_billing_reason_is_subscription_cycle(self):
+        mock_db = AsyncMock()
+        seat_service = MagicMock()
+        seat_service.rollover = AsyncMock()
+
+        callback = create_cycle_rollover_callback(mock_db, seat_service)
+        await callback("cus_1", "sub_1", "in_1", "evt_1", "subscription_cycle")
+
+        seat_service.rollover.assert_awaited_once_with(mock_db, "sub_1", "evt_1")
+
+    @pytest.mark.asyncio
+    async def test_noop_when_billing_reason_is_anything_else(self):
+        """subscription_create / subscription_update / manual → skip."""
+        mock_db = AsyncMock()
+        seat_service = MagicMock()
+        seat_service.rollover = AsyncMock()
+
+        callback = create_cycle_rollover_callback(mock_db, seat_service)
+        for reason in ("subscription_create", "subscription_update", "manual", None):
+            await callback("cus_1", "sub_1", "in_1", "evt_1", reason)
+
+        seat_service.rollover.assert_not_awaited()

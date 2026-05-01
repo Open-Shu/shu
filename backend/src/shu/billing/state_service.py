@@ -59,7 +59,7 @@ class BillingStateService:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def ensure_singleton(db: AsyncSession) -> BillingState:
+    async def ensure_singleton(db: AsyncSession) -> tuple[BillingState, bool]:
         """Create the singleton row if it doesn't exist, then return it.
 
         Safe to call on every startup, including concurrent multi-worker
@@ -67,19 +67,26 @@ class BillingStateService:
         catches the IntegrityError via a SAVEPOINT, rolls back just that
         nested write, and fetches the row the winner already inserted.
         The outer session transaction is never aborted.
+
+        Returns ``(state, inserted)`` where ``inserted`` is True only for the
+        caller that actually wrote the row. Startup code uses the flag to
+        seed defaults (e.g. ``user_limit_enforcement``) exactly once per
+        deployment without overwriting operator edits on later boots.
         """
         state = await BillingStateService.get(db)
-        if state is None:
-            try:
-                async with db.begin_nested():
-                    state = BillingState(id=1)
-                    db.add(state)
-                    await db.flush()
-                logger.info("billing_state singleton created")
-            except IntegrityError:
-                # Another worker won the race — fetch the row it inserted.
-                state = await BillingStateService.get(db)
-        return state
+        if state is not None:
+            return state, False
+        try:
+            async with db.begin_nested():
+                state = BillingState(id=1)
+                db.add(state)
+                await db.flush()
+            logger.info("billing_state singleton created")
+            return state, True
+        except IntegrityError:
+            # Another worker won the race — fetch the row it inserted.
+            state = await BillingStateService.get(db)
+            return state, False
 
     @staticmethod
     async def seed_from_config(db: AsyncSession, settings: Any) -> None:

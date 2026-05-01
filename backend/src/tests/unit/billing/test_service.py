@@ -34,100 +34,41 @@ def _make_client():
 
 
 class TestSyncSubscriptionQuantity:
-    """Tests for BillingService.sync_subscription_quantity."""
+    """Tests for BillingService.sync_subscription_quantity.
+
+    Service is a thin wrapper over ``StripeClient.update_subscription_quantity``
+    after SHU-704 Phase G; the fetch / seat-item / branching logic now lives
+    in the client and is covered there. These tests verify only the wrapper
+    contract: delegation, the changed-bool pass-through, and error propagation.
+    """
 
     @pytest.mark.asyncio
-    async def test_updates_when_quantity_differs(self):
-        """Should call Stripe when user count differs from subscription quantity."""
+    async def test_delegates_and_returns_true_when_client_writes(self):
         client = _make_client()
-        client.get_subscription.return_value = {
-            "items": {"data": [{"id": "si_1", "quantity": 3, "price": {"id": "price_seat"}}]},
-        }
+        client.update_subscription_quantity.return_value = (MagicMock(), True)
         service = BillingService(_make_settings(), stripe_client=client)
 
         result = await service.sync_subscription_quantity("sub_123", user_count=5)
 
         assert result is True
-        client.update_subscription_quantity.assert_called_once_with(
-            "sub_123", "si_1", 5, "create_prorations"
-        )
+        client.update_subscription_quantity.assert_awaited_once_with("sub_123", 5)
 
     @pytest.mark.asyncio
-    async def test_skips_when_quantity_matches(self):
-        """Should not call Stripe when quantity already matches."""
+    async def test_delegates_and_returns_false_on_no_op(self):
         client = _make_client()
-        client.get_subscription.return_value = {
-            "items": {"data": [{"id": "si_1", "quantity": 5, "price": {"id": "price_seat"}}]},
-        }
+        client.update_subscription_quantity.return_value = (MagicMock(), False)
         service = BillingService(_make_settings(), stripe_client=client)
 
         result = await service.sync_subscription_quantity("sub_123", user_count=5)
 
         assert result is False
-        client.update_subscription_quantity.assert_not_called()
+        client.update_subscription_quantity.assert_awaited_once_with("sub_123", 5)
 
     @pytest.mark.asyncio
-    async def test_raises_when_subscription_not_found(self):
-        """Should raise StripeClientError when Stripe subscription doesn't exist.
-
-        Callers must not persist local quantity on raise — the subscription
-        state is unknown and writing user_count would produce wrong quota data.
-        """
+    async def test_propagates_stripe_client_error(self):
+        """Errors from the client (not-found, no seat item, API errors) surface unwrapped."""
         client = _make_client()
-        client.get_subscription.return_value = None
-        service = BillingService(_make_settings(), stripe_client=client)
-
-        with pytest.raises(StripeClientError):
-            await service.sync_subscription_quantity("sub_gone", user_count=5)
-
-        client.update_subscription_quantity.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_raises_when_no_seat_item_found(self):
-        """Should raise StripeClientError when no item matches the configured seat price.
-
-        Falling back to items[0] on a mixed subscription (seat + metered) would
-        persist the metered item's quantity, which is wrong.
-        """
-        client = _make_client()
-        # No items at all
-        client.get_subscription.return_value = {"items": {"data": []}}
-        service = BillingService(_make_settings(), stripe_client=client)
-
-        with pytest.raises(StripeClientError):
-            await service.sync_subscription_quantity("sub_123", user_count=3)
-
-        client.update_subscription_quantity.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_picks_seat_item_among_multiple(self):
-        """With seat + metered items, should match by price ID, not pick index 0."""
-        client = _make_client()
-        client.get_subscription.return_value = {
-            "items": {
-                "data": [
-                    # Metered item first — quantity is meaningless here
-                    {"id": "si_meter", "quantity": 1, "price": {"id": "price_metered"}},
-                    {"id": "si_seat", "quantity": 3, "price": {"id": "price_seat"}},
-                ]
-            },
-        }
-        service = BillingService(_make_settings(), stripe_client=client)
-
-        result = await service.sync_subscription_quantity("sub_123", user_count=5)
-
-        # Should pick the seat item, see quantity 3 ≠ 5, and update
-        assert result is True
-        client.update_subscription_quantity.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_raises_on_stripe_error(self):
-        """Should propagate StripeClientError from update call."""
-        client = _make_client()
-        client.get_subscription.return_value = {
-            "items": {"data": [{"id": "si_1", "quantity": 3, "price": {"id": "price_seat"}}]},
-        }
-        client.update_subscription_quantity.side_effect = StripeClientError("API error")
+        client.update_subscription_quantity.side_effect = StripeClientError("boom")
         service = BillingService(_make_settings(), stripe_client=client)
 
         with pytest.raises(StripeClientError):

@@ -271,7 +271,20 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         billing_settings = get_billing_settings()
         async with session_maker() as session:
             async with session.begin():
-                await BillingStateService.ensure_singleton(session)
+                _, inserted = await BillingStateService.ensure_singleton(session)
+            # SHU-730: seed enforcement mode exactly once per deployment. Only
+            # writes when the singleton was freshly inserted so operator edits
+            # survive restarts. `is_configured` is our proxy for "hosted +
+            # billed", where hard enforcement is the safe default; self-hosted
+            # stays `none`.
+            if inserted:
+                await BillingStateService.update(
+                    session,
+                    updates={
+                        "user_limit_enforcement": "hard" if billing_settings.is_configured else "none",
+                    },
+                    source="startup:seed_enforcement",
+                )
             await BillingStateService.seed_from_config(session, billing_settings)
     except Exception as e:
         logger.warning(f"billing_state init failed: {e}")

@@ -23,17 +23,24 @@ from shu.auth.models import User
 from shu.auth.rbac import get_current_user, require_admin
 from shu.billing.adapters import (
     UsageProviderImpl,
+    create_cycle_rollover_callback,
     create_payment_failed_callback,
     create_payment_recovered_callback,
     create_subscription_persistence_callback,
+    get_active_user_count,
     get_billing_config,
-    get_user_count,
 )
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
 from shu.billing.router_envelope import verify_router_envelope_dep
 from shu.billing.schemas import WebhookEventResponse
+from shu.billing.seat_service import (
+    SeatMinimumError,
+    SeatService,
+    SeatServiceError,
+    get_seat_service,
+)
 from shu.billing.service import BillingService, CustomerMismatchError
-from shu.billing.stripe_client import StripeClientError
+from shu.billing.stripe_client import StripeClient, StripeClientError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
 
@@ -116,6 +123,7 @@ async def get_portal_session(
 async def get_subscription_status(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[BillingSettings, Depends(get_billing_settings_dependency)],
 ) -> JSONResponse:
     """Get current subscription status.
 
@@ -124,13 +132,30 @@ async def get_subscription_status(
     sensitive Stripe identifiers and billing period details.
     """
     billing_config = await get_billing_config(db)
-    user_count = await get_user_count(db)
-    user_limit = billing_config.get("quantity", 0)
+    user_count = await get_active_user_count(db)
     enforcement = billing_config.get("user_limit_enforcement", "soft")
+    subscription_id = billing_config.get("stripe_subscription_id")
+
+    user_limit = 0
+    target_quantity = 0
+    if subscription_id and settings.is_configured:
+        try:
+            stripe_client = StripeClient(settings)
+            user_limit, target_quantity, _ = await stripe_client.get_subscription_seat_state(subscription_id)
+        except StripeClientError as e:
+            # Fail-closed to match check_user_limit. Surfacing the outage as
+            # 502 keeps the frontend from rendering a "no limit" view that
+            # would let admins exceed Stripe quantity while billing is down.
+            logger.error("Failed to fetch live seat state from Stripe", extra={"error": str(e)})
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Billing provider unavailable",
+            )
 
     payload: dict = {
         "user_count": user_count,
         "user_limit": user_limit,
+        "target_quantity": target_quantity,
         "user_limit_enforcement": enforcement,
         "at_user_limit": user_count >= user_limit > 0,
     }
@@ -220,6 +245,99 @@ async def get_current_usage(
 
 
 # =============================================================================
+# Seat management
+# =============================================================================
+
+
+@router.post(
+    "/seats/cancel-release",
+    summary="Cancel pending seat release",
+    description="Wipe the pending Stripe downgrade and clear all user deactivation flags.",
+    dependencies=[Depends(require_admin)],
+)
+async def cancel_pending_release(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    seat_service: Annotated[SeatService | None, Depends(get_seat_service)],
+) -> JSONResponse:
+    """Undo all pending downgrade actions — both open-seat releases and user flags.
+
+    Releases the Stripe subscription schedule and clears every user's
+    ``deactivation_scheduled_at``. Returns the fresh ``UserLimitStatus``.
+    """
+    if seat_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Billing is not configured",
+        )
+    try:
+        status_result = await seat_service.cancel_pending_release(db)
+    except StripeClientError as e:
+        logger.error("Stripe error during cancel-release", extra={"error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Billing provider error",
+        )
+    except SeatServiceError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return ShuResponse.success(
+        {
+            "user_count": status_result.current_count,
+            "user_limit": status_result.user_limit,
+            "user_limit_enforcement": status_result.enforcement,
+            "at_user_limit": status_result.at_limit,
+        }
+    )
+
+
+@router.post(
+    "/seats/release",
+    summary="Release one open seat",
+    description="Shrink Stripe seat quantity by one without touching user rows.",
+    dependencies=[Depends(require_admin)],
+)
+async def release_open_seat(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    seat_service: Annotated[SeatService | None, Depends(get_seat_service)],
+) -> JSONResponse:
+    """Schedule a one-seat downgrade at the next period end.
+
+    Returns the fresh `UserLimitStatus` so the frontend can re-render the
+    seat counter without a follow-up GET on `/billing/subscription`.
+    """
+    if seat_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Billing is not configured",
+        )
+    try:
+        status_result = await seat_service.release_open_seat(db)
+    except SeatMinimumError as e:
+        return ShuResponse.error(
+            message=str(e),
+            code="cannot_release_below_minimum",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    except StripeClientError as e:
+        logger.error("Stripe error during seat release", extra={"error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Billing provider error",
+        )
+    except SeatServiceError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return ShuResponse.success(
+        {
+            "user_count": status_result.current_count,
+            "user_limit": status_result.user_limit,
+            "user_limit_enforcement": status_result.enforcement,
+            "at_user_limit": status_result.at_limit,
+        }
+    )
+
+
+# =============================================================================
 # Webhooks
 # =============================================================================
 
@@ -239,6 +357,7 @@ async def handle_webhook(
     body: Annotated[bytes, Depends(verify_router_envelope_dep)],
     db: Annotated[AsyncSession, Depends(get_db)],
     service: Annotated[BillingService, Depends(get_billing_service)],
+    seat_service: Annotated[SeatService | None, Depends(get_seat_service)],
 ) -> JSONResponse:
     """Process a router-forwarded Stripe webhook event.
 
@@ -274,6 +393,11 @@ async def handle_webhook(
         persist_subscription = await create_subscription_persistence_callback(db)
         on_payment_failed = await create_payment_failed_callback(db)
         on_payment_recovered = await create_payment_recovered_callback(db)
+        # seat_service is only None when billing isn't configured. Webhooks
+        # shouldn't reach an unconfigured tenant in practice, but guard so
+        # the type matches reality and we don't NPE if the router is
+        # ever wired to a half-provisioned instance.
+        on_cycle_rollover = create_cycle_rollover_callback(db, seat_service) if seat_service is not None else None
         billing_config = await get_billing_config(db)
         expected_customer_id = billing_config.get("stripe_customer_id")
 
@@ -282,6 +406,7 @@ async def handle_webhook(
             persist_subscription=persist_subscription,
             on_payment_failed=on_payment_failed,
             on_payment_recovered=on_payment_recovered,
+            on_cycle_rollover=on_cycle_rollover,
             expected_customer_id=expected_customer_id,
         )
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 import stripe
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,67 +93,32 @@ class BillingService:
         self,
         stripe_subscription_id: str,
         user_count: int,
-        proration: Literal["create_prorations", "none", "always_invoice"] = "create_prorations",
     ) -> bool:
         """Sync the subscription quantity to match current user count.
 
-        This should be called when users are added/removed.
+        Thin wrapper around ``StripeClient.update_subscription_quantity``,
+        which owns the fetch, seat-item identification, no-op detection,
+        and upgrade/downgrade branching (SHU-704 Phase G). Returns True
+        when a Stripe write occurred (upgrade modify or schedule op) and
+        False for the no-op branch.
 
-        Args:
-            stripe_subscription_id: The Stripe subscription ID
-            user_count: Current user count
-            proration: How to handle proration
-
-        Returns:
-            True if Stripe was updated, False if quantity already matched.
-
-        Raises:
-            StripeClientError: If the subscription is not found in Stripe,
-                no item matches the configured seat price, or a Stripe API
-                call fails. Callers must not persist local quantity on raise.
-
+        Raises ``StripeClientError`` on any failure; callers must not
+        persist local quantity on raise.
         """
         try:
-            subscription = await self._client.get_subscription(stripe_subscription_id)
-            if not subscription:
-                raise StripeClientError(f"Subscription {stripe_subscription_id!r} not found in Stripe")
-
-            # Subscriptions may carry multiple items (e.g., licensed seat + metered
-            # cost). Match the seat item by price ID instead of assuming index 0.
-            items_data = subscription.get("items", {}).get("data", [])
-            seat_item = self._find_seat_item(items_data)
-            if seat_item is None:
-                raise StripeClientError(
-                    "Subscription has no item matching the configured seat price",
-                    # Not a Stripe API error — no underlying stripe_error to attach
-                )
-
-            current_quantity = seat_item.get("quantity", 0)
-
-            if current_quantity == user_count:
-                logger.debug(
-                    "Subscription quantity already matches",
-                    extra={"subscription_id": stripe_subscription_id, "quantity": user_count},
-                )
-                return False
-
-            await self._client.update_subscription_quantity(
+            _, changed = await self._client.update_subscription_quantity(
                 stripe_subscription_id,
-                seat_item["id"],
                 user_count,
-                proration,
             )
-
-            logger.info(
-                "Synced subscription quantity",
-                extra={
-                    "subscription_id": stripe_subscription_id,
-                    "old_quantity": current_quantity,
-                    "new_quantity": user_count,
-                },
-            )
-            return True
-
+            if changed:
+                logger.info(
+                    "Synced subscription quantity",
+                    extra={
+                        "subscription_id": stripe_subscription_id,
+                        "user_count": user_count,
+                    },
+                )
+            return changed
         except StripeClientError as e:
             logger.error(
                 "Failed to sync subscription quantity",
@@ -418,6 +383,7 @@ class BillingService:
         persist_subscription: PersistSubscriptionFn | None = None,
         on_payment_failed: Any | None = None,
         on_payment_recovered: Any | None = None,
+        on_cycle_rollover: Any | None = None,
         expected_customer_id: str | None = None,
     ) -> tuple[bool, str, str | None]:
         """Process a router-forwarded Stripe webhook event.
@@ -435,6 +401,7 @@ class BillingService:
             persist_subscription: Callback to save subscription changes
             on_payment_failed: Callback to set payment_failed_at on invoice failure
             on_payment_recovered: Callback to clear payment_failed_at on invoice paid
+            on_cycle_rollover: Callback to reconcile seats on cycle-rollover invoice.paid
             expected_customer_id: Customer ID from billing_state. When None the
                 instance is misconfigured (SHU_STRIPE_CUSTOMER_ID unset) — events
                 are dropped with a warning rather than raising, because dropping
@@ -498,25 +465,12 @@ class BillingService:
         if on_payment_recovered:
             callbacks["on_payment_recovered"] = on_payment_recovered
 
+        if on_cycle_rollover:
+            callbacks["on_cycle_rollover"] = on_cycle_rollover
+
         handled = await self._dispatcher.dispatch(event, **callbacks)
 
         return handled, event.type, event.id
-
-    def _find_seat_item(self, items_data: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Find the subscription item that matches the configured seat price.
-
-        Subscriptions may carry multiple items (e.g., licensed seat price plus
-        a metered cost price). Quantity sync only applies to the seat item.
-        """
-        seat_price_id = self._settings.price_id_monthly
-        if not seat_price_id:
-            return items_data[0] if items_data else None
-        for item in items_data:
-            price = item.get("price")
-            price_id = price.get("id") if isinstance(price, dict) else None
-            if price_id == seat_price_id:
-                return item
-        return None
 
     @staticmethod
     def _extract_customer_id(event: Any) -> str | None:
