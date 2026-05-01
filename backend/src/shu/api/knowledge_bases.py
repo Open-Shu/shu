@@ -17,6 +17,7 @@ from ..auth.models import User
 from ..auth.rbac import (
     get_current_user,
     require_admin,
+    require_kb_write_access,
     require_power_user,
 )
 from ..core.config import get_settings_instance
@@ -204,10 +205,9 @@ async def get_knowledge_base(
 
 
 @router.post("")
-# RBAC: require_power_user expects no path param
 async def create_knowledge_base(
     kb_data: KnowledgeBaseCreate,
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new knowledge base.
@@ -881,12 +881,16 @@ def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
 @router.post(
     "/{kb_id}/documents/upload",
     summary="Upload documents to knowledge base",
-    description="Upload one or more documents directly to a knowledge base. Power user or admin only.",
+    description=(
+        "Upload one or more documents directly to a knowledge base. "
+        "Allowed when the caller is a KB owner, has power_user/admin role, "
+        "or has a PBAC kb.write grant on the target KB."
+    ),
 )
 async def upload_documents(
     kb_id: str,
     files: list[UploadFile] = File(..., description="Files to upload"),
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_write_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload documents directly to a knowledge base.
@@ -897,7 +901,9 @@ async def upload_documents(
 
     Returns results for each file indicating success or failure.
 
-    Requires power_user or admin role. Access to the specific KB is still enforced via PBAC.
+    Write access is gated by ``require_kb_write_access``: power_user/admin can
+    upload to any KB; regular users can upload to KBs they own; PBAC policies
+    can grant cross-user write on a per-KB basis.
     """
     try:
         kb_service = KnowledgeBaseService(db)
