@@ -10,8 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shu.models.document import DocumentStatus
-
 
 class MockJob:
     """Mock job object for testing."""
@@ -83,14 +81,9 @@ class TestOCRHandlerStagingCleanupFailure:
         mock_session_local, mock_session = _make_session_with_document(mock_document)
 
         mock_staging_service = AsyncMock()
-        mock_staging_service.retrieve_file = AsyncMock(return_value=b"%PDF fake content")
+        mock_staging_service.retrieve_to_path = AsyncMock(return_value="/tmp/fake_staged.bin")
         mock_staging_service.delete_staged_file = AsyncMock(
             side_effect=Exception("Redis connection lost")
-        )
-
-        mock_extractor = MagicMock()
-        mock_extractor.extract_text = AsyncMock(
-            return_value={"text": "Extracted text", "metadata": {}}
         )
 
         mock_enqueue_job = AsyncMock()
@@ -98,13 +91,18 @@ class TestOCRHandlerStagingCleanupFailure:
 
         job = _make_ocr_job()
 
+        # SHU-739: post-split _handle_ocr_job calls extract_via_ocr directly.
+        # Stub it so the test doesn't need real bytes at the fake staging path.
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
             patch("shu.core.cache_backend.get_cache_backend", AsyncMock(return_value=AsyncMock())),
             patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=mock_queue)),
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
-            patch("shu.processors.text_extractor.TextExtractor", return_value=mock_extractor),
+            patch(
+                "shu.core.ocr_service.extract_via_ocr",
+                new=AsyncMock(return_value={"text": "Extracted text " * 20, "metadata": {}}),
+            ),
         ):
             from shu.worker import _handle_ocr_job
 
@@ -133,14 +131,9 @@ class TestOCRHandlerStagingCleanupFailure:
         mock_session_local, mock_session = _make_session_with_document(mock_document)
 
         mock_staging_service = AsyncMock()
-        mock_staging_service.retrieve_file = AsyncMock(return_value=b"%PDF fake content")
+        mock_staging_service.retrieve_to_path = AsyncMock(return_value="/tmp/fake_staged.bin")
         mock_staging_service.delete_staged_file = AsyncMock(
             side_effect=Exception("TTL expired")
-        )
-
-        mock_extractor = MagicMock()
-        mock_extractor.extract_text = AsyncMock(
-            return_value={"text": "Extracted text", "metadata": {}}
         )
 
         mock_enqueue_job = AsyncMock()
@@ -154,7 +147,10 @@ class TestOCRHandlerStagingCleanupFailure:
             patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=mock_queue)),
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
-            patch("shu.processors.text_extractor.TextExtractor", return_value=mock_extractor),
+            patch(
+                "shu.core.ocr_service.extract_via_ocr",
+                new=AsyncMock(return_value={"text": "Extracted text " * 20, "metadata": {}}),
+            ),
         ):
             from shu.worker import _handle_ocr_job
 
@@ -194,7 +190,7 @@ class TestOCRHandlerDocumentNotFound:
             await _handle_ocr_job(job)
 
         # Staging service must not have been called (early return)
-        mock_staging_service.retrieve_file.assert_not_called()
+        mock_staging_service.retrieve_to_path.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_document_not_found_does_not_enqueue_embed_job(self):
@@ -217,3 +213,54 @@ class TestOCRHandlerDocumentNotFound:
             await _handle_ocr_job(job)
 
         mock_enqueue_job.assert_not_called()
+
+
+class TestOCRHandlerPassesPathNotBytes:
+    """SHU-710 regression guard: the ingestion happy path must resolve the
+    staged file to a disk path and call the OCR entry point with
+    ``file_path=...`` (not ``file_bytes=...``). Reading the full file into
+    Python memory regresses memory usage by ~file-size per concurrent job.
+
+    Updated for SHU-739: the OCR handler now calls ``extract_via_ocr``
+    directly (no inline classifier preamble); same path-vs-bytes contract.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ingestion_happy_path_uses_file_path_not_bytes(self):
+        mock_document = MagicMock()
+        mock_document.id = "doc-123"
+        mock_document.update_status = MagicMock()
+        mock_document.mark_error = MagicMock()
+
+        mock_session_local, _ = _make_session_with_document(mock_document)
+
+        mock_staging_service = AsyncMock()
+        mock_staging_service.retrieve_to_path = AsyncMock(return_value="/tmp/staged_doc.bin")
+        mock_staging_service.delete_staged_file = AsyncMock()
+
+        mock_extract = AsyncMock(return_value={"text": "Extracted text", "metadata": {}})
+        mock_enqueue_job = AsyncMock()
+
+        job = _make_ocr_job()
+
+        with (
+            patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
+            patch("shu.core.cache_backend.get_cache_backend", AsyncMock(return_value=AsyncMock())),
+            patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=AsyncMock())),
+            patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
+            patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
+            patch("shu.core.ocr_service.extract_via_ocr", mock_extract),
+        ):
+            from shu.worker import _handle_ocr_job
+
+            await _handle_ocr_job(job)
+
+        mock_staging_service.retrieve_to_path.assert_awaited_once()
+        mock_extract.assert_awaited_once()
+        kwargs = mock_extract.call_args.kwargs
+        assert kwargs.get("file_path") == "/tmp/staged_doc.bin", (
+            "Ingestion worker must pass file_path to extract_via_ocr (not file_bytes)"
+        )
+        assert kwargs.get("file_bytes") is None, (
+            "Ingestion worker must not load the staged file into memory"
+        )

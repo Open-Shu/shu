@@ -154,6 +154,31 @@ class FileStagingService:
                 details={"staging_key": staging_key, "error": str(e)},
             ) from e
 
+    async def retrieve_to_path(self, staging_key: str) -> Path:
+        """Resolve a staging key to a local filesystem path.
+
+        Returns the staged file's path with no extra I/O so callers (notably
+        PyMuPDF) can mmap the file instead of loading it into Python memory.
+        The file is NOT deleted; the caller calls ``delete_staged_file`` on
+        success and leaves it in place on failure for retry safety.
+
+        Args:
+            staging_key: The path returned by stage_file.
+
+        Returns:
+            Absolute filesystem path to the staged file.
+
+        Raises:
+            FileStagingError: If the staged file does not exist.
+
+        """
+        if not os.path.exists(staging_key):
+            raise FileStagingError(
+                f"Staged file not found: {staging_key}",
+                details={"staging_key": staging_key},
+            )
+        return Path(staging_key)
+
     async def delete_staged_file(self, staging_key: str) -> None:
         """Delete a staged file from disk.
 

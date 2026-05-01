@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ...core.ocr_modes import OcrMode
 from .auth_capability import AuthCapability
 from .cache_capability import CacheCapability
 from .cursor_capability import CursorCapability
@@ -21,7 +22,7 @@ from .utils_capability import UtilsCapability
 class HostContext:
     auth: dict[str, Any]
     schedule_id: str | None
-    ocr_mode: str | None
+    ocr_mode: OcrMode | None
     knowledge_base_ids: list[str] | None = None
 
 
@@ -42,14 +43,16 @@ def parse_host_context(host_context: dict[str, Any] | None) -> HostContext:
     except Exception:
         schedule_id = None
     # ocr.mode
-    ocr_mode: str | None = None
+    ocr_mode: OcrMode | None = None
     try:
         ocr_ctx = ctx.get("ocr") if isinstance(ctx, dict) else None
         if isinstance(ocr_ctx, dict):
             m = ocr_ctx.get("mode") or ocr_ctx.get("ocr_mode")
             if isinstance(m, str):
-                mm = m.strip().lower()
-                ocr_mode = mm if mm in {"auto", "always", "never", "fallback"} else None
+                try:
+                    ocr_mode = OcrMode(m.strip().lower())
+                except ValueError:
+                    ocr_mode = None
     except Exception:
         ocr_mode = None
     # kb.knowledge_base_ids

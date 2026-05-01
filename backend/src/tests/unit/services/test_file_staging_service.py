@@ -91,6 +91,42 @@ class TestFileStagingService:
         assert exc_info.value.details["staging_key"] == non_existent_key
 
     @pytest.mark.asyncio
+    async def test_retrieve_to_path_returns_existing_path(
+        self,
+        staging_service: FileStagingService,
+    ):
+        """retrieve_to_path returns the staged file's path without reading or deleting it."""
+        document_id = "test_doc_path"
+        file_bytes = b"mmap-bound content"
+
+        staging_key = await staging_service.stage_file(document_id, file_bytes)
+
+        path = await staging_service.retrieve_to_path(staging_key)
+
+        assert isinstance(path, Path)
+        assert str(path) == staging_key
+        # File is preserved — caller owns the lifecycle
+        assert path.is_file()
+        assert path.read_bytes() == file_bytes
+
+        await staging_service.delete_staged_file(staging_key)
+
+    @pytest.mark.asyncio
+    async def test_retrieve_to_path_missing_file_raises_error(
+        self,
+        staging_service: FileStagingService,
+        staging_dir: str,
+    ):
+        """retrieve_to_path with a non-existent path raises FileStagingError."""
+        non_existent_key = str(Path(staging_dir) / "ghost_doc_abc.bin")
+
+        with pytest.raises(FileStagingError) as exc_info:
+            await staging_service.retrieve_to_path(non_existent_key)
+
+        assert "Staged file not found" in str(exc_info.value.message)
+        assert exc_info.value.details["staging_key"] == non_existent_key
+
+    @pytest.mark.asyncio
     async def test_staging_dir_created_on_init(self, tmp_path):
         """FileStagingService creates the staging directory if it doesn't exist."""
         new_dir = str(tmp_path / "does" / "not" / "exist")

@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db_session
+from ...core.ocr_modes import OcrMode
 from ...knowledge.ko import KnowledgeObject
 from ...services.ingestion_service import ingest_document as _host_ingest_document
 from ...services.ingestion_service import ingest_email as _host_ingest_email
@@ -38,7 +39,7 @@ class KbCapability(ImmutableCapabilityMixin):
     _plugin_name: str
     _user_id: str
     _schedule_id: str | None
-    _ocr_mode: str | None
+    _ocr_mode: OcrMode | None
     _knowledge_base_ids: list[str]
 
     def __init__(
@@ -46,15 +47,25 @@ class KbCapability(ImmutableCapabilityMixin):
         *,
         plugin_name: str,
         user_id: str,
-        ocr_mode: str | None = None,
+        ocr_mode: str | OcrMode | None = None,
         schedule_id: str | None = None,
         knowledge_base_ids: list[str] | None = None,
     ) -> None:
         object.__setattr__(self, "_plugin_name", plugin_name)
         object.__setattr__(self, "_user_id", user_id)
         object.__setattr__(self, "_schedule_id", str(schedule_id) if schedule_id else None)
-        m = (ocr_mode or "").strip().lower() if isinstance(ocr_mode, str) else None
-        object.__setattr__(self, "_ocr_mode", m if m in {"auto", "always", "never", "fallback"} else None)
+        if ocr_mode is None:
+            resolved: OcrMode | None = None
+        elif isinstance(ocr_mode, OcrMode):
+            resolved = ocr_mode
+        elif isinstance(ocr_mode, str):
+            try:
+                resolved = OcrMode(ocr_mode.strip().lower())
+            except ValueError:
+                resolved = None
+        else:
+            resolved = None
+        object.__setattr__(self, "_ocr_mode", resolved)
         object.__setattr__(self, "_knowledge_base_ids", list(knowledge_base_ids or []))
 
     async def upsert_knowledge_object(self, knowledge_base_id: str, ko: dict[str, Any] | KnowledgeObject) -> str:

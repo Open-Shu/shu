@@ -11,8 +11,8 @@
    for seat counts — the cached columns introduced races on every webhook
    delivery and are no longer read or written.
 
-Revision ID: 008_0011
-Revises: 008_0010
+Revision ID: 008_0012
+Revises: 008_0011
 Create Date: 2026-04-24
 """
 
@@ -23,8 +23,8 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from migrations.helpers import add_column_if_not_exists, drop_column_if_exists, index_exists
 
 # revision identifiers, used by Alembic.
-revision = "008_0011"
-down_revision = "008_0010"
+revision = "008_0012"
+down_revision = "008_0011"
 branch_labels = None
 depends_on = None
 

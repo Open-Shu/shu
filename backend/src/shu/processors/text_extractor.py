@@ -1,6 +1,15 @@
 """Text extraction processor for Shu RAG Backend.
 
 This module provides text extraction functionality for various file types.
+
+OCR mode invariant (post-SHU-728): callers pass `ocr_mode` values from the
+`OcrMode` enum — exactly one of `"auto"`, `"always"`, or `"never"`. The
+legacy `"fallback"` and `"text_only"` aliases were removed in SHU-728. The
+orchestrator (`core.ocr_service.extract_text_with_ocr_fallback`) is the
+canonical entry point; it always passes `OcrMode.NEVER` to TextExtractor
+because the routing classifier has already chosen text-only by the time we
+get here. Direct callers that bypass the orchestrator (`attachment_service`,
+`local_ocr_service`) pass `OcrMode.NEVER` and `OcrMode.ALWAYS` respectively.
 """
 
 import asyncio
@@ -8,11 +17,15 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, ClassVar
 
 from ..core.config import ConfigurationManager
 from ..core.logging import get_logger
+from ..core.ocr_modes import OcrMode
 from ..ingestion.filetypes import (
     ALL_BINARY_SIGNATURES,
     EXT_TO_INGESTION_TYPE,
@@ -37,7 +50,93 @@ _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
 })
 # fmt: on
 
-VALID_OCR_MODES: frozenset[str] = frozenset({"auto", "always", "never", "fallback", "text_only"})
+VALID_OCR_MODES: frozenset[str] = frozenset(m.value for m in OcrMode)
+
+# MuPDF process-global store ceiling (SHU-710). The store is shared across all
+# concurrent fitz.open() calls, not per-worker. Sizing: per-worker working set
+# for sequential text extraction is ~15-25 MiB (active page + its fonts +
+# display list); at SHU_OCR_MAX_CONCURRENT_JOBS=6 that is ~120 MiB plus a
+# small LRU headroom. Values below ~64 MiB risk thrashing under multi-worker
+# load; values above 256 MiB give diminishing returns for text-only workloads.
+MUPDF_STORE_MAXSIZE_BYTES: int = 128 * 1024 * 1024
+
+
+def configure_mupdf_store() -> None:
+    """Cap the MuPDF process-global store and shrink defaults (SHU-710).
+
+    Must be called once per process before any ``fitz.open`` — from the
+    FastAPI lifespan for the API process, and from the worker entrypoint
+    for dedicated worker processes (where OCR actually runs). Idempotent:
+    safe to call multiple times, though callers should not rely on that.
+
+    Failure is logged and swallowed so misconfiguration does not block
+    process startup; absent the cap, behavior matches pre-SHU-710 MuPDF
+    defaults (unbounded store), which is degraded but not broken.
+    """
+    try:
+        import fitz
+
+        fitz.TOOLS.store_maxsize = MUPDF_STORE_MAXSIZE_BYTES
+        logger.info(
+            "MuPDF store cap configured",
+            extra={"store_maxsize_bytes": MUPDF_STORE_MAXSIZE_BYTES},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to configure MuPDF store cap: {e}")
+
+
+@contextmanager
+def _open_pdf(
+    file_path: str | None,
+    file_content: bytes | None,
+    *,
+    doc: Any | None = None,
+) -> Iterator[Any]:
+    """Open a PDF via path (mmap) when possible, else from in-memory bytes.
+
+    When the caller already holds an open ``fitz.Document`` (e.g., the routing
+    classifier in ``core.ocr_service`` opens one for the per-page scan), pass
+    it as ``doc=`` to reuse it and skip the open/close cycle. The caller owns
+    the lifecycle in that case — we yield the doc unchanged and do not close
+    or shrink the store.
+
+    Otherwise, always closes the document and shrinks the MuPDF process-global
+    store on exit so cached fonts/images from the closed doc are evicted
+    before the next extraction begins (SHU-710). The store is process-global,
+    so without shrink it staircases toward the cap and forces eviction under
+    LRU pressure — shrink returns it to near-baseline between documents.
+
+    ``filetype="pdf"`` is passed explicitly because staged files are named
+    ``.bin`` (the staging-service convention) and fitz's default
+    extension-based type detection would otherwise fall back to magic-byte
+    sniffing. These extraction methods are only reached after upstream
+    routing has confirmed the document is a PDF.
+    """
+    import fitz
+
+    if doc is not None:
+        # Caller-owned doc: reuse without managing lifecycle.
+        yield doc
+        return
+
+    if file_path and os.path.exists(file_path):
+        opened = fitz.open(file_path, filetype="pdf")
+    elif file_content is not None:
+        opened = fitz.open(stream=BytesIO(file_content), filetype="pdf")
+    else:
+        raise ValueError("_open_pdf requires either file_path or file_content")
+    try:
+        yield opened
+    finally:
+        try:
+            opened.close()
+        finally:
+            try:
+                fitz.TOOLS.store_shrink(100)
+            except Exception:
+                # store_shrink is best-effort: a failure here must not mask
+                # an earlier extraction exception or block cleanup.
+                pass
 
 
 class UnsupportedFileFormatError(Exception):
@@ -258,10 +357,12 @@ class TextExtractor:
         *,
         file_bytes: bytes | None = None,
         file_path: str | None = None,
+        filename: str | None = None,
         mime_type: str | None = None,
         ocr_mode: str | None = None,
         kb_config: dict[str, Any] | None = None,
         progress_context: dict[str, Any] | None = None,
+        fitz_doc: Any | None = None,
     ) -> dict[str, Any]:
         """Extract text from a file or in-memory bytes.
 
@@ -276,11 +377,16 @@ class TextExtractor:
                 only for extension inference (when *file_bytes* is given).
             mime_type: MIME type string used as a fallback for extension
                 resolution when *file_path* has no suffix.
-            ocr_mode: One of ``"auto"`` (default), ``"always"``,
-                ``"never"``, ``"fallback"``, ``"text_only"``.
+            ocr_mode: One of ``"auto"`` (default), ``"always"``, or
+                ``"never"`` — see `core.ocr_modes.OcrMode`.
             kb_config: Optional per-KB configuration overrides.
             progress_context: Optional dict carrying progress tracking
                 objects (``enhanced_tracker``, ``sync_job_id``, etc.).
+            fitz_doc: Optional pre-opened ``fitz.Document``. When provided
+                for a PDF, the inner extraction reuses it instead of opening
+                a fresh handle — used by `core.ocr_service` to hand off the
+                document already opened by the routing classifier (SHU-728).
+                The caller retains lifecycle ownership; we do not close it.
 
         Returns:
             Dictionary containing:
@@ -290,10 +396,10 @@ class TextExtractor:
 
         """
         # --- Derive internal use_ocr bool from the public ocr_mode string ---
-        effective_ocr_mode = (ocr_mode or "auto").strip().lower()
+        effective_ocr_mode = (ocr_mode or OcrMode.AUTO.value).strip().lower()
         if effective_ocr_mode not in VALID_OCR_MODES:
             raise ValueError(f"Invalid ocr_mode {ocr_mode!r}; must be one of {sorted(VALID_OCR_MODES)}")
-        use_ocr = effective_ocr_mode not in {"text_only", "never"}
+        use_ocr = effective_ocr_mode != OcrMode.NEVER.value
 
         logger.debug(
             "Extracting text from file",
@@ -321,20 +427,47 @@ class TextExtractor:
             )
 
         # --- Resolve file extension ---
+        # Priority: explicit filename hint → real file_path suffix → mime_type → magic bytes.
+        # `.bin` is the staging-service convention for opaque blobs and carries no type
+        # information; treat it as absent wherever it appears so the next source takes over.
         file_ext = ""
-        if file_path:
-            file_ext = Path(file_path).suffix.lower()
-        if not file_ext and mime_type:
-            file_ext = normalize_extension(mime_type)
-            # normalize_extension returns ".bin" for unknowns — treat as empty
+        if filename:
+            file_ext = Path(filename).suffix.lower()
             if file_ext == ".bin":
                 file_ext = ""
-        if not file_ext and file_bytes is not None:
-            file_ext = detect_extension_from_bytes(file_bytes) or ".txt"
-            logger.debug(
-                "No file extension found, using fallback",
-                extra={"file_path": file_path, "fallback_extension": file_ext},
-            )
+        if not file_ext and file_path:
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext == ".bin":
+                file_ext = ""
+        if not file_ext and mime_type:
+            file_ext = normalize_extension(mime_type)
+            if file_ext == ".bin":
+                file_ext = ""
+        if not file_ext:
+            # Magic-byte sniff: from in-memory bytes if we have them, else from the file head.
+            sniffed: str | None = None
+            if file_bytes is not None:
+                sniffed = detect_extension_from_bytes(file_bytes)
+            elif file_path and os.path.exists(file_path):
+                try:
+                    with open(file_path, "rb") as _fh:
+                        sniffed = detect_extension_from_bytes(_fh.read(16))
+                except OSError:
+                    sniffed = None
+            if sniffed:
+                file_ext = sniffed
+                logger.debug(
+                    "No file extension from filename/path/mime, recovered from magic bytes",
+                    extra={"file_path": file_path, "recovered_extension": file_ext},
+                )
+            elif file_bytes is not None:
+                # Preserves pre-SHU-710 behavior: degrade to .txt so the extractor can try
+                # a best-effort plain-text read instead of hard-failing on missing mime.
+                file_ext = ".txt"
+                logger.warning(
+                    "No file extension resolvable; defaulting to .txt for best-effort extraction",
+                    extra={"file_path": file_path, "mime_type": mime_type, "upload_filename": filename},
+                )
 
         if file_ext not in self.supported_extensions:
             logger.warning(
@@ -363,6 +496,7 @@ class TextExtractor:
                 use_ocr,
                 file_ext,
                 effective_ocr_mode,
+                fitz_doc=fitz_doc,
             )
             duration = time.time() - start_time
 
@@ -432,6 +566,8 @@ class TextExtractor:
         use_ocr: bool = True,
         file_ext: str | None = None,
         ocr_mode: str = "auto",
+        *,
+        fitz_doc: Any | None = None,
     ) -> tuple[str, bool, float | None]:
         """Extract text directly in-memory with progress updates.
 
@@ -463,7 +599,7 @@ class TextExtractor:
             if ingestion_type == IngestionType.PDF:
                 cb = progress_callback if progress_callback else None
                 raw_text, ocr_actually_used, ocr_confidence = await self._extract_text_pdf_with_progress(
-                    file_path, file_content, cb, use_ocr, ocr_mode
+                    file_path, file_content, cb, use_ocr, ocr_mode, fitz_doc=fitz_doc
                 )
             else:
                 handler = self._type_handlers[ingestion_type]
@@ -641,6 +777,8 @@ class TextExtractor:
         progress_callback=None,
         use_ocr: bool = True,
         ocr_mode: str = "auto",
+        *,
+        fitz_doc: Any | None = None,
     ) -> tuple[str, bool, float | None]:
         """Extract text from PDF with page-by-page progress updates.
 
@@ -655,148 +793,111 @@ class TextExtractor:
             extra={"file_path": file_path, "use_ocr": use_ocr, "ocr_mode": ocr_mode},
         )
 
-        # Handle fallback mode - try fast extraction first
-        if ocr_mode == "fallback":
-            logger.info("Trying fast extraction first (fallback mode)", extra={"file_path": file_path})
-            try:
-                # Try fast extraction first
-                fast_text = await self._extract_text_pdf_fast_only(file_path, file_content)
-                if (
-                    fast_text and fast_text.strip() and len(fast_text.strip()) > 50
-                ):  # Minimum threshold for meaningful text
-                    logger.info(
-                        "Fast extraction successful, skipping OCR",
-                        extra={"file_path": file_path, "text_length": len(fast_text.strip())},
-                    )
-                    return fast_text, False, None
-                logger.info(
-                    "Fast extraction yielded insufficient text, falling back to OCR",
-                    extra={
-                        "file_path": file_path,
-                        "text_length": len(fast_text.strip()) if fast_text else 0,
-                    },
-                )
-                # Fall through to OCR processing
-                use_ocr = True
-            except Exception as e:
-                logger.warning(
-                    "Fast extraction failed, falling back to OCR",
-                    extra={"file_path": file_path, "error": str(e)},
-                )
-                use_ocr = True
-
-        # Implement correct OCR decision logic
         if use_ocr:
-            # OCR is enabled - use OCR directly
+            # OCR is enabled - use OCR directly. The OCR path renders pages from
+            # raw bytes via Mistral/EasyOCR and doesn't read the fitz text layer,
+            # so a pre-opened doc has nothing to contribute here — don't forward.
             logger.info("OCR enabled for PDF, using OCR processing", extra={"file_path": file_path})
             text, confidence = await self._extract_pdf_ocr_direct(file_path, file_content, progress_callback)
             return text, True, confidence
         # OCR is disabled - try text extraction only
         logger.info("OCR disabled for PDF, using text extraction only", extra={"file_path": file_path})
-        return await self._extract_pdf_text_only(file_path, file_content, progress_callback), False, None
+        return (
+            await self._extract_pdf_text_only(file_path, file_content, progress_callback, fitz_doc=fitz_doc),
+            False,
+            None,
+        )
 
     async def _extract_pdf_text_only(
-        self, file_path: str, file_content: bytes | None = None, progress_callback=None
+        self,
+        file_path: str,
+        file_content: bytes | None = None,
+        progress_callback=None,
+        *,
+        fitz_doc: Any | None = None,
     ) -> str:
-        """Extract text from PDF using text extraction methods only (no OCR)."""
+        """Extract text from PDF using text extraction methods only (no OCR).
+
+        When ``fitz_doc`` is provided (e.g., handed off from the SHU-728
+        routing classifier), the existing handle is reused — no second open,
+        no second mmap. The caller retains lifecycle ownership.
+        """
         logger.debug("Extracting PDF text only (no OCR)", extra={"file_path": file_path})
 
         def _extract_text_only():
-            """Extract PDF text without OCR."""
+            """Extract PDF text without OCR.
+
+            SHU-739 fix #4 (revised): per-page MuPDF cache eviction.
+            `fitz.TOOLS.store_shrink(100)` is called after each page so the
+            MuPDF store doesn't accumulate font tables / character maps /
+            parsed content streams across all pages of a single document.
+            SHU-710 already calls store_shrink at document close; this adds
+            the per-iteration call to bound the in-loop store size.
+
+            (An earlier version of this fix also wrote pages to a temp file
+            to bound Python-heap accumulation, but lab measurement showed
+            no working-set benefit — the savings were offset by Linux file
+            cache. Reverted in favour of the simpler list+join shape from
+            fix #1, keeping only the per-page store_shrink.)
+            """
             try:
-                from io import BytesIO
+                import fitz as _fitz
+            except ImportError:
+                _fitz = None  # `_open_pdf` will raise the same import error
 
-                import fitz
+            try:
+                with _open_pdf(file_path, file_content, doc=fitz_doc) as doc:
+                    total_pages = len(doc)
+                    logger.debug(f"PDF has {total_pages} pages", extra={"file_path": file_path})
 
-                # Open PDF document
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
-
-                total_pages = len(doc)
-                logger.debug(f"PDF has {total_pages} pages", extra={"file_path": file_path})
-
-                # Initialize progress
-                if progress_callback:
-                    progress_callback(0, total_pages)
-
-                text = ""
-                for page_num in range(total_pages):
-                    # Extract text from page
-                    page = doc.load_page(page_num)
-                    page_text = page.get_text()
-
-                    if page_text.strip():
-                        text += page_text + "\n"
-
-                    # Update progress after each page
                     if progress_callback:
-                        progress_callback(page_num + 1, total_pages)
+                        progress_callback(0, total_pages)
 
-                    logger.debug(
-                        f"Processed page {page_num + 1}/{total_pages}",
-                        extra={"file_path": file_path, "page_text_length": len(page_text)},
-                    )
+                    parts: list[str] = []
+                    for page_num in range(total_pages):
+                        page = doc.load_page(page_num)
+                        page_text = page.get_text()
 
-                doc.close()
-                return text.strip()
+                        if page_text.strip():
+                            parts.append(page_text)
+
+                        # Explicit per-page MuPDF cleanup: release cached
+                        # font tables, character maps, and content streams
+                        # that the page parsed. SHU-710 caps the store
+                        # globally; this call forces release between pages
+                        # so the in-loop cache doesn't balloon to doc-size.
+                        # Best-effort — failures here must not mask
+                        # extraction success.
+                        if _fitz is not None:
+                            try:
+                                _fitz.TOOLS.store_shrink(100)
+                            except Exception:
+                                pass
+
+                        if progress_callback:
+                            progress_callback(page_num + 1, total_pages)
+
+                        logger.debug(
+                            f"Processed page {page_num + 1}/{total_pages}",
+                            extra={"file_path": file_path, "page_text_length": len(page_text)},
+                        )
+
+                    return "\n".join(parts).strip()
 
             except Exception as e:
+                # Re-raise so callers (e.g. extract_text_with_ocr_fallback)
+                # can detect the failure and route to the OCR fallback path.
+                # Previously this returned "" silently, which masked the
+                # failure as a successful empty extraction and prevented
+                # the fallback from firing on corrupt-PDF inputs.
                 logger.error(f"PDF text extraction failed: {e}", extra={"file_path": file_path})
-                return ""
+                raise
 
         # Run in executor to avoid blocking
         result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
 
         if not result.strip():
             logger.warning("No text found in PDF with text extraction only", extra={"file_path": file_path})
-            return ""
-
-        return result
-
-    async def _extract_text_pdf_fast_only(self, file_path: str, file_content: bytes | None = None) -> str:
-        """Extract text from PDF using only fast text extraction (no OCR)."""
-        logger.debug("Extracting PDF text using fast extraction only", extra={"file_path": file_path})
-
-        def _extract_text_only():
-            """Extract text without OCR in a separate thread."""
-            from io import BytesIO
-
-            import fitz
-
-            try:
-                doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
-
-                text = ""
-                total_pages = len(doc)
-
-                for page_num in range(total_pages):
-                    # Check for job cancellation
-                    if self._current_sync_job_id and self.is_job_cancelled(self._current_sync_job_id):
-                        logger.info(
-                            f"Fast extraction cancelled for job {self._current_sync_job_id}, stopping at page {page_num + 1}"
-                        )
-                        break
-
-                    # Extract text from page
-                    page = doc.load_page(page_num)
-                    page_text = page.get_text()
-
-                    if page_text.strip():
-                        text += page_text + "\n"
-
-                    logger.debug(f"Processed page {page_num + 1}/{total_pages} | page_text_length={len(page_text)}")
-
-                doc.close()
-                return text.strip()
-
-            except Exception as e:
-                logger.error(f"Fast PDF extraction failed: {e}", extra={"file_path": file_path})
-                return ""
-
-        # Run in executor to avoid blocking
-        result = await asyncio.get_running_loop().run_in_executor(None, _extract_text_only)
-
-        if not result.strip():
-            logger.warning("No text found in PDF with fast extraction only", extra={"file_path": file_path})
             return ""
 
         return result
@@ -819,48 +920,40 @@ class TextExtractor:
         start_time = time.time()
 
         try:
-            from io import BytesIO
-
-            import fitz
-
-            # Open PDF — worker-level concurrency limiting ensures at most
+            # Worker-level concurrency limiting ensures at most
             # SHU_OCR_MAX_CONCURRENT_JOBS are processing OCR simultaneously.
-            doc = fitz.open(stream=BytesIO(file_content), filetype="pdf") if file_content else fitz.open(file_path)
+            with _open_pdf(file_path, file_content) as doc:
+                total_pages = len(doc)
+                logger.info(
+                    f"Starting direct OCR processing for {total_pages} pages",
+                    extra={"file_path": file_path},
+                )
 
-            total_pages = len(doc)
-            logger.info(
-                f"Starting direct OCR processing for {total_pages} pages",
-                extra={"file_path": file_path},
-            )
-
-            # Process with OCR (EasyOCR with Tesseract fallback)
-            try:
-                text, method, confidence = await self._process_pdf_with_ocr_direct(doc, file_path, progress_callback)
-                # Record the actual engine so extract_text() can report it accurately.
-                engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
-                self._last_ocr_engine = engine_map.get(method, method)
-                if text.strip():
-                    processing_time = time.time() - start_time
-                    logger.info(
-                        "OCR processing successful",
-                        extra={
-                            "file_path": file_path,
-                            "engine": self._last_ocr_engine,
-                            "confidence": confidence,
-                            "processing_time": processing_time,
-                            "pages": total_pages,
-                        },
+                try:
+                    text, method, confidence = await self._process_pdf_with_ocr_direct(
+                        doc, file_path, progress_callback
                     )
-                    doc.close()
-                    return text, confidence
-            except Exception as e:
-                logger.error(f"OCR processing failed: {e}", extra={"file_path": file_path})
-                doc.close()
-                return "", 0.0
+                    engine_map = {"ocr": "easyocr", "tesseract_direct": "tesseract"}
+                    self._last_ocr_engine = engine_map.get(method, method)
+                    if text.strip():
+                        processing_time = time.time() - start_time
+                        logger.info(
+                            "OCR processing successful",
+                            extra={
+                                "file_path": file_path,
+                                "engine": self._last_ocr_engine,
+                                "confidence": confidence,
+                                "processing_time": processing_time,
+                                "pages": total_pages,
+                            },
+                        )
+                        return text, confidence
+                except Exception as e:
+                    logger.error(f"OCR processing failed: {e}", extra={"file_path": file_path})
+                    return "", 0.0
 
-            doc.close()
-            logger.error("All direct OCR methods failed", extra={"file_path": file_path})
-            return "", 0.0
+                logger.error("All direct OCR methods failed", extra={"file_path": file_path})
+                return "", 0.0
 
         except Exception as e:
             logger.error(f"Direct OCR processing failed: {e}", extra={"file_path": file_path})
@@ -908,7 +1001,7 @@ class TextExtractor:
         # Process pages with EasyOCR
         import fitz  # Add missing import
 
-        text = ""
+        page_outputs: list[str] = []
         confidence_scores = []
         total_pages = len(doc)
 
@@ -1060,17 +1153,19 @@ class TextExtractor:
 
                     # Handle EasyOCR result format
                     if hasattr(ocr, "readtext"):  # EasyOCR format
+                        detections: list[str] = []
                         for detection in result:
                             if len(detection) >= 3:
                                 _bbox, text_content, confidence = detection
-                                page_text += text_content + " "
+                                detections.append(text_content)
                                 page_confidences.append(confidence)
+                        page_text = " ".join(detections)
                     else:
                         # Unknown format - log warning and skip
                         logger.warning(f"Unknown OCR result format on page {page_num + 1}")
                         page_text = ""
 
-                    text += page_text + "\n"
+                    page_outputs.append(page_text)
                     confidence_scores.extend(page_confidences)
 
                 # Update progress - page completed
@@ -1096,12 +1191,12 @@ class TextExtractor:
                     progress_callback(page_num + 1, total_pages, page_time, 0)
 
                 # Add empty text for failed page to maintain page count
-                text += f"[OCR failed on page {page_num + 1}]\n"
+                page_outputs.append(f"[OCR failed on page {page_num + 1}]")
                 continue
 
         avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
 
-        return text.strip(), "ocr", avg_confidence
+        return "\n".join(page_outputs).strip(), "ocr", avg_confidence
 
     def _process_pdf_with_tesseract_direct(self, doc, file_path: str, progress_callback=None):
         """Process PDF with Tesseract directly (no process isolation)."""
@@ -1114,7 +1209,7 @@ class TextExtractor:
         except ImportError as e:
             raise Exception(f"Tesseract dependencies not available: {e}")
 
-        text = ""
+        page_outputs: list[str] = []
         total_pages = len(doc)
 
         for page_num in range(total_pages):
@@ -1136,7 +1231,7 @@ class TextExtractor:
             try:
                 image = Image.open(io.BytesIO(img_data))
                 page_text = pytesseract.image_to_string(image, config="--psm 6")
-                text += page_text + "\n"
+                page_outputs.append(page_text)
 
                 # Update progress
                 if progress_callback:
@@ -1146,7 +1241,8 @@ class TextExtractor:
                 logger.warning(f"Tesseract failed on page {page_num + 1}: {e}")
                 continue
 
-        return text.strip(), "tesseract_direct", self._calculate_text_quality(text.strip())
+        text = "\n".join(page_outputs).strip()
+        return text, "tesseract_direct", self._calculate_text_quality(text)
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text by removing problematic characters."""
@@ -1219,10 +1315,10 @@ class TextExtractor:
 
                 doc = docx.Document(BytesIO(file_content)) if file_content else docx.Document(file_path)
 
-                text = ""
+                parts: list[str] = []
                 for paragraph in doc.paragraphs:
                     if paragraph.text.strip():
-                        text += paragraph.text + "\n"
+                        parts.append(paragraph.text)
 
                 # Also extract text from tables with proper formatting
                 for table in doc.tables:
@@ -1239,9 +1335,9 @@ class TextExtractor:
                             table_text.append(" | ".join(row_text))
 
                     if table_text:
-                        text += "\n[Table]\n" + "\n".join(table_text) + "\n[/Table]\n"
+                        parts.append("\n[Table]\n" + "\n".join(table_text) + "\n[/Table]")
 
-                return text.strip()
+                return "\n".join(parts).strip()
             except Exception as e:
                 logger.debug(f"python-docx extraction failed: {e!s}")
                 return None
