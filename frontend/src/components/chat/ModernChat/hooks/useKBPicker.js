@@ -34,6 +34,21 @@ const useKBPicker = () => {
     setSelectedKBs((prev) => prev.filter((kb) => kb.id !== kbId));
   }, []);
 
+  // Add a KB to the current selection if not already attached.
+  // Used by Personal Knowledge auto-attach so additive flows don't trample
+  // existing user choices.
+  const ensureKBAttached = useCallback((kb) => {
+    if (!kb || !kb.id) {
+      return;
+    }
+    setSelectedKBs((prev) => {
+      if (prev.some((existing) => existing.id === kb.id)) {
+        return prev;
+      }
+      return [...prev, kb];
+    });
+  }, []);
+
   return {
     selectedKBs,
     selectedKBIds,
@@ -45,6 +60,7 @@ const useKBPicker = () => {
     applyKBSelection,
     clearKBSelection,
     removeKB,
+    ensureKBAttached,
   };
 };
 
