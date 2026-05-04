@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { billingAPI, extractDataFromResponse } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 import log from '../utils/log';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -21,12 +22,9 @@ export const useBillingStatus = () => {
 };
 
 export const BillingStatusProvider = ({ children }) => {
+  const { isAuthenticated } = useAuth();
   const [status, setStatus] = useState(HEALTHY_STATE);
   const [loading, setLoading] = useState(true);
-
-  // Ref'd so the interval/focus handlers always call the latest callback without
-  // re-binding the interval each render.
-  const fetchRef = useRef(null);
 
   const fetchBillingStatus = useCallback(async () => {
     try {
@@ -46,25 +44,22 @@ export const BillingStatusProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    fetchRef.current = fetchBillingStatus;
-  }, [fetchBillingStatus]);
+    // Belt-and-suspenders with the auth boundary in App.js — once a session
+    // expires, isAuthenticated flips before the unmount completes, and we
+    // don't want a queued tick to fire a guaranteed-401 between those events.
+    if (!isAuthenticated) {
+      return undefined;
+    }
 
-  useEffect(() => {
-    const tick = () => {
-      if (fetchRef.current) {
-        fetchRef.current();
-      }
-    };
-
-    tick();
-    const intervalId = setInterval(tick, POLL_INTERVAL_MS);
-    window.addEventListener('focus', tick);
+    fetchBillingStatus();
+    const intervalId = setInterval(fetchBillingStatus, POLL_INTERVAL_MS);
+    window.addEventListener('focus', fetchBillingStatus);
 
     return () => {
       clearInterval(intervalId);
-      window.removeEventListener('focus', tick);
+      window.removeEventListener('focus', fetchBillingStatus);
     };
-  }, []);
+  }, [isAuthenticated, fetchBillingStatus]);
 
   const value = {
     paymentFailedAt: status.paymentFailedAt,

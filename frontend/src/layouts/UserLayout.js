@@ -11,7 +11,7 @@ const UserLayoutContent = ({ children }) => {
   const { toggle } = useMobileSidebar();
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <TopBar
         appBarPosition="static"
         showAdminLink

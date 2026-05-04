@@ -13,14 +13,13 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from shu.api.dependencies import get_db
 from shu.api.knowledge_bases import list_knowledge_bases, router as kb_router
 from shu.auth.rbac import require_power_user
 from shu.billing.cp_client import BillingState
-from shu.core.exceptions import ShuException
+from tests.unit.api.conftest import make_app_with_router
 
 
 def _mock_user(user_id: str = "user-1"):
@@ -127,37 +126,6 @@ class TestListKnowledgeBases:
 # in test_chat.py for the same reason.
 
 
-def _build_app() -> FastAPI:
-    """Minimal FastAPI app with just the KB router + the production ShuException handler.
-
-    Spinning up the full main.py app pulls in DB init, settings validation, etc.
-    The 402 gate behavior depends only on Depends-resolution + the global
-    ShuException handler, both of which we wire up here directly.
-    """
-    app = FastAPI()
-    app.include_router(kb_router, prefix="/api/v1")
-
-    # WHY — re-implement the same handler shape as main.py:658 so the wire
-    # format under test matches production. Importing setup_exception_handlers
-    # would drag in get_settings_instance and full app config.
-    @app.exception_handler(ShuException)
-    async def _shu_exception_handler(request, exc: ShuException):  # noqa: ARG001
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": {
-                    "code": exc.error_code,
-                    "message": exc.message,
-                    "details": exc.details,
-                }
-            },
-        )
-
-    return app
-
-
 class TestUploadDocumentsSubscriptionGate:
     """The subscription gate must fire before staging or job enqueue."""
 
@@ -172,7 +140,7 @@ class TestUploadDocumentsSubscriptionGate:
             )
         )
 
-        app = _build_app()
+        app = make_app_with_router(kb_router)
         fake_user = _mock_user("user-123")
         fake_db = AsyncMock()
 

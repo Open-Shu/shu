@@ -3,6 +3,7 @@ import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingStatusProvider, useBillingStatus } from './BillingStatusContext';
 import { billingAPI } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 
 vi.mock('../services/api', () => ({
   billingAPI: {
@@ -20,6 +21,12 @@ vi.mock('../services/api', () => ({
     }
     return response;
   },
+}));
+
+// Default to authenticated so existing tests don't all need to opt in. The
+// auth-gating test below overrides to false explicitly.
+vi.mock('../hooks/useAuth', () => ({
+  useAuth: vi.fn(() => ({ isAuthenticated: true })),
 }));
 
 // Silence the warn() call in the swallowed-error path so test output stays clean.
@@ -81,6 +88,7 @@ describe('BillingStatusContext', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     billingAPI.getSubscription.mockReset();
+    useAuth.mockReturnValue({ isAuthenticated: true });
   });
 
   afterEach(() => {
@@ -167,6 +175,32 @@ describe('BillingStatusContext', () => {
     expect(screen.getByTestId('paymentFailedAt').textContent).toBe('null');
     expect(screen.getByTestId('graceDeadline').textContent).toBe('null');
     expect(screen.getByTestId('servicePaused').textContent).toBe('false');
+  });
+
+  it('does not poll while unauthenticated and resumes polling on auth flip', async () => {
+    // Belt-and-suspenders with the auth boundary in App.js: even if the
+    // provider somehow renders without an authenticated session, no fetch
+    // should fire — every call would be a guaranteed 401.
+    useAuth.mockReturnValue({ isAuthenticated: false });
+    billingAPI.getSubscription.mockResolvedValue(HEALTHY_RESPONSE);
+
+    const { rerender } = renderProvider();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    fireEvent.focus(window);
+    expect(billingAPI.getSubscription).not.toHaveBeenCalled();
+
+    // Simulate login completing — the effect re-runs and polling kicks in.
+    useAuth.mockReturnValue({ isAuthenticated: true });
+    rerender(
+      <BillingStatusProvider>
+        <StatusProbe />
+      </BillingStatusProvider>
+    );
+
+    await waitFor(() => {
+      expect(billingAPI.getSubscription).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('cleans up interval and focus listener on unmount', async () => {

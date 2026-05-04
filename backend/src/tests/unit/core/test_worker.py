@@ -17,7 +17,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from shu.billing.enforcement import SubscriptionInactiveError
-from tests.unit.conftest import healthy_billing_state
+from tests.unit.conftest import disabled_billing_state, healthy_billing_state
 from shu.core.queue_backend import InMemoryQueueBackend, Job
 from shu.core.worker import Worker, WorkerConfig
 from shu.core.workload_routing import WorkloadType, enqueue_job
@@ -942,3 +942,66 @@ class TestProcessJobSubscriptionGate:
         assert getattr(record, "job_id", None) == "job-001"
         assert getattr(record, "document_id", None) == "doc-1"
         assert getattr(record, "knowledge_base_id", None) == "kb-1"
+
+
+class TestHandlerPreCheckBeforeStateMutation:
+    """Each per-workload handler must short-circuit before opening a session
+    or touching staged files when CP has paused the tenant.
+
+    Without this pre-check, the OCR/embed handlers mark documents
+    EXTRACTING / EMBEDDING and then leave them stuck when the dispatch
+    catch drops the job. The pre-check keeps the document state machine
+    clean — drops happen before any DB write.
+    """
+
+    @pytest.mark.parametrize(
+        "handler_name,payload,blocked_path",
+        [
+            (
+                "_handle_ocr_job",
+                {
+                    "document_id": "doc-1",
+                    "knowledge_base_id": "kb-1",
+                    "staging_key": "k",
+                    "filename": "f.pdf",
+                    "mime_type": "application/pdf",
+                },
+                # If the gate fell through, the handler would open a real DB
+                # session here. Patching at the source module so the inner
+                # `from .core.database import get_async_session_local` picks
+                # up the mock regardless of binding location.
+                "shu.core.database.get_async_session_local",
+            ),
+            (
+                "_handle_embed_job",
+                {"document_id": "doc-1", "knowledge_base_id": "kb-1", "action": "embed_document"},
+                # _handle_embed_job dispatches to _handle_content_embed_job
+                # (the EMBEDDING-status mutation lives there). Assert the
+                # pre-check fires before dispatch.
+                "shu.worker._handle_content_embed_job",
+            ),
+            (
+                "_handle_re_embedding_job",
+                {"document_id": "doc-1", "knowledge_base_id": "kb-1"},
+                # The handler lazy-imports re_embedding_handler; patch the
+                # symbol that import would resolve to.
+                "shu.re_embedding_handler.handle_re_embedding_job",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_paused_cache_short_circuits_before_side_effects(
+        self, install_stub_cache, handler_name, payload, blocked_path
+    ):
+        install_stub_cache(disabled_billing_state())
+
+        import shu.worker as worker_module
+
+        job = MagicMock(id="job-pre-1", payload=payload, attempts=1, max_attempts=3)
+        handler = getattr(worker_module, handler_name)
+
+        with patch(blocked_path, new=AsyncMock()) as blocked:
+            with pytest.raises(SubscriptionInactiveError):
+                await handler(job)
+
+        blocked.assert_not_called()

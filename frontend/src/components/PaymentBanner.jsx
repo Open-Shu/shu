@@ -2,10 +2,6 @@ import React from 'react';
 import { Alert } from '@mui/material';
 import { useBillingStatus } from '../contexts/BillingStatusContext';
 
-// One above MUI's modal/drawer layer so the banner sits over fixed AppBars
-// and any open drawers — service-paused state must always be visible.
-const BANNER_Z_OFFSET = 2;
-
 /**
  * PaymentBanner surfaces billing failure state to the user.
  *
@@ -23,16 +19,12 @@ const PaymentBanner = () => {
   // Falling back to null keeps formatting from blowing up on `new Date(null)`.
   const formattedDate = graceDeadline ? new Date(graceDeadline).toLocaleDateString() : null;
 
-  // Fixed at the top of the viewport with a high z-index — the routed layouts
-  // claim `height: 100vh`, so an in-flow banner gets pushed off-screen even
-  // though it renders. Fixed positioning sidesteps the layout overhaul that a
-  // proper flex-column rewrite would require across UserLayout / AdminLayout.
+  // Rendered in normal flow inside the flex-column wrapper in App.js, so it
+  // pushes the routed layout down instead of overlapping it. Banner height
+  // is implicit (driven by py + content); the parent flex layout absorbs
+  // the change so no magic-number coupling is needed.
   const sx = {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: (theme) => theme.zIndex.drawer + BANNER_Z_OFFSET,
+    flexShrink: 0,
     borderRadius: 0,
     fontSize: '1.05rem',
     fontWeight: 500,

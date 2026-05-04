@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -20,7 +19,7 @@ from shu.api.dependencies import get_db
 from shu.auth.rbac import get_current_user
 from shu.billing.cp_client import BillingState
 from shu.core.config import get_config_manager_dependency
-from shu.core.exceptions import ShuException
+from tests.unit.api.conftest import make_app_with_router
 
 
 class TestSendMessageRequestKBIds:
@@ -76,43 +75,12 @@ def mock_chat_service():
         yield instance
 
 
-def _build_app() -> FastAPI:
-    """Minimal FastAPI app with just the chat router + the production ShuException handler.
-
-    Spinning up the full main.py app pulls in DB init, settings validation, etc.
-    The 402 gate behavior depends only on Depends-resolution + the global
-    ShuException handler, both of which we can wire up here directly.
-    """
-    app = FastAPI()
-    app.include_router(chat_router, prefix="/api/v1")
-
-    # WHY — re-implement the same handler shape as main.py:658 so the wire
-    # format under test matches production. Importing setup_exception_handlers
-    # would drag in get_settings_instance and full app config.
-    @app.exception_handler(ShuException)
-    async def _shu_exception_handler(request, exc: ShuException):  # noqa: ARG001
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": {
-                    "code": exc.error_code,
-                    "message": exc.message,
-                    "details": exc.details,
-                }
-            },
-        )
-
-    return app
-
-
 @pytest.fixture
 def client_with_overrides(mock_chat_service):
     """TestClient with auth/db/config deps stubbed so the chat gate is the only thing
     that can fail the request.
     """
-    app = _build_app()
+    app = make_app_with_router(chat_router)
 
     fake_user = MagicMock(id="user-123")
     fake_db = AsyncMock()
@@ -214,7 +182,7 @@ class TestSseInFlightInvariant:
         # into the running APIRouter and override via dependency_overrides.
         from shu.api.chat import assert_subscription_active as real_helper
 
-        app = _build_app()
+        app = make_app_with_router(chat_router)
         fake_user = MagicMock(id="user-123")
         fake_db = AsyncMock()
         fake_config_manager = MagicMock()

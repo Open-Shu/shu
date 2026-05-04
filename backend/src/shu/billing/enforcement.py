@@ -12,7 +12,7 @@ in the design doc — there is no per-chokepoint policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,24 +69,14 @@ async def get_current_billing_state() -> BillingState:
 
 
 async def assert_subscription_active() -> None:
-    """Raise ``SubscriptionInactiveError`` if CP has paused service.
-
-    The deadline is recomputed from the current cache payload on every
-    call rather than memoized — `payment_grace_days` is CP-served and
-    can change mid-window, so caching the derived deadline would lock
-    in a stale window length.
-    """
+    """Raise ``SubscriptionInactiveError`` if CP has paused service."""
     state = await get_current_billing_state()
     if not state.openrouter_key_disabled:
         return
 
-    grace_deadline: datetime | None = None
-    if state.payment_failed_at is not None:
-        grace_deadline = state.payment_failed_at + timedelta(days=state.payment_grace_days)
-
     raise SubscriptionInactiveError(
         payment_failed_at=state.payment_failed_at,
-        grace_deadline=grace_deadline,
+        grace_deadline=state.grace_deadline,
     )
 
 

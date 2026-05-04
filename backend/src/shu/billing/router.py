@@ -11,7 +11,6 @@ The router is designed to be mounted at /api/v1/billing.
 from __future__ import annotations
 
 import json
-from datetime import timedelta
 from typing import Annotated
 
 import stripe
@@ -131,9 +130,6 @@ async def get_subscription_status(
     enforcement = billing_config.get("user_limit_enforcement", "soft")
 
     state = await get_current_billing_state()
-    grace_deadline = (
-        state.payment_failed_at + timedelta(days=state.payment_grace_days) if state.payment_failed_at else None
-    )
 
     payload: dict = {
         "user_count": user_count,
@@ -142,7 +138,7 @@ async def get_subscription_status(
         "at_user_limit": user_count >= user_limit > 0,
         "payment_failed_at": state.payment_failed_at.isoformat() if state.payment_failed_at else None,
         "payment_grace_days": state.payment_grace_days,
-        "grace_deadline": grace_deadline.isoformat() if grace_deadline else None,
+        "grace_deadline": state.grace_deadline.isoformat() if state.grace_deadline else None,
         "service_paused": state.openrouter_key_disabled,
     }
 

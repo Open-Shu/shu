@@ -41,7 +41,7 @@ from sqlalchemy import select
 
 from .auth.models import User
 from .billing.billing_state_cache import initialize_billing_state_cache
-from .billing.enforcement import SubscriptionInactiveError
+from .billing.enforcement import SubscriptionInactiveError, assert_subscription_active
 from .core.config import get_settings_instance
 from .core.database import get_async_session_local, init_db
 from .core.exceptions import ShuException
@@ -143,6 +143,12 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
 
     ocr_mode = job.payload.get("ocr_mode")
     user_id = job.payload.get("user_id")
+
+    # Short-circuit before any DB write or staged-file read so a paused
+    # tenant doesn't leave documents stuck in EXTRACTING. The OCR
+    # service-layer gate would also catch this; this pre-check just
+    # avoids the dirty status transition in the documented drop case.
+    await assert_subscription_active()
 
     logger.info(
         "Processing OCR job",
@@ -333,6 +339,13 @@ async def _handle_embed_job(job) -> None:
         Exception: If embedding generation fails (triggers retry).
 
     """
+    # Single chokepoint for both embed actions — fires before either
+    # downstream handler can mutate document status to EMBEDDING. The
+    # embedding service-layer gate is still load-bearing for direct
+    # callers (plugin host, future entry points); this pre-check just
+    # avoids the dirty status transition in the documented drop case.
+    await assert_subscription_active()
+
     action = job.payload.get("action", "embed_document")
 
     if action == "embed_profile_artifacts":
@@ -1069,6 +1082,11 @@ async def _handle_profiling_job(job) -> None:
 
 async def _handle_re_embedding_job(job) -> None:
     """Route RE_EMBEDDING jobs to the handler module."""
+    # Pre-check before loading the handler module / opening any session.
+    # Re-embedding is the load-bearing case the dispatch-level catch was
+    # added for; gating here keeps the document state machine clean too.
+    await assert_subscription_active()
+
     from .re_embedding_handler import handle_re_embedding_job
 
     await handle_re_embedding_job(job)
