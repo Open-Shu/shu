@@ -33,6 +33,7 @@ import {
   Palette as BrandingIcon,
   Menu as MenuIcon,
   AutoAwesome as ExperiencesIcon,
+  BarChart as BillingIcon,
 } from '@mui/icons-material';
 
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -108,6 +109,8 @@ const AdminLayout = ({ children }) => {
       path: '/admin/policies',
     },
   ];
+
+  const billingMenuItems = [{ text: 'Cost & Usage', icon: <BillingIcon />, path: '/admin/billing/usage' }];
 
   const isActive = (path) => location.pathname === path;
 
@@ -186,6 +189,27 @@ const AdminLayout = ({ children }) => {
             </Typography>
           </ListItem>
           {rbacMenuItems.map((item) => (
+            <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
+              <ListItemIcon>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.text} />
+            </ListItemButton>
+          ))}
+
+          {/* Billing */}
+          <ListItem>
+            <Typography
+              variant="overline"
+              sx={{
+                fontSize: '0.75rem',
+                color: 'primary.main',
+                fontWeight: 600,
+                letterSpacing: '0.1em',
+              }}
+            >
+              Billing
+            </Typography>
+          </ListItem>
+          {billingMenuItems.map((item) => (
             <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
