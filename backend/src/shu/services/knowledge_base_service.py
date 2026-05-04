@@ -460,10 +460,21 @@ class KnowledgeBaseService:
         try:
             # Create new knowledge base from Pydantic model
             kb_dict = kb_data.model_dump()
+            is_personal = bool(kb_dict.get("is_personal", False))
 
-            slug = slugify(kb_data.name)
-            if not slug:
-                raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
+            # Personal KBs (SHU-742) scope their slug to the owner so two users
+            # whose display names collide (e.g., both "Eric") can each have a
+            # Personal Knowledge KB. Display name is allowed to repeat across
+            # users; only the slug must be globally unique. For non-personal
+            # KBs, fall back to the name-derived slug — collisions there are
+            # the caller's problem to resolve by renaming.
+            if is_personal and owner_id:
+                slug = f"personal-knowledge-{owner_id}"
+            else:
+                slug = slugify(kb_data.name)
+                if not slug:
+                    raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
+
             if await self._get_kb_by_slug(slug):
                 raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
             kb_dict["slug"] = slug
@@ -471,6 +482,17 @@ class KnowledgeBaseService:
             if owner_id:
                 kb_dict["owner_id"] = owner_id
             knowledge_base = KnowledgeBase(**kb_dict)
+
+            # Personal Knowledge KBs (SHU-742) get a divergent default profile
+            # sourced from core/config.py so future tuning doesn't require a
+            # code change. Only fields explicitly listed here are overridden;
+            # everything else still cascades through ConfigurationManager.
+            if is_personal:
+                from ..core.config import get_settings_instance
+
+                settings = get_settings_instance()
+                knowledge_base.rag_fetch_full_documents = settings.personal_kb_rag_fetch_full_documents
+
             self.db.add(knowledge_base)
             await self.db.commit()
             await self.db.refresh(knowledge_base)

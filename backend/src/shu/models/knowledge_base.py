@@ -86,6 +86,12 @@ class KnowledgeBase(BaseModel):
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )  # NULL for system/shared KBs
 
+    # Marks user-owned Personal Knowledge KBs auto-provisioned from the in-chat
+    # brain icon flow (SHU-742). Used to apply Personal-specific defaults at
+    # creation time and to find the user's Personal KB on subsequent loads
+    # without depending on a name pattern.
+    is_personal = Column(Boolean, default=False, nullable=False, server_default="false")
+
     # Relationships
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     # DEPRECATED: prompts relationship removed - using generalized prompt system instead

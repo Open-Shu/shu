@@ -1,13 +1,14 @@
-"""Unit tests for KnowledgeBaseService performance optimizations.
+"""Unit tests for KnowledgeBaseService.
 
-Tests the recalculate_kb_stats function and verifies that denormalized
-stats are properly maintained.
+Covers performance-optimized stats recalculation and create_knowledge_base
+behavior, including the SHU-742 Personal Knowledge defaults flow.
 """
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from shu.models.document import Document
+from shu.schemas.knowledge_base import KnowledgeBaseCreate
 from shu.services.knowledge_base_service import KnowledgeBaseService
 
 
@@ -398,3 +399,131 @@ class TestAdjustDocumentStats:
             await service.adjust_document_stats("test-kb-id", doc_delta=1, chunk_delta=10)
 
         mock_db.rollback.assert_called_once()
+
+
+class TestCreatePersonalKnowledgeBaseDefaults:
+    """SHU-742: Personal Knowledge KBs apply config-sourced defaults at create time."""
+
+    def _build_service(self, mock_db, captured):
+        """Build a service whose db.add captures the KB passed to it.
+
+        ``_get_kb_by_slug`` is patched to return None so the create path
+        proceeds through to instantiation without a slug-conflict early exit.
+        """
+        service = KnowledgeBaseService(mock_db)
+        service._get_kb_by_slug = AsyncMock(return_value=None)
+
+        def _capture_add(obj):
+            captured.append(obj)
+
+        mock_db.add = MagicMock(side_effect=_capture_add)
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_applies_full_doc_fetch_default_from_config(self):
+        """is_personal=True copies personal_kb_rag_fetch_full_documents onto the KB row."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        mock_settings = MagicMock()
+        mock_settings.personal_kb_rag_fetch_full_documents = True
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+
+        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
+            await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        assert len(captured) == 1
+        kb = captured[0]
+        assert kb.is_personal is True
+        assert kb.rag_fetch_full_documents is True
+        assert kb.owner_id == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_non_personal_kb_does_not_apply_personal_defaults(self):
+        """is_personal=False leaves rag_fetch_full_documents at its model default (None)."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        kb_data = KnowledgeBaseCreate(name="Project Alpha")  # is_personal defaults to False
+
+        await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        assert len(captured) == 1
+        kb = captured[0]
+        assert kb.is_personal is False
+        # rag_fetch_full_documents is nullable; we must NOT set it explicitly
+        # so the centralized cascade in ConfigurationManager remains in charge.
+        assert kb.rag_fetch_full_documents is None
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_respects_config_value_false(self):
+        """If ops disable the personal default via config, the KB reflects that."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        mock_settings = MagicMock()
+        mock_settings.personal_kb_rag_fetch_full_documents = False
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+
+        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
+            await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        kb = captured[0]
+        assert kb.is_personal is True
+        assert kb.rag_fetch_full_documents is False
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_slug_is_owner_scoped(self):
+        """Personal KB slugs are derived from owner_id, not the display name."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+        await service.create_knowledge_base(kb_data, owner_id="user-aaaa")
+
+        kb = captured[0]
+        assert kb.slug == "personal-knowledge-user-aaaa"
+
+    @pytest.mark.asyncio
+    async def test_two_users_with_same_name_can_both_create_personal_kbs(self):
+        """Two distinct owners with colliding display names each get unique slugs."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        await service.create_knowledge_base(
+            KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True),
+            owner_id="user-aaaa",
+        )
+        await service.create_knowledge_base(
+            KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True),
+            owner_id="user-bbbb",
+        )
+
+        assert len(captured) == 2
+        assert captured[0].slug == "personal-knowledge-user-aaaa"
+        assert captured[1].slug == "personal-knowledge-user-bbbb"
+        # Display name allowed to collide; the slug uniqueness check uses
+        # the slug only, so neither create raises ConflictError.
+        assert captured[0].name == captured[1].name == "Eric's Knowledge"
+
+    @pytest.mark.asyncio
+    async def test_non_personal_kb_still_uses_name_based_slug(self):
+        """Non-personal KBs use the historic name-derived slug, unchanged."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        kb_data = KnowledgeBaseCreate(name="Project Alpha", is_personal=False)
+        await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        kb = captured[0]
+        assert kb.slug == "project-alpha"

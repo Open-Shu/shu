@@ -1,18 +1,49 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractDataFromResponse, extractItemsFromResponse, knowledgeBaseAPI } from '../../../../services/api';
+import { useAuth } from '../../../../hooks/useAuth';
 import { log } from '../../../../utils/log';
 
-// The Personal Knowledge KB is identified by a fixed name convention.
-// One per user; auto-provisioned on first upload from chat.
-export const PERSONAL_KB_NAME = 'Personal Knowledge';
+const FALLBACK_PERSONAL_KB_NAME = 'Personal Knowledge';
 
-const findPersonalKB = (kbs) => kbs.find((kb) => kb.name === PERSONAL_KB_NAME) || null;
+/**
+ * Resolve the display name for a user's Personal Knowledge KB.
+ *
+ * Precedence (always prefers something identifying so admins viewing the
+ * full KB list can tell whose is whose):
+ *   1. `${firstName}'s Knowledge` — derived from the first whitespace-delimited
+ *      token of `user.name`.
+ *   2. `${emailLocalPart}'s Knowledge` — even if generic-looking ("user42"),
+ *      because admins still need to identify the owner.
+ *   3. "Personal Knowledge" — only when neither name nor email is present.
+ */
+export const resolvePersonalKBName = (user) => {
+  // Coerce to String() so unexpected non-string inputs (e.g., numeric names
+  // from a malformed user object) don't blow up on `.trim()`.
+  const name = String(user?.name ?? '').trim();
+  if (name) {
+    const firstName = name.split(/\s+/)[0];
+    if (firstName) {
+      return `${firstName}'s Knowledge`;
+    }
+  }
+  const email = String(user?.email ?? '').trim();
+  if (email && email.includes('@')) {
+    const localPart = email.split('@')[0].trim();
+    if (localPart) {
+      return `${localPart}'s Knowledge`;
+    }
+  }
+  return FALLBACK_PERSONAL_KB_NAME;
+};
+
+const findPersonalKB = (kbs) => kbs.find((kb) => kb.is_personal === true) || null;
 
 /**
  * Manage the user's Personal Knowledge KB and the unified upload code path
  * shared across drag/drop, clipboard paste, and the Choose-files file picker.
  */
 const usePersonalKB = () => {
+  const { user } = useAuth();
   const [personalKB, setPersonalKB] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -46,8 +77,9 @@ const usePersonalKB = () => {
     if (ensurePromiseRef.current) {
       return ensurePromiseRef.current;
     }
+    const name = resolvePersonalKBName(user);
     const promise = (async () => {
-      const response = await knowledgeBaseAPI.create({ name: PERSONAL_KB_NAME });
+      const response = await knowledgeBaseAPI.create({ name, is_personal: true });
       const created = extractDataFromResponse(response);
       setPersonalKB(created);
       return created;
@@ -56,7 +88,7 @@ const usePersonalKB = () => {
     });
     ensurePromiseRef.current = promise;
     return promise;
-  }, [personalKB]);
+  }, [personalKB, user]);
 
   /**
    * Upload an array of File objects to the user's Personal Knowledge KB.

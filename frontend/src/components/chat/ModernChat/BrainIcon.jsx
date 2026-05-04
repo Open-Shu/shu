@@ -1,13 +1,20 @@
-import React from 'react';
-import { Badge, Box, CircularProgress, IconButton, Tooltip } from '@mui/material';
+import React, { useMemo } from 'react';
+import { Badge, Box, CircularProgress, IconButton, Tooltip, useTheme } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import { keyframes } from '@emotion/react';
 
-const pulseAnim = keyframes`
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.1); opacity: 0.65; }
+// Empty-state glow halo: a soft colored box-shadow that ripples outward
+// from the button edge and fades. Each iteration restarts at 0px so the
+// motion is always outward — never collapsing back inward. Color is
+// driven by the theme so it tracks light/dark mode and brand changes.
+const makeGlowPulseAnim = (color) => keyframes`
+  0%   { box-shadow: 0 0 0 0 ${alpha(color, 0.55)}; }
+  100% { box-shadow: 0 0 0 16px ${alpha(color, 0)}; }
 `;
 
+// Active-state vortex: applied to the brain glyph so files visibly get
+// "pulled into" the user's memory during drag-over and upload.
 const vortexAnim = keyframes`
   0% { transform: rotate(0deg) scale(1); }
   50% { transform: rotate(180deg) scale(1.08); }
@@ -18,8 +25,8 @@ const vortexAnim = keyframes`
  * BrainIcon — entry point for Personal Knowledge upload from the chat composer.
  *
  * State machine driven by props:
- *   - empty (no kb or 0 docs) and no errors  →  pulse
- *   - dragActive or uploading                →  vortex (with halo)
+ *   - empty (no kb or 0 docs) and no errors  →  glow halo on button
+ *   - dragActive or uploading                →  vortex on glyph + static halo
  *   - indexing                               →  spinner glyph
  *   - has docs, no errors                    →  solid + count badge
  *   - errors > 0                             →  solid + red `!` badge (non-clearing)
@@ -32,6 +39,10 @@ const BrainIcon = React.memo(function BrainIcon({
   dragActive = false,
   onClick,
 }) {
+  const theme = useTheme();
+  const accentColor = theme.palette.secondary.main;
+  const glowPulseAnim = useMemo(() => makeGlowPulseAnim(accentColor), [accentColor]);
+
   const docCount = kb?.document_count || 0;
   const isEmpty = !kb || docCount === 0;
   const hasErrors = errorCount > 0;
@@ -43,12 +54,14 @@ const BrainIcon = React.memo(function BrainIcon({
       : `${docCount} doc${docCount === 1 ? '' : 's'} in Personal Knowledge`;
 
   const isAnimating = dragActive || uploading;
-  const animation = isAnimating
-    ? `${vortexAnim} 1.2s linear infinite`
-    : isEmpty && !hasErrors
-      ? `${pulseAnim} 2s ease-in-out infinite`
-      : 'none';
 
+  // Empty-state glow runs only when nothing else is happening — vortex / drag /
+  // error states take visual priority so the user isn't drowning in motion.
+  const showGlowPulse = isEmpty && !hasErrors && !isAnimating;
+  const buttonAnimation = showGlowPulse ? `${glowPulseAnim} 2s ease-out infinite` : 'none';
+  const buttonBoxShadow = !showGlowPulse && dragActive ? `0 0 0 4px ${alpha(accentColor, 0.22)}` : undefined;
+
+  const iconAnimation = isAnimating ? `${vortexAnim} 1.2s linear infinite` : 'none';
   const iconColor = hasErrors ? 'error.main' : isEmpty ? 'text.secondary' : 'primary.main';
 
   const badgeContent = hasErrors ? '!' : docCount > 0 ? docCount : null;
@@ -61,14 +74,15 @@ const BrainIcon = React.memo(function BrainIcon({
         size="medium"
         sx={{
           border: 1,
-          borderColor: dragActive ? 'primary.main' : 'divider',
+          borderColor: dragActive || showGlowPulse ? 'secondary.main' : 'divider',
           bgcolor: dragActive ? 'action.hover' : 'background.paper',
           width: { xs: 40, sm: 36 },
           height: { xs: 40, sm: 36 },
           borderRadius: '50%',
           flexShrink: 0,
-          boxShadow: dragActive ? '0 0 0 4px rgba(25, 118, 210, 0.18)' : 'none',
-          transition: 'box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease',
+          boxShadow: buttonBoxShadow,
+          animation: buttonAnimation,
+          transition: 'background-color 0.2s ease, border-color 0.2s ease',
         }}
         aria-label="Personal Knowledge"
       >
@@ -81,7 +95,7 @@ const BrainIcon = React.memo(function BrainIcon({
             <PsychologyIcon
               sx={{
                 color: iconColor,
-                animation,
+                animation: iconAnimation,
                 transformOrigin: 'center',
               }}
             />

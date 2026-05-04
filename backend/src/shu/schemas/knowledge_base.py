@@ -182,7 +182,14 @@ class KnowledgeBaseBase(BaseModel):
 class KnowledgeBaseCreate(KnowledgeBaseBase):
     """Schema for creating a new knowledge base."""
 
-    pass
+    is_personal: bool = Field(
+        False,
+        description=(
+            "Marks this KB as the user's auto-provisioned Personal Knowledge "
+            "(SHU-742). When True, the service applies Personal-specific RAG "
+            "defaults from config.py (e.g., Full Document Escalation enabled)."
+        ),
+    )
 
 
 class KnowledgeBaseUpdate(BaseModel):

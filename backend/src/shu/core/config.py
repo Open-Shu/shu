@@ -501,6 +501,15 @@ class Settings(BaseSettings):
     rag_full_doc_max_docs_default: int = Field(2, alias="SHU_RAG_FULL_DOC_MAX_DOCS_DEFAULT")
     rag_full_doc_token_cap_default: int = Field(80000, alias="SHU_RAG_FULL_DOC_TOKEN_CAP_DEFAULT")
 
+    # Personal Knowledge KB Defaults (SHU-742) — applied at create time when
+    # KnowledgeBaseCreate.is_personal=True. These intentionally diverge from
+    # the global RAG defaults above; Personal KBs are small, user-owned, and
+    # benefit from richer retrieval (full-document escalation) by default.
+    # Only fields explicitly listed here are overridden — every other RAG
+    # setting still cascades through ConfigurationManager as usual. Add new
+    # fields here when more Personal-KB-specific defaults are needed.
+    personal_kb_rag_fetch_full_documents: bool = Field(True, alias="SHU_PERSONAL_KB_RAG_FETCH_FULL_DOCUMENTS")
+
     # User Preferences Defaults (what users can actually configure)
     user_memory_depth_default: int = Field(5, alias="SHU_USER_MEMORY_DEPTH_DEFAULT")
     user_memory_similarity_threshold_default: float = Field(0.6, alias="SHU_USER_MEMORY_SIMILARITY_THRESHOLD_DEFAULT")

@@ -252,13 +252,6 @@ const InputBar = React.memo(function InputBar({
       )}
 
       <Box sx={{ display: 'flex', gap: { xs: 0.5, sm: 1 }, alignItems: 'center' }}>
-        <BrainIcon
-          kb={personalKB}
-          uploading={personalKBUploading}
-          errorCount={personalKBErrors.length}
-          dragActive={dragActive}
-          onClick={handleBrainClick}
-        />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFileSelected} />
         <Tooltip title="Add attachments or run plugins">
           <IconButton
@@ -338,6 +331,13 @@ const InputBar = React.memo(function InputBar({
             </MenuItem>
           )}
         </Menu>
+        <BrainIcon
+          kb={personalKB}
+          uploading={personalKBUploading}
+          errorCount={personalKBErrors.length}
+          dragActive={dragActive}
+          onClick={handleBrainClick}
+        />
         <TextField
           fullWidth
           multiline
