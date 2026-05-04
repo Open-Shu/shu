@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -26,7 +26,11 @@ import {
 import { extractItemsFromResponse, knowledgeBaseAPI } from '../../../services/api';
 import { log } from '../../../utils/log';
 
-const RECENT_DOC_LIMIT = 3;
+// Soft cap on docs rendered in the popover. Backend's GET /documents default
+// is also 50, so we don't accidentally request more than the endpoint sends.
+// Docs are sorted newest-first by Document.created_at.desc(), so currently-
+// indexing uploads naturally appear at the top of the list.
+const DOC_LIST_LIMIT = 50;
 const POLL_INTERVAL_MS = 4000;
 
 const dropzoneSx = (active) => ({
@@ -68,6 +72,12 @@ const docStatusLabel = (doc) => {
  *
  * v1 scope: strictly Personal Knowledge — no destination override, no
  * "Manage all KBs →" link (added in v2 with the drawer).
+ *
+ * Props of note:
+ *   - loading: pass true while the parent's initial KB lookup is in flight,
+ *     so the popover shows a skeleton instead of the first-session prompt.
+ *     Defaults to false; callers that don't pass it will see the onboarding
+ *     content flash briefly before kb resolves.
  */
 const BrainPopover = React.memo(function BrainPopover({
   open,
@@ -75,6 +85,7 @@ const BrainPopover = React.memo(function BrainPopover({
   onClose,
   isMobile,
   kb,
+  loading = false,
   uploading,
   errors,
   onUpload,
@@ -86,7 +97,12 @@ const BrainPopover = React.memo(function BrainPopover({
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  const isEmpty = !kb || (kb?.document_count || 0) === 0;
+  // While the initial KB lookup is in flight (kb still null), show a brief
+  // loading skeleton instead of the first-session prompt — otherwise users
+  // with an existing Personal Knowledge see the onboarding content flash for
+  // a moment before the popover swaps to "returning" view.
+  const isLoadingKB = loading && !kb;
+  const isEmpty = !kb || (kb.document_count || 0) === 0;
 
   // Fetch recent docs. Used by initial open, the polling loop, and the
   // manual refresh button. Always toggles docsLoading so the refresh icon
@@ -98,11 +114,11 @@ const BrainPopover = React.memo(function BrainPopover({
     setDocsLoading(true);
     try {
       const response = await knowledgeBaseAPI.getDocuments(kb.id, {
-        limit: RECENT_DOC_LIMIT,
+        limit: DOC_LIST_LIMIT,
         offset: 0,
       });
       const docs = extractItemsFromResponse(response) || [];
-      setRecentDocs(docs.slice(0, RECENT_DOC_LIMIT));
+      setRecentDocs(docs.slice(0, DOC_LIST_LIMIT));
     } catch (err) {
       log.error('BrainPopover: failed to fetch recent docs', err);
     } finally {
@@ -110,10 +126,22 @@ const BrainPopover = React.memo(function BrainPopover({
     }
   }, [kb?.id]);
 
-  // Initial fetch when the popover opens or KB doc count changes after an upload.
+  // Drop stale docs only when the underlying KB goes away (logout, user
+  // switch). Closing the popover keeps recentDocs in state so MUI's close
+  // transition doesn't visibly shrink the popover from "list of docs" to
+  // "empty dropzone" mid-animation. Fresh data on reopen comes from the
+  // fetch below.
+  useEffect(() => {
+    if (!kb?.id) {
+      setRecentDocs([]);
+    }
+  }, [kb?.id]);
+
+  // Refetch when the popover opens or the KB's doc count changes (after an
+  // upload). Closed popover skips the fetch — no need to spin work in the
+  // background while the user can't see the list.
   useEffect(() => {
     if (!open || !kb?.id) {
-      setRecentDocs([]);
       return;
     }
     fetchDocs();
@@ -121,7 +149,9 @@ const BrainPopover = React.memo(function BrainPopover({
 
   // Poll while any doc is still in a non-terminal status (Indexing…).
   // The interval clears automatically once every doc reaches a terminal state.
-  const hasNonTerminalDoc = recentDocs.some(isDocNonTerminal);
+  // Memoized so the polling effect only re-runs on real status transitions,
+  // not on every render of the parent.
+  const hasNonTerminalDoc = useMemo(() => recentDocs.some(isDocNonTerminal), [recentDocs]);
   useEffect(() => {
     if (!open || !hasNonTerminalDoc) {
       return undefined;
@@ -245,7 +275,7 @@ const BrainPopover = React.memo(function BrainPopover({
           <CircularProgress size={20} />
         </Box>
       ) : recentDocs.length > 0 ? (
-        <List dense disablePadding sx={{ maxHeight: 220, overflowY: 'auto' }}>
+        <List dense disablePadding sx={{ maxHeight: 280, overflowY: 'auto' }}>
           {recentDocs.map((doc) => {
             const status = docStatusLabel(doc);
             return (
@@ -313,10 +343,16 @@ const BrainPopover = React.memo(function BrainPopover({
     </>
   );
 
+  const loadingSkeleton = (
+    <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}>
+      <CircularProgress size={28} />
+    </Box>
+  );
+
   const content = (
     <Box sx={{ p: 2, width: { xs: '100%', sm: 360 } }}>
       <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
-      {isEmpty ? firstSession : returning}
+      {isLoadingKB ? loadingSkeleton : isEmpty ? firstSession : returning}
       {errorList}
     </Box>
   );

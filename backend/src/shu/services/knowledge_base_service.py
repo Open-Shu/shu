@@ -7,6 +7,7 @@ including CRUD operations, statistics, and configuration management.
 from typing import Any, ClassVar
 
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
@@ -460,7 +461,14 @@ class KnowledgeBaseService:
         try:
             # Create new knowledge base from Pydantic model
             kb_dict = kb_data.model_dump()
-            is_personal = bool(kb_dict.get("is_personal", False))
+            is_personal = kb_dict["is_personal"]
+
+            # Personal KBs require an owner — without one, the owner-scoped
+            # slug below would be undefined and the KB would have no owner to
+            # attach to. Reject explicitly rather than silently falling back
+            # to a name-based slug, which would leave a disowned "personal" KB.
+            if is_personal and not owner_id:
+                raise ValidationError("Personal knowledge bases require an owner_id")
 
             # Personal KBs (SHU-742) scope their slug to the owner so two users
             # whose display names collide (e.g., both "Eric") can each have a
@@ -468,7 +476,7 @@ class KnowledgeBaseService:
             # users; only the slug must be globally unique. For non-personal
             # KBs, fall back to the name-derived slug — collisions there are
             # the caller's problem to resolve by renaming.
-            if is_personal and owner_id:
+            if is_personal:
                 slug = f"personal-knowledge-{owner_id}"
             else:
                 slug = slugify(kb_data.name)
@@ -503,6 +511,31 @@ class KnowledgeBaseService:
         except ShuException:
             await self.db.rollback()
             raise
+        except IntegrityError as e:
+            # Narrow handling to slug-uniqueness violations specifically. Other
+            # integrity errors (e.g., FK violation on owner_id from a deleted
+            # user racing the request) shouldn't masquerade as a slug conflict
+            # in the user-facing message.
+            await self.db.rollback()
+            constraint_name = (getattr(getattr(e, "orig", None), "constraint_name", "") or "").lower()
+            is_slug_conflict = "slug" in constraint_name
+
+            if is_slug_conflict and is_personal:
+                # TOCTOU race between _get_kb_by_slug and commit. For Personal
+                # KBs the caller's intent is "ensure my Personal KB exists" —
+                # return the winning row so the operation succeeds idempotently.
+                existing = await self._get_kb_by_slug(slug)
+                if existing is not None:
+                    logger.info(f"Personal KB created concurrently; returning existing: {existing.name}")
+                    return existing
+            if is_slug_conflict:
+                # Non-personal collision: the user explicitly chose a colliding
+                # name; surface that as a 409 ConflictError honestly.
+                raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
+
+            # Some other integrity constraint failed — propagate honestly.
+            logger.error(f"Unexpected integrity error creating KB: {e}", exc_info=True)
+            raise ShuException(f"Failed to create knowledge base: {e!s}", "KNOWLEDGE_BASE_CREATE_ERROR")
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)

@@ -107,7 +107,20 @@ const usePersonalKB = () => {
         const kb = await ensurePersonalKB();
         const response = await knowledgeBaseAPI.uploadDocuments(kb.id, files);
         const data = extractDataFromResponse(response) || {};
-        const results = Array.isArray(data) ? data : data.results || [];
+
+        // Backend currently returns { results: [...] }, but earlier iterations
+        // returned a bare array. Accept either shape; warn loudly on anything
+        // else so a future API change surfaces in logs instead of silently
+        // looking like an empty success.
+        let results;
+        if (Array.isArray(data)) {
+          results = data;
+        } else if (Array.isArray(data?.results)) {
+          results = data.results;
+        } else {
+          log.warn('usePersonalKB: unexpected upload response shape', data);
+          results = [];
+        }
 
         const failedByName = new Map(results.filter((r) => !r.success).map((r) => [r.filename, r.error]));
 

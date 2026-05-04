@@ -53,6 +53,7 @@ const InputBar = React.memo(function InputBar({
   ensembleMenuDisabled,
   // Personal Knowledge (v1) — brain icon, popover, drag/drop, paste
   personalKB,
+  personalKBLoading = false,
   personalKBUploading = false,
   personalKBErrors = [],
   onUploadToPersonalKB,
@@ -126,6 +127,28 @@ const InputBar = React.memo(function InputBar({
     },
     [onUploadToPersonalKB]
   );
+
+  // The brain popover is rendered through a Portal, so it sits outside the
+  // InputBar wrapper's DOM subtree but still bubbles React events back up
+  // through the React tree. When the popover handles a drop it calls
+  // stopPropagation on the synthetic event, which React forwards to the
+  // underlying native event — so a bubble-phase window listener never sees
+  // the drop and dragCounterRef stays incremented (chat overlay + brain
+  // vortex stuck on). Capture phase runs window→target before any handler
+  // can call stopPropagation, so it fires reliably regardless of which
+  // element captures the drop.
+  useEffect(() => {
+    const resetDragState = () => {
+      dragCounterRef.current = 0;
+      setDragActive(false);
+    };
+    window.addEventListener('drop', resetDragState, true);
+    window.addEventListener('dragend', resetDragState, true);
+    return () => {
+      window.removeEventListener('drop', resetDragState, true);
+      window.removeEventListener('dragend', resetDragState, true);
+    };
+  }, []);
 
   // Paste handler: route files / pasted images to Personal Knowledge.
   // Plain-text paste passes through unchanged so users' typing flow isn't disturbed.
@@ -402,6 +425,7 @@ const InputBar = React.memo(function InputBar({
         onClose={handleBrainPopoverClose}
         isMobile={isMobile}
         kb={personalKB}
+        loading={personalKBLoading}
         uploading={personalKBUploading}
         errors={personalKBErrors}
         onUpload={handleBrainUpload}

@@ -196,6 +196,7 @@ const ModernChat = () => {
   // Personal Knowledge — v1 in-chat upload entry point.
   const {
     personalKB,
+    loading: personalKBLoading,
     uploading: personalKBUploading,
     errors: personalKBErrors,
     uploadFiles: uploadToPersonalKB,
@@ -1338,6 +1339,7 @@ const ModernChat = () => {
     selectedKBs,
     onRemoveKB: removeKB,
     personalKB,
+    personalKBLoading,
     personalKBUploading,
     personalKBErrors,
     onUploadToPersonalKB: uploadToPersonalKB,

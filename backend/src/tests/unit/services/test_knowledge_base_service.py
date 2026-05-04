@@ -527,3 +527,108 @@ class TestCreatePersonalKnowledgeBaseDefaults:
 
         kb = captured[0]
         assert kb.slug == "project-alpha"
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_without_owner_id_raises_validation_error(self):
+        """is_personal=True with no owner_id is invalid — would create an orphan."""
+        from shu.core.exceptions import ValidationError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+
+        with pytest.raises(ValidationError, match="owner_id"):
+            await service.create_knowledge_base(kb_data, owner_id=None)
+
+        # Nothing should have been added to the session.
+        assert captured == []
+
+    @staticmethod
+    def _slug_violation_orig():
+        """Build an asyncpg-shaped error with constraint_name set to the slug index."""
+        orig = MagicMock()
+        orig.constraint_name = "knowledge_bases_slug_key"
+        return orig
+
+    @staticmethod
+    def _fk_violation_orig():
+        """Build an asyncpg-shaped error with constraint_name set to a non-slug FK."""
+        orig = MagicMock()
+        orig.constraint_name = "knowledge_bases_owner_id_fkey"
+        return orig
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_concurrent_create_returns_existing_row(self):
+        """IntegrityError on commit (slug race) → fetch winning row, succeed idempotently."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        # First _get_kb_by_slug (pre-insert) finds nothing → proceed to commit.
+        # Second call (post-IntegrityError, after race) returns the winning row.
+        existing_kb = MagicMock(name="ExistingPersonalKB")
+        service._get_kb_by_slug = AsyncMock(side_effect=[None, existing_kb])
+
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, self._slug_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+        result = await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        assert result is existing_kb
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_personal_kb_concurrent_create_raises_conflict(self):
+        """IntegrityError on commit for non-personal KB → ConflictError (not idempotent)."""
+        from shu.core.exceptions import ConflictError
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        service._get_kb_by_slug = AsyncMock(return_value=None)
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, self._slug_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        kb_data = KnowledgeBaseCreate(name="Project Alpha", is_personal=False)
+
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_slug_integrity_error_propagates_as_shu_exception(self):
+        """FK or other constraint violations must not masquerade as a slug conflict."""
+        from shu.core.exceptions import ConflictError, ShuException
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        service._get_kb_by_slug = AsyncMock(return_value=None)
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, self._fk_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+
+        with pytest.raises(ShuException) as exc_info:
+            await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        # Must NOT have been converted to a 409 ConflictError.
+        assert not isinstance(exc_info.value, ConflictError)
+        assert exc_info.value.error_code == "KNOWLEDGE_BASE_CREATE_ERROR"
+        mock_db.rollback.assert_awaited_once()
