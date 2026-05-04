@@ -432,7 +432,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         logger.warning(f"Plugins startup failed: {e}")
 
     await _initialize_policy_cache()
-    await initialize_billing_state_cache(app)
+    await initialize_billing_state_cache()
 
     # Start periodic malloc_trim(0) task (SHU-731). Disabled by default —
     # enable via SHU_MEMORY_TRIM_INTERVAL_SECONDS>0. No-op on non-glibc libc

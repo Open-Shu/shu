@@ -11,6 +11,7 @@ The router is designed to be mounted at /api/v1/billing.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Annotated
 
 import stripe
@@ -30,6 +31,7 @@ from shu.billing.adapters import (
     get_user_count,
 )
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
+from shu.billing.enforcement import get_current_billing_state
 from shu.billing.router_envelope import verify_router_envelope_dep
 from shu.billing.schemas import WebhookEventResponse
 from shu.billing.service import BillingService, CustomerMismatchError
@@ -128,11 +130,20 @@ async def get_subscription_status(
     user_limit = billing_config.get("quantity", 0)
     enforcement = billing_config.get("user_limit_enforcement", "soft")
 
+    state = await get_current_billing_state()
+    grace_deadline = (
+        state.payment_failed_at + timedelta(days=state.payment_grace_days) if state.payment_failed_at else None
+    )
+
     payload: dict = {
         "user_count": user_count,
         "user_limit": user_limit,
         "user_limit_enforcement": enforcement,
         "at_user_limit": user_count >= user_limit > 0,
+        "payment_failed_at": state.payment_failed_at.isoformat() if state.payment_failed_at else None,
+        "payment_grace_days": state.payment_grace_days,
+        "grace_deadline": grace_deadline.isoformat() if grace_deadline else None,
+        "service_paused": state.openrouter_key_disabled,
     }
 
     if user.can_manage_users():

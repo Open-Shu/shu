@@ -75,9 +75,6 @@ class BillingSettings(BaseSettings):
     # Stripe recommends hourly reporting for usage-based billing
     usage_report_interval_seconds: int = Field(3600, alias="SHU_STRIPE_USAGE_REPORT_INTERVAL")
 
-    # Grace period in days before suspending service after payment failure
-    payment_grace_period_days: int = Field(7, alias="SHU_STRIPE_PAYMENT_GRACE_DAYS")
-
     # Token credit included per user per month (0 = pure usage-based)
     # This is for informational purposes; actual credits are in Stripe product config
     included_tokens_per_user: int = Field(0, alias="SHU_STRIPE_INCLUDED_TOKENS_PER_USER")
@@ -152,9 +149,6 @@ class BillingSettings(BaseSettings):
 
         if self.usage_report_interval_seconds <= 0:
             issues.append("SHU_STRIPE_USAGE_REPORT_INTERVAL must be > 0")
-
-        if self.payment_grace_period_days <= 0:
-            issues.append("SHU_STRIPE_PAYMENT_GRACE_DAYS must be > 0")
 
         return issues
 

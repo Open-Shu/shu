@@ -40,6 +40,8 @@ import sys
 from sqlalchemy import select
 
 from .auth.models import User
+from .billing.billing_state_cache import initialize_billing_state_cache
+from .billing.enforcement import SubscriptionInactiveError
 from .core.config import get_settings_instance
 from .core.database import get_async_session_local, init_db
 from .core.exceptions import ShuException
@@ -1149,6 +1151,22 @@ async def process_job(job):  # noqa: PLR0912 — dispatch table by workload type
 
         else:
             raise ValueError(f"Unsupported workload type: {workload_type}")
+    except SubscriptionInactiveError:
+        # SHU-703: any handler whose chain reaches the OCR or embedding
+        # service-layer gate raises this. Drop without retry — propagating
+        # would log a stack trace and requeue, neither correct for a known
+        # billing state. Catching here (not in each handler) means future
+        # handlers that touch billable services inherit the drop behavior.
+        payload = job.payload or {}
+        logger.info(
+            f"Subscription inactive — dropping {workload_type.value if workload_type else 'unknown'} job",
+            extra={
+                "job_id": job.id,
+                "document_id": payload.get("document_id"),
+                "knowledge_base_id": payload.get("knowledge_base_id"),
+            },
+        )
+        return
     finally:
         if log_rss:
             rss_after = current_rss_bytes()
@@ -1218,6 +1236,16 @@ async def run_worker(  # noqa: PLR0915 — linear startup/shutdown sequence; spl
     except Exception as e:
         logger.error("Failed to initialize queue backend: %s", e, exc_info=True)
         sys.exit(1)
+
+    # CP billing-state cache: needed so OCR jobs can re-check at dequeue
+    # time (SHU-703) and short-circuit before incurring Mistral cost when
+    # the tenant has been disabled by CP between enqueue and dequeue.
+    # Best-effort: cache init absorbs CP failures internally and falls
+    # back to HEALTHY_DEFAULT, so a CP outage doesn't block worker boot.
+    try:
+        await initialize_billing_state_cache()
+    except Exception as e:
+        logger.warning("Billing-state cache init failed in worker: %s", e)
 
     # Start a lightweight log-maintenance loop so that worker processes
     # (which are long-lived but don't run the full unified scheduler)

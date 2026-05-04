@@ -19,6 +19,7 @@ from ..auth.rbac import (
     require_admin,
     require_power_user,
 )
+from ..billing.enforcement import assert_subscription_active
 from ..core.config import get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
@@ -888,6 +889,8 @@ async def upload_documents(
     files: list[UploadFile] = File(..., description="Files to upload"),
     current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
+    # WHY — short-circuits before staging any bytes or enqueueing OCR jobs.
+    _subscription_active: None = Depends(assert_subscription_active),
 ):
     """Upload documents directly to a knowledge base.
 

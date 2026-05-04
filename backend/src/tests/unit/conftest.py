@@ -4,6 +4,7 @@ Shared pytest fixtures and path setup for unit tests.
 
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -46,6 +47,102 @@ def _clear_active_check_cache_between_tests():
     _clear_active_check_cache()
     yield
     _clear_active_check_cache()
+
+
+# =============================================================================
+# SHU-703 billing-state cache stubs
+#
+# Seven test files exercise the subscription-gate path; consolidating the
+# stub class + fixture here keeps each test file focused on its own contract
+# instead of reproducing the cache-injection scaffolding.
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _reset_billing_state_cache_between_tests():
+    """Always reset the module-level `_cache` between tests.
+
+    Tests that drive the FastAPI lifespan (test_worker_mode.py) call
+    `initialize_billing_state_cache()`, which leaves `_cache` pointing at a
+    real `BillingStateCache` backed by an httpx client. The lifespan's
+    shutdown closes that client, but `_cache` stays set — so the next test
+    that hits `assert_subscription_active()` (e.g. via the embedding-service
+    gate) calls `cache.get()` on the stale cache and gets
+    'Cannot send a request, as the client has been closed.'
+    Belt-and-suspenders cleanup; cheap (just sets `_cache = None`).
+    """
+    from shu.billing.billing_state_cache import reset_billing_state_cache
+
+    yield
+    reset_billing_state_cache()
+
+
+class StubBillingStateCache:
+    """Async stand-in for `BillingStateCache` — only `.get()` is needed.
+
+    Tests inject this via `install_stub_cache(state)` so the helper under
+    test sees a deterministic BillingState without spinning a real cache.
+    """
+
+    def __init__(self, value):
+        self.value = value
+
+    async def get(self):
+        return self.value
+
+
+def disabled_billing_state(
+    *,
+    grace_days: int = 7,
+    payment_failed_at: datetime | None = None,
+):
+    """BillingState representing 'CP has paused this tenant'.
+
+    Default `payment_failed_at` is a fixed 2026-01-01 — tests asserting on
+    grace_deadline values get a stable input without each one inventing one.
+    """
+    from shu.billing.cp_client import BillingState
+
+    return BillingState(
+        openrouter_key_disabled=True,
+        payment_failed_at=payment_failed_at or datetime(2026, 1, 1, tzinfo=UTC),
+        payment_grace_days=grace_days,
+    )
+
+
+def healthy_billing_state():
+    """BillingState representing 'tenant is paying, no enforcement'."""
+    from shu.billing.cp_client import HEALTHY_DEFAULT
+
+    return HEALTHY_DEFAULT
+
+
+@pytest.fixture
+def install_stub_cache():
+    """Install a stub billing-state cache singleton, restore None on teardown.
+
+    Returns a callable `_install(state) -> StubBillingStateCache` so a single
+    test can replace the cache value mid-flight (e.g. simulating a CP poll
+    that flips the gate). Patches the module-level `_cache` directly — the
+    helper only consumes the singleton via `get_billing_state_cache()`, so
+    the stub's surface is enough.
+
+    Resets on both setup and teardown so a test that requests this fixture
+    but never calls `_install` sees `_cache=None` (the self-hosted bypass
+    path) regardless of test execution order.
+    """
+    from shu.billing import billing_state_cache as billing_state_cache_module
+    from shu.billing.billing_state_cache import reset_billing_state_cache
+
+    reset_billing_state_cache()
+
+    def _install(value) -> StubBillingStateCache:
+        stub = StubBillingStateCache(value)
+        billing_state_cache_module._cache = stub
+        return stub
+
+    yield _install
+    reset_billing_state_cache()
 
 
 @pytest.fixture

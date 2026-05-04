@@ -5,14 +5,22 @@ Tests cover:
 - list_knowledge_bases is accessible to regular (non-power) users
 - User ID is passed to the service for PBAC filtering
 - Service results are correctly formatted in the response
+- Subscription gate (SHU-703) on POST /{kb_id}/documents/upload
 """
 
+import io
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-from shu.api.knowledge_bases import list_knowledge_bases
+from shu.api.dependencies import get_db
+from shu.api.knowledge_bases import list_knowledge_bases, router as kb_router
+from shu.auth.rbac import require_power_user
+from shu.billing.cp_client import BillingState
+from shu.core.exceptions import ShuException
 
 
 def _mock_user(user_id: str = "user-1"):
@@ -109,3 +117,91 @@ class TestListKnowledgeBases:
             )
 
             assert response.status_code == 200
+
+
+# Subscription-gating tests below need FastAPI's dependency-resolution machinery
+# to fire. Calling the route function directly bypasses Depends() defaults, so
+# the dep never raises and we cannot observe the 402 short-circuit. TestClient
+# is the minimum surface that exercises the actual gate behavior — the gate is
+# a framework concern, not application logic. Mirrors the deviation called out
+# in test_chat.py for the same reason.
+
+
+def _build_app() -> FastAPI:
+    """Minimal FastAPI app with just the KB router + the production ShuException handler.
+
+    Spinning up the full main.py app pulls in DB init, settings validation, etc.
+    The 402 gate behavior depends only on Depends-resolution + the global
+    ShuException handler, both of which we wire up here directly.
+    """
+    app = FastAPI()
+    app.include_router(kb_router, prefix="/api/v1")
+
+    # WHY — re-implement the same handler shape as main.py:658 so the wire
+    # format under test matches production. Importing setup_exception_handlers
+    # would drag in get_settings_instance and full app config.
+    @app.exception_handler(ShuException)
+    async def _shu_exception_handler(request, exc: ShuException):  # noqa: ARG001
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": exc.error_code,
+                    "message": exc.message,
+                    "details": exc.details,
+                }
+            },
+        )
+
+    return app
+
+
+class TestUploadDocumentsSubscriptionGate:
+    """The subscription gate must fire before staging or job enqueue."""
+
+    def test_inactive_subscription_returns_402_and_blocks_ingestion(self, install_stub_cache):
+        """Disabled key → 402 JSON envelope; no staging write, no OCR enqueue."""
+        failed_at = datetime(2026, 1, 1, tzinfo=UTC)
+        install_stub_cache(
+            BillingState(
+                openrouter_key_disabled=True,
+                payment_failed_at=failed_at,
+                payment_grace_days=7,
+            )
+        )
+
+        app = _build_app()
+        fake_user = _mock_user("user-123")
+        fake_db = AsyncMock()
+
+        app.dependency_overrides[require_power_user] = lambda: fake_user
+        app.dependency_overrides[get_db] = lambda: fake_db
+
+        # Patch the route's local entry point to ingestion plus the lazy-imported
+        # staging class and enqueue_job at their definition sites. The gate must
+        # short-circuit before any of these are reachable.
+        with (
+            patch("shu.api.knowledge_bases.ingest_document_service") as mock_ingest,
+            patch("shu.services.file_staging_service.FileStagingService") as mock_staging_cls,
+            patch("shu.core.workload_routing.enqueue_job") as mock_enqueue,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/knowledge-bases/kb-1/documents/upload",
+                    files={"files": ("test.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+                )
+
+            assert response.status_code == 402
+            assert response.headers["content-type"].startswith("application/json")
+
+            body = response.json()
+            assert body["error"]["code"] == "subscription_inactive"
+            assert body["error"]["details"]["payment_failed_at"] == failed_at.isoformat()
+            assert body["error"]["details"]["grace_deadline"] is not None
+
+            # The gate must fire BEFORE the route reads bytes or stages anything.
+            mock_ingest.assert_not_called()
+            mock_staging_cls.assert_not_called()
+            mock_enqueue.assert_not_called()

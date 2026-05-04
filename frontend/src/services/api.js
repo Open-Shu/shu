@@ -662,4 +662,9 @@ export const setupAPI = {
   getStatus: () => api.get('/config/setup-status'),
 };
 
+// Single touchpoint for the BillingStatusContext — keep error handling at the caller.
+export const billingAPI = {
+  getSubscription: () => api.get('/billing/subscription'),
+};
+
 export default api;
