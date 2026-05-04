@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from shu.billing.config import BillingSettings
 from shu.billing.config import BillingSettings, log_billing_validation
 from shu.billing.router import get_billing_config_endpoint
 
@@ -44,6 +43,7 @@ def _settings(**overrides) -> BillingSettings:
         "SHU_STRIPE_CUSTOMER_ID": "cus_test_123",
         "SHU_STRIPE_SUBSCRIPTION_ID": "sub_test_123",
         "SHU_ROUTER_SHARED_SECRET": "a" * 64,
+        "SHU_CP_BASE_URL": "https://cp.example.com",
         "SHU_STRIPE_PRICE_ID_MONTHLY": "price_test_123",
         "SHU_STRIPE_MODE": "test",
     }
@@ -193,12 +193,6 @@ class TestBillingConfigEndpoint:
         body = _decode(response)
         assert body["validation_issues"] == []
 
-"""Tests for shu.billing.config — validators and validate_configuration logic.
-
-Coverage focus: the rules we actually wrote (TTL minimum, the CP-base-URL
-co-requirement). Pydantic's own type coercion and env-var loading are not
-re-tested here.
-"""
 
 def test_billing_state_cache_ttl_default(monkeypatch: pytest.MonkeyPatch) -> None:
     # Robust to whatever the developer happens to have in their .env / env.
