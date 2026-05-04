@@ -6,11 +6,18 @@ integrate with the main Shu Settings class.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+_FIELD_RE = re.compile(r"^(SHU_[A-Z0-9_]+)")
 
 # Floor on the cache TTL guards against an operator setting a near-zero value
 # that would have every enforcement check hit CP. 10s is loose enough not to be
@@ -171,3 +178,40 @@ def get_billing_settings_dependency() -> BillingSettings:
     Unlike the cached version, this can be overridden in tests.
     """
     return get_billing_settings()
+
+
+def log_billing_validation(settings: BillingSettings) -> list[str]:
+    """Run startup billing-config validation and emit log lines.
+
+    Behaviour matches SHU-701:
+
+    - Not configured → single INFO line ("self-hosted mode"); no warnings.
+    - Configured + no issues → single INFO success line.
+    - Configured + issues → one WARNING per issue, with structured ``extra``
+      so log parsers can aggregate by field name.
+
+    Never raises. If ``validate_configuration`` itself raises, log a single
+    ERROR and return an empty list — startup must continue regardless.
+    """
+    if not settings.is_configured:
+        logger.info("Billing module not configured — self-hosted mode")
+        return []
+
+    try:
+        issues = settings.validate_configuration()
+    except Exception as e:
+        logger.error("Billing configuration validation failed to run", exc_info=e)
+        return []
+
+    if not issues:
+        logger.info("Billing configuration validated successfully")
+        return []
+
+    for issue in issues:
+        match = _FIELD_RE.match(issue)
+        extra: dict[str, str] = {"issue": issue}
+        if match:
+            extra["field"] = match.group(1)
+        logger.warning("Billing configuration issue", extra=extra)
+
+    return issues
