@@ -518,13 +518,34 @@ class Settings(BaseSettings):
     ocr_confidence_threshold: float = Field(default=0.6, description="Minimum confidence threshold for OCR results")
     ocr_max_concurrent_jobs: int = Field(
         default=1,
+        ge=0,
         alias="SHU_OCR_MAX_CONCURRENT_JOBS",
         description="Max concurrent OCR jobs per worker process. OCR is CPU/memory-intensive; "
         "limit to avoid OOM. Workers skip the OCR queue when at capacity, allowing other work "
         "types to proceed. Set to 0 for unlimited (not recommended).",
     )
+    ingestion_classify_max_concurrent_jobs: int = Field(
+        default=1,
+        ge=0,
+        alias="SHU_INGESTION_CLASSIFY_MAX_CONCURRENT_JOBS",
+        description="Max concurrent PDF text-vs-OCR routing classifier jobs per worker process "
+        "(SHU-739). Capped tightly to bound the synchronized CPU spike from multiple concurrent "
+        '`get_text("blocks")` scans at burst start. The classifier is fast per document and not '
+        "the throughput bottleneck, so a tight cap has no end-to-end throughput cost. Set to 0 "
+        "for unlimited.",
+    )
+    ingestion_text_max_concurrent_jobs: int = Field(
+        default=1,
+        ge=0,
+        alias="SHU_INGESTION_TEXT_MAX_CONCURRENT_JOBS",
+        description="Max concurrent text-extraction jobs per worker process (SHU-739). Bounds "
+        "the working-set spike from concurrent `_extract_pdf_text_only` runs on long born-digital "
+        "documents. Text extraction is memory-heavy but not network-bound, so a tight cap is "
+        "safe. Set to 0 for unlimited.",
+    )
     ocr_render_scale: float = Field(
         default=2.0,
+        gt=0.0,
         alias="SHU_OCR_RENDER_SCALE",
         description=(
             "Scale factor for PDF page rendering before OCR (fitz.Matrix scale). "
@@ -545,10 +566,47 @@ class Settings(BaseSettings):
     mistral_ocr_base_url: str = Field("https://api.mistral.ai/v1", alias="SHU_MISTRAL_OCR_BASE_URL")
     mistral_ocr_model: str = Field("mistral-ocr-latest", alias="SHU_MISTRAL_OCR_MODEL")
 
-    # Minimum character count from fast text extraction before OCR is skipped.
-    # Scanned PDFs with tiny garbage text layers produce < 50 chars; raising
-    # this triggers OCR more aggressively, lowering it trusts the text layer.
-    ocr_fallback_min_text_length: int = Field(50, alias="SHU_OCR_FALLBACK_MIN_TEXT_LENGTH")
+    # OCR routing classifier thresholds (SHU-728). The classifier is per-page
+    # geometric — see core/ocr_routing.py for the rule. To verify these
+    # defaults against the current corpus and classifier code, run
+    # `scripts/ocr_routing_calibrate.py --sweep`; redirect to
+    # `ocr_routing_calibration_report.md` if you want a checkpoint.
+    ocr_page_margin_ratio: float = Field(0.125, ge=0.0, le=1.0, alias="SHU_OCR_PAGE_MARGIN_RATIO")
+    ocr_text_page_fraction: float = Field(0.5, ge=0.0, le=1.0, alias="SHU_OCR_TEXT_PAGE_FRACTION")
+    # SHU-739 fix #3: sampling-based classifier with ambiguous-band fallback.
+    # Long documents (e.g. 482-page books) trigger ~241 page scans before the
+    # current early-exit can lock a decision. At 1-7 ms per `get_text("blocks")`
+    # call this is the per-job CPU floor — even with INGESTION_CLASSIFY=1, a
+    # single classifier scan saturates one core for hundreds of ms. Sampling
+    # collapses that to ~10 page scans for the common-case decisive document
+    # and falls back to the full scan only when the sample's real-text fraction
+    # sits in the ambiguous band around the threshold.
+    ocr_classify_sample_size: int = Field(
+        10,
+        ge=0,
+        alias="SHU_OCR_CLASSIFY_SAMPLE_SIZE",
+        description="Number of stratified pages (first N/3 + last N/3 + middle N/3) to sample "
+        "before falling back to the full per-page scan. Set to 0 to disable sampling and always "
+        "do the full scan (legacy behaviour).",
+    )
+    ocr_classify_sample_min_pages: int = Field(
+        30,
+        ge=0,
+        alias="SHU_OCR_CLASSIFY_SAMPLE_MIN_PAGES",
+        description="Documents shorter than this page count skip sampling and always do the full "
+        "scan (the existing early-exit handles them quickly enough). Set to 0 to apply sampling "
+        "to all documents regardless of length.",
+    )
+    ocr_classify_ambiguous_band: float = Field(
+        0.15,
+        ge=0.0,
+        le=1.0,
+        alias="SHU_OCR_CLASSIFY_AMBIGUOUS_BAND",
+        description="Half-width of the ambiguous band around the text_page_fraction threshold. "
+        "If the sampled real-text fraction lands inside (threshold - band, threshold + band), "
+        "the classifier falls back to the full per-page scan rather than trust the sample. "
+        "Default 0.15 with default threshold 0.5 yields the band (0.35, 0.65).",
+    )
 
     @field_validator("database_url")
     @classmethod

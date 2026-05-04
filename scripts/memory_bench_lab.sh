@@ -138,13 +138,15 @@ apply_variant() {
 }
 
 sample_pod_memory() {
-  # Emits "vmrss_kb,working_set_kb" for the current pod on success; returns
-  # non-zero (with stderr message) and emits nothing on failure so callers
-  # can distinguish "no sample" from "sample = 0,0". Uses /proc/1/status
-  # and /sys/fs/cgroup/memory.{current,stat} via kubectl exec — no metrics
-  # server required (Docker Desktop K8s doesn't ship one). Working set is
+  # Emits "vmrss_kb,working_set_kb,cpu_usage_usec" for the current pod on
+  # success; returns non-zero (with stderr message) and emits nothing on
+  # failure so callers can distinguish "no sample" from "sample = 0,0,0".
+  # Uses /proc/1/status, /sys/fs/cgroup/memory.{current,stat}, and
+  # /sys/fs/cgroup/cpu.stat via kubectl exec — no metrics server required
+  # (Docker Desktop K8s doesn't ship one). Working set is
   # memory.current - inactive_file, matching how the kubelet makes OOM
-  # decisions (and what `kubectl top` would return if available).
+  # decisions. cpu_usage_usec is cumulative cgroup CPU microseconds; the
+  # bench computes per-window cores used as delta(usec)/delta(t_s)/1e6.
   local pod
   pod="$(kubectl -n "$NAMESPACE" get pod -l "app=$DEPLOYMENT" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   if [[ -z "$pod" ]]; then
@@ -164,7 +166,16 @@ sample_pod_memory() {
       inactive_file=0
     fi
     working_set=$(( (mem_current - inactive_file) / 1024 ))
-    echo "${vmrss},${working_set}"
+    if [ -r /sys/fs/cgroup/cpu.stat ]; then
+      cpu_usage=$(awk "/^usage_usec / {print \$2}" /sys/fs/cgroup/cpu.stat 2>/dev/null || echo 0)
+    elif [ -r /sys/fs/cgroup/cpuacct/cpuacct.usage ]; then
+      # cgroup v1: nanoseconds; convert to microseconds for parity.
+      cpu_usage_ns=$(cat /sys/fs/cgroup/cpuacct/cpuacct.usage 2>/dev/null || echo 0)
+      cpu_usage=$(( cpu_usage_ns / 1000 ))
+    else
+      cpu_usage=0
+    fi
+    echo "${vmrss},${working_set},${cpu_usage}"
   '; then
     echo "sample_pod_memory: kubectl exec failed for pod $pod" >&2
     return 1
@@ -185,7 +196,7 @@ run_variant() {
 
   # Sampler in background.
   {
-    echo "t_s,vmrss_kb,working_set_kb"
+    echo "t_s,vmrss_kb,working_set_kb,cpu_usage_usec"
     local start_s
     start_s="$(date +%s)"
     while true; do
@@ -228,31 +239,47 @@ run_variant() {
   fi
 
   # Extract post-trim numbers from heap_post.json.
-  local pre_rss post_rss freed peak_vmrss_kb peak_working_set_kb
+  local pre_rss post_rss freed peak_vmrss_kb peak_working_set_kb peak_cores
   pre_rss="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["data"]["before_rss_bytes"])' "$variant_dir/heap_post.json" 2>/dev/null || echo 0)"
   post_rss="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["data"]["after_rss_bytes"])' "$variant_dir/heap_post.json" 2>/dev/null || echo 0)"
   freed="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["data"]["freed_bytes"])' "$variant_dir/heap_post.json" 2>/dev/null || echo 0)"
   peak_vmrss_kb="$(awk -F, 'NR>1 && $2+0 > m {m=$2+0} END {print m+0}' "$variant_dir/pod-memory.csv")"
   peak_working_set_kb="$(awk -F, 'NR>1 && $3+0 > m {m=$3+0} END {print m+0}' "$variant_dir/pod-memory.csv")"
+  # Per-window cores used: delta(cpu_usage_usec) / (delta(t_s) * 1e6).
+  # Captures spike intensity that an end-of-run average would smooth out.
+  peak_cores="$(awk -F, '
+    NR == 2 { prev_t=$1; prev_c=$4; next }
+    NR > 2 {
+      dt = $1 - prev_t
+      dc = $4 - prev_c
+      if (dt > 0 && dc >= 0) {
+        cores = dc / (dt * 1000000.0)
+        if (cores > m) m = cores
+      }
+      prev_t = $1; prev_c = $4
+    }
+    END { printf "%.2f", m+0 }
+  ' "$variant_dir/pod-memory.csv")"
 
-  printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$variant" \
     "${peak_vmrss_kb:-0}" \
     "${peak_working_set_kb:-0}" \
     "${pre_rss:-0}" \
     "${post_rss:-0}" \
     "${freed:-0}" \
+    "${peak_cores:-0}" \
     "$load_rc" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     >> "$RUN_DIR/variants.csv"
 
-  echo "==> [$variant] done  peak_vmrss_kb=${peak_vmrss_kb} peak_working_set_kb=${peak_working_set_kb} pre_trim=${pre_rss} post_trim=${post_rss} freed=${freed}"
+  echo "==> [$variant] done  peak_vmrss_kb=${peak_vmrss_kb} peak_working_set_kb=${peak_working_set_kb} pre_trim=${pre_rss} post_trim=${post_rss} freed=${freed} peak_cores=${peak_cores}"
 }
 
 TS="$(date +%Y%m%dT%H%M%S)"
 RUN_DIR="$OUT_DIR/$TS"
 mkdir -p "$RUN_DIR"
-echo "variant,peak_vmrss_kb,peak_working_set_kb,pre_trim_rss_bytes,post_trim_rss_bytes,trim_freed_bytes,load_rc,finished_at_utc" \
+echo "variant,peak_vmrss_kb,peak_working_set_kb,pre_trim_rss_bytes,post_trim_rss_bytes,trim_freed_bytes,peak_cores,load_rc,finished_at_utc" \
   > "$RUN_DIR/variants.csv"
 
 echo "==> run dir:    $RUN_DIR"

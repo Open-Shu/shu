@@ -40,6 +40,7 @@ from .api.side_call import router as side_call_router
 from .api.system import router as system_router
 from .api.user_permissions import router as user_permissions_router
 from .api.user_preferences import router as user_preferences_router
+from .billing.billing_state_cache import initialize_billing_state_cache
 from .billing.router import router as billing_router
 from .core.cache_backend import initialize_cache_backend
 from .core.config import get_settings_instance
@@ -282,7 +283,20 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         billing_settings = get_billing_settings()
         async with session_maker() as session:
             async with session.begin():
-                await BillingStateService.ensure_singleton(session)
+                _, inserted = await BillingStateService.ensure_singleton(session)
+            # SHU-730: seed enforcement mode exactly once per deployment. Only
+            # writes when the singleton was freshly inserted so operator edits
+            # survive restarts. `is_configured` is our proxy for "hosted +
+            # billed", where hard enforcement is the safe default; self-hosted
+            # stays `none`.
+            if inserted:
+                await BillingStateService.update(
+                    session,
+                    updates={
+                        "user_limit_enforcement": "hard" if billing_settings.is_configured else "none",
+                    },
+                    source="startup:seed_enforcement",
+                )
             await BillingStateService.seed_from_config(session, billing_settings)
     except Exception as e:
         logger.warning(f"billing_state init failed: {e}")
@@ -442,6 +456,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         logger.warning(f"Plugins startup failed: {e}")
 
     await _initialize_policy_cache()
+    await initialize_billing_state_cache(app)
 
     # Start periodic malloc_trim(0) task (SHU-731). Disabled by default —
     # enable via SHU_MEMORY_TRIM_INTERVAL_SECONDS>0. No-op on non-glibc libc

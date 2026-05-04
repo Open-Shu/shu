@@ -1,0 +1,111 @@
+{
+  "_comment": "Ground-truth OCR-vs-text routing labels for shu/docs/.pdf-corpus. Used by scripts/ocr_routing_calibrate.py for SHU-728 calibration.",
+  "Claromer label 1.pdf": {
+    "should_ocr": true,
+    "reason": "macOS Quartz screenshot PDF; 0 fonts, 0 chars on the page; pure image"
+  },
+  "Claromer label 2.pdf": {
+    "should_ocr": true,
+    "reason": "macOS Quartz screenshot PDF; 0 fonts, 0 chars on the page; pure image"
+  },
+  "RDIF loan.pdf": {
+    "should_ocr": true,
+    "reason": "Adobe 'Image Conversion' producer; 4 pages, 0 fonts, 0 chars; scanned doc"
+  },
+  "63_557217 Provisional Application As Filed 02_23_2024 118433-0091.pdf": {
+    "should_ocr": true,
+    "reason": "99-page scanned patent filing; 100 images, 2672 chars total (0 chars on first 3 pages); essentially image PDF"
+  },
+  "000029.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital, 1 page, 6018 chars"
+  },
+  "000143.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital, 1 page, 2890 chars + 20 figure images"
+  },
+  "000152.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 76 pages, 180k chars"
+  },
+  "000159.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 147 pages, 285k chars"
+  },
+  "000187.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital (Adobe Paper Capture producer hints at OCR-augmented scan, but text layer is real); 55 pages, 150k chars"
+  },
+  "000208.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 76 pages, 159k chars"
+  },
+  "000282.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital with figures; 194 pages, 219k chars; figure-only pages are expected"
+  },
+  "000340.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital, 1 page, 1243 chars + 38 images (figure-heavy)"
+  },
+  "000584.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 87 pages, 191k chars"
+  },
+  "000595.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital book; 226 pages, 501k chars"
+  },
+  "000859.pdf": {
+    "should_ocr": false,
+    "reason": "image-heavy slides (20909 images!) but real text layer; 23 pages, 11.8k chars"
+  },
+  "Additional New References list - Response to IR_20260428.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital reference list, 2 pages, 2981 chars"
+  },
+  "Agentic_Design_Patterns.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital book; 482 pages, 862k chars"
+  },
+  "Barrero-Guevara 2019 New peptides with immunomodulatory activity in macrophages and antibacterial activity against multiresistant Staphylococcus aureus.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 23 pages, 118k chars"
+  },
+  "Batemen 2019 Outcomes of Respiratory Infections in the Immunocompromised Host.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital, 1 page, 3526 chars"
+  },
+  "BenefitsGuide_Full-time_44070.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital benefits guide; 39 pages, 49k chars"
+  },
+  "Harrison\u2019s Principles of Internal Medicine (Vol.1 & Vol.2) 21st\u00a0Edition \u2013 Chapter 142.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital book chapter; 11 pages, 67k chars"
+  },
+  "Howroyd 2024 Ventilator-associated pneumonia_ pathobiological heterogeneity and diagnostic challenges.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 13 pages, 78k chars"
+  },
+  "Maxwell Biosciences Fungal Slides.pdf": {
+    "should_ocr": false,
+    "reason": "2-page slide deck with sparse text (438 chars across 2 pages); real text layer, image-heavy"
+  },
+  "Maxwell poster version with margins - 6_26 (2).pptx (1).pdf": {
+    "should_ocr": false,
+    "reason": "Canva-exported poster; 5 pages, 36k chars"
+  },
+  "RDIF slides.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital slide deck; 58 pages, 40k chars"
+  },
+  "Wang 2022 Exosomes released by Brucella\u2010infected macrophages inhibit the intracellular survival of Brucella by promoting the polarization of M1 macrophages.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 12 pages, 49k chars"
+  },
+  "ge-et-al-2025-directed-synthesis-of-gold-nanoparticle-superstructures-using-self-assembling-peptoids-containing-metal.pdf": {
+    "should_ocr": false,
+    "reason": "born-digital scientific PDF; 10 pages, 47k chars"
+  }
+}

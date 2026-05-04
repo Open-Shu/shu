@@ -20,6 +20,7 @@ import pytest
 from shu.billing.router_envelope import (
     DEFAULT_SKEW_SECONDS,
     RouterSignatureError,
+    sign_envelope,
     verify_envelope,
 )
 
@@ -180,3 +181,59 @@ class TestVerifyEnvelope:
             body=body,
             now=ts,
         )
+
+
+class TestSignEnvelope:
+    secret = "a" * 64
+
+    def test_sign_then_verify_round_trips(self):
+        ts, sig = sign_envelope(self.secret, "GET", "/api/v1/foo", b"")
+
+        verify_envelope(
+            shared_secret=self.secret,
+            signature_header=sig,
+            timestamp_header=str(ts),
+            method="GET",
+            path="/api/v1/foo",
+            body=b"",
+            now=ts,
+        )
+
+    def test_explicit_timestamp_is_honored(self):
+        ts, sig = sign_envelope(
+            self.secret, "POST", "/x", b"body", timestamp=1_700_000_000
+        )
+
+        assert ts == 1_700_000_000
+        # Body is non-empty here so a timestamp regression would also break
+        # the canonical-string verification path.
+        verify_envelope(
+            shared_secret=self.secret,
+            signature_header=sig,
+            timestamp_header=str(ts),
+            method="POST",
+            path="/x",
+            body=b"body",
+            now=ts,
+        )
+
+    def test_default_timestamp_within_clock_skew(self):
+        before = int(time.time())
+        ts, _sig = sign_envelope(self.secret, "GET", "/x", b"")
+        after = int(time.time())
+
+        assert before <= ts <= after
+
+    def test_signature_matches_independent_hmac_byte_for_byte(self):
+        """Lock the wire format. A drift in canonical-string layout would
+        break interop with CP's signing.sign — the comment block at the top
+        of router_envelope.py promises byte-identical output, so test it."""
+        ts = 1_700_000_000
+        body = b'{"foo":"bar"}'
+        method = "GET"
+        path = "/api/v1/tenants/abc/billing-state"
+
+        _, sig = sign_envelope(self.secret, method, path, body, timestamp=ts)
+
+        expected = _sign_for(self.secret, ts, method, path, body)
+        assert sig == expected

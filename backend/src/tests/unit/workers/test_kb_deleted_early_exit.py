@@ -205,20 +205,23 @@ class TestOCRHandlerKBDeletedEarlyExit:
         mock_staging_service.retrieve_to_path = AsyncMock(return_value="/tmp/fake_staged.bin")
         mock_staging_service.delete_staged_file = AsyncMock()
 
-        mock_extractor = MagicMock()
-        mock_extractor.extract_text = AsyncMock(return_value={"text": "text " * 50, "metadata": {}})
-
         mock_enqueue_job = AsyncMock()
 
         job = _make_ocr_job()
 
+        # SHU-739: post-split _handle_ocr_job calls extract_via_ocr directly
+        # — no inline classifier, no TextExtractor route. Stub the OCR entry
+        # point so the test doesn't need real bytes at the fake staging path.
         with (
             patch("shu.core.database.get_async_session_local", return_value=mock_session_local),
             patch("shu.core.cache_backend.get_cache_backend", AsyncMock(return_value=AsyncMock())),
             patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=AsyncMock())),
             patch("shu.core.workload_routing.enqueue_job", mock_enqueue_job),
             patch("shu.services.file_staging_service.FileStagingService", return_value=mock_staging_service),
-            patch("shu.core.ocr_service.TextExtractor", return_value=mock_extractor),
+            patch(
+                "shu.core.ocr_service.extract_via_ocr",
+                new=AsyncMock(return_value={"text": "text " * 50, "metadata": {}}),
+            ),
         ):
             from shu.worker import _handle_ocr_job
 

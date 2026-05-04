@@ -49,7 +49,6 @@ class BillingState(Base):
     subscription_status = Column(Text, nullable=False, default="pending")
     current_period_start = Column(TIMESTAMP(timezone=True), nullable=True)
     current_period_end = Column(TIMESTAMP(timezone=True), nullable=True)
-    quantity = Column(Integer, nullable=False, default=0)
     cancel_at_period_end = Column(Boolean, nullable=False, default=False)
 
     # Usage metering bookkeeping (microdollars)

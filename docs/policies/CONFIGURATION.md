@@ -33,33 +33,49 @@ User Preferences → Model Config → Knowledge Base Config → Global Defaults
 
 ### Version and Build Metadata
 
-The application exposes version/build information via environment variables that are typically baked in at build-time by the Makefile and GitHub Actions. These are read by Settings and surfaced at `/api/v1/system/version` and in readiness checks.
+The application exposes version/build information via environment variables that the Makefile bakes in at build-time. These are read by Settings and surfaced at `/api/v1/system/version` and in readiness checks.
 
 - SHU_APP_VERSION: SemVer of the build (e.g., 1.2.3). Defaults to 0.0.0-dev for local builds without tags.
 - SHU_GIT_SHA: Short commit SHA for the build (e.g., abc1234). Defaults to unknown.
 - SHU_BUILD_TIMESTAMP: UTC ISO8601 timestamp when the image was built.
 - SHU_DB_RELEASE: Expected Alembic baseline that this image is built against (latest numeric squashed revision like 002). Readiness fails (503) if runtime DB alembic_version does not match this value.
 
-Notes:
-- These values should not be set manually in normal workflows; they are supplied by the build.
-- For local builds, Makefile derives a reasonable VERSION from git tags or falls back to dev format, and detects DB_RELEASE from alembic/versions.
+The Makefile derives `SHU_APP_VERSION` from git tags (or falls back to `0.0.0-dev`) and detects `SHU_DB_RELEASE` from `alembic/versions`. Don't set these by hand in normal workflows.
 
 
 ## OCR Processing Policy (Documents & Attachments)
 
 Limitations/Known Issues:
 - OCR quality varies by engine; EasyOCR with Tesseract fallback is used; noisy scans may yield little text
-- OCR is compute‑heavy; progress callbacks are optional but PDFs are routed through OCR logic regardless
+- OCR is compute‑heavy; progress callbacks are optional. PDFs are routed by the per-page real-text classifier (`core.ocr_routing.classify_pdf`) when `ocr_mode='auto'`; the classifier itself is also CPU-bound on long documents (mitigated by the sampling knobs documented below).
 
 Policy:
-- PDFs: Always treat as OCR candidates; do not try to guess if OCR is needed
+
+- PDFs: routed per-document by `ocr_mode` (see `core.ocr_modes.OcrMode`). `auto` (default) runs the per-page real-text classifier and chooses OCR or text extraction; `always` forces OCR; `never` forces text extraction. Run `scripts/ocr_routing_calibrate.py --sweep` to verify the classifier's decisions against a labelled corpus.
 - Text‑based files (docx, txt, html, etc.): Use fast text extraction only; do not OCR by default
 - Empty content handling: allowed only for OCR/PDF paths; text‑based files with empty extraction are skipped
 - Frontend: attachment upload errors must be surfaced to the user (inline alert/toast)
 
 Configuration:
-- Source ocr_mode: 'always' | 'auto' | 'fallback' | 'never' (default 'auto' with PDFs forced through OCR path)
+
+- Source ocr_mode: 'auto' | 'always' | 'never' — see `core.ocr_modes.OcrMode`. Default 'auto':
+  - For PDFs: the per-page real-text classifier (`core.ocr_routing.classify_pdf`) decides per document whether to run OCR.
+  - For OCR-eligible image MIME types (PNG/JPG/etc.): always OCR (no per-page geometry to classify).
+  - For non-OCR-eligible types (DOCX/txt/html/...): always text extraction.
+- Classifier thresholds: `SHU_OCR_PAGE_MARGIN_RATIO` (default 0.125) and `SHU_OCR_TEXT_PAGE_FRACTION` (default 0.5). To verify these against the current corpus and classifier code, run `scripts/ocr_routing_calibrate.py --sweep` (output can be redirected to `ocr_routing_calibration_report.md` if you want a checkpoint).
+- Classifier sampling (SHU-739 fix #3): `SHU_OCR_CLASSIFY_SAMPLE_SIZE`, `SHU_OCR_CLASSIFY_SAMPLE_MIN_PAGES`, `SHU_OCR_CLASSIFY_AMBIGUOUS_BAND`. Long documents are classified from a stratified sample of `SAMPLE_SIZE` pages instead of a full per-page scan. If the sampled real-text fraction sits inside `(text_page_fraction ± AMBIGUOUS_BAND)` the classifier falls back to the full scan. Set `SAMPLE_SIZE=0` to disable sampling; set `SAMPLE_MIN_PAGES=0` to apply sampling regardless of document length. Defaults in `core/config.py`.
 - Global defaults live in config.py and ConfigurationManager; API endpoints should inject config via get_config_manager_dependency
+
+### Per-stage ingestion concurrency caps (SHU-739)
+
+Each ingestion stage runs under its own per-process semaphore so the classifier scan, text extraction, and OCR call don't share a single concurrency budget. Operators tune these caps based on the per-process CPU and memory budget for their deployment; the defaults are conservative and assume a constrained per-process budget.
+
+- `SHU_INGESTION_CLASSIFY_MAX_CONCURRENT_JOBS`: caps concurrent PDF text-vs-OCR classifier scans. A single classifier scan can saturate one core; serialising avoids a synchronized multi-classifier CPU spike at burst start.
+- `SHU_INGESTION_TEXT_MAX_CONCURRENT_JOBS`: caps concurrent text-extraction jobs. Per-job working-set during text extraction can be substantial on long PDFs; running one at a time bounds the in-process memory floor.
+- `SHU_OCR_MAX_CONCURRENT_JOBS`: caps concurrent OCR jobs. Network-bound; the legitimate throughput bottleneck.
+- `SHU_PROFILING_MAX_CONCURRENT_TASKS`: caps concurrent profiling LLM calls.
+
+Defaults for these are set conservatively in `core/config.py` — check there for current values rather than relying on this doc to track them.
 
 Auditing/Logging:
 - Log extraction method, engine, and durations; do not log raw content
@@ -354,17 +370,21 @@ python -m shu.worker
 python -m shu.worker --concurrency 4
 
 # Start a worker for specific workload types only
-python -m shu.worker --workload-types INGESTION,PROFILING
+python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED,PROFILING
 
 # Start multiple specialized workers (in separate terminals/containers)
-python -m shu.worker --workload-types INGESTION --concurrency 4
+# Document-ingestion workers must consume the full pipeline:
+#   INGESTION (plugin feeds), INGESTION_CLASSIFY (PDF routing classifier),
+#   INGESTION_TEXT (text extraction), INGESTION_OCR (OCR), INGESTION_EMBED (embedding)
+python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED --concurrency 4
 python -m shu.worker --workload-types LLM_WORKFLOW --concurrency 2
 python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
 
 ##### Horizontal Scaling Scenarios
 
-**Scenario 1: Single-Node Development/Bare-Metal**
+###### Scenario 1: Single-Node Development/Bare-Metal
+
 ```bash
 # No Redis needed, workers run in-process
 SHU_WORKERS_ENABLED=true  # or unset (default)
@@ -372,45 +392,35 @@ SHU_WORKERS_ENABLED=true  # or unset (default)
 python -m uvicorn shu.main:app --app-dir backend/src
 ```
 
-**Scenario 2: Horizontally-Scaled Production**
+###### Scenario 2: Multi-Process / Multi-Container
+
+If you need to scale workers separately from the API (e.g. ingestion bursts that shouldn't tie up HTTP capacity), run them as separate processes against a shared Redis:
+
 ```bash
-# Redis required for cross-process communication. If Redis is down or unreachable,
-# the queue/cache factories will raise connection errors rather than silently
+# Redis is required for cross-process queue/cache. If Redis is unreachable,
+# the queue/cache factories raise connection errors rather than silently
 # falling back to in-memory implementations.
 SHU_REDIS_URL=redis://redis:6379/0
-SHU_WORKERS_ENABLED=false  # Disable workers in API process
+SHU_WORKERS_ENABLED=false  # API process serves HTTP only
 
-# Deploy API replicas (no workers)
-# Container 1-N: API only
+# API process(es)
 python -m uvicorn shu.main:app --app-dir backend/src
 
-# Deploy specialized worker replicas
-# Container A1-AN: Ingestion workers (scale based on document volume)
-python -m shu.worker --workload-types INGESTION
-
-# Container B1-BN: LLM workers (scale based on LLM request volume)
+# Worker process(es) — split or combine workload types as needed
+python -m shu.worker --workload-types INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED
 python -m shu.worker --workload-types LLM_WORKFLOW
-
-# Container C1-CN: Maintenance workers (typically 1-2 replicas)
 python -m shu.worker --workload-types MAINTENANCE,PROFILING
 ```
 
-**Scenario 3: Mixed Workload Scaling**
-```bash
-# Scale ingestion workers independently from LLM workers
-# Useful when document ingestion spikes don't correlate with chat usage
-
-# Kubernetes example:
-# - api: 3 replicas, SHU_WORKERS_ENABLED=false
-# - worker-ingestion: 5 replicas, --workload-types INGESTION
-# - worker-llm: 2 replicas, --workload-types LLM_WORKFLOW
-# - worker-maintenance: 1 replica, --workload-types MAINTENANCE,PROFILING
-```
+The split above is illustrative; consolidate workload types onto a single worker if your load doesn't warrant separation. See the WorkloadType reference below for what each type covers.
 
 ##### WorkloadType Reference
-- **INGESTION**: Document ingestion and indexing tasks (legacy, general ingestion)
-- **INGESTION_OCR**: OCR/text extraction stage of document pipeline (first stage of async ingestion)
-- **INGESTION_EMBED**: Embedding stage of document pipeline (chunking, embedding generation, vector storage)
+
+- **INGESTION**: Plugin feed ingestion (Gmail, Google Drive, etc.)
+- **INGESTION_CLASSIFY** *(SHU-739)*: PDF text-vs-OCR routing classifier. PDFs in `auto` mode enter here first; the classifier decides between TEXT and OCR and enqueues the next stage. Capped tightly to bound the synchronized CPU spike at burst start.
+- **INGESTION_TEXT** *(SHU-739)*: Born-digital PDF text extraction + DOCX / plain-text / HTML extraction. The non-OCR path. Capped tightly to bound the per-job working-set spike from concurrent extractions.
+- **INGESTION_OCR**: OCR stage of document pipeline. Network-bound. Capped via `SHU_OCR_MAX_CONCURRENT_JOBS` — the legitimate throughput bottleneck.
+- **INGESTION_EMBED**: Embedding stage of document pipeline (chunking, embedding generation, vector storage).
 - **LLM_WORKFLOW**: LLM-based workflows and chat processing
 - **MAINTENANCE**: Scheduled tasks, cleanup, and system maintenance
 - **PROFILING**: Document profiling (LLM-based analysis)
@@ -753,9 +763,10 @@ npm start
 ## Production Deployment
 
 ### 1. Database Setup
-- Use a managed PostgreSQL service (AWS RDS, Google Cloud SQL, etc.)
-- Ensure pgvector extension is installed
-- Set up proper backup and monitoring
+
+- Run PostgreSQL on whatever infrastructure suits your deployment (self-managed Postgres, container, or a managed service if you prefer)
+- Ensure the pgvector extension is installed and enabled in the Shu database
+- Set up backups and basic monitoring appropriate to your environment
 
 ### 2. Environment Configuration
 - Use environment variables for sensitive configuration
@@ -917,12 +928,10 @@ variants, same corpus, same driver).
 
 ### Recommended values
 
-| Environment       | MALLOC_ARENA_MAX | SHU_MEMORY_TRIM_INTERVAL_SECONDS |
-| ----------------- | ---------------- | -------------------------------- |
-| local dev (macOS) | unset            | `0` (malloc_trim is a no-op)     |
-| Kubernetes dev    | `2`              | `60`                             |
-| Kubernetes demo   | `2`              | `60`                             |
-| Kubernetes prod   | `2`              | `60`                             |
+| Environment                              | MALLOC_ARENA_MAX | SHU_MEMORY_TRIM_INTERVAL_SECONDS |
+| ---------------------------------------- | ---------------- | -------------------------------- |
+| Local dev (macOS / non-glibc)            | unset            | `0` (malloc_trim is a no-op)     |
+| Linux container / VM (glibc, any tier)   | `2`              | `60`                             |
 
 ## API Documentation
 

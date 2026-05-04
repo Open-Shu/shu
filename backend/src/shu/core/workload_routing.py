@@ -43,13 +43,24 @@ class WorkloadType(Enum):
             Examples: Running plugin feeds (Gmail, Google Drive, Outlook, etc.)
             to pull data from external sources into knowledge bases.
 
-        INGESTION_OCR: OCR/text extraction stage of document pipeline.
-            Examples: Running OCR on PDFs, extracting text from images,
-            parsing document formats. First stage of async ingestion.
+        INGESTION_CLASSIFY: PDF text-vs-OCR routing classifier (SHU-728).
+            Runs `classify_pdf` on a freshly-uploaded PDF and enqueues the
+            appropriate next stage (INGESTION_TEXT or INGESTION_OCR). Capped
+            tightly (default 1) to bound the synchronized CPU spike from
+            multiple concurrent classifier scans at burst start.
+
+        INGESTION_TEXT: Born-digital PDF text extraction + DOCX / plain-text
+            extraction. The non-OCR text path. Capped tightly (default 1)
+            to bound the working-set spike from concurrent
+            `_extract_pdf_text_only` runs on long documents.
+
+        INGESTION_OCR: OCR stage of document pipeline. Network-bound
+            (Mistral or local-fallback). Capped at SHU_OCR_MAX_CONCURRENT_JOBS
+            (default 6) — the legitimate throughput bottleneck.
 
         INGESTION_EMBED: Embedding stage of document pipeline.
             Examples: Chunking extracted text, generating embeddings,
-            storing vectors. Second stage of async ingestion.
+            storing vectors. Final ingestion-side stage before profiling.
 
         LLM_WORKFLOW: LLM-based workflows and experience execution.
             Examples: Scheduled experience execution (Morning Briefing,
@@ -82,6 +93,8 @@ class WorkloadType(Enum):
     """
 
     INGESTION = "ingestion"
+    INGESTION_CLASSIFY = "ingestion_classify"
+    INGESTION_TEXT = "ingestion_text"
     INGESTION_OCR = "ingestion_ocr"
     INGESTION_EMBED = "ingestion_embed"
     LLM_WORKFLOW = "llm_workflow"

@@ -4,12 +4,23 @@ Sends the entire document as a base64 data URL to Mistral's /ocr endpoint.
 The API handles PDF page splitting internally — no need to render pages
 to images on our side.
 
+Memory profile (SHU-738): the request body is built as a streaming async
+iterator that base64-encodes the source document chunk-by-chunk. When the
+caller passes a ``file_path``, only one ~256 KiB chunk lives in Python
+memory at a time during transmission — no full-document buffer, no full
+base64 string, no full data URL. The bytes-based path (used by plugins
+and in-memory test harnesses) base64-encodes the supplied buffer once
+and frees it before the request hits the wire.
+
 Failures raise — no silent fallback to local. The worker retry mechanism
 handles transient errors.
 """
 
 import base64
+import json
+from collections.abc import AsyncIterator
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -24,8 +35,110 @@ from .usage_recording import get_usage_recorder
 
 logger = get_logger(__name__)
 
+# Read 192 KiB at a time. Multiple of 3 bytes so each chunk encodes to a
+# whole number of base64 quadruplets and we never have to carry a partial
+# triple across iterations. 192 KiB encoded → 256 KiB of ASCII output, which
+# is the chunk size httpx sees on the wire.
+_STREAM_CHUNK_SIZE = 192 * 1024
+
 _PROVIDER_TYPE_KEY = "generic_completions"
 _PROVIDER_NAME = "Shu Curated: Mistral"
+
+
+def _build_streaming_request_body(
+    *,
+    model: str,
+    mime_prefix: str,
+    file_bytes: bytes | None,
+    file_path: str | None,
+) -> tuple[AsyncIterator[bytes], int]:
+    """Construct the Mistral /ocr request body as a streaming async iterator.
+
+    Mistral's endpoint expects a single JSON document with the file embedded
+    as a base64 data URL inside ``document.document_url``. To avoid holding
+    the full document, the full base64 string, and the full data URL in
+    memory simultaneously (the pre-SHU-738 pattern), we build the JSON
+    envelope as three concatenated parts and base64-encode the file body
+    chunk-by-chunk between them:
+
+        prefix_bytes = b'{"model":"…","document":{"type":"document_url","document_url":"data:application/pdf;base64,'
+        body_bytes   = b64(file_chunk_1) + b64(file_chunk_2) + …
+        suffix_bytes = b'"},"confidence_scores_granularity":"page",…}'
+
+    httpx accepts the iterator directly via ``content=``. The request body
+    is well-formed JSON because base64 only emits ASCII characters in
+    ``[A-Za-z0-9+/=]`` — none of which need JSON escaping inside a string.
+
+    Returns the iterator and the exact ``Content-Length`` so the request
+    can be sent without chunked transfer encoding (Mistral expects a
+    fixed-length body and the value is computable upfront from
+    ``ceil(file_size / 3) * 4``).
+    """
+    # Building the suffix as a JSON-serialized object lets the underlying
+    # JSON library handle escaping for any future non-ASCII model name. The
+    # key insight is that we never serialize the document content via JSON;
+    # we splice raw base64 ASCII into the wire bytes directly.
+    payload_envelope: dict[str, Any] = {
+        "model": model,
+        "document": {
+            "type": "document_url",
+            "document_url_PLACEHOLDER": "",  # replaced by streaming splice below
+        },
+        "confidence_scores_granularity": "page",
+        "table_format": None,
+        "include_image_base64": False,
+    }
+    serialized = json.dumps(payload_envelope, separators=(",", ":"))
+    # Split the serialized envelope around the placeholder so we can stream
+    # the data URL directly into its position.
+    sentinel_key = '"document_url_PLACEHOLDER":""'
+    split_index = serialized.index(sentinel_key)
+    real_key = '"document_url":"' + mime_prefix
+    prefix_str = serialized[:split_index] + real_key
+    suffix_str = '"' + serialized[split_index + len(sentinel_key) :]
+    prefix_bytes = prefix_str.encode("ascii")
+    suffix_bytes = suffix_str.encode("ascii")
+
+    # Determine source size + acquire a payload reference.
+    if file_path is not None:
+        source_size = Path(file_path).stat().st_size
+        path_for_iter = file_path
+        bytes_for_iter: bytes | None = None
+    else:
+        assert file_bytes is not None
+        source_size = len(file_bytes)
+        path_for_iter = None
+        bytes_for_iter = file_bytes
+
+    # base64 inflates by ceil(N/3)*4. For N divisible by 3 this is exactly
+    # 4N/3; otherwise the last block is padded with '=' and the formula
+    # still holds. We compute it without materializing the encoded data.
+    encoded_size = ((source_size + 2) // 3) * 4
+    content_length = len(prefix_bytes) + encoded_size + len(suffix_bytes)
+
+    async def _iter() -> AsyncIterator[bytes]:
+        yield prefix_bytes
+        if path_for_iter is not None:
+            # Read in chunks aligned to 3 bytes so each block encodes to
+            # complete base64 quadruplets — no partial-triple carry across
+            # iterations and no padding except in the final block.
+            with open(path_for_iter, "rb") as fh:
+                while True:
+                    chunk = fh.read(_STREAM_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield base64.b64encode(chunk)
+        else:
+            assert bytes_for_iter is not None
+            # The bytes branch can't avoid the one-time full encode (the
+            # caller already has the buffer in memory). We still emit it
+            # via the iterator so the request body holds at most one extra
+            # copy at a time, and the encoded buffer is freed before the
+            # response is read.
+            yield base64.b64encode(bytes_for_iter)
+        yield suffix_bytes
+
+    return _iter(), content_length
 
 
 def _coerce_non_negative_int(value: Any, fallback: int) -> int:
@@ -60,15 +173,24 @@ class ExternalOCRService:
 
     async def extract_text(
         self,
-        file_bytes: bytes,
-        mime_type: str,
         *,
+        file_bytes: bytes | None = None,
+        file_path: str | None = None,
+        mime_type: str,
         user_id: str | None = None,
     ) -> OCRResult:
         """Extract text by sending the document to Mistral's OCR API.
 
+        Exactly one of ``file_bytes`` or ``file_path`` must be provided.
+        ``file_path`` is the memory-efficient hot path: the request body is
+        streamed to httpx as base64-encoded chunks, so no full document
+        buffer or full data URL string is held in Python memory at any
+        point. ``file_bytes`` is preserved for plugin and in-memory callers
+        and base64-encodes the supplied buffer once before the request.
+
         Args:
-            file_bytes: Raw bytes of the document to process.
+            file_bytes: Raw bytes of the document. Mutually exclusive with file_path.
+            file_path: Path to the document on disk. Mutually exclusive with file_bytes.
             mime_type: MIME type of the document.
             user_id: Optional user attribution for the resulting llm_usage row.
 
@@ -77,9 +199,12 @@ class ExternalOCRService:
 
         Raises:
             httpx.HTTPStatusError: On API errors (4xx/5xx).
-            ValueError: On unsupported mime types.
+            ValueError: On unsupported mime types or invalid arg combos.
 
         """
+        if (file_bytes is None) == (file_path is None):
+            raise ValueError("Provide exactly one of file_bytes or file_path")
+
         prefix = OCR_ELIGIBLE_MIME_PREFIXES.get(mime_type)
         if prefix is None:
             raise ValueError(
@@ -89,19 +214,16 @@ class ExternalOCRService:
 
         await self._ensure_active()
 
-        b64 = base64.b64encode(file_bytes).decode("ascii")
-        data_url = f"{prefix}{b64}"
-
-        payload: dict[str, Any] = {
-            "model": self._model_name,
-            "document": {
-                "type": "document_url",
-                "document_url": data_url,
-            },
-            "confidence_scores_granularity": "page",
-            "table_format": None,  # inline MD tables
-            "include_image_base64": False,  # TODO: we may be able to support ingestion intelligence on images in the future?
-        }
+        body_iter, content_length = _build_streaming_request_body(
+            model=self._model_name,
+            mime_prefix=prefix,
+            file_bytes=file_bytes,
+            file_path=file_path,
+        )
+        # Drop the bytes reference now that the iterator owns its own copy
+        # (or the file handle, on the path branch). Keeps peak memory low
+        # for the bytes branch, which is otherwise still doing one full copy.
+        del file_bytes
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -109,8 +231,9 @@ class ExternalOCRService:
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
+                    "Content-Length": str(content_length),
                 },
-                json=payload,
+                content=body_iter,
                 timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
             )
             response.raise_for_status()

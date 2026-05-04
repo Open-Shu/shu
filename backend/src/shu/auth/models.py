@@ -28,6 +28,7 @@ class User(BaseModel):
     # google_id column removed - use ProviderIdentity table instead
     picture_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=False)  # Users require admin activation by default
+    deactivation_scheduled_at = Column(TIMESTAMP(timezone=True), nullable=True)
     last_login = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # Password authentication fields
@@ -97,4 +98,7 @@ class User(BaseModel):
             "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at is not None else None,
             "last_login": self.last_login.isoformat() if self.last_login is not None else None,
+            "deactivation_scheduled_at": (
+                self.deactivation_scheduled_at.isoformat() if self.deactivation_scheduled_at is not None else None
+            ),
         }

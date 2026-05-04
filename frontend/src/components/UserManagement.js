@@ -26,6 +26,7 @@ import {
   Alert,
   CircularProgress,
   TextField,
+  Tooltip,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -35,12 +36,16 @@ import BlockIcon from '@mui/icons-material/Block';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import PeopleIcon from '@mui/icons-material/People';
 import ShieldIcon from '@mui/icons-material/Shield';
-import { authAPI, extractDataFromResponse, formatError } from '../services/api';
+import EventBusyIcon from '@mui/icons-material/EventBusy';
+import UndoIcon from '@mui/icons-material/Undo';
+import EventSeatIcon from '@mui/icons-material/EventSeat';
+import { authAPI, billingAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { resolveUserId } from '../utils/userHelpers';
 import PageHelpHeader from './PageHelpHeader';
 import ResetPasswordDialog from './ResetPasswordDialog';
 import EffectivePermissionsDialog from './EffectivePermissionsDialog';
+import SeatLimitModal from './SeatLimitModal';
 
 const UserManagement = () => {
   const { canManageUsers } = useAuth();
@@ -59,6 +64,7 @@ const UserManagement = () => {
     auth_method: 'password',
   });
   const [error, setError] = useState(null);
+  const [seatLimitPrompt, setSeatLimitPrompt] = useState(null);
   const queryClient = useQueryClient();
 
   // Fetch users
@@ -69,37 +75,91 @@ const UserManagement = () => {
     },
   });
 
-  // Update user mutation
-  const updateUserMutation = useMutation(({ userId, data }) => authAPI.updateUser(userId, data), {
-    onSuccess: () => {
-      queryClient.invalidateQueries('users');
-      setEditDialogOpen(false);
-      setEditUser(null);
-      setError(null);
-    },
-    onError: (err) => {
-      setError(formatError(err).message);
-    },
+  const { data: subscriptionResponse } = useQuery('billing-subscription', billingAPI.getSubscription, {
+    enabled: canManageUsers(),
   });
+  const subscription = extractDataFromResponse(subscriptionResponse) || {};
+  const isSeatGateActive = subscription.user_limit_enforcement === 'hard';
+
+  // Treat a 402 seat_limit_reached response as a phase-1 preview instead
+  // of an error: pop the consent modal, and remember the retry closure so
+  // the Add 1 seat button can re-issue the original call with the header.
+  const extractSeatLimitDetails = (err) => {
+    const data = err?.response?.data?.error;
+    if (err?.response?.status !== 402 || data?.code !== 'seat_limit_reached') {
+      return null;
+    }
+    return data.details || {};
+  };
+
+  // Update user mutation
+  const updateUserMutation = useMutation(
+    ({ userId, data, confirmSeatCharge = false }) => authAPI.updateUser(userId, data, { confirmSeatCharge }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('users');
+        queryClient.invalidateQueries('billing-subscription');
+        setEditDialogOpen(false);
+        setEditUser(null);
+        setSeatLimitPrompt(null);
+        setError(null);
+      },
+      onError: (err, variables) => {
+        // A False→True flip on is_active can trigger the seat-charge preflight.
+        // Mirror createUserMutation's 402 handling so the modal can confirm.
+        const seatDetails = extractSeatLimitDetails(err);
+        if (seatDetails) {
+          setSeatLimitPrompt({
+            details: seatDetails,
+            retry: () =>
+              updateUserMutation.mutate({
+                userId: variables.userId,
+                data: variables.data,
+                confirmSeatCharge: true,
+              }),
+          });
+          return;
+        }
+        setError(formatError(err).message);
+      },
+    }
+  );
 
   // Create user mutation
-  const createUserMutation = useMutation((userData) => authAPI.createUser(userData), {
-    onSuccess: () => {
-      queryClient.invalidateQueries('users');
-      setCreateDialogOpen(false);
-      setNewUser({
-        email: '',
-        name: '',
-        password: '',
-        role: 'regular_user',
-        auth_method: 'password',
-      });
-      setError(null);
-    },
-    onError: (err) => {
-      setError(formatError(err).message);
-    },
-  });
+  const createUserMutation = useMutation(
+    ({ userData, confirmSeatCharge = false }) => authAPI.createUser(userData, { confirmSeatCharge }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('users');
+        queryClient.invalidateQueries('billing-subscription');
+        setCreateDialogOpen(false);
+        setSeatLimitPrompt(null);
+        setNewUser({
+          email: '',
+          name: '',
+          password: '',
+          role: 'regular_user',
+          auth_method: 'password',
+        });
+        setError(null);
+      },
+      onError: (err, variables) => {
+        const seatDetails = extractSeatLimitDetails(err);
+        if (seatDetails) {
+          setSeatLimitPrompt({
+            details: seatDetails,
+            retry: () =>
+              createUserMutation.mutate({
+                userData: variables.userData,
+                confirmSeatCharge: true,
+              }),
+          });
+          return;
+        }
+        setError(formatError(err).message);
+      },
+    }
+  );
 
   // Delete user mutation
   const deleteUserMutation = useMutation((userId) => authAPI.deleteUser(userId), {
@@ -115,7 +175,35 @@ const UserManagement = () => {
   });
 
   // Activate user mutation
-  const activateUserMutation = useMutation((userId) => authAPI.activateUser(userId), {
+  const activateUserMutation = useMutation(
+    ({ userId, confirmSeatCharge = false }) => authAPI.activateUser(userId, { confirmSeatCharge }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('users');
+        queryClient.invalidateQueries('billing-subscription');
+        setSeatLimitPrompt(null);
+        setError(null);
+      },
+      onError: (err, variables) => {
+        const seatDetails = extractSeatLimitDetails(err);
+        if (seatDetails) {
+          setSeatLimitPrompt({
+            details: seatDetails,
+            retry: () =>
+              activateUserMutation.mutate({
+                userId: variables.userId,
+                confirmSeatCharge: true,
+              }),
+          });
+          return;
+        }
+        setError(formatError(err).message);
+      },
+    }
+  );
+
+  // Deactivate user mutation
+  const deactivateUserMutation = useMutation((userId) => authAPI.deactivateUser(userId), {
     onSuccess: () => {
       queryClient.invalidateQueries('users');
       setError(null);
@@ -125,9 +213,43 @@ const UserManagement = () => {
     },
   });
 
-  // Deactivate user mutation
-  const deactivateUserMutation = useMutation((userId) => authAPI.deactivateUser(userId), {
+  const scheduleDeactivationMutation = useMutation((userId) => authAPI.scheduleUserDeactivation(userId), {
     onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      queryClient.invalidateQueries('billing-subscription');
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
+
+  const unscheduleDeactivationMutation = useMutation((userId) => authAPI.unscheduleUserDeactivation(userId), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('users');
+      queryClient.invalidateQueries('billing-subscription');
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
+
+  const releaseSeatMutation = useMutation(() => billingAPI.releaseSeat(), {
+    onSuccess: () => {
+      queryClient.invalidateQueries('billing-subscription');
+      setError(null);
+    },
+    onError: (err) => {
+      setError(formatError(err).message);
+    },
+  });
+
+  const cancelPendingReleaseMutation = useMutation(() => billingAPI.cancelPendingRelease(), {
+    onSuccess: () => {
+      // Both billing-subscription (target_quantity) and users (cleared flags)
+      // change in one shot; refresh both.
+      queryClient.invalidateQueries('billing-subscription');
       queryClient.invalidateQueries('users');
       setError(null);
     },
@@ -141,6 +263,18 @@ const UserManagement = () => {
   }
 
   const users = extractDataFromResponse(usersResponse) || [];
+  const activeUserCount = users.filter((u) => u.is_active).length;
+  const stripeQuantity = subscription.user_limit ?? 0;
+  const targetQuantity = subscription.target_quantity ?? stripeQuantity;
+  const openSeats = Math.max(0, stripeQuantity - activeUserCount);
+  // Release is only allowed when there's true headroom — target_quantity
+  // strictly greater than active count. Otherwise the admin should flag a
+  // specific user, since a release without headroom would force a random
+  // trim at rollover.
+  const canRelease = targetQuantity > activeUserCount;
+  // Pending change exists when admin has scheduled an up- or downgrade that
+  // hasn't yet materialised on Stripe's live phase-1 quantity.
+  const hasPendingChange = targetQuantity !== stripeQuantity;
 
   const handleEditUser = (user) => {
     const userId = resolveUserId(user);
@@ -177,7 +311,7 @@ const UserManagement = () => {
 
   const handleCreateUser = () => {
     if (newUser.email && newUser.name && newUser.password) {
-      createUserMutation.mutate(newUser);
+      createUserMutation.mutate({ userData: newUser });
     }
   };
 
@@ -254,9 +388,75 @@ const UserManagement = () => {
           'Users can authenticate via password or Google SSO depending on auth method',
         ]}
         actions={
-          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateDialog}>
-            Create User
-          </Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {isSeatGateActive && (
+              <>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}
+                >
+                  <EventSeatIcon fontSize="small" />
+                  {openSeats} open seat{openSeats === 1 ? '' : 's'}
+                </Typography>
+                {hasPendingChange && (
+                  <Typography variant="body2" color="warning.main">
+                    {stripeQuantity} now → {targetQuantity}
+                    {subscription.current_period_end
+                      ? ` after ${new Date(subscription.current_period_end).toLocaleDateString()}`
+                      : ''}
+                  </Typography>
+                )}
+                {targetQuantity < stripeQuantity && (
+                  <Tooltip title="Releases the Stripe downgrade schedule and clears every user's scheduled deactivation. Affects all pending seat reductions, not just the most recent one.">
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      color="warning"
+                      onClick={() => {
+                        const flagged = users.filter((u) => u.deactivation_scheduled_at).length;
+                        const summary =
+                          flagged > 0
+                            ? `Cancel all pending seat reductions? This will release ${
+                                stripeQuantity - targetQuantity
+                              } seat(s) and unflag ${flagged} user(s) currently scheduled for deactivation.`
+                            : `Cancel pending seat reduction(s)? Stripe will stay at ${stripeQuantity} seats next cycle.`;
+                        if (window.confirm(summary)) {
+                          cancelPendingReleaseMutation.mutate();
+                        }
+                      }}
+                      disabled={cancelPendingReleaseMutation.isLoading}
+                      aria-label="Cancel all pending seat reductions and unflag scheduled users"
+                    >
+                      Cancel all pending reductions
+                    </Button>
+                  </Tooltip>
+                )}
+                <Tooltip
+                  title={
+                    canRelease
+                      ? ''
+                      : 'No open seats. Schedule a user for deactivation to reduce capacity at the next billing cycle.'
+                  }
+                >
+                  <span>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => releaseSeatMutation.mutate()}
+                      disabled={!canRelease || releaseSeatMutation.isLoading}
+                      aria-label="Release one open seat"
+                    >
+                      Release 1 seat
+                    </Button>
+                  </span>
+                </Tooltip>
+              </>
+            )}
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateDialog}>
+              Create User
+            </Button>
+          </Box>
         }
       />
 
@@ -284,7 +484,14 @@ const UserManagement = () => {
                 const userId = resolveUserId(user);
                 return (
                   <TableRow key={userId || user.email}>
-                    <TableCell>{user.name}</TableCell>
+                    <TableCell>
+                      {user.name}
+                      {isSeatGateActive && user.deactivation_scheduled_at && subscription.current_period_end && (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          Loses access on {new Date(subscription.current_period_end).toLocaleDateString()}
+                        </Typography>
+                      )}
+                    </TableCell>
                     <TableCell>{user.email}</TableCell>
                     <TableCell>
                       <Chip label={getRoleLabel(user.role)} color={getRoleColor(user.role)} size="small" />
@@ -300,10 +507,11 @@ const UserManagement = () => {
                     <TableCell>
                       {!user.is_active ? (
                         <IconButton
-                          onClick={() => activateUserMutation.mutate(userId)}
+                          onClick={() => activateUserMutation.mutate({ userId })}
                           size="small"
                           color="success"
                           title="Activate User"
+                          aria-label="Activate user"
                           disabled={activateUserMutation.isLoading || !userId}
                         >
                           <CheckCircleIcon />
@@ -314,11 +522,37 @@ const UserManagement = () => {
                           size="small"
                           color="warning"
                           title="Deactivate User"
+                          aria-label="Deactivate user"
                           disabled={deactivateUserMutation.isLoading || !userId}
                         >
                           <BlockIcon />
                         </IconButton>
                       )}
+                      {isSeatGateActive &&
+                        user.is_active &&
+                        (user.deactivation_scheduled_at ? (
+                          <IconButton
+                            onClick={() => unscheduleDeactivationMutation.mutate(userId)}
+                            size="small"
+                            color="info"
+                            title="Cancel scheduled deactivation"
+                            aria-label="Cancel scheduled deactivation"
+                            disabled={unscheduleDeactivationMutation.isLoading || !userId}
+                          >
+                            <UndoIcon />
+                          </IconButton>
+                        ) : (
+                          <IconButton
+                            onClick={() => scheduleDeactivationMutation.mutate(userId)}
+                            size="small"
+                            color="warning"
+                            title="Schedule deactivation on period end"
+                            aria-label="Schedule deactivation on period end"
+                            disabled={scheduleDeactivationMutation.isLoading || !userId}
+                          >
+                            <EventBusyIcon />
+                          </IconButton>
+                        ))}
                       <IconButton
                         onClick={() => handleEditUser(user)}
                         size="small"
@@ -547,6 +781,15 @@ const UserManagement = () => {
         onClose={() => setResetPasswordUser(null)}
         user={resetPasswordUser}
         onSuccess={() => queryClient.invalidateQueries('users')}
+      />
+
+      {/* Inline seat-charge consent modal (SHU-730 phase-2 confirmation) */}
+      <SeatLimitModal
+        open={!!seatLimitPrompt}
+        details={seatLimitPrompt?.details}
+        isConfirming={createUserMutation.isLoading || activateUserMutation.isLoading || updateUserMutation.isLoading}
+        onClose={() => setSeatLimitPrompt(null)}
+        onConfirm={() => seatLimitPrompt?.retry?.()}
       />
     </Box>
   );

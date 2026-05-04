@@ -1,6 +1,7 @@
 """Unit tests for ExternalOCRService."""
 
 import base64
+import json
 from contextlib import contextmanager
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,24 @@ import pytest
 from shu.core.exceptions import InactiveProviderError
 from shu.core.ocr_service import OCRResult
 from shu.services.external_ocr_service import ExternalOCRService
+
+
+async def _consume_post_body(mock_client: MagicMock) -> tuple[dict, int]:
+    """Reassemble and parse the JSON request body that the streaming iterator
+    fed to ``httpx.AsyncClient.post(content=...)`` (SHU-738).
+
+    Pre-SHU-738 these tests inspected ``call_args[1]["json"]`` directly. Now
+    the body is built incrementally — this helper consumes the async iterator
+    once and returns ``(parsed_payload, total_byte_length)`` so individual
+    assertions don't have to re-iterate (async generators are single-use).
+    """
+    call = mock_client.post.call_args
+    body_iter = call.kwargs["content"]
+    chunks: list[bytes] = []
+    async for chunk in body_iter:
+        chunks.append(chunk)
+    body_bytes = b"".join(chunks)
+    return json.loads(body_bytes.decode("ascii")), len(body_bytes)
 
 # OCR cost is now DB-sourced (cost_per_input_unit on the llm_models row, seeded from
 # model_pricing.py). Tests that assert on total cost stub a model row with this rate.
@@ -90,7 +109,7 @@ class TestExternalOCRService:
         svc = _make_service()
 
         with _patched_httpx(response) as mock_client:
-            result = await svc.extract_text(pdf_bytes, "application/pdf")
+            result = await svc.extract_text(file_bytes=pdf_bytes, mime_type="application/pdf")
 
         assert isinstance(result, OCRResult)
         assert result.text == "Page one text\n\nPage two text"
@@ -98,13 +117,16 @@ class TestExternalOCRService:
         assert result.page_count == 2
         assert result.confidence is None
 
-        call_kwargs = mock_client.post.call_args
-        assert call_kwargs[0][0] == "https://api.mistral.ai/v1/ocr"
-        payload = call_kwargs[1]["json"]
+        call_args = mock_client.post.call_args
+        assert call_args[0][0] == "https://api.mistral.ai/v1/ocr"
+        payload, body_len = await _consume_post_body(mock_client)
         assert payload["model"] == "mistral-ocr-latest"
         assert payload["document"]["type"] == "document_url"
         expected_b64 = base64.b64encode(pdf_bytes).decode("ascii")
         assert payload["document"]["document_url"] == f"data:application/pdf;base64,{expected_b64}"
+        # Content-Length must match the body the iterator produced — Mistral
+        # rejects mismatched lengths and chunked transfer encoding.
+        assert call_args.kwargs["headers"]["Content-Length"] == str(body_len)
 
     @pytest.mark.asyncio
     async def test_extract_text_image(self):
@@ -117,12 +139,12 @@ class TestExternalOCRService:
         svc = _make_service()
 
         with _patched_httpx(response) as mock_client:
-            result = await svc.extract_text(image_bytes, "image/png")
+            result = await svc.extract_text(file_bytes=image_bytes, mime_type="image/png")
 
         assert result.text == "Image text"
         assert result.page_count == 1
 
-        payload = mock_client.post.call_args[1]["json"]
+        payload, _ = await _consume_post_body(mock_client)
         expected_b64 = base64.b64encode(image_bytes).decode("ascii")
         assert payload["document"]["document_url"] == f"data:image/png;base64,{expected_b64}"
 
@@ -130,7 +152,7 @@ class TestExternalOCRService:
     async def test_unsupported_mime_type_raises(self):
         svc = _make_service()
         with pytest.raises(ValueError, match="does not support mime type"):
-            await svc.extract_text(b"data", "text/plain")
+            await svc.extract_text(file_bytes=b"data", mime_type="text/plain")
 
     @pytest.mark.asyncio
     async def test_http_error_propagates(self):
@@ -145,7 +167,7 @@ class TestExternalOCRService:
 
         with _patched_httpx(mock_response):
             with pytest.raises(httpx.HTTPStatusError):
-                await svc.extract_text(b"%PDF-content", "application/pdf")
+                await svc.extract_text(file_bytes=b"%PDF-content", mime_type="application/pdf")
 
     @pytest.mark.asyncio
     async def test_empty_pages_response(self):
@@ -154,7 +176,7 @@ class TestExternalOCRService:
         svc = _make_service()
 
         with _patched_httpx(response):
-            result = await svc.extract_text(b"%PDF-content", "application/pdf")
+            result = await svc.extract_text(file_bytes=b"%PDF-content", mime_type="application/pdf")
 
         assert result.text == ""
         assert result.page_count == 0
@@ -166,10 +188,72 @@ class TestExternalOCRService:
         svc = _make_service(api_key="sk-secret-key")
 
         with _patched_httpx(response) as mock_client:
-            await svc.extract_text(b"data", "image/jpeg")
+            await svc.extract_text(file_bytes=b"data", mime_type="image/jpeg")
 
         headers = mock_client.post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer sk-secret-key"
+
+    @pytest.mark.asyncio
+    async def test_extract_text_pdf_via_file_path_streams_from_disk(self, tmp_path):
+        """SHU-738: file_path branch streams base64-encoded chunks from disk.
+
+        The body the iterator emits must be byte-for-byte equivalent to the
+        buffered build for the same content — Mistral can't tell whether the
+        request was streamed; correctness depends on parity.
+        """
+        pdf_bytes = b"%PDF-fake-content-and-then-some-more-bytes-to-cross-chunks" * 17
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+
+        response = _mock_ocr_response([{"index": 0, "markdown": "page text"}])
+        svc = _make_service()
+
+        with _patched_httpx(response) as mock_client:
+            result = await svc.extract_text(file_path=str(pdf_path), mime_type="application/pdf")
+
+        assert result.text == "page text"
+        payload, body_len = await _consume_post_body(mock_client)
+        # Must produce the same data URL as the bytes branch would have produced.
+        expected_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+        assert payload["document"]["document_url"] == f"data:application/pdf;base64,{expected_b64}"
+        # Content-Length advertised on the wire must match the bytes the iterator emitted.
+        assert mock_client.post.call_args.kwargs["headers"]["Content-Length"] == str(body_len)
+
+    @pytest.mark.asyncio
+    async def test_streaming_body_byte_parity_with_bytes_branch(self, tmp_path):
+        """The path branch and the bytes branch must produce identical request bodies.
+
+        Same content, two entry points: regression test for SHU-738's claim
+        that the streaming change is byte-for-byte equivalent to the
+        pre-change buffered build.
+        """
+        pdf_bytes = b"some pdf-ish bytes" * 200  # not a multiple of 3, exercises padding
+        pdf_path = tmp_path / "parity.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+
+        response = _mock_ocr_response([])
+        svc = _make_service()
+
+        with _patched_httpx(response) as mock_client:
+            await svc.extract_text(file_bytes=pdf_bytes, mime_type="application/pdf")
+        bytes_payload, bytes_len = await _consume_post_body(mock_client)
+
+        with _patched_httpx(response) as mock_client:
+            await svc.extract_text(file_path=str(pdf_path), mime_type="application/pdf")
+        path_payload, path_len = await _consume_post_body(mock_client)
+
+        assert bytes_payload == path_payload
+        assert bytes_len == path_len
+
+    @pytest.mark.asyncio
+    async def test_rejects_both_or_neither_input(self):
+        svc = _make_service()
+        with pytest.raises(ValueError, match="exactly one"):
+            await svc.extract_text(
+                file_bytes=b"x", file_path="/tmp/y", mime_type="application/pdf"
+            )
+        with pytest.raises(ValueError, match="exactly one"):
+            await svc.extract_text(mime_type="application/pdf")
 
     def test_base_url_trailing_slash_stripped(self):
         svc = ExternalOCRService(
@@ -198,7 +282,7 @@ class TestExternalOCRService:
         svc = _make_service()
 
         with _patched_httpx(response):
-            result = await svc.extract_text(b"%PDF-content", "application/pdf")
+            result = await svc.extract_text(file_bytes=b"%PDF-content", mime_type="application/pdf")
 
         assert result.confidence == pytest.approx(0.85)
         assert result.page_count == 3
@@ -349,7 +433,7 @@ class TestUsageRecording:
 
         with _patched_httpx(response):
             with patch.object(svc, "_record_usage", new_callable=AsyncMock) as mock_record:
-                await svc.extract_text(b"%PDF-content", "application/pdf")
+                await svc.extract_text(file_bytes=b"%PDF-content", mime_type="application/pdf")
 
         mock_record.assert_called_once_with(3, usage_info={}, observed_page_count=3, user_id=None)
 
@@ -492,7 +576,7 @@ class TestExtractTextInactiveGuard:
             patch.object(ExternalOCRService, "_record_usage", new_callable=AsyncMock),
         ):
             with pytest.raises(InactiveProviderError):
-                await svc.extract_text(b"%PDF-content", "application/pdf")
+                await svc.extract_text(file_bytes=b"%PDF-content", mime_type="application/pdf")
 
             mock_client_cls.assert_not_called()
             mock_guard.assert_awaited_once()

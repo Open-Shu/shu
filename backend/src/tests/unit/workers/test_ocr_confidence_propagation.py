@@ -134,23 +134,6 @@ class TestExtractTextPdfWithProgress:
         assert ocr_used is False
         assert confidence is None
 
-    @pytest.mark.asyncio
-    async def test_fallback_mode_fast_success_returns_none_confidence(self):
-        """Fallback mode: fast extraction success → confidence is None."""
-        extractor = _make_extractor()
-
-        with patch.object(
-            extractor,
-            "_extract_text_pdf_fast_only",
-            new=AsyncMock(return_value="x" * 100),  # > 50 chars threshold
-        ):
-            text, ocr_used, confidence = await extractor._extract_text_pdf_with_progress(
-                "test.pdf", b"fake", use_ocr=True, ocr_mode="fallback"
-            )
-
-        assert ocr_used is False
-        assert confidence is None
-
 
 # ---------------------------------------------------------------------------
 # extract_text() — end-to-end confidence propagation

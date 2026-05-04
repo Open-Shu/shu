@@ -349,14 +349,16 @@ class TestOcrCapabilityIntegration:
             result = await cap.extract_text(
                 file_bytes=b"pdf-data",
                 mime_type="application/pdf",
-                mode="fallback",
+                mode="auto",
             )
+
+        from shu.core.ocr_modes import OcrMode
 
         mock_fn.assert_called_once_with(
             file_bytes=b"pdf-data",
             mime_type="application/pdf",
             config_manager=cap._config_manager,
-            ocr_mode="fallback",
+            ocr_mode=OcrMode.AUTO,
             user_id="user-123",
         )
         assert result == mock_result
