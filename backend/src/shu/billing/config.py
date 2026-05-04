@@ -9,8 +9,14 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Floor on the cache TTL guards against an operator setting a near-zero value
+# that would have every enforcement check hit CP. 10s is loose enough not to be
+# accidentally tripped, tight enough that emergency cache flushes are still
+# possible without code changes.
+_MIN_BILLING_STATE_CACHE_TTL_SECONDS = 10
 
 
 class BillingSettings(BaseSettings):
@@ -31,6 +37,17 @@ class BillingSettings(BaseSettings):
     # /api/v1/billing/webhooks. Must match the tenant row's `shared_secret` in
     # the control-plane registry (64 lowercase hex chars from secrets.token_hex(32)).
     router_shared_secret: str | None = Field(None, alias="SHU_ROUTER_SHARED_SECRET")
+
+    # Base URL for tenant→CP polls (e.g. /api/v1/tenants/{id}/billing-state).
+    # Required in hosted mode whenever router_shared_secret is set; absence is
+    # surfaced through validate_configuration rather than failing model init so
+    # self-hosted deployments without billing can still load BillingSettings.
+    cp_base_url: str | None = Field(None, alias="SHU_CP_BASE_URL")
+
+    # In-process TTL for the cached BillingState polled from CP. The cache uses
+    # stale-while-error on top of this — TTL governs successful-refresh cadence;
+    # outage windows are absorbed by serving the previous value.
+    billing_state_cache_ttl_seconds: int = Field(500, alias="SHU_BILLING_STATE_CACHE_TTL_SECONDS")
 
     # Tenant identifiers — set by the operator at deploy time.
     # These seed billing_state on first boot so webhook handlers and
@@ -73,6 +90,16 @@ class BillingSettings(BaseSettings):
         populate_by_name=True,  # Allow both field names and aliases
     )
 
+    @field_validator("billing_state_cache_ttl_seconds", mode="after")
+    @classmethod
+    def _enforce_min_cache_ttl(cls, value: int) -> int:
+        if value < _MIN_BILLING_STATE_CACHE_TTL_SECONDS:
+            raise ValueError(
+                f"SHU_BILLING_STATE_CACHE_TTL_SECONDS must be >= "
+                f"{_MIN_BILLING_STATE_CACHE_TTL_SECONDS} (got {value})"
+            )
+        return value
+
     @property
     def is_configured(self) -> bool:
         """Check if billing is fully configured for this instance.
@@ -113,6 +140,12 @@ class BillingSettings(BaseSettings):
 
         if not self.router_shared_secret:
             issues.append("SHU_ROUTER_SHARED_SECRET is required for router-envelope verification")
+
+        # cp_base_url is only meaningful when router_shared_secret is set —
+        # the secret addresses the tenant in CP, the URL is where to reach CP.
+        # Either both are present (hosted) or both absent (dev / self-hosted).
+        if self.router_shared_secret and not self.cp_base_url:
+            issues.append("SHU_CP_BASE_URL is required when SHU_ROUTER_SHARED_SECRET is set")
 
         if not self.price_id_monthly:
             issues.append("SHU_STRIPE_PRICE_ID_MONTHLY is required for subscriptions")

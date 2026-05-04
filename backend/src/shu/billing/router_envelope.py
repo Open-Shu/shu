@@ -61,6 +61,25 @@ def _sign(shared_secret: str, timestamp: int, method: str, path: str, body: byte
     return f"{SIGNATURE_PREFIX}{digest}"
 
 
+def sign_envelope(
+    shared_secret: str,
+    method: str,
+    path: str,
+    body: bytes,
+    *,
+    timestamp: int | None = None,
+) -> tuple[int, str]:
+    """Sign an outbound request to CP, byte-compatible with verify_envelope.
+
+    Returns (timestamp, signature) so callers don't have to capture the clock
+    at sign time and again at header-build time — a 1-second drift between
+    the two would silently land outside the skew window on slow paths.
+    """
+    if timestamp is None:
+        timestamp = int(time.time())
+    return timestamp, _sign(shared_secret, timestamp, method, path, body)
+
+
 def verify_envelope(
     shared_secret: str,
     signature_header: str,
@@ -153,6 +172,7 @@ __all__ = [
     "SIGNATURE_PREFIX",
     "TIMESTAMP_HEADER",
     "RouterSignatureError",
+    "sign_envelope",
     "verify_envelope",
     "verify_router_envelope_dep",
 ]
