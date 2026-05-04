@@ -32,6 +32,7 @@ from .document import (
     ParticipantRole,
     RelationalContext,
 )
+from .email_send_log import EmailSendLog
 from .experience import Experience, ExperienceRun, ExperienceStep
 from .knowledge_base import KnowledgeBase
 from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message, ModelType
@@ -79,6 +80,7 @@ __all__ = [
     "DocumentParticipant",
     "DocumentProject",
     "DocumentQuery",
+    "EmailSendLog",
     "EntityType",
     "Experience",
     "ExperienceRun",

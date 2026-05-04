@@ -1217,6 +1217,13 @@ async def _handle_re_embedding_job(job) -> None:
     await handle_re_embedding_job(job)
 
 
+async def _handle_email_job(job) -> None:
+    """Route EMAIL jobs to the handler module."""
+    from .email_handler import handle_email_job
+
+    await handle_email_job(job)
+
+
 async def process_job(job):  # noqa: PLR0912 — dispatch table by workload type; flatter than a handler registry here
     """Process a job based on its workload type and payload.
 
@@ -1271,6 +1278,9 @@ async def process_job(job):  # noqa: PLR0912 — dispatch table by workload type
 
         elif workload_type == WorkloadType.RE_EMBEDDING:
             await _handle_re_embedding_job(job)
+
+        elif workload_type == WorkloadType.EMAIL:
+            await _handle_email_job(job)
 
         elif workload_type == WorkloadType.MAINTENANCE:
             # Reserved for future maintenance tasks (cache cleanup, session expiry, etc.)

@@ -1,0 +1,43 @@
+{#
+  Shared HTML layout for outbound emails.
+
+  Templates extend this and override the `content` block. Inline
+  styling only — most clients (Gmail, Outlook, Apple Mail) strip
+  <style> tags or apply them inconsistently. Keep it minimal.
+
+  The `app_name` and `support_email` context values are injected by
+  EmailService from settings; templates should not require callers to
+  provide them.
+#}
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ app_name | default('Shu') }}{% endblock %}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f7f7f7; color: #1a1a1a;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f7f7f7; padding: 24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; padding: 32px; max-width: 560px;">
+          <tr>
+            <td>
+              {% block content %}{% endblock %}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top: 32px; border-top: 1px solid #eaeaea; margin-top: 32px; font-size: 12px; color: #888888;">
+              {% block footer %}
+              <p style="margin: 16px 0 0 0;">
+                {{ app_name | default('Shu') }}{% if support_email %} &middot; <a href="mailto:{{ support_email }}" style="color: #888888;">{{ support_email }}</a>{% endif %}
+              </p>
+              {% endblock %}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

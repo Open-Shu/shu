@@ -1,0 +1,7 @@
+{# Plain-text counterpart to _base.html. Templates extend this and override `content`. #}
+{%- block content %}{% endblock -%}
+
+--
+{% block footer -%}
+{{ app_name | default('Shu') }}{% if support_email %} ({{ support_email }}){% endif %}
+{%- endblock %}
