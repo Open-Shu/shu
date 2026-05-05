@@ -420,6 +420,19 @@ class TestAuthenticateUserEmailVerificationGate:
         with patch("shu.auth.password_auth.get_settings_instance", return_value=mock_settings_moderate):
             return PasswordAuthService()
 
+    def _patch_effective_backend(self, name: str):
+        """Patch the *effective* backend name reported by the factory.
+
+        The login gate now consults the factory's effective backend name
+        (post-fallback to disabled when config is missing), not the raw
+        setting. Tests must patch the factory function rather than just
+        flipping the setting field on the mock.
+        """
+        return patch(
+            "shu.core.email.factory.get_effective_email_backend_name",
+            return_value=name,
+        )
+
     @pytest.mark.asyncio
     async def test_unverified_blocked_when_email_backend_configured(
         self, mock_settings_moderate, mock_user: MagicMock, mock_db: AsyncMock
@@ -429,7 +442,7 @@ class TestAuthenticateUserEmailVerificationGate:
         mock_user.email_verified = False
         service = self._service_with_backend(mock_settings_moderate, "resend")
 
-        with pytest.raises(HTTPException) as exc_info:
+        with self._patch_effective_backend("resend"), pytest.raises(HTTPException) as exc_info:
             await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
         assert exc_info.value.status_code == 400
         # Must be the verification message (NOT the inactive message) so the
@@ -446,7 +459,27 @@ class TestAuthenticateUserEmailVerificationGate:
         mock_user.email_verified = False
         service = self._service_with_backend(mock_settings_moderate, "disabled")
 
-        result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        with self._patch_effective_backend("disabled"):
+            result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        assert result is mock_user
+
+    @pytest.mark.asyncio
+    async def test_unverified_allowed_when_factory_downgrades_to_disabled(
+        self, mock_settings_moderate, mock_user: MagicMock, mock_db: AsyncMock
+    ) -> None:
+        """Codex finding: gate must read the *effective* backend, not the
+        raw setting. If SHU_EMAIL_BACKEND=smtp but the factory downgraded
+        to disabled (e.g., SMTP host missing), unverified users must still
+        be allowed in via the legacy admin-activation gate — otherwise the
+        deployment is stuck creating users who can't receive verification
+        emails.
+        """
+        mock_user.email_verified = False
+        # Raw setting is "smtp" but the factory's effective backend is "disabled"
+        service = self._service_with_backend(mock_settings_moderate, "smtp")
+
+        with self._patch_effective_backend("disabled"):
+            result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
         assert result is mock_user
 
     @pytest.mark.asyncio
@@ -456,7 +489,8 @@ class TestAuthenticateUserEmailVerificationGate:
         mock_user.email_verified = True
         service = self._service_with_backend(mock_settings_moderate, "resend")
 
-        result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        with self._patch_effective_backend("resend"):
+            result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
         assert result is mock_user
 
     @pytest.mark.asyncio

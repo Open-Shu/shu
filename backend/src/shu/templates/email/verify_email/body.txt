@@ -7,8 +7,9 @@ your email address by visiting the link below:
 
 {{ verification_url }}
 
-This link expires in {{ expires_in_hours }} hours. If it expires before you
-click it, you can request a new one from the sign-in screen.
+This link expires in {{ expires_in_hours }} hour{{ '' if expires_in_hours == 1 else 's' }}.
+If it expires before you click it, you can request a new one from the
+sign-in screen.
 
 If you did not create an account, you can safely ignore this email.
 {%- endblock %}

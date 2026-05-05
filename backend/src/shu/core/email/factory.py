@@ -150,3 +150,20 @@ def reset_email_backend() -> None:
     """Reset the singleton (for tests only)."""
     global _email_backend  # noqa: PLW0603
     _email_backend = None
+
+
+def get_effective_email_backend_name() -> str:
+    """Return the name of the actually-instantiated email backend.
+
+    Differs from ``settings.email_backend`` when the configured backend
+    could not be initialised (missing SMTP host, missing Resend API key,
+    etc.) and was downgraded to ``DisabledEmailBackend`` by the factory.
+
+    Auth flows that gate on "is email available" must check this rather
+    than the raw setting — otherwise a self-hosted instance with
+    ``SHU_EMAIL_BACKEND=smtp`` but no SMTP config configured will
+    create users who need email verification but cannot receive mail,
+    and reset requests will silently enqueue against the disabled
+    backend rather than preserving the operator/manual fallback.
+    """
+    return get_email_backend_dependency().name

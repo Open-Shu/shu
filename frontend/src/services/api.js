@@ -30,6 +30,15 @@ api.interceptors.request.use(
   }
 );
 
+// Public unauthenticated recovery routes — /verify-email and
+// /reset-password identify the visitor by their URL token, not by a
+// session JWT. A stale JWT on these routes is irrelevant; redirecting
+// the user away strands them on /auth and breaks the flow.
+const isPublicAuthPath = () => {
+  const path = window.location.pathname;
+  return path.includes('/auth') || path.startsWith('/verify-email') || path.startsWith('/reset-password');
+};
+
 // Flag to prevent multiple refresh attempts
 let isRefreshing = false;
 let failedQueue = [];
@@ -145,7 +154,7 @@ api.interceptors.response.use(
           localStorage.removeItem('shu_token');
           localStorage.removeItem('shu_refresh_token');
 
-          if (!window.location.pathname.includes('/auth')) {
+          if (!isPublicAuthPath()) {
             window.location.href = '/auth';
           }
 
@@ -158,7 +167,7 @@ api.interceptors.response.use(
         localStorage.removeItem('shu_token');
         localStorage.removeItem('shu_refresh_token');
 
-        if (!window.location.pathname.includes('/auth')) {
+        if (!isPublicAuthPath()) {
           window.location.href = '/auth';
         }
 

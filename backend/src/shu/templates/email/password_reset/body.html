@@ -19,8 +19,9 @@
   <a href="{{ reset_url }}" style="color: #555555; word-break: break-all;">{{ reset_url }}</a>
 </p>
 <p style="margin: 16px 0; color: #888888; font-size: 13px;">
-  This link expires in {{ expires_in_hours }} hour(s) and can only be used
-  once. If you didn&apos;t request a password reset, you can safely ignore
-  this email &mdash; your current password will continue to work.
+  This link expires in {{ expires_in_hours }} hour{{ '' if expires_in_hours == 1 else 's' }}
+  and can only be used once. If you didn&apos;t request a password reset,
+  you can safely ignore this email &mdash; your current password will
+  continue to work.
 </p>
 {% endblock %}

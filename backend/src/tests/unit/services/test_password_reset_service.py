@@ -420,7 +420,11 @@ class TestResendFromToken:
         token_result.scalar_one_or_none.return_value = token_row
         user_result = MagicMock()
         user_result.scalar_one_or_none.return_value = user
-        mock_db.execute = AsyncMock(side_effect=[token_result, user_result])
+        # Three execute calls: token lookup, user lookup, invalidate-others
+        # UPDATE (the SHU-745 "newest wins" rule applies on resend too).
+        invalidate_result = MagicMock()
+        invalidate_result.rowcount = 1
+        mock_db.execute = AsyncMock(side_effect=[token_result, user_result, invalidate_result])
 
         await service.resend_from_token("any", mock_db)
         # New row added (separate from the original token row)

@@ -51,7 +51,21 @@ def _make_job(payload: dict[str, Any] | None = None) -> Job:
 @pytest.fixture
 def mock_session() -> AsyncMock:
     session = AsyncMock()
-    session.execute = AsyncMock()
+    # SHU-508 audit-row lookup: handler does a SELECT of EmailSendLog by
+    # audit_id before invoking the backend (to detect rolled-back /
+    # not-yet-committed producer transactions and idempotently skip
+    # already-terminal rows). Default the lookup to "row exists, status
+    # queued" so the legacy tests continue to exercise the SUCCESS /
+    # PERMANENT-FAILURE / TRANSIENT paths. Tests that exercise the
+    # missing-audit or idempotency paths override this explicitly.
+    audit_row = MagicMock()
+    audit_row.status = "queued"
+    lookup_result = MagicMock()
+    lookup_result.scalar_one_or_none = MagicMock(return_value=audit_row)
+    # session.execute returns the lookup result on the first call and a
+    # bare MagicMock for subsequent calls (the UPDATE statement's result
+    # isn't read by the handler).
+    session.execute = AsyncMock(side_effect=[lookup_result, MagicMock(), MagicMock()])
     session.commit = AsyncMock()
     return session
 
@@ -132,8 +146,8 @@ class TestHandleEmailJob:
             await handle_email_job(_make_job())
 
         backend.send_email.assert_awaited_once()
-        # session.execute called once for the UPDATE; session.commit called once
-        assert session.execute.await_count == 1
+        # Two execute calls: SHU-745 audit-visibility lookup + the UPDATE.
+        assert session.execute.await_count == 2
         session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -159,8 +173,8 @@ class TestHandleEmailJob:
         ):
             await handle_email_job(_make_job())
 
-        # Audit row updated to failed
-        assert session.execute.await_count == 1
+        # Two execute calls: visibility lookup + UPDATE marking failed.
+        assert session.execute.await_count == 2
         session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -176,7 +190,8 @@ class TestHandleEmailJob:
         )
 
         # Mid-retry: attempts < max_attempts so the queue will requeue.
-        # Audit row must stay `queued` (no DB writes from this attempt).
+        # The visibility lookup runs first (1 execute call); the UPDATE
+        # does not run because the send raised mid-attempt.
         job = _make_job()
         job.attempts = 1
         job.max_attempts = 3
@@ -188,7 +203,8 @@ class TestHandleEmailJob:
             with pytest.raises(EmailTransportError):
                 await handle_email_job(job)
 
-        session.execute.assert_not_called()
+        # Lookup happened, but no UPDATE — audit row stays queued.
+        assert session.execute.await_count == 1
         session.commit.assert_not_called()
 
     @pytest.mark.asyncio
@@ -222,8 +238,9 @@ class TestHandleEmailJob:
             with pytest.raises(EmailTransportError):
                 await handle_email_job(job)
 
-        # Audit row marked failed before the exception propagated
-        assert session.execute.await_count == 1
+        # Audit row marked failed before the exception propagated.
+        # Two execute calls: visibility lookup + UPDATE.
+        assert session.execute.await_count == 2
         session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -231,3 +248,67 @@ class TestHandleEmailJob:
         bad_job = Job(queue_name=WorkloadType.EMAIL.queue_name, payload={"to": "u@example.com"})
         with pytest.raises(ValueError, match="audit_id"):
             await handle_email_job(bad_job)
+
+    @pytest.mark.asyncio
+    async def test_audit_row_not_visible_raises_transient_for_retry(
+        self, mock_session_context
+    ) -> None:
+        """Codex Critical: producer transaction may not yet be visible
+        when the worker dequeues. The handler must NOT send the email
+        in that case — instead raise a transient error so the queue
+        retries until the producer commits (or max_attempts is hit, in
+        which case the producer rolled back and the email is correctly
+        never sent).
+        """
+        factory, session = mock_session_context
+
+        # Override the fixture default: lookup returns None (row not visible).
+        lookup_result = MagicMock()
+        lookup_result.scalar_one_or_none = MagicMock(return_value=None)
+        session.execute = AsyncMock(side_effect=[lookup_result])
+
+        backend = MagicMock()
+        backend.name = "smtp"
+        backend.send_email = AsyncMock()
+
+        with (  # noqa: SIM117
+            patch("shu.email_handler.get_email_backend", new=AsyncMock(return_value=backend)),
+            patch("shu.email_handler.get_async_session_local", new=factory),
+        ):
+            with pytest.raises(EmailTransportError, match="not yet visible"):
+                await handle_email_job(_make_job())
+
+        # Critical: the email must NOT have been sent.
+        backend.send_email.assert_not_awaited()
+        session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_already_terminal_audit_row_skipped_idempotently(
+        self, mock_session_context
+    ) -> None:
+        """If a previous attempt updated the audit row to a terminal
+        state, a duplicate dequeue (e.g., visibility-timeout retry that
+        landed after the first attempt completed) must NOT re-send the
+        email. Idempotency via the audit row's status field.
+        """
+        factory, session = mock_session_context
+
+        # Override fixture default: row exists with status='sent'.
+        audit_row = MagicMock()
+        audit_row.status = "sent"
+        lookup_result = MagicMock()
+        lookup_result.scalar_one_or_none = MagicMock(return_value=audit_row)
+        session.execute = AsyncMock(side_effect=[lookup_result])
+
+        backend = MagicMock()
+        backend.name = "smtp"
+        backend.send_email = AsyncMock()
+
+        with (
+            patch("shu.email_handler.get_email_backend", new=AsyncMock(return_value=backend)),
+            patch("shu.email_handler.get_async_session_local", new=factory),
+        ):
+            await handle_email_job(_make_job())
+
+        backend.send_email.assert_not_awaited()
+        session.commit.assert_not_called()

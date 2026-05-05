@@ -356,6 +356,62 @@ async def test_unknown_email_is_silent_no_op(
 
 
 @pytest.mark.asyncio
+async def test_request_reset_invalidates_prior_outstanding_tokens(
+    reset_service: PasswordResetService,
+    session_factory,
+) -> None:
+    """SHU-745 "newest wins": when a user requests a second reset before
+    the first token is consumed, the older token is marked used so it
+    can no longer redeem. Bounds the live token surface to one per user.
+    """
+    async with session_factory() as session:
+        user = User(
+            email="newest@example.com",
+            name="Newest",
+            password_hash="hashed:original",
+            auth_method="password",
+            role="regular_user",
+            is_active=True,
+            email_verified=True,
+        )
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+    # First request — issue token A.
+    with patch("shu.services.password_reset_service.secrets.token_urlsafe", return_value="token-A"):
+        async with session_factory() as session:
+            await reset_service.request_reset("newest@example.com", None, session)
+            await session.commit()
+
+    # Second request — issue token B. Token A must be invalidated.
+    with patch("shu.services.password_reset_service.secrets.token_urlsafe", return_value="token-B"):
+        async with session_factory() as session:
+            await reset_service.request_reset("newest@example.com", None, session)
+            await session.commit()
+
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(PasswordResetToken)
+                .where(PasswordResetToken.user_id == user_id)
+                .order_by(PasswordResetToken.created_at)
+            )
+        ).scalars().all()
+        assert len(rows) == 2
+        # Older token is used (invalidated by newer); newer is unconsumed.
+        assert rows[0].used_at is not None
+        assert rows[1].used_at is None
+
+    # Token A can no longer redeem.
+    from shu.services.password_reset_service import TokenInvalidError
+
+    async with session_factory() as session:
+        with pytest.raises(TokenInvalidError):
+            await reset_service.complete_reset("token-A", "any-new-password", session)
+
+
+@pytest.mark.asyncio
 async def test_validator_bumps_password_changed_at_on_any_password_hash_set(
     session_factory,
 ) -> None:

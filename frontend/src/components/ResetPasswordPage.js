@@ -38,9 +38,13 @@ const ResetPasswordPage = () => {
 
   const token = searchParams.get('token');
   // Page state machine. 'form' = ready for input; 'submitting' = network
-  // in flight; 'success' / 'expired' / 'invalid' / 'missing' = terminal.
+  // in flight; 'success' / 'expired' / 'missing' = terminal. Token-invalid
+  // and policy-violation errors stay on 'form' with an inline `formError`
+  // so the user can either retype a stronger password or click "Cancel"
+  // to return to login (the backend doesn't currently emit a structured
+  // PASSWORD_RESET_TOKEN_INVALID code; if we add one later, route it to a
+  // dedicated 'invalid' branch).
   const [state, setState] = useState(token ? 'form' : 'missing');
-  const [errorMessage, setErrorMessage] = useState(null);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -79,12 +83,13 @@ const ResetPasswordPage = () => {
       await resetPassword(token, newPassword);
       setState('success');
     } catch (err) {
-      setErrorMessage(err.message);
       if (err.code === EXPIRED_TOKEN_CODE) {
         setState('expired');
       } else {
-        // Includes policy errors ("Password must contain..."), which we
-        // surface inline on the form so the user can fix and retry.
+        // Includes policy errors ("Password must contain...") and the
+        // generic "reset token is invalid" string. Surface inline on the
+        // form so the user can either fix the password and retry, or
+        // click Cancel to start a new request from the login page.
         setFormError(err.message);
         setState('form');
       }
@@ -206,25 +211,6 @@ const ResetPasswordPage = () => {
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   Open the link from your password reset email, or request a new one from the sign-in screen.
-                </Typography>
-                <Button variant="contained" onClick={goToLogin}>
-                  Go to sign in
-                </Button>
-              </>
-            )}
-            {state === 'invalid' && (
-              <>
-                <ErrorIcon sx={{ fontSize: 56, color: 'warning.main', mb: 2 }} />
-                <Typography component="h1" variant="h5" gutterBottom>
-                  Reset link invalid
-                </Typography>
-                {errorMessage && (
-                  <Alert severity="warning" sx={{ mb: 2 }}>
-                    {errorMessage}
-                  </Alert>
-                )}
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  This link is no longer valid. Request a new one from the sign-in screen.
                 </Typography>
                 <Button variant="contained" onClick={goToLogin}>
                   Go to sign in

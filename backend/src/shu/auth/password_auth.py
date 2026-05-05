@@ -253,13 +253,17 @@ class PasswordAuthService:
                 detail="User account is inactive. Please contact an administrator for activation.",
             )
 
-        # SHU-507: email verification gate. Only enforced when an email backend
-        # is configured. Self-hosted deployments with email_backend=disabled
-        # rely on the `is_active` admin gate above as the sole login gate;
-        # email_verified stays False on those rows but is never checked here,
-        # so admin activation alone is sufficient (legacy behaviour preserved).
-        email_backend = (self.settings.email_backend or "disabled").strip().lower()
-        if email_backend != "disabled" and not user.email_verified:
+        # SHU-507: email verification gate. Only enforced when the *effective*
+        # email backend is configured (not just the raw setting). Self-hosted
+        # deployments with email_backend=disabled — or with a configured
+        # backend that the factory downgraded to disabled because of missing
+        # config — rely on the `is_active` admin gate above as the sole login
+        # gate; email_verified stays False on those rows but is never checked
+        # here, so admin activation alone is sufficient (legacy behaviour
+        # preserved).
+        from ..core.email.factory import get_effective_email_backend_name
+
+        if get_effective_email_backend_name() != "disabled" and not user.email_verified:
             logger.info(
                 "Login blocked for %s (user %s): email not verified yet",
                 user.email,

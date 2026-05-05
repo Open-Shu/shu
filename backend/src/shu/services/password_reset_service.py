@@ -226,6 +226,29 @@ class PasswordResetService:
             )
             return
 
+        # Invalidate every prior outstanding token for this user before
+        # issuing a new one. The ticket explicitly calls this out: "the
+        # password_reset_token table needs a *history* of issued tokens
+        # to invalidate older ones when a newer one is requested." The
+        # net effect is a "newest wins" rule that bounds the live token
+        # surface to one per user. Each invalidated row gets an audit
+        # log entry so ops can correlate "user reports the first link
+        # stopped working" with "they requested a second one."
+        invalidated_count = await self._invalidate_outstanding(user.id, db)
+        if invalidated_count:
+            logger.info(
+                "Invalidated %d prior outstanding password reset token(s) for %s (user %s)",
+                invalidated_count,
+                user.email,
+                user.id,
+                extra={
+                    "event": "password_reset.token_invalidated_by_newer",
+                    "user_id": user.id,
+                    "email": user.email,
+                    "count": invalidated_count,
+                },
+            )
+
         plaintext = secrets.token_urlsafe(32)
         token_row = PasswordResetToken(
             user_id=user.id,
@@ -382,18 +405,12 @@ class PasswordResetService:
         user.must_change_password = False
         token_row.used_at = now
 
-        # Invalidate every other outstanding token for this user (mark
-        # them used_at=now so the sweep doesn't have to distinguish
-        # "consumed by reset" from "superseded by a newer reset").
-        await db.execute(
-            update(PasswordResetToken)
-            .where(
-                PasswordResetToken.user_id == user.id,
-                PasswordResetToken.id != token_row.id,
-                PasswordResetToken.used_at.is_(None),
-            )
-            .values(used_at=now)
-        )
+        # Invalidate every *other* outstanding token for this user — a
+        # stockpile of valid tokens cannot keep working after one has
+        # been consumed. Same `used_at=now` mark request-time
+        # invalidation uses, so the sweep doesn't have to distinguish
+        # "consumed by reset" from "superseded by a newer reset."
+        await self._invalidate_outstanding(user.id, db, exclude_id=token_row.id, when=now)
         await db.flush()
 
         logger.info(
@@ -471,6 +488,23 @@ class PasswordResetService:
             )
             return
 
+        # Same "newest wins" rule as request_reset — token-based resend
+        # is also a fresh issue, so the older token (and any siblings)
+        # must be invalidated before we mint a new one.
+        invalidated_count = await self._invalidate_outstanding(user.id, db)
+        if invalidated_count:
+            logger.info(
+                "Invalidated %d prior outstanding password reset token(s) for %s (token-based resend)",
+                invalidated_count,
+                user.email,
+                extra={
+                    "event": "password_reset.token_invalidated_by_newer",
+                    "user_id": user.id,
+                    "email": user.email,
+                    "count": invalidated_count,
+                },
+            )
+
         plaintext = secrets.token_urlsafe(32)
         new_row = PasswordResetToken(
             user_id=user.id,
@@ -521,6 +555,36 @@ class PasswordResetService:
         if count == 1:
             await self._cache.expire(key, _REQUEST_PER_IP_WINDOW_SECONDS)
         return count <= _REQUEST_PER_IP_MAX
+
+    async def _invalidate_outstanding(
+        self,
+        user_id: str,
+        db: AsyncSession,
+        *,
+        exclude_id: str | None = None,
+        when: datetime | None = None,
+    ) -> int:
+        """Mark every outstanding reset token for ``user_id`` as used so it
+        can no longer redeem a reset.
+
+        Returns the count of rows that were actually invalidated. Used
+        from three places: request_reset / resend_from_token (mark
+        every prior outstanding row before issuing a new one — "newest
+        wins"), and complete_reset (mark every other outstanding row
+        once one is consumed — "stockpile cannot survive a redeem").
+
+        Single-shot UPDATE rather than a SELECT-then-UPDATE; SQLAlchemy
+        returns the affected rowcount and we read it for the audit log.
+        """
+        timestamp = when or datetime.now(UTC)
+        conditions = [
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.used_at.is_(None),
+        ]
+        if exclude_id is not None:
+            conditions.append(PasswordResetToken.id != exclude_id)
+        result = await db.execute(update(PasswordResetToken).where(*conditions).values(used_at=timestamp))
+        return result.rowcount or 0
 
     def _build_reset_url(self, token: str) -> str:
         query = urlencode({"token": token})

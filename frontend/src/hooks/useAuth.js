@@ -50,8 +50,15 @@ export const AuthProvider = ({ children }) => {
           setToken(null);
           setUser(null);
 
-          // If we're not already on the auth page, redirect there
-          if (!window.location.pathname.includes('/auth')) {
+          // Don't redirect away from public unauthenticated recovery
+          // routes — /verify-email and /reset-password identify the
+          // visitor by the token in their query string, so a stale
+          // session JWT being invalid is irrelevant. The matching
+          // routes in App.js render these pages without auth.
+          const path = window.location.pathname;
+          const isPublicAuthPath =
+            path.includes('/auth') || path.startsWith('/verify-email') || path.startsWith('/reset-password');
+          if (!isPublicAuthPath) {
             log.info('Redirecting to auth due to invalid token');
             window.location.href = '/auth';
           }
@@ -314,8 +321,14 @@ export const AuthProvider = ({ children }) => {
     log.warn('Authentication error detected - logging out user');
     logout();
 
-    // Redirect to auth if not already there
-    if (!window.location.pathname.includes('/auth')) {
+    // Same exemption as initAuth: public unauthenticated recovery routes
+    // identify the visitor by the URL token, not by session, so they
+    // should not be redirected to /auth even when an invalid JWT was
+    // detected on a parallel API call.
+    const path = window.location.pathname;
+    const isPublicAuthPath =
+      path.includes('/auth') || path.startsWith('/verify-email') || path.startsWith('/reset-password');
+    if (!isPublicAuthPath) {
       window.location.href = '/auth';
     }
   };

@@ -19,7 +19,7 @@
   <a href="{{ verification_url }}" style="color: #555555; word-break: break-all;">{{ verification_url }}</a>
 </p>
 <p style="margin: 16px 0; color: #888888; font-size: 13px;">
-  This link expires in {{ expires_in_hours }} hours. If you didn't create an
-  account, you can safely ignore this email.
+  This link expires in {{ expires_in_hours }} hour{{ '' if expires_in_hours == 1 else 's' }}.
+  If you didn't create an account, you can safely ignore this email.
 </p>
 {% endblock %}

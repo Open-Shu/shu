@@ -47,6 +47,62 @@ async def handle_email_job(job: Job) -> None:
     backend = await get_email_backend()
     message = build_message_from_payload(payload)
 
+    # Producer transaction may not yet be visible — EmailService.send
+    # flushes the audit row but the producer's outer commit happens
+    # AFTER the queue job has already been published to Redis. If the
+    # worker dequeues before that commit, the audit row is invisible
+    # to its session. Sending the email anyway would be a correctness
+    # bug:
+    #   * If the producer's transaction later commits, the email was
+    #     sent for a token that exists; mark_audit_sent would UPDATE
+    #     zero rows and the audit log would stay 'queued' forever.
+    #   * If the producer rolls back, the email was sent for a token
+    #     that NEVER exists — user clicks the link and gets "invalid".
+    # Look up the audit row first; raise a transient error if missing
+    # so the queue retries until the producer commit becomes visible
+    # or max_attempts is hit. Idempotency: skip if the row is already
+    # in a terminal state (a previous attempt got there first).
+    session_local = get_async_session_local()
+    async with session_local() as session:
+        from sqlalchemy import select
+
+        from .models.email_send_log import EmailSendLog
+
+        existing = (await session.execute(select(EmailSendLog).where(EmailSendLog.id == audit_id))).scalar_one_or_none()
+
+    if existing is None:
+        # Producer transaction not yet visible (or rolled back). Treat
+        # as transient — the queue will retry. If the producer rolled
+        # back, max_attempts will eventually expire and the email is
+        # never sent.
+        logger.info(
+            "Email audit row not yet visible — producer transaction probably " "still in flight; will retry",
+            extra={
+                "event": "email.audit_not_visible",
+                "audit_id": audit_id,
+                "job_id": job.id,
+                "attempt": job.attempts,
+                "max_attempts": job.max_attempts,
+            },
+        )
+        raise EmailTransportError(
+            f"audit row {audit_id} not yet visible (producer transaction pending)",
+            details={"audit_id": audit_id},
+        )
+
+    if existing.status in ("sent", "failed"):
+        # Idempotency: a previous attempt already updated the row to a
+        # terminal state. Don't re-send — just ack the job.
+        logger.info(
+            "Email job already terminal; skipping",
+            extra={
+                "event": "email.job_already_terminal",
+                "audit_id": audit_id,
+                "status": existing.status,
+            },
+        )
+        return
+
     logger.info(
         "Processing email job",
         extra={
