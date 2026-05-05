@@ -48,10 +48,10 @@ const BrainIcon = React.memo(function BrainIcon({
   const hasErrors = errorCount > 0;
 
   const tooltipText = hasErrors
-    ? `${errorCount} upload${errorCount === 1 ? '' : 's'} need attention — click to retry`
+    ? `${errorCount} file${errorCount === 1 ? '' : 's'} couldn't be added — click to review`
     : isEmpty
-      ? "Personal Knowledge — drop a file and I'll remember it"
-      : `${docCount} doc${docCount === 1 ? '' : 's'} in Personal Knowledge`;
+      ? 'Your Personal Knowledge — add files, then ask me about them'
+      : `${docCount} doc${docCount === 1 ? '' : 's'} ready — ask me anything about them`;
 
   const isAnimating = dragActive || uploading;
 

@@ -225,8 +225,8 @@ const BrainPopover = React.memo(function BrainPopover({
           Your Personal Knowledge
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Anything you drop here, I&apos;ll remember across every chat. Drop a CV, project notes — anything you&apos;d
-          want me to know.
+          Drop documents here and ask me anything about them later. I&apos;ll find the passages that match your question
+          and ground my answer in your own material.
         </Typography>
       </Box>
       {dropzone}
@@ -250,7 +250,8 @@ const BrainPopover = React.memo(function BrainPopover({
             Personal Knowledge
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {kb?.document_count || 0} doc{(kb?.document_count || 0) === 1 ? '' : 's'} the assistant remembers about you
+            {kb?.document_count || 0} doc{(kb?.document_count || 0) === 1 ? '' : 's'} I can search to answer your
+            questions
           </Typography>
         </Box>
         <Tooltip title="Refresh">
@@ -310,7 +311,7 @@ const BrainPopover = React.memo(function BrainPopover({
       <Divider />
       <Stack spacing={1} sx={{ maxHeight: 200, overflowY: 'auto', pr: 0.5 }}>
         <Typography variant="caption" color="error.main" fontWeight={600}>
-          Failed uploads ({errors.length})
+          {errors.length} upload{errors.length === 1 ? '' : 's'} need attention
         </Typography>
         {errors.map((err) => (
           <Alert

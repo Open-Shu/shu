@@ -151,9 +151,17 @@ describe('resolvePersonalKBName', () => {
 });
 
 describe('usePersonalKB hook', () => {
+  const TEST_USER_ID = 'user-test-1';
+
   beforeEach(() => {
     vi.clearAllMocks();
-    useAuth.mockReturnValue({ user: { name: 'Test User', email: 'test@example.com' } });
+    // Mirrors the production shape from /auth/me — User.to_dict() exposes the
+    // id as `user_id`, not `id`. resolveUserId() in usePersonalKB normalises
+    // both, but tests should pin the production shape so a regression there
+    // surfaces here.
+    useAuth.mockReturnValue({
+      user: { user_id: TEST_USER_ID, name: 'Test User', email: 'test@example.com' },
+    });
   });
 
   const listResponse = (items) => ({ data: { data: { items } } });
@@ -161,7 +169,13 @@ describe('usePersonalKB hook', () => {
   const uploadResponse = (results) => ({ data: { data: { results } } });
 
   it('finds an existing Personal KB on mount', async () => {
-    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 2 };
+    const personal = {
+      id: 'kb-pk',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 2,
+    };
     knowledgeBaseAPI.list.mockResolvedValueOnce(
       listResponse([{ id: 'kb-other', name: 'Project', is_personal: false }, personal])
     );
@@ -172,9 +186,33 @@ describe('usePersonalKB hook', () => {
     expect(result.current.personalKB).toEqual(personal);
   });
 
+  it("does not match another user's Personal KB even when admin sees it in the list", async () => {
+    // Admin user's list endpoint returns every personal KB in the system, but
+    // the hook must only attach the one owned by the current user.
+    const someoneElse = {
+      id: 'kb-other-pk',
+      name: "Other Person's Knowledge",
+      is_personal: true,
+      owner_id: 'user-someone-else',
+      document_count: 9,
+    };
+    knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([someoneElse]));
+
+    const { result } = renderHook(() => usePersonalKB());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.personalKB).toBeNull();
+  });
+
   it('auto-provisions a Personal KB on first upload when none exists', async () => {
     knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([]));
-    const created = { id: 'kb-new', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
+    const created = {
+      id: 'kb-new',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 0,
+    };
     knowledgeBaseAPI.create.mockResolvedValueOnce(createResponse(created));
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(uploadResponse([{ filename: 'doc.pdf', success: true }]));
     knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([{ ...created, document_count: 1 }]));
@@ -204,7 +242,15 @@ describe('usePersonalKB hook', () => {
     );
     knowledgeBaseAPI.uploadDocuments.mockResolvedValue(uploadResponse([{ filename: 'a.pdf', success: true }]));
     knowledgeBaseAPI.list.mockResolvedValue(
-      listResponse([{ id: 'kb-new', name: "Test User's Knowledge", is_personal: true, document_count: 1 }])
+      listResponse([
+        {
+          id: 'kb-new',
+          name: "Test User's Knowledge",
+          is_personal: true,
+          owner_id: TEST_USER_ID,
+          document_count: 1,
+        },
+      ])
     );
 
     const { result } = renderHook(() => usePersonalKB());
@@ -224,6 +270,7 @@ describe('usePersonalKB hook', () => {
           id: 'kb-new',
           name: "Test User's Knowledge",
           is_personal: true,
+          owner_id: TEST_USER_ID,
           document_count: 0,
         })
       );
@@ -236,7 +283,13 @@ describe('usePersonalKB hook', () => {
   });
 
   it('records per-file errors on partial failure and clears them on retry success', async () => {
-    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
+    const personal = {
+      id: 'kb-pk',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 0,
+    };
     knowledgeBaseAPI.list.mockResolvedValue(listResponse([personal]));
     // First upload: doc.pdf fails.
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(
@@ -264,7 +317,13 @@ describe('usePersonalKB hook', () => {
   });
 
   it('handles upload response in bare-array shape', async () => {
-    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
+    const personal = {
+      id: 'kb-pk',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 0,
+    };
     knowledgeBaseAPI.list.mockResolvedValue(listResponse([personal]));
     // Backend returns the per-file array directly (legacy shape).
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce({
@@ -283,7 +342,13 @@ describe('usePersonalKB hook', () => {
   });
 
   it('logs a warning when upload response shape is unrecognized', async () => {
-    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
+    const personal = {
+      id: 'kb-pk',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 0,
+    };
     knowledgeBaseAPI.list.mockResolvedValue(listResponse([personal]));
     // Neither bare array nor { results: [...] } — backend returned something else.
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce({

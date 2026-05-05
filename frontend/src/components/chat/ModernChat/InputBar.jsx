@@ -194,11 +194,11 @@ const InputBar = React.memo(function InputBar({
       wasUploadingRef.current = false;
       const newErrors = Math.max(0, personalKBErrors.length - errorCountAtStartRef.current);
       if (newErrors === 0) {
-        setToast({ severity: 'success', message: 'Added to Personal Knowledge' });
+        setToast({ severity: 'success', message: 'Got it — ask me about this anytime' });
       } else {
         setToast({
           severity: 'error',
-          message: `${newErrors} upload${newErrors === 1 ? '' : 's'} failed — see the brain icon`,
+          message: `${newErrors} file${newErrors === 1 ? '' : 's'} need attention — check the brain icon`,
         });
       }
     }

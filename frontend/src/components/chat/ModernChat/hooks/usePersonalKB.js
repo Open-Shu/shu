@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractDataFromResponse, extractItemsFromResponse, knowledgeBaseAPI } from '../../../../services/api';
 import { useAuth } from '../../../../hooks/useAuth';
 import { log } from '../../../../utils/log';
+import { resolveUserId } from '../../../../utils/userHelpers';
 
 const FALLBACK_PERSONAL_KB_NAME = 'Personal Knowledge';
 
@@ -43,7 +44,17 @@ export const resolvePersonalKBName = (user) => {
   return FALLBACK_PERSONAL_KB_NAME;
 };
 
-const findPersonalKB = (kbs) => kbs.find((kb) => kb.is_personal === true) || null;
+// Match BOTH the personal flag AND ownership. Admin users see every KB in the
+// system via the list endpoint (default-allow filtering), so a bare
+// kb.is_personal lookup would return whichever personal KB sorted first —
+// typically another user's. That would then auto-attach to the admin's chat
+// and silently inject someone else's documents into the LLM context.
+const findPersonalKB = (kbs, userId) => {
+  if (!userId) {
+    return null;
+  }
+  return kbs.find((kb) => kb.is_personal === true && String(kb.owner_id) === String(userId)) || null;
+};
 
 /**
  * Manage the user's Personal Knowledge KB and the unified upload code path
@@ -59,19 +70,24 @@ const usePersonalKB = () => {
   // Avoid concurrent ensure() calls racing to create two KBs.
   const ensurePromiseRef = useRef(null);
 
+  // /auth/me serializes the user via User.to_dict() which exposes the id as
+  // `user_id`, not `id`. Use the canonical resolveUserId() helper so we don't
+  // silently fall through to undefined and skip the ownership match.
+  const userId = resolveUserId(user);
+
   const fetchPersonalKB = useCallback(async () => {
     setLoading(true);
     try {
       const response = await knowledgeBaseAPI.list({ limit: 100 });
       const items = extractItemsFromResponse(response);
-      setPersonalKB(findPersonalKB(items));
+      setPersonalKB(findPersonalKB(items, userId));
     } catch (err) {
       log.error('usePersonalKB: failed to fetch knowledge bases', err);
       // Soft-fail: leave personalKB null. Empty state pulses; first upload will create it.
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     fetchPersonalKB();
