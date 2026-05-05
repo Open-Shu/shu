@@ -608,6 +608,64 @@ class TestCreatePersonalKnowledgeBaseDefaults:
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_personal_kb_existing_slug_returns_existing_idempotently(self):
+        """When the owner-scoped slug already exists, ensure-style create returns it."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        existing_kb = MagicMock(name="ExistingPersonalKB")
+        existing_kb.is_personal = True
+        service._get_kb_by_slug = AsyncMock(return_value=existing_kb)
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+        result = await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        assert result is existing_kb
+        # No new KB was added — we returned the existing row.
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_existing_slug_heals_is_personal_flag(self):
+        """Existing rows that predate the is_personal column get healed on ensure."""
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        # Existing row was created before the is_personal column existed (or
+        # was never flagged). The frontend's findPersonalKB filter wouldn't
+        # pick it up; healing the flag fixes that going forward.
+        existing_kb = MagicMock(name="LegacyKB")
+        existing_kb.is_personal = False
+        service._get_kb_by_slug = AsyncMock(return_value=existing_kb)
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+        result = await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        assert result is existing_kb
+        assert existing_kb.is_personal is True
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_personal_existing_slug_still_raises_conflict(self):
+        """Non-personal creates retain the historic 409 on slug collision."""
+        from shu.core.exceptions import ConflictError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        existing_kb = MagicMock(name="ExistingNamedKB")
+        service._get_kb_by_slug = AsyncMock(return_value=existing_kb)
+
+        kb_data = KnowledgeBaseCreate(name="Project Alpha", is_personal=False)
+
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+    @pytest.mark.asyncio
     async def test_non_slug_integrity_error_propagates_as_shu_exception(self):
         """FK or other constraint violations must not masquerade as a slug conflict."""
         from shu.core.exceptions import ConflictError, ShuException

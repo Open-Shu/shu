@@ -46,33 +46,33 @@ import { log } from '../../../../../utils/log';
 
 describe('resolvePersonalKBName', () => {
   describe('happy paths — name precedence', () => {
-    it('uses first name from a multi-token name', () => {
-      expect(resolvePersonalKBName({ name: 'Eric Longville' })).toBe("Eric's Knowledge");
+    it('uses first + last name for a two-token name', () => {
+      expect(resolvePersonalKBName({ name: 'Eric Longville' })).toBe("Eric Longville's Knowledge");
     });
 
     it('uses single-token names as-is', () => {
       expect(resolvePersonalKBName({ name: 'Madonna' })).toBe("Madonna's Knowledge");
     });
 
-    it('handles names with multiple whitespace tokens', () => {
-      expect(resolvePersonalKBName({ name: 'Eric David Longville' })).toBe("Eric's Knowledge");
+    it('drops middle names; keeps first + last', () => {
+      expect(resolvePersonalKBName({ name: 'Eric David Longville' })).toBe("Eric Longville's Knowledge");
     });
 
-    it('preserves unicode in first names', () => {
-      expect(resolvePersonalKBName({ name: 'José García' })).toBe("José's Knowledge");
+    it('preserves unicode in first and last names', () => {
+      expect(resolvePersonalKBName({ name: 'José García' })).toBe("José García's Knowledge");
     });
 
-    it('strips leading whitespace before extracting first token', () => {
-      expect(resolvePersonalKBName({ name: '  Eric Longville  ' })).toBe("Eric's Knowledge");
+    it('strips leading and trailing whitespace before tokenizing', () => {
+      expect(resolvePersonalKBName({ name: '  Eric Longville  ' })).toBe("Eric Longville's Knowledge");
     });
 
     it('treats internal multiple spaces as a single delimiter', () => {
-      expect(resolvePersonalKBName({ name: 'Eric    Longville' })).toBe("Eric's Knowledge");
+      expect(resolvePersonalKBName({ name: 'Eric    Longville' })).toBe("Eric Longville's Knowledge");
     });
 
     it('prefers name over email when both are present', () => {
       expect(resolvePersonalKBName({ name: 'Eric Longville', email: 'someone-else@example.com' })).toBe(
-        "Eric's Knowledge"
+        "Eric Longville's Knowledge"
       );
     });
   });
@@ -161,7 +161,7 @@ describe('usePersonalKB hook', () => {
   const uploadResponse = (results) => ({ data: { data: { results } } });
 
   it('finds an existing Personal KB on mount', async () => {
-    const personal = { id: 'kb-pk', name: "Test's Knowledge", is_personal: true, document_count: 2 };
+    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 2 };
     knowledgeBaseAPI.list.mockResolvedValueOnce(
       listResponse([{ id: 'kb-other', name: 'Project', is_personal: false }, personal])
     );
@@ -174,7 +174,7 @@ describe('usePersonalKB hook', () => {
 
   it('auto-provisions a Personal KB on first upload when none exists', async () => {
     knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([]));
-    const created = { id: 'kb-new', name: "Test's Knowledge", is_personal: true, document_count: 0 };
+    const created = { id: 'kb-new', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
     knowledgeBaseAPI.create.mockResolvedValueOnce(createResponse(created));
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(uploadResponse([{ filename: 'doc.pdf', success: true }]));
     knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([{ ...created, document_count: 1 }]));
@@ -189,7 +189,7 @@ describe('usePersonalKB hook', () => {
     });
 
     expect(knowledgeBaseAPI.create).toHaveBeenCalledTimes(1);
-    expect(knowledgeBaseAPI.create).toHaveBeenCalledWith({ name: "Test's Knowledge", is_personal: true });
+    expect(knowledgeBaseAPI.create).toHaveBeenCalledWith({ name: "Test User's Knowledge", is_personal: true });
     expect(result.current.errors).toEqual([]);
   });
 
@@ -204,7 +204,7 @@ describe('usePersonalKB hook', () => {
     );
     knowledgeBaseAPI.uploadDocuments.mockResolvedValue(uploadResponse([{ filename: 'a.pdf', success: true }]));
     knowledgeBaseAPI.list.mockResolvedValue(
-      listResponse([{ id: 'kb-new', name: "Test's Knowledge", is_personal: true, document_count: 1 }])
+      listResponse([{ id: 'kb-new', name: "Test User's Knowledge", is_personal: true, document_count: 1 }])
     );
 
     const { result } = renderHook(() => usePersonalKB());
@@ -222,7 +222,7 @@ describe('usePersonalKB hook', () => {
       resolveCreate(
         createResponse({
           id: 'kb-new',
-          name: "Test's Knowledge",
+          name: "Test User's Knowledge",
           is_personal: true,
           document_count: 0,
         })
@@ -236,7 +236,7 @@ describe('usePersonalKB hook', () => {
   });
 
   it('records per-file errors on partial failure and clears them on retry success', async () => {
-    const personal = { id: 'kb-pk', name: "Test's Knowledge", is_personal: true, document_count: 0 };
+    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
     knowledgeBaseAPI.list.mockResolvedValue(listResponse([personal]));
     // First upload: doc.pdf fails.
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(
@@ -264,7 +264,7 @@ describe('usePersonalKB hook', () => {
   });
 
   it('handles upload response in bare-array shape', async () => {
-    const personal = { id: 'kb-pk', name: "Test's Knowledge", is_personal: true, document_count: 0 };
+    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
     knowledgeBaseAPI.list.mockResolvedValue(listResponse([personal]));
     // Backend returns the per-file array directly (legacy shape).
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce({
@@ -283,7 +283,7 @@ describe('usePersonalKB hook', () => {
   });
 
   it('logs a warning when upload response shape is unrecognized', async () => {
-    const personal = { id: 'kb-pk', name: "Test's Knowledge", is_personal: true, document_count: 0 };
+    const personal = { id: 'kb-pk', name: "Test User's Knowledge", is_personal: true, document_count: 0 };
     knowledgeBaseAPI.list.mockResolvedValue(listResponse([personal]));
     // Neither bare array nor { results: [...] } — backend returned something else.
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce({

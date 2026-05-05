@@ -395,6 +395,13 @@ class KnowledgeBaseService:
         Raises NotFoundError if the KB does not exist or the user is denied,
         using the same error to avoid leaking KB existence.
 
+        Owner escape (SHU-742): a user always has kb.read on KBs they own,
+        without needing an explicit PBAC grant. This mirrors the ownership
+        escape in ``require_kb_write_access`` and matches the semantic that
+        creating a KB implies the right to read it. Non-owners still go
+        through enforce_pbac as before, so the security model for shared
+        KBs is unchanged.
+
         Args:
             kb_id: Knowledge base ID.
             user_id: The user to enforce access for.
@@ -409,6 +416,8 @@ class KnowledgeBaseService:
         kb = await self._get_knowledge_base(kb_id)
         if not kb:
             raise NotFoundError(f"Knowledge base '{kb_id}' not found")
+        if kb.owner_id is not None and str(kb.owner_id) == str(user_id):
+            return kb
         await enforce_pbac(
             user_id,
             "kb.read",
@@ -447,6 +456,62 @@ class KnowledgeBaseService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    def _resolve_create_slug(self, kb_data, owner_id: str | None, is_personal: bool) -> str:
+        """Compute the slug for a new KB.
+
+        Personal KBs (SHU-742) scope their slug to the owner so two users with
+        colliding display names (e.g., both "Eric") can each have a Personal
+        Knowledge KB; display name may repeat, slug must not. Non-personal
+        KBs fall back to the name-derived slug — collisions there are the
+        caller's problem to resolve by renaming.
+        """
+        if is_personal:
+            return f"personal-knowledge-{owner_id}"
+        slug = slugify(kb_data.name)
+        if not slug:
+            raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
+        return slug
+
+    async def _return_or_heal_existing_personal_kb(self, existing: KnowledgeBase) -> KnowledgeBase:
+        """Idempotent return for ensure-style personal-KB creates.
+
+        Heals ``is_personal=True`` on the existing row if the flag was missing
+        (legacy rows that predate the column or were otherwise mis-flagged) so
+        the frontend's ``findPersonalKB`` filter picks it up on subsequent
+        fetches.
+        """
+        if not existing.is_personal:
+            existing.is_personal = True
+            await self.db.commit()
+            await self.db.refresh(existing)
+        logger.info(f"Personal KB already exists; returning existing: {existing.name}")
+        return existing
+
+    async def _handle_create_integrity_error(
+        self, exc: IntegrityError, slug: str, kb_name: str, is_personal: bool
+    ) -> KnowledgeBase:
+        """Resolve an IntegrityError raised on commit during KB create.
+
+        Narrowed to slug-uniqueness violations — other integrity errors (e.g.,
+        FK violation on owner_id from a deleted user racing the request)
+        propagate honestly as ShuException instead of masquerading as a slug
+        conflict. For slug conflicts on personal KBs, returns the winning row
+        idempotently. For non-personal slug conflicts, raises ConflictError.
+        """
+        constraint_name = (getattr(getattr(exc, "orig", None), "constraint_name", "") or "").lower()
+        is_slug_conflict = "slug" in constraint_name
+
+        if is_slug_conflict and is_personal:
+            existing = await self._get_kb_by_slug(slug)
+            if existing is not None:
+                logger.info(f"Personal KB created concurrently; returning existing: {existing.name}")
+                return existing
+        if is_slug_conflict:
+            raise ConflictError(f"Knowledge base '{kb_name}' already exists")
+
+        logger.error(f"Unexpected integrity error creating KB: {exc}", exc_info=True)
+        raise ShuException(f"Failed to create knowledge base: {exc!s}", "KNOWLEDGE_BASE_CREATE_ERROR")
+
     async def create_knowledge_base(self, kb_data, owner_id: str | None = None) -> KnowledgeBase:
         """Create a new knowledge base.
 
@@ -458,35 +523,26 @@ class KnowledgeBaseService:
             Created KnowledgeBase
 
         """
+        kb_dict = kb_data.model_dump()
+        is_personal = kb_dict["is_personal"]
+
+        # Personal KBs require an owner — without one, the owner-scoped slug
+        # below would be undefined and the KB would have no owner to attach
+        # to. Reject explicitly rather than silently falling back to a name-
+        # based slug, which would leave a disowned "personal" KB.
+        if is_personal and not owner_id:
+            raise ValidationError("Personal knowledge bases require an owner_id")
+
+        slug = self._resolve_create_slug(kb_data, owner_id, is_personal)
+
         try:
-            # Create new knowledge base from Pydantic model
-            kb_dict = kb_data.model_dump()
-            is_personal = kb_dict["is_personal"]
-
-            # Personal KBs require an owner — without one, the owner-scoped
-            # slug below would be undefined and the KB would have no owner to
-            # attach to. Reject explicitly rather than silently falling back
-            # to a name-based slug, which would leave a disowned "personal" KB.
-            if is_personal and not owner_id:
-                raise ValidationError("Personal knowledge bases require an owner_id")
-
-            # Personal KBs (SHU-742) scope their slug to the owner so two users
-            # whose display names collide (e.g., both "Eric") can each have a
-            # Personal Knowledge KB. Display name is allowed to repeat across
-            # users; only the slug must be globally unique. For non-personal
-            # KBs, fall back to the name-derived slug — collisions there are
-            # the caller's problem to resolve by renaming.
-            if is_personal:
-                slug = f"personal-knowledge-{owner_id}"
-            else:
-                slug = slugify(kb_data.name)
-                if not slug:
-                    raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
-
-            if await self._get_kb_by_slug(slug):
+            existing = await self._get_kb_by_slug(slug)
+            if existing is not None:
+                if is_personal:
+                    return await self._return_or_heal_existing_personal_kb(existing)
                 raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
-            kb_dict["slug"] = slug
 
+            kb_dict["slug"] = slug
             if owner_id:
                 kb_dict["owner_id"] = owner_id
             knowledge_base = KnowledgeBase(**kb_dict)
@@ -512,30 +568,8 @@ class KnowledgeBaseService:
             await self.db.rollback()
             raise
         except IntegrityError as e:
-            # Narrow handling to slug-uniqueness violations specifically. Other
-            # integrity errors (e.g., FK violation on owner_id from a deleted
-            # user racing the request) shouldn't masquerade as a slug conflict
-            # in the user-facing message.
             await self.db.rollback()
-            constraint_name = (getattr(getattr(e, "orig", None), "constraint_name", "") or "").lower()
-            is_slug_conflict = "slug" in constraint_name
-
-            if is_slug_conflict and is_personal:
-                # TOCTOU race between _get_kb_by_slug and commit. For Personal
-                # KBs the caller's intent is "ensure my Personal KB exists" —
-                # return the winning row so the operation succeeds idempotently.
-                existing = await self._get_kb_by_slug(slug)
-                if existing is not None:
-                    logger.info(f"Personal KB created concurrently; returning existing: {existing.name}")
-                    return existing
-            if is_slug_conflict:
-                # Non-personal collision: the user explicitly chose a colliding
-                # name; surface that as a 409 ConflictError honestly.
-                raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
-
-            # Some other integrity constraint failed — propagate honestly.
-            logger.error(f"Unexpected integrity error creating KB: {e}", exc_info=True)
-            raise ShuException(f"Failed to create knowledge base: {e!s}", "KNOWLEDGE_BASE_CREATE_ERROR")
+            return await self._handle_create_integrity_error(e, slug, kb_data.name, is_personal)
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)
@@ -1076,10 +1110,33 @@ class KnowledgeBaseService:
         return {"status": "queued", "knowledge_base_id": kb_id, "total_chunks": total_chunks}
 
     async def _get_denied_kb_slugs(self, user_id: str, slugs: list[str]) -> set[str]:
-        """Return the set of KB slugs denied by PBAC ``kb.read`` for *user_id*."""
+        """Return the set of KB slugs denied by PBAC ``kb.read`` for *user_id*.
+
+        Owner escape (SHU-742): KBs whose ``owner_id`` matches *user_id* are
+        always considered readable and are removed from the denied set,
+        regardless of PBAC policies. Mirrors the single-KB ownership escape
+        in ``get_knowledge_base`` so the list endpoint, the chat-send
+        ``check_kb_read_access`` path, and ``filter_accessible_kb_ids`` all
+        consistently allow owners to read what they own. Critical for
+        regular and power users who have no PBAC policy bindings — without
+        the escape, ``PolicyCache.get_denied_resources`` is default-deny and
+        their auto-provisioned Personal Knowledge KB would be invisible.
+        """
         if not slugs:
             return set()
-        return await POLICY_CACHE.get_denied_resources(user_id, "kb.read", "kb", slugs, self.db)
+        denied = await POLICY_CACHE.get_denied_resources(user_id, "kb.read", "kb", slugs, self.db)
+        if denied:
+            owned_result = await self.db.execute(
+                select(KnowledgeBase.slug).where(
+                    and_(
+                        KnowledgeBase.owner_id == user_id,
+                        KnowledgeBase.slug.in_(denied),
+                    )
+                )
+            )
+            owned_slugs = {row[0] for row in owned_result.fetchall()}
+            denied -= owned_slugs
+        return denied
 
     async def filter_accessible_kb_ids(self, user_id: str, kbs: list[KnowledgeBase]) -> list[str]:
         """Filter a list of KB ORM objects, returning IDs of those the user can read."""

@@ -10,19 +10,26 @@ const FALLBACK_PERSONAL_KB_NAME = 'Personal Knowledge';
  *
  * Precedence (always prefers something identifying so admins viewing the
  * full KB list can tell whose is whose):
- *   1. `${firstName}'s Knowledge` — derived from the first whitespace-delimited
- *      token of `user.name`.
- *   2. `${emailLocalPart}'s Knowledge` — even if generic-looking ("user42"),
+ *   1. Multi-token name → `${firstName} ${lastName}'s Knowledge` using the
+ *      first and last whitespace-delimited tokens (middle names dropped).
+ *      Disambiguates two users sharing a first name — the common case.
+ *   2. Single-token name → `${firstName}'s Knowledge`.
+ *   3. `${emailLocalPart}'s Knowledge` — even if generic-looking ("user42"),
  *      because admins still need to identify the owner.
- *   3. "Personal Knowledge" — only when neither name nor email is present.
+ *   4. "Personal Knowledge" — only when neither name nor email is present.
  */
 export const resolvePersonalKBName = (user) => {
   // Coerce to String() so unexpected non-string inputs (e.g., numeric names
   // from a malformed user object) don't blow up on `.trim()`.
   const name = String(user?.name ?? '').trim();
   if (name) {
-    const firstName = name.split(/\s+/)[0];
+    const tokens = name.split(/\s+/).filter(Boolean);
+    const firstName = tokens[0];
     if (firstName) {
+      const lastName = tokens.length > 1 ? tokens[tokens.length - 1] : null;
+      if (lastName) {
+        return `${firstName} ${lastName}'s Knowledge`;
+      }
       return `${firstName}'s Knowledge`;
     }
   }
