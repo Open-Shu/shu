@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, String
+from sqlalchemy import Boolean, Column, Index, String, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
 
@@ -22,6 +22,17 @@ class User(BaseModel):
 
     __tablename__ = "users"
 
+    __table_args__ = (
+        # Partial index for the SHU-507 verification lookup. The hash is
+        # NULL in the steady state, so a full index is mostly empty rows;
+        # the partial form keeps it small. Mirrors migration 008_0014.
+        Index(
+            "ix_users_email_verification_token_hash",
+            "email_verification_token_hash",
+            postgresql_where=text("email_verification_token_hash IS NOT NULL"),
+        ),
+    )
+
     email = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
     role = Column(String, default=UserRole.REGULAR_USER.value)  # Store as string
@@ -35,6 +46,16 @@ class User(BaseModel):
     password_hash = Column(String(255), nullable=True)  # Nullable for Google OAuth users
     auth_method = Column(String(50), nullable=False, default="google")  # 'google' or 'password'
     must_change_password = Column(Boolean, default=False, nullable=False, server_default="false")
+
+    # Email verification (SHU-507) — separate from is_active. is_active is the
+    # admin-controlled gate; email_verified is the user-controlled gate proving
+    # ownership of the address. Login fails fast on is_active first, then on
+    # email_verified (only when an email backend is configured).
+    email_verified = Column(Boolean, default=False, nullable=False, server_default="false")
+    # sha256 hex of the plaintext token. Plaintext only ever appears in the
+    # verification email. NULL when no verification is pending.
+    email_verification_token_hash = Column(String(64), nullable=True)
+    email_verification_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # Relationships
     preferences = relationship("UserPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -94,6 +115,7 @@ class User(BaseModel):
             "role": self.role,
             "picture_url": self.picture_url,
             "is_active": self.is_active,
+            "email_verified": self.email_verified,
             "auth_method": self.auth_method,
             "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at is not None else None,

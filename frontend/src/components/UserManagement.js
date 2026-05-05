@@ -39,6 +39,7 @@ import ShieldIcon from '@mui/icons-material/Shield';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import UndoIcon from '@mui/icons-material/Undo';
 import EventSeatIcon from '@mui/icons-material/EventSeat';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { authAPI, billingAPI, extractDataFromResponse, formatError } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { resolveUserId } from '../utils/userHelpers';
@@ -56,6 +57,11 @@ const UserManagement = () => {
   const [userToDelete, setUserToDelete] = useState(null);
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [permissionsUser, setPermissionsUser] = useState(null);
+  // SHU-507: when an admin clicks Activate on a password user whose email is
+  // not yet verified, prompt for confirmation. Activating alone does not let
+  // them log in — the email_verified gate is independent — and admins
+  // otherwise have no signal that the second gate exists.
+  const [unverifiedActivateUser, setUnverifiedActivateUser] = useState(null);
   const [newUser, setNewUser] = useState({
     email: '',
     name: '',
@@ -497,17 +503,40 @@ const UserManagement = () => {
                       <Chip label={getRoleLabel(user.role)} color={getRoleColor(user.role)} size="small" />
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={user.is_active ? 'Active' : 'Inactive'}
-                        color={user.is_active ? 'success' : 'default'}
-                        size="small"
-                      />
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        <Chip
+                          label={user.is_active ? 'Active' : 'Inactive'}
+                          color={user.is_active ? 'success' : 'default'}
+                          size="small"
+                        />
+                        {user.auth_method === 'password' && user.email_verified === false && (
+                          <Tooltip title="This user has not verified their email address. They cannot log in until they verify, even if Active.">
+                            <Chip
+                              icon={<WarningAmberIcon />}
+                              label="Email unverified"
+                              color="warning"
+                              size="small"
+                              variant="outlined"
+                            />
+                          </Tooltip>
+                        )}
+                      </Box>
                     </TableCell>
                     <TableCell>{user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</TableCell>
                     <TableCell>
                       {!user.is_active ? (
                         <IconButton
-                          onClick={() => activateUserMutation.mutate({ userId })}
+                          onClick={() => {
+                            // Surface the email_verified gate to the admin
+                            // before they consume a seat on a user who still
+                            // can't log in. See unverifiedActivateUser dialog
+                            // below.
+                            if (user.auth_method === 'password' && user.email_verified === false) {
+                              setUnverifiedActivateUser({ ...user, id: userId });
+                              return;
+                            }
+                            activateUserMutation.mutate({ userId });
+                          }}
                           size="small"
                           color="success"
                           title="Activate User"
@@ -791,6 +820,43 @@ const UserManagement = () => {
         onClose={() => setSeatLimitPrompt(null)}
         onConfirm={() => seatLimitPrompt?.retry?.()}
       />
+
+      {/* SHU-507: confirm activation of a password user whose email is not
+          yet verified. Activation alone does not let them log in — the
+          email_verified gate is independent and the admin needs to know that
+          before consuming a seat on a user who still can't sign in. */}
+      <Dialog open={!!unverifiedActivateUser} onClose={() => setUnverifiedActivateUser(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Activate user with unverified email?</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            <strong>{unverifiedActivateUser?.email}</strong> has not verified their email address.
+          </Alert>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Email verification is an independent gate from activation. Activating this user will consume a seat, but
+            they still will not be able to log in until they click the verification link sent to their address.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            They already have a pending verification email. Consider waiting until they verify before activating.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUnverifiedActivateUser(null)}>Cancel</Button>
+          <Button
+            color="warning"
+            variant="contained"
+            onClick={() => {
+              const userId = unverifiedActivateUser?.id;
+              setUnverifiedActivateUser(null);
+              if (userId) {
+                activateUserMutation.mutate({ userId });
+              }
+            }}
+            disabled={activateUserMutation.isLoading}
+          >
+            Activate anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

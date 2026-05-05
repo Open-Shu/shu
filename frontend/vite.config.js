@@ -38,7 +38,11 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
         },
-        '/auth': {
+        // Only proxy the OAuth callback path to the backend. The bare /auth
+        // path is a frontend Router route (the login screen) — proxying all
+        // /auth/* would shadow it and a hard navigation to /auth would land
+        // on the backend's JWT middleware, which returns a raw 401 page.
+        '/auth/callback': {
           target: proxyTarget,
           changeOrigin: true,
         },

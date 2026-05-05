@@ -1,0 +1,14 @@
+{% extends "_base.txt" %}
+{%- block content %}
+Hi {{ name }},
+
+Welcome to {{ app_name }}. To finish setting up your account, please confirm
+your email address by visiting the link below:
+
+{{ verification_url }}
+
+This link expires in {{ expires_in_hours }} hours. If it expires before you
+click it, you can request a new one from the sign-in screen.
+
+If you did not create an account, you can safely ignore this email.
+{%- endblock %}

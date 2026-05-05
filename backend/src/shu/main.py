@@ -747,14 +747,32 @@ def setup_exception_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # Prepare response
-        error_response = {
-            "error": {
-                "code": f"HTTP_{exc.status_code}",
-                "message": exc.detail,
-                "details": {},
+        # Prepare response. Endpoints that need to surface a structured error
+        # code to the frontend (so the UI can branch — e.g. expired token →
+        # "send a new one" CTA, vs unknown token → email entry form) raise
+        # `HTTPException(detail={"error": {"code": ..., "message": ...}})`.
+        # Preserve that shape into the envelope; otherwise wrap the plain
+        # string detail as before. (FastAPI types `detail` as `str` but
+        # accepts any JSON-serialisable value at runtime — cast for type
+        # checkers.)
+        detail: Any = exc.detail
+        inner_error = detail.get("error") if isinstance(detail, dict) else None
+        if isinstance(inner_error, dict) and isinstance(inner_error.get("message"), str):
+            error_response = {
+                "error": {
+                    "code": inner_error.get("code") or f"HTTP_{exc.status_code}",
+                    "message": inner_error["message"],
+                    "details": inner_error.get("details") or {},
+                }
             }
-        }
+        else:
+            error_response = {
+                "error": {
+                    "code": f"HTTP_{exc.status_code}",
+                    "message": detail,
+                    "details": {},
+                }
+            }
 
         # Add error ID for server errors
         if error_id:

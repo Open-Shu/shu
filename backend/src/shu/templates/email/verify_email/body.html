@@ -1,0 +1,25 @@
+{% extends "_base.html" %}
+{% block title %}Verify your {{ app_name }} email{% endblock %}
+{% block content %}
+<h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 600;">
+  Welcome to {{ app_name }}
+</h1>
+<p style="margin: 0 0 16px 0; line-height: 1.5;">
+  Hi {{ name }}, please confirm your email address to finish setting up your
+  account.
+</p>
+<p style="margin: 24px 0;">
+  <a href="{{ verification_url }}"
+     style="display: inline-block; background-color: #1a1a1a; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+    Verify email address
+  </a>
+</p>
+<p style="margin: 16px 0; color: #555555; font-size: 14px; line-height: 1.5;">
+  Or paste this link into your browser:<br>
+  <a href="{{ verification_url }}" style="color: #555555; word-break: break-all;">{{ verification_url }}</a>
+</p>
+<p style="margin: 16px 0; color: #888888; font-size: 13px;">
+  This link expires in {{ expires_in_hours }} hours. If you didn't create an
+  account, you can safely ignore this email.
+</p>
+{% endblock %}

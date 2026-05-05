@@ -90,15 +90,27 @@ api.interceptors.response.use(
 
     log.error('API Error:', error.response?.data || error.message);
 
-    // For the refresh endpoint itself, just propagate 401 to avoid infinite loops
-    if (error.response?.status === 401) {
-      const requestUrl = originalRequest?.url || '';
-      if (requestUrl.includes('/auth/refresh')) {
-        return Promise.reject(error);
-      }
+    // Unauthenticated entry points: a 4xx here is a credential / verification /
+    // rate-limit error, NOT a session-expired event. Propagate as-is so the
+    // calling component can show an inline error on the login form. Without
+    // this guard, a wrong-password 401 from /auth/login/password would
+    // trigger refresh-and-redirect to /auth, which the dev server proxies
+    // straight to the backend (no top-level /auth route) and renders a raw
+    // {"detail":"Authentication required"} JSON page.
+    const requestUrl = originalRequest?.url || '';
+    const isAuthEntryPoint =
+      requestUrl.includes('/auth/login') ||
+      requestUrl.includes('/auth/register') ||
+      requestUrl.includes('/auth/refresh') ||
+      requestUrl.includes('/auth/verify-email') ||
+      requestUrl.includes('/auth/resend-verification') ||
+      requestUrl.includes('/auth/request-password-reset') ||
+      requestUrl.includes('/auth/reset-password');
+    if (error.response?.status === 401 && isAuthEntryPoint) {
+      return Promise.reject(error);
     }
 
-    // Handle authentication errors (401 Unauthorized)
+    // Handle authentication errors (401 Unauthorized) on protected endpoints
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
         // If we're already refreshing, queue this request

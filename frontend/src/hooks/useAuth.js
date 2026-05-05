@@ -144,16 +144,68 @@ export const AuthProvider = ({ children }) => {
         role,
       });
 
-      // Backend returns a success message and pending activation status; no tokens
+      // Backend returns a success envelope with a `status` indicating which
+      // gate the new account must clear (SHU-507):
+      //   - "activated"                  → admin / first-user, can log in immediately
+      //   - "pending_email_verification" → click the link in the verification email
+      //   - "pending_admin_activation"   → email backend disabled, admin must activate
       const responseData = extractDataFromResponse(response);
-      if (responseData?.status !== 'pending_activation') {
+      const knownStatuses = new Set(['activated', 'pending_email_verification', 'pending_admin_activation']);
+      if (!knownStatuses.has(responseData?.status)) {
         log.warn('Unexpected register response payload', responseData);
       }
 
-      // Do not set tokens or user; require login after activation by admin
+      // Do not set tokens or user; the user must log in after clearing whichever
+      // gate the response indicates.
       return responseData;
     } catch (error) {
       throw new Error(error.response?.data?.error?.message || 'Registration failed');
+    }
+  };
+
+  const verifyEmail = async (token) => {
+    try {
+      const response = await api.post('/auth/verify-email', { token });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      // Backend wraps every HTTPException into the standard envelope at
+      // main.py:http_exception_handler:
+      //   { "error": { "code": <HTTP_xxx | structured>, "message": <string> } }
+      // The verify-email endpoint surfaces a structured `code` on the
+      // expired branch (VERIFICATION_TOKEN_EXPIRED) so the page can switch
+      // to the token-based resend UX (no email entry — the token IS the
+      // identity, we hand it back to the server). Generic HTTP_xxx codes
+      // are filtered out so the page falls through to the unknown-token UI.
+      const envelope = error.response?.data?.error;
+      const message = envelope?.message || 'Email verification failed';
+      const code = envelope?.code && !envelope.code.startsWith('HTTP_') ? envelope.code : null;
+      const err = new Error(typeof message === 'string' ? message : 'Email verification failed');
+      err.code = code;
+      throw err;
+    }
+  };
+
+  const resendVerification = async (email) => {
+    // Always resolves with the generic success envelope — backend does not
+    // distinguish unknown / verified / rate-limited cases (no enumeration).
+    try {
+      const response = await api.post('/auth/resend-verification', { email });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Resend verification failed');
+    }
+  };
+
+  const resendVerificationFromToken = async (token) => {
+    // Token-based resend: caller passes the original (possibly expired)
+    // token and the server resolves the user from its hash. No email
+    // address required from the user. Used by the verify-email expired
+    // branch — see SHU-507.
+    try {
+      const response = await api.post('/auth/resend-verification-from-token', { token });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Resend verification failed');
     }
   };
 
@@ -262,6 +314,9 @@ export const AuthProvider = ({ children }) => {
     login,
     loginWithPassword,
     register,
+    verifyEmail,
+    resendVerification,
+    resendVerificationFromToken,
     refreshToken,
     refreshUser,
     logout,

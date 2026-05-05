@@ -37,6 +37,7 @@ import UserPreferencesPage from './components/UserPreferencesPage';
 
 // Auth Components
 import AuthPage from './components/AuthPage';
+import VerifyEmailPage from './components/VerifyEmailPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleBasedRoute from './components/RoleBasedRoute';
 import ForceChangePasswordGate from './components/ForceChangePasswordGate';
@@ -117,8 +118,20 @@ const AuthenticatedApp = () => {
     return pageLoadingView;
   }
 
+  // Unauthenticated users still need access to a small set of public
+  // routes (most importantly the SHU-507 email-verification landing
+  // page — the token in the URL is the auth credential, so by definition
+  // the visitor is not logged in yet). Render a minimal Router for the
+  // unauth path; everything else falls through to <AuthPage />.
   if (!isAuthenticated) {
-    return <AuthPage />;
+    return (
+      <Router>
+        <Routes>
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="*" element={<AuthPage />} />
+        </Routes>
+      </Router>
+    );
   }
 
   return (
@@ -130,6 +143,12 @@ const AuthenticatedApp = () => {
 
           {/* Auth route - redirect if already authenticated */}
           <Route path="/auth" element={<AuthPageWrapper />} />
+
+          {/* SHU-507 email-verification landing page is also reachable
+              when authenticated — e.g. an admin clicking a verification
+              link for another account. The verify endpoint matches by
+              token hash, so the current session is unaffected. */}
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
 
           {/* Main Chat Interface - Available to ALL users */}
           <Route

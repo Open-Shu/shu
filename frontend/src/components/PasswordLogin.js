@@ -1,11 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button, TextField, Box, Typography, Alert, CircularProgress, Paper, Container, Divider } from '@mui/material';
 import LoginIcon from '@mui/icons-material/Login';
 import GoogleIcon from '@mui/icons-material/Google';
 import api, { extractDataFromResponse } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName, getBrandingFaviconUrlForTheme } from '../utils/constants';
 import { useMicrosoftOAuth } from '../hooks/useMicrosoftOAuth';
+
+const RESEND_COOLDOWN_SECONDS = 60;
+
+// Backend signals "user must verify email" via this exact message in the
+// 400 response detail. SHU-507 keeps the message stable so the frontend
+// can offer a resend CTA on this specific failure (and only this one —
+// the inactive-account error is structurally similar but unrecoverable
+// from the user's side).
+const VERIFY_EMAIL_ERROR_MARKER = 'verify your email';
 
 // Microsoft logo - using official asset from Microsoft identity platform branding guidelines
 // https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
@@ -26,6 +36,13 @@ const PasswordLogin = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  // SHU-507: when login fails because the user has not verified their email,
+  // surface a "Resend verification email" prompt that uses the address in
+  // the form. Without this the user is stuck.
+  const [verificationBlocked, setVerificationBlocked] = useState(false);
+  const [resendNotice, setResendNotice] = useState(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const { resendVerification } = useAuth();
   const { branding, resolvedMode } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
   const faviconUrl = getBrandingFaviconUrlForTheme(branding, resolvedMode);
@@ -57,6 +74,33 @@ const PasswordLogin = ({
     }
     if (successMessage) {
       setSuccessMessage(null);
+    }
+    if (verificationBlocked) {
+      setVerificationBlocked(false);
+      setResendNotice(null);
+    }
+  };
+
+  // Tick the resend cooldown so the button re-enables exactly
+  // RESEND_COOLDOWN_SECONDS after the most recent click.
+  useEffect(() => {
+    if (resendCooldown <= 0) {
+      return undefined;
+    }
+    const id = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendCooldown]);
+
+  const handleResendVerification = async () => {
+    setResendNotice(null);
+    try {
+      const data = await resendVerification(formData.email);
+      // Backend returns the same generic envelope regardless of whether
+      // the address exists or is already verified (no enumeration).
+      setResendNotice(data?.message || 'If an account is pending verification, a new email has been sent.');
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      setResendNotice(err.message || 'Could not resend verification email.');
     }
   };
 
@@ -107,6 +151,7 @@ const PasswordLogin = ({
         err.response?.data?.detail ||
         'Login failed. Please check your credentials.';
       setError(errorMessage);
+      setVerificationBlocked(errorMessage.toLowerCase().includes(VERIFY_EMAIL_ERROR_MARKER));
     } finally {
       setLoading(false);
     }
@@ -157,6 +202,28 @@ const PasswordLogin = ({
               <Alert severity="error" sx={{ mb: 2 }}>
                 {error}
               </Alert>
+            )}
+
+            {/* SHU-507: when login was blocked specifically because email is
+                not verified, offer a resend CTA. The address comes from the
+                form (we already have it) and the backend response is
+                non-enumerating (same generic message regardless). */}
+            {verificationBlocked && (
+              <Box sx={{ mb: 2 }}>
+                {resendNotice && (
+                  <Alert severity="info" sx={{ mb: 1 }}>
+                    {resendNotice}
+                  </Alert>
+                )}
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  onClick={handleResendVerification}
+                  disabled={isAnyLoading || !formData.email || resendCooldown > 0}
+                >
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend verification email'}
+                </Button>
+              </Box>
             )}
 
             {successMessage && (

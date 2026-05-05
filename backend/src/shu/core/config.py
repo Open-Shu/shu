@@ -133,6 +133,18 @@ class Settings(BaseSettings):
     # even under maximum email parallelism.
     email_max_concurrent_jobs: int = Field(5, alias="SHU_EMAIL_MAX_CONCURRENT_JOBS")
 
+    # Email verification (SHU-507) token TTL. Default 24h — long enough for
+    # users who check email infrequently, short enough that a leaked token
+    # has bounded impact. Stored hashed; expiry is the only window an
+    # attacker has even with a DB compromise.
+    email_verification_token_ttl_seconds: int = Field(86400, alias="SHU_EMAIL_VERIFICATION_TOKEN_TTL_SECONDS")
+
+    # Public base URL of the frontend app (no trailing slash). Used to build
+    # links that go INTO emails — verification, password reset, etc. Reads
+    # the same env var as billing's app_base_url (which uses it for Stripe
+    # customer-portal returns) so operators only set one value.
+    app_base_url: str = Field("http://localhost:3000", alias="SHU_APP_BASE_URL")
+
     # Embedding configuration
     # WARNING: Changing SHU_EMBEDDING_MODEL is a DESTRUCTIVE operation.
     # All existing knowledge bases will be marked "stale" on next startup.

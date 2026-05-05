@@ -139,6 +139,13 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/register",
             "/api/v1/auth/login/password",
             "/api/v1/auth/refresh",
+            # SHU-507 verification flow — token in body is the credential,
+            # the visitor is by definition not authenticated yet (they
+            # cannot log in until verification succeeds). The endpoints
+            # have their own per-IP rate limiting via _check_auth_rate_limit.
+            "/api/v1/auth/verify-email",
+            "/api/v1/auth/resend-verification",
+            "/api/v1/auth/resend-verification-from-token",
             "/api/v1/auth/google/login",
             "/api/v1/auth/google/exchange-login",
             "/api/v1/auth/microsoft/login",

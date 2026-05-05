@@ -9,7 +9,6 @@ import pytest
 
 from shu.auth.password_auth import PasswordAuthService
 
-
 DEFAULT_SPECIAL_CHARS = "!@#$%^&*()-_+="
 
 
@@ -383,3 +382,165 @@ class TestResetPassword:
         mock_user.auth_method = "google"
         with pytest.raises(ValueError, match="does not use password authentication"):
             await service_moderate.reset_password("user-456", mock_db)
+
+
+class TestAuthenticateUserEmailVerificationGate:
+    """SHU-507: login is blocked when email_verified=False AND an email backend
+    is configured. Self-hosted deployments running with email_backend=disabled
+    keep the legacy is_active gate as the only login check.
+    """
+
+    PASSWORD = "ValidPass1!"
+
+    @pytest.fixture
+    def known_hash(self, service_moderate: PasswordAuthService) -> str:
+        return service_moderate._hash_password(self.PASSWORD)
+
+    @pytest.fixture
+    def mock_user(self, known_hash: str) -> MagicMock:
+        user = MagicMock()
+        user.id = "user-1"
+        user.email = "user@example.com"
+        user.password_hash = known_hash
+        user.auth_method = "password"
+        user.is_active = True
+        user.email_verified = True
+        return user
+
+    @pytest.fixture
+    def mock_db(self, mock_user: MagicMock) -> AsyncMock:
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = mock_user
+        db.execute.return_value = result
+        return db
+
+    def _service_with_backend(self, mock_settings_moderate, backend: str) -> PasswordAuthService:
+        mock_settings_moderate.email_backend = backend
+        with patch("shu.auth.password_auth.get_settings_instance", return_value=mock_settings_moderate):
+            return PasswordAuthService()
+
+    @pytest.mark.asyncio
+    async def test_unverified_blocked_when_email_backend_configured(
+        self, mock_settings_moderate, mock_user: MagicMock, mock_db: AsyncMock
+    ) -> None:
+        from fastapi import HTTPException
+
+        mock_user.email_verified = False
+        service = self._service_with_backend(mock_settings_moderate, "resend")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        assert exc_info.value.status_code == 400
+        # Must be the verification message (NOT the inactive message) so the
+        # frontend can offer a "resend" CTA on this specific failure.
+        assert "verify your email" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_unverified_allowed_when_email_backend_disabled(
+        self, mock_settings_moderate, mock_user: MagicMock, mock_db: AsyncMock
+    ) -> None:
+        # Self-hosted-without-email path: is_active is the only gate; an
+        # admin who activated the user implicitly vouches for the email.
+        # mock_user is already is_active=True so login proceeds.
+        mock_user.email_verified = False
+        service = self._service_with_backend(mock_settings_moderate, "disabled")
+
+        result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        assert result is mock_user
+
+    @pytest.mark.asyncio
+    async def test_verified_user_logs_in(
+        self, mock_settings_moderate, mock_user: MagicMock, mock_db: AsyncMock
+    ) -> None:
+        mock_user.email_verified = True
+        service = self._service_with_backend(mock_settings_moderate, "resend")
+
+        result = await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        assert result is mock_user
+
+    @pytest.mark.asyncio
+    async def test_inactive_check_runs_before_verification_check(
+        self, mock_settings_moderate, mock_user: MagicMock, mock_db: AsyncMock
+    ) -> None:
+        """An inactive AND unverified user gets the inactive message — the gate
+        order is is_active first, email_verified second. The frontend should
+        not show "resend verification" to an admin-deactivated account.
+        """
+        from fastapi import HTTPException
+
+        mock_user.is_active = False
+        mock_user.email_verified = False
+        service = self._service_with_backend(mock_settings_moderate, "resend")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.authenticate_user("user@example.com", self.PASSWORD, mock_db)
+        assert "inactive" in exc_info.value.detail.lower()
+        assert "verify" not in exc_info.value.detail.lower()
+
+
+class TestCreateUserVerificationActivationComposition:
+    """SHU-507: SHU_AUTO_ACTIVATE_USERS interacts with email-verification.
+
+    When a user self-registers and the email backend is configured:
+      - SHU_AUTO_ACTIVATE_USERS=true  → is_active=True, email_verified=False.
+        The single remaining gate is verification.
+      - SHU_AUTO_ACTIVATE_USERS=false → is_active=False, email_verified=False.
+        BOTH gates apply — admin must activate AND user must verify.
+
+    Regression test: an earlier version of the create_user code unilaterally
+    set is_active=True for the verification path, which silently bypassed
+    SHU_AUTO_ACTIVATE_USERS=false (default) and let users into the system
+    without admin approval.
+    """
+
+    @pytest.fixture
+    def mock_db(self) -> AsyncMock:
+        db = AsyncMock()
+        # No existing user with this email.
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        db.execute = AsyncMock(return_value=result)
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+        return db
+
+    def _service(self, mock_settings_moderate, *, auto_activate: bool) -> PasswordAuthService:
+        mock_settings_moderate.auto_activate_users = auto_activate
+        with patch("shu.auth.password_auth.get_settings_instance", return_value=mock_settings_moderate):
+            return PasswordAuthService()
+
+    @pytest.mark.asyncio
+    async def test_auto_activate_false_keeps_is_active_false(
+        self, mock_settings_moderate, mock_db: AsyncMock
+    ) -> None:
+        service = self._service(mock_settings_moderate, auto_activate=False)
+        user = await service.create_user(
+            email="new@example.com",
+            password="ValidPass1!",
+            name="New User",
+            db=mock_db,
+            requires_email_verification=True,
+            flush_only=True,
+        )
+        # Both gates apply: admin must activate AND user must verify.
+        assert user.is_active is False
+        assert user.email_verified is False
+
+    @pytest.mark.asyncio
+    async def test_auto_activate_true_sets_is_active_true(
+        self, mock_settings_moderate, mock_db: AsyncMock
+    ) -> None:
+        service = self._service(mock_settings_moderate, auto_activate=True)
+        user = await service.create_user(
+            email="new@example.com",
+            password="ValidPass1!",
+            name="New User",
+            db=mock_db,
+            requires_email_verification=True,
+            flush_only=True,
+        )
+        # Operator opted in to trusting verification — only the email
+        # gate remains.
+        assert user.is_active is True
+        assert user.email_verified is False

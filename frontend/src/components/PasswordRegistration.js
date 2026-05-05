@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
-import { Button, TextField, Box, Typography, Alert, CircularProgress, Paper, Container } from '@mui/material';
+import React, { useEffect, useState } from 'react';
+import { Button, TextField, Box, Typography, Alert, CircularProgress, Paper, Container, Stack } from '@mui/material';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
-import api from '../services/api';
+import { useAuth } from '../hooks/useAuth';
+import api, { extractDataFromResponse } from '../services/api';
+import log from '../utils/log';
+
+const RESEND_COOLDOWN_SECONDS = 60;
 
 const PasswordRegistration = ({ onSwitchToLogin }) => {
+  const { resendVerification } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -12,7 +17,12 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(false);
+  // SHU-507: backend returns one of four statuses driving the success screen.
+  // null = form, otherwise "activated" | "pending_email_verification" |
+  // "pending_admin_activation" | "pending_verification_and_admin".
+  const [registrationStatus, setRegistrationStatus] = useState(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendNotice, setResendNotice] = useState(null);
 
   const handleChange = (e) => {
     setFormData({
@@ -62,14 +72,23 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
 
     try {
       // Register the user
-      await api.post('/auth/register', {
+      const response = await api.post('/auth/register', {
         email: formData.email,
         password: formData.password,
         name: formData.name,
       });
 
-      // Registration successful but user needs admin activation
-      setSuccess(true);
+      const data = extractDataFromResponse(response);
+      const knownStatuses = new Set([
+        'activated',
+        'pending_email_verification',
+        'pending_admin_activation',
+        'pending_verification_and_admin',
+      ]);
+      if (!knownStatuses.has(data?.status)) {
+        log.warn('Unexpected register response payload', data);
+      }
+      setRegistrationStatus(data?.status || 'pending_admin_activation');
     } catch (err) {
       const errorMessage =
         err.response?.data?.error?.message || err.response?.data?.detail || 'Registration failed. Please try again.';
@@ -79,7 +98,36 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
     }
   };
 
-  if (success) {
+  // Decrement resend cooldown each second so the button re-enables exactly
+  // RESEND_COOLDOWN_SECONDS after the most recent click. Backend rate-limits
+  // are the source of truth (3/hour); the cooldown just discourages
+  // hammering between legitimate retries.
+  useEffect(() => {
+    if (resendCooldown <= 0) {
+      return undefined;
+    }
+    const id = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendCooldown]);
+
+  const handleResendVerification = async () => {
+    setResendNotice(null);
+    try {
+      const data = await resendVerification(formData.email);
+      // Backend always returns the same generic envelope (no enumeration).
+      setResendNotice(data?.message || 'If an account is pending verification, a new email has been sent.');
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      setResendNotice(err.message || 'Could not resend verification email.');
+    }
+  };
+
+  if (registrationStatus) {
+    const isVerificationPending = registrationStatus === 'pending_email_verification';
+    const isAdminPending = registrationStatus === 'pending_admin_activation';
+    const isVerificationAndAdminPending = registrationStatus === 'pending_verification_and_admin';
+    const isActivated = registrationStatus === 'activated';
+
     return (
       <Container maxWidth="sm">
         <Box
@@ -95,17 +143,82 @@ const PasswordRegistration = ({ onSwitchToLogin }) => {
               <Typography component="h1" variant="h4" gutterBottom color="success.main">
                 Registration Successful!
               </Typography>
-              <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                Your account has been created successfully. However, it requires administrator activation before you can
-                log in.
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Please contact your administrator to activate your account. You will receive an email confirmation once
-                your account is activated.
-              </Typography>
-              <Button variant="contained" onClick={onSwitchToLogin} sx={{ mt: 2 }}>
-                Return to Login
-              </Button>
+              {isVerificationPending && (
+                <>
+                  <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                    Check your inbox for a verification link sent to <strong>{formData.email}</strong>. Click the link
+                    to activate your account before logging in.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    The link expires in 24 hours. Did not get an email? Check your spam folder, or request a new one
+                    below.
+                  </Typography>
+                  {resendNotice && (
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                      {resendNotice}
+                    </Alert>
+                  )}
+                </>
+              )}
+              {isAdminPending && (
+                <>
+                  <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                    Your account has been created but requires administrator activation before you can log in.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                    Please contact your administrator to activate your account.
+                  </Typography>
+                </>
+              )}
+              {isVerificationAndAdminPending && (
+                <>
+                  <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                    Check your inbox for a verification link sent to <strong>{formData.email}</strong>.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Once your email is verified, an administrator still needs to activate your account before you can
+                    sign in. You will not be able to log in until both steps are complete.
+                  </Typography>
+                  {resendNotice && (
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                      {resendNotice}
+                    </Alert>
+                  )}
+                </>
+              )}
+              {isActivated && (
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                  Your account is active. You can sign in now.
+                </Typography>
+              )}
+
+              {/*
+                Action buttons share a row with equal widths so neither
+                dominates visually. In the verification-pending state,
+                "Resend" is the primary action (most likely next step for
+                a user who just registered) and "Return to Login" is the
+                secondary escape hatch. In the other states there is no
+                resend, and the single button stretches to fill the row.
+              */}
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mt: 2 }}>
+                {(isVerificationPending || isVerificationAndAdminPending) && (
+                  <Button
+                    variant="contained"
+                    onClick={handleResendVerification}
+                    disabled={resendCooldown > 0}
+                    fullWidth
+                  >
+                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend verification email'}
+                  </Button>
+                )}
+                <Button
+                  variant={isVerificationPending || isVerificationAndAdminPending ? 'outlined' : 'contained'}
+                  onClick={onSwitchToLogin}
+                  fullWidth
+                >
+                  Return to Login
+                </Button>
+              </Stack>
             </Box>
           </Paper>
         </Box>
