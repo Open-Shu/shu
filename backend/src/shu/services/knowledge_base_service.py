@@ -1112,30 +1112,48 @@ class KnowledgeBaseService:
     async def _get_denied_kb_slugs(self, user_id: str, slugs: list[str]) -> set[str]:
         """Return the set of KB slugs denied by PBAC ``kb.read`` for *user_id*.
 
-        Owner escape (SHU-742): KBs whose ``owner_id`` matches *user_id* are
-        always considered readable and are removed from the denied set,
-        regardless of PBAC policies. Mirrors the single-KB ownership escape
-        in ``get_knowledge_base`` so the list endpoint, the chat-send
-        ``check_kb_read_access`` path, and ``filter_accessible_kb_ids`` all
-        consistently allow owners to read what they own. Critical for
-        regular and power users who have no PBAC policy bindings — without
-        the escape, ``PolicyCache.get_denied_resources`` is default-deny and
-        their auto-provisioned Personal Knowledge KB would be invisible.
+        Read-visibility model for SHU-742 v1:
+
+        - **Personal KBs** (``is_personal=True``) are private to their owner.
+          Non-owners are denied unless an explicit PBAC ``kb.read`` allow
+          policy targets them.
+        - **Non-personal KBs** are visible to every authenticated user by
+          default. They function as shared knowledge bases that anyone in
+          the org can read; write is still gated by ``require_kb_write_access``.
+
+        Two slug groups are subtracted from the PBAC-denied set:
+
+        1. KBs owned by *user_id* (owner escape — owners always read their
+           own KBs, mirroring the single-fetch escape in ``get_knowledge_base``).
+        2. Non-personal KBs (public-read escape — shared KBs are visible to all).
+
+        Both escapes are critical because ``PolicyCache.get_denied_resources``
+        is default-deny for users with no policy bindings: without them, a
+        regular user would see an empty list and the chat-send path would
+        403 mid-stream.
+
+        Trade-off: this approach makes non-personal KBs default-allow, so
+        an explicit PBAC deny policy on a non-personal KB has no effect.
+        Acceptable for v1; future work can add ``is_public`` for finer
+        control or change the subtraction to honor explicit-deny.
         """
         if not slugs:
             return set()
         denied = await POLICY_CACHE.get_denied_resources(user_id, "kb.read", "kb", slugs, self.db)
         if denied:
-            owned_result = await self.db.execute(
+            escape_result = await self.db.execute(
                 select(KnowledgeBase.slug).where(
                     and_(
-                        KnowledgeBase.owner_id == user_id,
                         KnowledgeBase.slug.in_(denied),
+                        or_(
+                            KnowledgeBase.owner_id == user_id,
+                            KnowledgeBase.is_personal.is_(False),
+                        ),
                     )
                 )
             )
-            owned_slugs = {row[0] for row in owned_result.fetchall()}
-            denied -= owned_slugs
+            escape_slugs = {row[0] for row in escape_result.fetchall()}
+            denied -= escape_slugs
         return denied
 
     async def filter_accessible_kb_ids(self, user_id: str, kbs: list[KnowledgeBase]) -> list[str]:

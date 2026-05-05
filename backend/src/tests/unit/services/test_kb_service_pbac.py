@@ -393,7 +393,7 @@ class TestListKnowledgeBases:
 
         db.execute = AsyncMock(side_effect=[
             _make_slug_result([ALLOWED_KB_SLUG, "personal-knowledge-user-1"]),
-            _make_slug_result(["personal-knowledge-user-1"]),  # owner escape: user owns this
+            _make_slug_result(["personal-knowledge-user-1"]),  # escape: user owns this
             _make_count_result(2),
             _make_kb_result([MOCK_KB_ALLOWED, owned_kb]),
         ])
@@ -404,6 +404,35 @@ class TestListKnowledgeBases:
 
         assert total == 2
         assert {kb.slug for kb in kbs} == {ALLOWED_KB_SLUG, "personal-knowledge-user-1"}
+
+    @pytest.mark.asyncio
+    async def test_non_personal_kb_visible_to_non_owner_without_pbac_grant(self, service, db, pbac_cache):
+        """SHU-742: non-personal KBs are public-read by default.
+
+        A regular user with no policy grant should still see a non-personal KB
+        owned by someone else. This is the "shared knowledge base" use case —
+        admins create non-personal KBs intending them to be readable across
+        the org. Personal KBs remain private to their owner.
+        """
+        shared_kb = _make_mock_kb(kb_id="kb-shared", name="Shared Project Docs", slug="shared-project-docs")
+        shared_kb.owner_id = "some-other-user"
+        shared_kb.is_personal = False
+
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([ALLOWED_KB_SLUG, "shared-project-docs"]),
+            # The escape query matches the non-personal slug; owned-slug clause
+            # finds nothing for this user.
+            _make_slug_result(["shared-project-docs"]),
+            _make_count_result(2),
+            _make_kb_result([MOCK_KB_ALLOWED, shared_kb]),
+        ])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(REGULAR_USER_ID)
+
+        assert total == 2
+        assert {kb.slug for kb in kbs} == {ALLOWED_KB_SLUG, "shared-project-docs"}
 
     @pytest.mark.asyncio
     async def test_pagination_applied(self, service, db, pbac_cache):
