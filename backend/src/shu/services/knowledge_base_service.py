@@ -395,12 +395,18 @@ class KnowledgeBaseService:
         Raises NotFoundError if the KB does not exist or the user is denied,
         using the same error to avoid leaking KB existence.
 
-        Owner escape (SHU-742): a user always has kb.read on KBs they own,
-        without needing an explicit PBAC grant. This mirrors the ownership
-        escape in ``require_kb_write_access`` and matches the semantic that
-        creating a KB implies the right to read it. Non-owners still go
-        through enforce_pbac as before, so the security model for shared
-        KBs is unchanged.
+        Read-visibility escapes (SHU-742) — must mirror ``_get_denied_kb_slugs``
+        so the single-fetch path agrees with the list / filter / chat-attach
+        paths. Without that consistency, a regular user can see a KB in their
+        list but 404 when opening it or fetching its docs:
+
+        - **Owner escape**: a user always has kb.read on KBs they own,
+          without needing an explicit PBAC grant.
+        - **Public-read escape**: non-personal KBs are readable by every
+          authenticated user by default. Personal KBs remain owner-private.
+
+        Non-owners of a *personal* KB still go through ``enforce_pbac``, so
+        explicit allow policies can grant cross-user access to personal KBs.
 
         Args:
             kb_id: Knowledge base ID.
@@ -417,6 +423,8 @@ class KnowledgeBaseService:
         if not kb:
             raise NotFoundError(f"Knowledge base '{kb_id}' not found")
         if kb.owner_id is not None and str(kb.owner_id) == str(user_id):
+            return kb
+        if not kb.is_personal:
             return kb
         await enforce_pbac(
             user_id,
