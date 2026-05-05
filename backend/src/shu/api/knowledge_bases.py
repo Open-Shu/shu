@@ -914,8 +914,10 @@ async def upload_documents(
     can grant cross-user write on a per-KB basis.
     """
     try:
+        # require_kb_write_access has already verified KB existence and write
+        # permission; re-running get_knowledge_base here would redundantly query
+        # the DB and incorrectly gate write on the kb.read PBAC check.
         kb_service = KnowledgeBaseService(db)
-        await kb_service.get_knowledge_base(kb_id, str(current_user.id))
 
         # Get upload restrictions from KB-specific settings
         allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]

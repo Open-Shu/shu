@@ -571,6 +571,8 @@ class TestCreatePersonalKnowledgeBaseDefaults:
         # First _get_kb_by_slug (pre-insert) finds nothing → proceed to commit.
         # Second call (post-IntegrityError, after race) returns the winning row.
         existing_kb = MagicMock(name="ExistingPersonalKB")
+        existing_kb.owner_id = "user-1"
+        existing_kb.is_personal = True
         service._get_kb_by_slug = AsyncMock(side_effect=[None, existing_kb])
 
         mock_db.commit = AsyncMock(
@@ -616,6 +618,7 @@ class TestCreatePersonalKnowledgeBaseDefaults:
 
         existing_kb = MagicMock(name="ExistingPersonalKB")
         existing_kb.is_personal = True
+        existing_kb.owner_id = "user-1"
         service._get_kb_by_slug = AsyncMock(return_value=existing_kb)
 
         kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
@@ -637,6 +640,7 @@ class TestCreatePersonalKnowledgeBaseDefaults:
         # pick it up; healing the flag fixes that going forward.
         existing_kb = MagicMock(name="LegacyKB")
         existing_kb.is_personal = False
+        existing_kb.owner_id = "user-1"
         service._get_kb_by_slug = AsyncMock(return_value=existing_kb)
         mock_db.commit = AsyncMock()
         mock_db.refresh = AsyncMock()
@@ -647,6 +651,35 @@ class TestCreatePersonalKnowledgeBaseDefaults:
         assert result is existing_kb
         assert existing_kb.is_personal is True
         mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_personal_kb_refuses_to_take_over_other_users_kb(self):
+        """Heal path must reject existing rows owned by a different user.
+
+        The owner-scoped slug ``personal-knowledge-{owner_id}`` makes ownership
+        match by construction in the normal flow, but a non-personal KB whose
+        user-supplied name slugifies to that exact pattern would land here.
+        Without the ownership guard, the heal path would flip is_personal=True
+        and silently hand another user's KB to the caller.
+        """
+        from shu.core.exceptions import ConflictError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = self._build_service(mock_db, captured)
+
+        existing_kb = MagicMock(name="OtherUsersKB")
+        existing_kb.is_personal = False
+        existing_kb.owner_id = "attacker-user-id"
+        service._get_kb_by_slug = AsyncMock(return_value=existing_kb)
+
+        kb_data = KnowledgeBaseCreate(name="Eric's Knowledge", is_personal=True)
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(kb_data, owner_id="user-1")
+
+        # No flag flipping, no new row.
+        assert existing_kb.is_personal is False
+        assert captured == []
 
     @pytest.mark.asyncio
     async def test_non_personal_existing_slug_still_raises_conflict(self):

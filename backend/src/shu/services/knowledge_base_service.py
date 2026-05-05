@@ -480,14 +480,23 @@ class KnowledgeBaseService:
             raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
         return slug
 
-    async def _return_or_heal_existing_personal_kb(self, existing: KnowledgeBase) -> KnowledgeBase:
+    async def _return_or_heal_existing_personal_kb(self, existing: KnowledgeBase, owner_id: str) -> KnowledgeBase:
         """Idempotent return for ensure-style personal-KB creates.
 
         Heals ``is_personal=True`` on the existing row if the flag was missing
         (legacy rows that predate the column or were otherwise mis-flagged) so
         the frontend's ``findPersonalKB`` filter picks it up on subsequent
         fetches.
+
+        Refuses to take over a row owned by a different user. The owner-scoped
+        slug ``personal-knowledge-{owner_id}`` makes ownership match by
+        construction in the normal flow, but a non-personal KB whose
+        user-supplied name slugifies to that exact pattern could land here —
+        healing the flag without an ownership check would silently hand
+        another user's KB to the caller.
         """
+        if existing.owner_id is not None and str(existing.owner_id) != str(owner_id):
+            raise ConflictError("Knowledge base slug already in use")
         if not existing.is_personal:
             existing.is_personal = True
             await self.db.commit()
@@ -496,7 +505,7 @@ class KnowledgeBaseService:
         return existing
 
     async def _handle_create_integrity_error(
-        self, exc: IntegrityError, slug: str, kb_name: str, is_personal: bool
+        self, exc: IntegrityError, slug: str, kb_name: str, is_personal: bool, owner_id: str | None
     ) -> KnowledgeBase:
         """Resolve an IntegrityError raised on commit during KB create.
 
@@ -504,16 +513,16 @@ class KnowledgeBaseService:
         FK violation on owner_id from a deleted user racing the request)
         propagate honestly as ShuException instead of masquerading as a slug
         conflict. For slug conflicts on personal KBs, returns the winning row
-        idempotently. For non-personal slug conflicts, raises ConflictError.
+        idempotently via the heal helper (which enforces ownership). For
+        non-personal slug conflicts, raises ConflictError.
         """
         constraint_name = (getattr(getattr(exc, "orig", None), "constraint_name", "") or "").lower()
         is_slug_conflict = "slug" in constraint_name
 
-        if is_slug_conflict and is_personal:
+        if is_slug_conflict and is_personal and owner_id:
             existing = await self._get_kb_by_slug(slug)
             if existing is not None:
-                logger.info(f"Personal KB created concurrently; returning existing: {existing.name}")
-                return existing
+                return await self._return_or_heal_existing_personal_kb(existing, owner_id)
         if is_slug_conflict:
             raise ConflictError(f"Knowledge base '{kb_name}' already exists")
 
@@ -547,7 +556,7 @@ class KnowledgeBaseService:
             existing = await self._get_kb_by_slug(slug)
             if existing is not None:
                 if is_personal:
-                    return await self._return_or_heal_existing_personal_kb(existing)
+                    return await self._return_or_heal_existing_personal_kb(existing, owner_id)
                 raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
 
             kb_dict["slug"] = slug
@@ -577,7 +586,7 @@ class KnowledgeBaseService:
             raise
         except IntegrityError as e:
             await self.db.rollback()
-            return await self._handle_create_integrity_error(e, slug, kb_data.name, is_personal)
+            return await self._handle_create_integrity_error(e, slug, kb_data.name, is_personal, owner_id)
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)
