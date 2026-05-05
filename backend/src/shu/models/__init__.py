@@ -39,6 +39,7 @@ from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message
 from .mcp_server_connection import McpServerConnection
 from .model_configuration import ModelConfiguration
 from .model_configuration_kb_prompt import ModelConfigurationKBPrompt
+from .password_reset_token import PasswordResetToken
 from .plugin_execution import PluginExecution
 from .plugin_feed import PluginFeed
 from .plugin_registry import PluginDefinition
@@ -97,6 +98,7 @@ __all__ = [
     "ModelType",
     "ParticipantEntityType",
     "ParticipantRole",
+    "PasswordResetToken",
     "PluginDefinition",
     "PluginStorage",
     "Prompt",

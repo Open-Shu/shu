@@ -38,6 +38,7 @@ import UserPreferencesPage from './components/UserPreferencesPage';
 // Auth Components
 import AuthPage from './components/AuthPage';
 import VerifyEmailPage from './components/VerifyEmailPage';
+import ResetPasswordPage from './components/ResetPasswordPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleBasedRoute from './components/RoleBasedRoute';
 import ForceChangePasswordGate from './components/ForceChangePasswordGate';
@@ -128,6 +129,7 @@ const AuthenticatedApp = () => {
       <Router>
         <Routes>
           <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="*" element={<AuthPage />} />
         </Routes>
       </Router>
@@ -149,6 +151,13 @@ const AuthenticatedApp = () => {
               link for another account. The verify endpoint matches by
               token hash, so the current session is unaffected. */}
           <Route path="/verify-email" element={<VerifyEmailPage />} />
+
+          {/* SHU-745 password-reset page — also reachable when
+              authenticated; the same token-hash lookup applies, and the
+              current session is unaffected unless the user resets their
+              own password (in which case the iat-vs-password_changed_at
+              gate logs them out on next request, as designed). */}
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
 
           {/* Main Chat Interface - Available to ALL users */}
           <Route

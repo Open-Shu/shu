@@ -209,6 +209,48 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const requestPasswordReset = async (email) => {
+    // Always resolves with a generic envelope — backend does not
+    // distinguish unknown / SSO-only / inactive / rate-limited (no
+    // enumeration). SHU-745.
+    try {
+      const response = await api.post('/auth/request-password-reset', { email });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Could not request a password reset.');
+    }
+  };
+
+  const resetPassword = async (token, newPassword) => {
+    // SHU-745. Mirrors verifyEmail's structured-error contract: on the
+    // expired branch the backend returns code=PASSWORD_RESET_TOKEN_EXPIRED
+    // so the page can render a one-click "send a new reset link" CTA
+    // (no retype). Auto-generated HTTP_xxx codes are filtered out.
+    try {
+      const response = await api.post('/auth/reset-password', { token, new_password: newPassword });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      const envelope = error.response?.data?.error;
+      const message = envelope?.message || 'Password reset failed';
+      const code = envelope?.code && !envelope.code.startsWith('HTTP_') ? envelope.code : null;
+      const err = new Error(typeof message === 'string' ? message : 'Password reset failed');
+      err.code = code;
+      throw err;
+    }
+  };
+
+  const resendPasswordResetFromToken = async (token) => {
+    // SHU-745. Token-as-identity recovery for an expired reset link —
+    // hands the original (stale) token back, server resolves the user
+    // from its hash and issues a fresh token. No email retype.
+    try {
+      const response = await api.post('/auth/resend-password-reset-from-token', { token });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Could not resend reset email.');
+    }
+  };
+
   const logout = () => {
     // Clear tokens
     localStorage.removeItem('shu_token');
@@ -317,6 +359,9 @@ export const AuthProvider = ({ children }) => {
     verifyEmail,
     resendVerification,
     resendVerificationFromToken,
+    requestPasswordReset,
+    resetPassword,
+    resendPasswordResetFromToken,
     refreshToken,
     refreshUser,
     logout,

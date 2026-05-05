@@ -11,6 +11,31 @@ from ..core.config import get_settings_instance
 logger = logging.getLogger(__name__)
 
 
+def is_token_revoked_by_password_change(
+    token_iat: int | None,
+    password_changed_at: datetime | None,
+) -> bool:
+    """Return True if a token's `iat` predates the user's most recent
+    password change (SHU-745).
+
+    Both sides are floored to integer seconds before comparison: JWT `iat`
+    is serialised as integer seconds by the encoder, while
+    `password_changed_at` is microsecond-precision. Without flooring, a
+    token issued in the same wall-clock second as the reset would compare
+    as strictly less and produce a false-positive 401 — the user's freshly
+    issued token would bounce on its first request.
+
+    Returns False when either argument is None — `None` for either side
+    means "no invalidation gate applies" (existing accounts that never
+    reset, or token without an iat claim).
+    """
+    if token_iat is None or password_changed_at is None:
+        return False
+    if password_changed_at.tzinfo is None:
+        password_changed_at = password_changed_at.replace(tzinfo=UTC)
+    return int(token_iat) < int(password_changed_at.timestamp())
+
+
 class JWTManager:
     """JWT token management for Shu authentication."""
 
@@ -75,6 +100,10 @@ class JWTManager:
             "user_id": payload.get("user_id"),
             "email": payload.get("email"),
             "role": payload.get("role"),
+            # `iat` (epoch seconds) drives SHU-745 session invalidation —
+            # the JWT auth middleware rejects tokens whose `iat` is older
+            # than the user's `password_changed_at`.
+            "iat": payload.get("iat"),
         }
 
     def is_token_expired(self, token: str) -> bool:

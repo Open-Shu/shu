@@ -26,6 +26,7 @@ const MicrosoftIcon = () => (
 const PasswordLogin = ({
   onSwitchToRegister,
   onSwitchToGoogle,
+  onSwitchToForgotPassword,
   isGoogleSsoEnabled = false,
   isMicrosoftSsoEnabled = false,
 }) => {
@@ -325,6 +326,13 @@ const PasswordLogin = ({
                   Don't have an account? Register
                 </Button>
               </Box>
+              {onSwitchToForgotPassword && (
+                <Box sx={{ textAlign: 'center', mt: 0.5 }}>
+                  <Button variant="text" size="small" onClick={onSwitchToForgotPassword} disabled={isAnyLoading}>
+                    Forgot password?
+                  </Button>
+                </Box>
+              )}
             </Box>
 
             <Typography variant="caption" display="block" sx={{ textAlign: 'center', mt: 2 }}>

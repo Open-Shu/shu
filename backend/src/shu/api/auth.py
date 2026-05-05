@@ -142,6 +142,29 @@ class ResendVerificationFromTokenRequest(BaseModel):
     token: str = Field(min_length=1, max_length=256)
 
 
+class RequestPasswordResetRequest(BaseModel):
+    """Request model for the password-reset request endpoint (SHU-745)."""
+
+    email: str = Field(min_length=3, max_length=320)
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request model for completing a password reset (SHU-745)."""
+
+    token: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+class ResendPasswordResetFromTokenRequest(BaseModel):
+    """Request model for token-based reset resend (SHU-745). The caller
+    passes the original (possibly expired) token from the URL — server
+    resolves the user from its hash and issues a fresh token without
+    requiring an email retype.
+    """
+
+    token: str = Field(min_length=1, max_length=256)
+
+
 class TokenResponse(BaseModel):
     """Response model for token endpoints."""
 
@@ -484,6 +507,171 @@ async def resend_verification_from_token(
     )
 
 
+# ---------------------------------------------------------------------------
+# Password reset (SHU-745)
+# ---------------------------------------------------------------------------
+
+_RESET_NEUTRAL_RESPONSE = {
+    "message": (
+        "If an account is registered for this address, a password reset email has been sent. "
+        "If you don't see it within a few minutes, check spam or try again."
+    ),
+}
+
+_RESEND_RESET_NEUTRAL_RESPONSE = {
+    "message": ("If the link belonged to a real account, a fresh password reset email has been sent."),
+}
+
+
+@router.post(
+    "/request-password-reset",
+    response_model=SuccessResponse[dict[str, str]],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+async def request_password_reset(
+    request: RequestPasswordResetRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Issue a password reset token if the email belongs to a known
+    active password user (SHU-745).
+
+    Always returns 200 with a generic envelope — no enumeration regardless
+    of whether the address exists, is SSO-only, is inactive, or hit the
+    per-IP / per-email rate limit. The actual send happens only when there
+    is a real account that can use it.
+
+    When the configured email backend is `disabled`, returns 200 anyway
+    (no token created, no email sent — operators must reset manually as
+    they did before SHU-745). The frontend cannot distinguish from the
+    other no-op branches.
+    """
+    email_backend = (get_settings_instance().email_backend or "disabled").strip().lower()
+    if email_backend == "disabled":
+        logger.warning(
+            "Password reset requested for %s but SHU_EMAIL_BACKEND=disabled — operators must reset manually",
+            request.email,
+            extra={"event": "password_reset.requested_email_disabled", "email": request.email},
+        )
+        return SuccessResponse(data=_RESET_NEUTRAL_RESPONSE)
+
+    from ..core.rate_limiting import get_client_ip
+    from ..services.password_reset_service import get_password_reset_service_dependency
+
+    client_ip = get_client_ip(
+        raw_request.headers,
+        raw_request.client.host if raw_request.client else None,
+    )
+
+    service = get_password_reset_service_dependency()
+    await service.request_reset(request.email, client_ip, db)
+    await db.commit()
+
+    return SuccessResponse(data=_RESET_NEUTRAL_RESPONSE)
+
+
+@router.post(
+    "/reset-password",
+    response_model=SuccessResponse[dict[str, str]],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply a new password using a valid reset token (SHU-745).
+
+    On success, returns 200 and invalidates every existing JWT for the
+    user (the JWT auth middleware checks each access token's `iat` claim
+    against `users.password_changed_at` — bumping the latter forces every
+    open browser/device to log in fresh).
+
+    On expired token, returns 400 with a structured `code` of
+    ``PASSWORD_RESET_TOKEN_EXPIRED`` so the frontend can render a
+    one-click "Send a new reset link" CTA without asking the user to
+    retype their email.
+    """
+    email_backend = (get_settings_instance().email_backend or "disabled").strip().lower()
+    if email_backend == "disabled":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email backend is not configured; password reset is unavailable on this instance.",
+        )
+
+    from ..services.password_reset_service import (
+        PasswordPolicyError,
+        RateLimitedError,
+        TokenExpiredError,
+        TokenInvalidError,
+        get_password_reset_service_dependency,
+    )
+
+    service = get_password_reset_service_dependency()
+    try:
+        await service.complete_reset(request.token, request.new_password, db)
+    except RateLimitedError:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Please wait a minute and try again.",
+        )
+    except TokenExpiredError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "code": "PASSWORD_RESET_TOKEN_EXPIRED",
+                }
+            },
+        )
+    except TokenInvalidError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except PasswordPolicyError as e:
+        # Surface the validation errors as the detail string. Same
+        # convention the registration / change-password endpoints use.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    await db.commit()
+
+    return SuccessResponse(
+        data={
+            "message": "Password reset successfully. You can now log in with your new password.",
+        }
+    )
+
+
+@router.post(
+    "/resend-password-reset-from-token",
+    response_model=SuccessResponse[dict[str, str]],
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+async def resend_password_reset_from_token(
+    request: ResendPasswordResetFromTokenRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-issue a reset token using a (possibly expired) old token as
+    identity (SHU-745). Mirrors SHU-507's resend-verification-from-token.
+
+    Always returns 200 with a generic envelope — no enumeration regardless
+    of whether the token matched a real user, was already used, ineligible,
+    or rate-limited.
+    """
+    email_backend = (get_settings_instance().email_backend or "disabled").strip().lower()
+    if email_backend == "disabled":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email backend is not configured; password reset is unavailable on this instance.",
+        )
+
+    from ..services.password_reset_service import get_password_reset_service_dependency
+
+    service = get_password_reset_service_dependency()
+    await service.resend_from_token(request.token, db)
+    await db.commit()
+
+    return SuccessResponse(data=_RESEND_RESET_NEUTRAL_RESPONSE)
+
+
 @router.post(
     "/login/password", response_model=SuccessResponse[TokenResponse], dependencies=[Depends(_check_auth_rate_limit)]
 )
@@ -638,6 +826,43 @@ async def refresh_token(
 
         if not user or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+        # SHU-745: refuse to mint a fresh access token for a refresh token
+        # issued before the user's most recent password change. JWT
+        # middleware applies the same gate to access tokens; this is the
+        # corresponding rejection for refresh tokens (which have a much
+        # longer TTL and would otherwise let a stolen pre-reset session
+        # keep working until natural expiry).
+        if user.password_changed_at is not None:
+            from jose import jwt as _jwt
+
+            from ..auth.jwt_manager import is_token_revoked_by_password_change
+
+            try:
+                refresh_payload = _jwt.decode(
+                    request.refresh_token,
+                    user_service.jwt_manager.secret_key,
+                    algorithms=[user_service.jwt_manager.algorithm],
+                )
+                token_iat = refresh_payload.get("iat")
+            except Exception:
+                token_iat = None
+
+            if is_token_revoked_by_password_change(token_iat, user.password_changed_at):
+                logger.info(
+                    "Refresh blocked for %s (user %s): token predates password change",
+                    user.email,
+                    user.id,
+                    extra={
+                        "event": "refresh.blocked_password_changed",
+                        "user_id": user.id,
+                        "email": user.email,
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired due to password change. Please sign in again.",
+                )
 
         # SHU-507 defense-in-depth: refuse to mint a fresh access token for an
         # unverified password user when an email backend is configured. The
