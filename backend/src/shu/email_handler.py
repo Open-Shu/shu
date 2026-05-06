@@ -123,21 +123,40 @@ async def handle_email_job(job: Job) -> None:
         # mark the audit row failed so its terminal state matches the
         # queue's "give up" decision. Otherwise leave the row queued for
         # the next retry to update.
+        #
+        # The audit-row update is wrapped in its own try/except so a DB
+        # failure during the terminal mark-failed write cannot mask the
+        # original transport exception — the queue must see the actual
+        # transport error to make the right retry decision (and the
+        # operator must see it in logs to debug why send failed).
         if job.attempts >= job.max_attempts:
             error_label = (
                 exc.message  # type: ignore[attr-defined]
                 if isinstance(exc, EmailTransportError)
                 else str(exc)
             )
-            session_local = get_async_session_local()
-            async with session_local() as session:
-                await mark_audit_failed(
-                    session,
-                    audit_id,
-                    backend_name=backend.name,
-                    error_message=f"max retries exceeded: {error_label}",
+            try:
+                session_local = get_async_session_local()
+                async with session_local() as session:
+                    await mark_audit_failed(
+                        session,
+                        audit_id,
+                        backend_name=backend.name,
+                        error_message=f"max retries exceeded: {error_label}",
+                    )
+                    await session.commit()
+            except Exception as audit_exc:
+                logger.error(
+                    "Failed to mark audit row failed on terminal attempt; "
+                    "the row will remain in 'queued' state. Original transport "
+                    "error is re-raised below so the queue still sees it.",
+                    extra={
+                        "event": "email.terminal_audit_update_failed",
+                        "audit_id": audit_id,
+                        "audit_error": str(audit_exc),
+                        "original_error": error_label,
+                    },
                 )
-                await session.commit()
         raise
 
     session_local = get_async_session_local()

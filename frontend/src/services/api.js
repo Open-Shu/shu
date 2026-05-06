@@ -114,7 +114,8 @@ api.interceptors.response.use(
       requestUrl.includes('/auth/verify-email') ||
       requestUrl.includes('/auth/resend-verification') ||
       requestUrl.includes('/auth/request-password-reset') ||
-      requestUrl.includes('/auth/reset-password');
+      requestUrl.includes('/auth/reset-password') ||
+      requestUrl.includes('/auth/resend-password-reset-from-token');
     if (error.response?.status === 401 && isAuthEntryPoint) {
       return Promise.reject(error);
     }

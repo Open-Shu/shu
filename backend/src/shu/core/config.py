@@ -137,12 +137,12 @@ class Settings(BaseSettings):
     # users who check email infrequently, short enough that a leaked token
     # has bounded impact. Stored hashed; expiry is the only window an
     # attacker has even with a DB compromise.
-    email_verification_token_ttl_seconds: int = Field(86400, alias="SHU_EMAIL_VERIFICATION_TOKEN_TTL_SECONDS")
+    email_verification_token_ttl_seconds: int = Field(86400, gt=0, alias="SHU_EMAIL_VERIFICATION_TOKEN_TTL_SECONDS")
 
     # Password reset (SHU-745) token TTL. Default 1h — short to bound the
     # impact of an intercepted reset email. Same hashed-storage threat
     # model as the verification token.
-    password_reset_token_ttl_seconds: int = Field(3600, alias="SHU_PASSWORD_RESET_TOKEN_TTL_SECONDS")
+    password_reset_token_ttl_seconds: int = Field(3600, gt=0, alias="SHU_PASSWORD_RESET_TOKEN_TTL_SECONDS")
 
     # Public base URL of the frontend app (no trailing slash). Used to build
     # links that go INTO emails — verification, password reset, etc. Reads

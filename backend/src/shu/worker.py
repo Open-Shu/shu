@@ -1476,12 +1476,16 @@ Examples:
   python -m shu.worker --workload-types=LLM_WORKFLOW --poll-interval=0.5
 
 Valid workload types:
-  INGESTION       - Plugin feed ingestion (Gmail, Drive, Outlook, etc.)
-  INGESTION_OCR   - OCR/text extraction stage of document pipeline
-  INGESTION_EMBED - Embedding stage of document pipeline
-  LLM_WORKFLOW    - Scheduled experience execution and LLM workflows
-  MAINTENANCE     - Cleanup and scheduled maintenance tasks
-  PROFILING       - Document profiling with LLM calls
+  INGESTION          - Plugin feed ingestion (Gmail, Drive, Outlook, etc.)
+  INGESTION_CLASSIFY - Document classification stage of pipeline
+  INGESTION_TEXT     - Text extraction stage of pipeline
+  INGESTION_OCR      - OCR/text extraction stage of pipeline
+  INGESTION_EMBED    - Embedding stage of pipeline
+  LLM_WORKFLOW       - Scheduled experience execution and LLM workflows
+  MAINTENANCE        - Cleanup and scheduled maintenance tasks
+  PROFILING          - Document profiling with LLM calls
+  RE_EMBEDDING       - Re-embedding when an embedding model changes
+  EMAIL              - Outbound email dispatch (SHU-508)
         """,
     )
 

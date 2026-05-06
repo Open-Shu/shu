@@ -66,6 +66,14 @@ def mock_db() -> AsyncMock:
     db.flush = AsyncMock()
     db.rollback = AsyncMock()
 
+    # AsyncSession.begin_nested() returns an async context manager
+    # (AsyncSessionTransaction). Stub one whose body raises if needed
+    # in specific tests; default success path just no-ops on enter/exit.
+    nested_ctx = AsyncMock()
+    nested_ctx.__aenter__ = AsyncMock(return_value=nested_ctx)
+    nested_ctx.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested_ctx)
+
     # Default: no existing idempotency row
     result = MagicMock()
     result.scalar_one_or_none.return_value = None
@@ -153,7 +161,8 @@ class TestSendHappyPath:
         assert "&lt;script&gt;" in payload["body_html"]
 
         # Plain text does NOT escape — &, <, > must appear verbatim
-        assert "<script>" in payload["body_text"] or "&lt;" not in payload["body_text"]
+        assert "<script>" in payload["body_text"]
+        assert "&lt;" not in payload["body_text"]
         assert "a=1&b=2" in payload["body_text"]
 
     @pytest.mark.asyncio
@@ -272,7 +281,8 @@ class TestIdempotency:
         miss.scalar_one_or_none.return_value = None
         winner = MagicMock()
         winner.scalar_one_or_none.return_value = winner_id
-        # First execute (initial dedup): miss. Second (post-rollback lookup): winner.
+        # First execute (initial dedup): miss. Second (post-savepoint-rollback
+        # lookup): winner.
         mock_db.execute = AsyncMock(side_effect=[miss, winner])
         mock_db.flush = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("dup")))
 
@@ -285,7 +295,12 @@ class TestIdempotency:
         )
 
         assert returned == winner_id
-        mock_db.rollback.assert_awaited_once()
+        # The savepoint (begin_nested) rolls back automatically on
+        # IntegrityError; the OUTER session.rollback() must NOT be
+        # called — that would wipe unrelated caller mutations (user row,
+        # token row, etc.).
+        mock_db.rollback.assert_not_awaited()
+        mock_db.begin_nested.assert_called_once()
         # Original send's job was never enqueued because flush failed
         pending = await queue.peek(WorkloadType.EMAIL.queue_name, limit=10)
         assert pending == []

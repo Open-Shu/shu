@@ -391,18 +391,14 @@ async def verify_email(
     returns 400. Expired tokens also return 400 with a distinct message so the
     frontend can offer a "resend" CTA.
 
-    When the email backend is disabled, returns 503 — verification is not the
-    activation path in that deployment mode.
+    Note: this endpoint does NOT 503 when the effective email backend is
+    disabled. It only redeems an already-issued token — the redemption is
+    independent of whether the backend can currently send NEW emails. A
+    user who legitimately got a token (perhaps before an operator toggled
+    the backend off) still has a valid token; refusing to consume it
+    would strand them. The 503 gate lives only on issue/resend endpoints
+    that actually attempt outbound delivery.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
-    if email_backend == "disabled":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Email backend is not configured; admin activation is the gate on this instance.",
-        )
-
     service = get_email_verification_service_dependency()
     try:
         user = await service.verify_token(request.token, db)
@@ -600,16 +596,12 @@ async def reset_password(
     ``PASSWORD_RESET_TOKEN_EXPIRED`` so the frontend can render a
     one-click "Send a new reset link" CTA without asking the user to
     retype their email.
+
+    Note: this endpoint does NOT 503 when the effective email backend
+    is disabled. It only redeems an already-issued token; redemption is
+    independent of whether the backend can currently send NEW emails.
+    The 503 gate lives only on issue/resend endpoints.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
-    if email_backend == "disabled":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Email backend is not configured; password reset is unavailable on this instance.",
-        )
-
     from ..services.password_reset_service import (
         PasswordPolicyError,
         RateLimitedError,

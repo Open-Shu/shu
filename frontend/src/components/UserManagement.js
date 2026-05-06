@@ -836,7 +836,8 @@ const UserManagement = () => {
             they still will not be able to log in until they click the verification link sent to their address.
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            They already have a pending verification email. Consider waiting until they verify before activating.
+            Consider waiting until they verify before activating, or have them request a new verification email from the
+            sign-in screen if their original link expired.
           </Typography>
         </DialogContent>
         <DialogActions>

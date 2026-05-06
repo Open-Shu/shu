@@ -144,12 +144,18 @@ class EmailService:
             idempotency_key=idempotency_key,
         )
         db.add(audit)
+        # SAVEPOINT around the flush so an idempotency-conflict
+        # IntegrityError doesn't roll back the caller's outer transaction
+        # (which holds unrelated mutations — user rows, token rows, etc.).
+        # The nested transaction context rolls back to the SAVEPOINT on
+        # exception, leaving caller state intact.
         try:
-            await db.flush()
+            async with db.begin_nested():
+                await db.flush()
         except IntegrityError:
             # Lost a race against a concurrent send with the same idempotency
-            # key. Roll back our row and return the winner's id.
-            await db.rollback()
+            # key. The savepoint already rolled our row back; return the
+            # winner's id so callers see the same audit_id either way.
             existing = await self._find_existing(db, template_name, to, idempotency_key)
             if existing is None:
                 # This shouldn't happen — the unique constraint that fired

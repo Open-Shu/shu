@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage as MIMEEmailMessage
 from email.utils import make_msgid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import aiosmtplib
 
@@ -37,6 +37,11 @@ logger = get_logger(__name__)
 class SMTPEmailBackend:
     """Send email via SMTP using aiosmtplib."""
 
+    # Recognised tls_mode values. Anything else (typo, unknown) is
+    # normalised to "starttls" so a typo in SHU_SMTP_TLS_MODE cannot
+    # silently downgrade the connection to plaintext.
+    _VALID_TLS_MODES: ClassVar[frozenset[str]] = frozenset({"tls", "starttls", "none"})
+
     def __init__(
         self,
         host: str,
@@ -50,6 +55,13 @@ class SMTPEmailBackend:
         self._port = port
         self._user = user
         self._password = password
+        if tls_mode not in self._VALID_TLS_MODES:
+            logger.warning(
+                "Unrecognised SHU_SMTP_TLS_MODE=%r; falling back to starttls. " "Valid values: %s",
+                tls_mode,
+                ", ".join(sorted(self._VALID_TLS_MODES)),
+            )
+            tls_mode = "starttls"
         self._use_tls = tls_mode == "tls"
         self._start_tls = tls_mode == "starttls"
 

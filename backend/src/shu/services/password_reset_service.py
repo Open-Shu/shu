@@ -35,7 +35,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
@@ -181,7 +181,9 @@ class PasswordResetService:
             )
             return
 
-        stmt = select(User).where(User.email == email)
+        # Case-insensitive lookup — see the matching note in
+        # email_verification_service.resend.
+        stmt = select(User).where(func.lower(User.email) == email.lower())
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 

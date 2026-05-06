@@ -24,7 +24,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
@@ -248,7 +248,12 @@ class EmailVerificationService:
             )
             return
 
-        stmt = select(User).where(User.email == email)
+        # Case-insensitive lookup mirroring user_service.get_user_auth_method:
+        # email is stored verbatim at registration, but tooling and forms
+        # produce mixed-case input ("Mike@x.com" vs "mike@x.com"); the
+        # canonical lookup folds case so the resend doesn't 404 on a
+        # casing mismatch.
+        stmt = select(User).where(func.lower(User.email) == email.lower())
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 

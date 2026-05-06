@@ -16,7 +16,7 @@ import logging
 
 from shu.core.queue_backend import QueueBackend
 from shu.core.workload_routing import WorkloadType
-from shu.worker import _handle_email_job
+from shu.email_handler import handle_email_job
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +37,16 @@ async def process_email_queue_now(
     """
     queue_name = WorkloadType.EMAIL.queue_name
     processed = 0
+    drained_to_empty = False
 
     for _ in range(max_jobs):
         job = await queue.dequeue(queue_name)
         if job is None:
+            drained_to_empty = True
             break
 
         try:
-            await _handle_email_job(job)
+            await handle_email_job(job)
         except Exception:
             # Test mode: do not requeue. Re-raise so the test fails loudly
             # with the actual handler exception rather than seeing a "job
@@ -55,12 +57,19 @@ async def process_email_queue_now(
         await queue.acknowledge(job)
         processed += 1
 
-    if processed == max_jobs:
-        # Defensive cap hit — almost certainly a test bug (handler
-        # re-enqueueing or infinite loop). Surface as a hard error.
-        raise RuntimeError(
-            f"process_email_queue_now hit the {max_jobs}-job safety cap. "
-            "A handler is likely re-enqueueing jobs."
-        )
+    # Only error when the cap was hit AND the queue still had jobs left;
+    # a legitimate run of exactly max_jobs jobs that drained to empty
+    # should NOT raise. Peek once more to disambiguate.
+    if not drained_to_empty:
+        next_job = await queue.dequeue(queue_name)
+        if next_job is not None:
+            # Put it back-ish: reject without-requeue so the test fails on
+            # the cap rather than dropping a real job.
+            await queue.reject(next_job, requeue=False)
+            raise RuntimeError(
+                f"process_email_queue_now hit the {max_jobs}-job safety cap "
+                "and the queue still had jobs left. A handler is likely "
+                "re-enqueueing jobs."
+            )
 
     return processed

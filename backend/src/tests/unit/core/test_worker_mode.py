@@ -211,7 +211,7 @@ def test_parse_workload_types_all():
     """
     result = parse_workload_types(
         "INGESTION,INGESTION_CLASSIFY,INGESTION_TEXT,INGESTION_OCR,INGESTION_EMBED,"
-        "LLM_WORKFLOW,MAINTENANCE,PROFILING,RE_EMBEDDING"
+        "LLM_WORKFLOW,MAINTENANCE,PROFILING,RE_EMBEDDING,EMAIL"
     )
     assert result == set(WorkloadType)
 
