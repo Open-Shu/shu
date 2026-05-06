@@ -30,6 +30,11 @@ const usePersonalKB = () => {
   // Avoid concurrent ensure() calls racing to create two KBs.
   const ensurePromiseRef = useRef(null);
 
+  // Counter, not a boolean, so concurrent uploadFiles() calls (e.g. a retry
+  // fired while a drag-drop batch is mid-flight) don't clobber each other:
+  // `uploading` only goes false when the LAST in-flight upload settles.
+  const inFlightUploadsRef = useRef(0);
+
   // /auth/me serializes the user via User.to_dict() which exposes the id as
   // `user_id`, not `id`. Use the canonical resolveUserId() helper so we don't
   // silently fall through to undefined and skip the ownership match.
@@ -87,6 +92,7 @@ const usePersonalKB = () => {
       if (!files || files.length === 0) {
         return [];
       }
+      inFlightUploadsRef.current += 1;
       setUploading(true);
       try {
         const kb = await ensurePersonalKB();
@@ -135,7 +141,10 @@ const usePersonalKB = () => {
         setErrors((prev) => [...prev.filter((e) => !uploadedNames.has(e.filename)), ...newErrors]);
         return [];
       } finally {
-        setUploading(false);
+        inFlightUploadsRef.current = Math.max(0, inFlightUploadsRef.current - 1);
+        if (inFlightUploadsRef.current === 0) {
+          setUploading(false);
+        }
       }
     },
     [ensurePersonalKB, fetchPersonalKB]
