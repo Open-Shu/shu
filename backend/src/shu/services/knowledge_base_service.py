@@ -28,6 +28,26 @@ from ..services.policy_engine import POLICY_CACHE, enforce_pbac
 logger = get_logger(__name__)
 
 
+def _personal_kb_identity_hint(user) -> str | None:
+    """Return the first identifying token for *user* — first name, email local
+    part, or ``None`` if neither is usable. Shared precedence backing both
+    ``resolve_personal_kb_name`` and ``resolve_personal_kb_slug_token``.
+    """
+    name = (getattr(user, "name", None) or "").strip()
+    if name:
+        tokens = [t for t in name.split() if t]
+        if tokens:
+            return tokens[0]
+
+    email = (getattr(user, "email", None) or "").strip()
+    if email and "@" in email:
+        local = email.split("@", 1)[0].strip()
+        if local:
+            return local
+
+    return None
+
+
 def resolve_personal_kb_name(user) -> str:
     """Compute the display name for a user's Personal Knowledge KB.
 
@@ -61,6 +81,27 @@ def resolve_personal_kb_name(user) -> str:
             return f"{local}'s Knowledge"
 
     return "Personal Knowledge"
+
+
+def resolve_personal_kb_slug_token(user) -> str:
+    """Compute the readable token embedded in a personal KB's slug.
+
+    Personal-KB slug format: ``personal-knowledge-{token}-{owner_id}``. The
+    token gives admins authoring PBAC policies a hint about who the KB
+    belongs to without a separate UUID lookup, e.g.,
+    ``kb:personal-knowledge-eric-550e8400-...`` reads as Eric's KB.
+
+    Shares precedence with ``resolve_personal_kb_name`` (first name → email
+    local part) but slugified and length-capped. Falls back to ``"user"``
+    rather than letting the token be empty — an empty token would produce a
+    slug with a double hyphen.
+    """
+    hint = _personal_kb_identity_hint(user)
+    if hint:
+        token = slugify(hint, max_length=32)
+        if token:
+            return token
+    return "user"
 
 
 class KnowledgeBaseService:
@@ -499,6 +540,31 @@ class KnowledgeBaseService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def _get_personal_kb_by_owner(self, owner_id: str) -> KnowledgeBase | None:
+        """Look up a user's existing personal KB by ownership, not by slug.
+
+        Why owner-keyed and not slug-keyed: the personal-KB slug embeds the
+        user's identity token (a slugified first name or email-local part) at
+        creation time. If the user is later renamed, the recomputed slug
+        differs from the row's stored slug — a slug-based lookup would miss
+        the existing row and ``ensure_personal_knowledge_base`` would create
+        a second personal KB for the same user. Looking up by owner_id is
+        the stable invariant ("each user has at most one personal KB") and
+        keeps the slug stable across renames so existing PBAC policies
+        targeting the slug continue to match.
+
+        Uses ``.first()`` rather than ``scalar_one_or_none()`` so any
+        pre-existing duplicate set (e.g. from a buggy past session) doesn't
+        crash the lookup; we return one of them and let downstream cleanup
+        handle the rest.
+        """
+        stmt = select(KnowledgeBase).where(
+            KnowledgeBase.owner_id == owner_id,
+            KnowledgeBase.is_personal.is_(True),
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
+
     async def _return_or_heal_existing_personal_kb(self, existing: KnowledgeBase, owner_id: str) -> KnowledgeBase:
         """Idempotent return for ensure-style personal-KB creates.
 
@@ -508,7 +574,7 @@ class KnowledgeBaseService:
         fetches.
 
         Refuses to take over a row owned by a different user. The owner-scoped
-        slug ``personal-knowledge-{owner_id}`` makes ownership match by
+        slug ``personal-knowledge-{token}-{owner_id}`` makes ownership match by
         construction in the normal flow, but defense-in-depth: if a row with
         that slug exists with a different owner, raise ConflictError rather
         than healing.
@@ -577,23 +643,27 @@ class KnowledgeBaseService:
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)
             raise ShuException(f"Failed to create knowledge base: {e!s}", "KNOWLEDGE_BASE_CREATE_ERROR")
 
-    async def ensure_personal_knowledge_base(self, owner_id: str, display_name: str) -> KnowledgeBase:
+    async def ensure_personal_knowledge_base(self, owner_id: str, display_name: str, slug_token: str) -> KnowledgeBase:
         """Idempotently ensure the caller's Personal Knowledge KB exists.
 
         Returns the existing row if one already exists for ``owner_id`` (with
         ``is_personal`` healed if needed), otherwise creates and returns a new
         one. Safe to call from a hot path like the brain icon's first upload.
 
-        The slug is owner-scoped (``personal-knowledge-{owner_id}``), so two
-        users with the same display name each get their own KB. Personal KBs
-        get the divergent RAG profile (Full Document Escalation enabled) from
+        The slug is owner-scoped (``personal-knowledge-{slug_token}-{owner_id}``)
+        so two users with the same display name each get their own KB. The
+        embedded ``slug_token`` (a slugified first name or email-local part)
+        gives admins authoring PBAC policies a hint about the owner without a
+        UUID lookup. Personal KBs get the divergent RAG profile from
         ``settings.personal_kb_rag_fetch_full_documents``.
 
         Args:
-            owner_id: The caller's user ID; becomes both the slug suffix and
+            owner_id: The caller's user ID; becomes the slug suffix and
                 ``kb.owner_id``.
-            display_name: Resolved display name for the KB. Computed by the
-                router from the User row via ``resolve_personal_kb_name``.
+            display_name: Resolved display name. Computed by the router via
+                ``resolve_personal_kb_name``.
+            slug_token: Readable identifier embedded in the slug. Computed by
+                the router via ``resolve_personal_kb_slug_token``.
 
         Returns:
             The KnowledgeBase row (existing or newly created).
@@ -607,10 +677,14 @@ class KnowledgeBaseService:
         if not owner_id:
             raise ValidationError("Personal knowledge bases require an owner_id")
 
-        slug = f"personal-knowledge-{owner_id}"
+        slug = f"personal-knowledge-{slug_token}-{owner_id}"
 
         try:
-            existing = await self._get_kb_by_slug(slug)
+            # Look up by owner — see _get_personal_kb_by_owner for why we
+            # don't key on slug here. A user-rename changes slug_token, which
+            # would let a slug-keyed lookup miss the existing row and create
+            # a second personal KB for the same user.
+            existing = await self._get_personal_kb_by_owner(owner_id)
             if existing is not None:
                 return await self._return_or_heal_existing_personal_kb(existing, owner_id)
 
@@ -639,10 +713,9 @@ class KnowledgeBaseService:
             await self.db.rollback()
             constraint_name = (getattr(getattr(e, "orig", None), "constraint_name", "") or "").lower()
             if "slug" in constraint_name:
-                # Concurrent create raced us to the same slug. Re-fetch and
-                # heal-or-return; if the racing row was created by a different
-                # owner (defense in depth), the helper raises ConflictError.
-                existing = await self._get_kb_by_slug(slug)
+                # Concurrent ensure raced us to insert. Re-fetch by owner and
+                # heal-or-return so we don't loop on a phantom miss.
+                existing = await self._get_personal_kb_by_owner(owner_id)
                 if existing is not None:
                     return await self._return_or_heal_existing_personal_kb(existing, owner_id)
             logger.error(f"Unexpected integrity error creating personal KB: {e}", exc_info=True)

@@ -30,7 +30,11 @@ from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, R
 from ..services.document_service import DocumentService
 from ..services.ingestion_service import ingest_document as ingest_document_service
 from ..services.kb_import_export_service import KBImportExportService
-from ..services.knowledge_base_service import KnowledgeBaseService, resolve_personal_kb_name
+from ..services.knowledge_base_service import (
+    KnowledgeBaseService,
+    resolve_personal_kb_name,
+    resolve_personal_kb_slug_token,
+)
 from .dependencies import get_db
 
 logger = get_logger(__name__)
@@ -282,7 +286,10 @@ async def ensure_personal_knowledge_base(
     try:
         service = KnowledgeBaseService(db)
         display_name = resolve_personal_kb_name(current_user)
-        result = await service.ensure_personal_knowledge_base(owner_id=current_user.id, display_name=display_name)
+        slug_token = resolve_personal_kb_slug_token(current_user)
+        result = await service.ensure_personal_knowledge_base(
+            owner_id=current_user.id, display_name=display_name, slug_token=slug_token
+        )
         logger.info(
             "API: Resolved personal knowledge base",
             extra={"kb_id": result.id, "user_id": current_user.id},

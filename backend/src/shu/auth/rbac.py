@@ -198,13 +198,10 @@ async def require_kb_write_access(
     if kb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
 
-    # Fast paths: role and ownership (no extra DB calls)
     if current_user.has_role(UserRole.POWER_USER):
         return current_user
     if kb.owner_id is not None and str(kb.owner_id) == str(current_user.id):
         return current_user
-
-    # PBAC fallback: admin-authored policy may grant kb.write on this KB
     if await POLICY_CACHE.check(str(current_user.id), "kb.write", f"kb:{kb.slug}", db):
         return current_user
 
