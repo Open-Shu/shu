@@ -1,0 +1,13 @@
+{% extends "_base.txt" %}
+{%- block content %}
+Hi {{ name }},
+
+We received a request to reset the password for your {{ app_name }}
+account. Click the link below to choose a new password:
+
+{{ reset_url }}
+
+This link expires in {{ expires_in_hours }} hour{{ '' if expires_in_hours == 1 else 's' }}
+and can only be used once. If you didn't request a password reset, you can
+safely ignore this email — your current password will continue to work.
+{%- endblock %}

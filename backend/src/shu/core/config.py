@@ -97,6 +97,59 @@ class Settings(BaseSettings):
     # When true, new non-admin users are immediately active without admin approval.
     auto_activate_users: bool = Field(False, alias="SHU_AUTO_ACTIVATE_USERS")
 
+    # Email backend configuration
+    # Selects the outbound email transport. Valid values: disabled, console,
+    # smtp, resend, control_plane. Missing required config for the chosen
+    # backend silently degrades to "disabled" with a startup warning so the
+    # app still boots — preserves the existing "no email = admin activation"
+    # fallback behaviour.
+    email_backend: str = Field("disabled", alias="SHU_EMAIL_BACKEND")
+    email_from_address: str | None = Field(None, alias="SHU_EMAIL_FROM_ADDRESS")
+    email_from_name: str | None = Field(None, alias="SHU_EMAIL_FROM_NAME")
+
+    # SMTP backend (used when SHU_EMAIL_BACKEND=smtp)
+    smtp_host: str | None = Field(None, alias="SHU_SMTP_HOST")
+    smtp_port: int = Field(587, alias="SHU_SMTP_PORT")
+    smtp_user: str | None = Field(None, alias="SHU_SMTP_USER")
+    smtp_password: str | None = Field(None, alias="SHU_SMTP_PASSWORD")
+    # "starttls" (default, port 587), "tls" (implicit TLS, port 465), or "none"
+    # (plaintext, dev only). Any other value is treated as "starttls".
+    smtp_tls_mode: str = Field("starttls", alias="SHU_SMTP_TLS_MODE")
+
+    # Resend backend (used when SHU_EMAIL_BACKEND=resend)
+    resend_api_key: str | None = Field(None, alias="SHU_RESEND_API_KEY")
+
+    # NOTE: tenant → control-plane base URL is `cp_base_url` in
+    # billing/config.py (alias SHU_CP_BASE_URL), introduced by SHU-743.
+    # When SHU-749 ships the ControlPlaneEmailBackend it reads from there,
+    # not from this Settings class. Documenting here so future contributors
+    # do not re-add a duplicate field.
+
+    # Maximum concurrent in-flight email send jobs across all worker instances
+    # in this process. Mirrors the OCR / classify / text / profiling caps;
+    # bounds a runaway sender's footprint on the worker pool without
+    # affecting steady-state email throughput. Default 5 — half the default
+    # SHU_WORKER_CONCURRENCY=10 — leaves capacity for non-email workloads
+    # even under maximum email parallelism.
+    email_max_concurrent_jobs: int = Field(5, alias="SHU_EMAIL_MAX_CONCURRENT_JOBS")
+
+    # Email verification (SHU-507) token TTL. Default 24h — long enough for
+    # users who check email infrequently, short enough that a leaked token
+    # has bounded impact. Stored hashed; expiry is the only window an
+    # attacker has even with a DB compromise.
+    email_verification_token_ttl_seconds: int = Field(86400, gt=0, alias="SHU_EMAIL_VERIFICATION_TOKEN_TTL_SECONDS")
+
+    # Password reset (SHU-745) token TTL. Default 1h — short to bound the
+    # impact of an intercepted reset email. Same hashed-storage threat
+    # model as the verification token.
+    password_reset_token_ttl_seconds: int = Field(3600, gt=0, alias="SHU_PASSWORD_RESET_TOKEN_TTL_SECONDS")
+
+    # Public base URL of the frontend app (no trailing slash). Used to build
+    # links that go INTO emails — verification, password reset, etc. Reads
+    # the same env var as billing's app_base_url (which uses it for Stripe
+    # customer-portal returns) so operators only set one value.
+    app_base_url: str = Field("http://localhost:3000", alias="SHU_APP_BASE_URL")
+
     # Embedding configuration
     # WARNING: Changing SHU_EMBEDDING_MODEL is a DESTRUCTIVE operation.
     # All existing knowledge bases will be marked "stale" on next startup.

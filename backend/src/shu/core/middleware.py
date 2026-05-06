@@ -139,6 +139,20 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/register",
             "/api/v1/auth/login/password",
             "/api/v1/auth/refresh",
+            # SHU-507 verification flow — token in body is the credential,
+            # the visitor is by definition not authenticated yet (they
+            # cannot log in until verification succeeds). The endpoints
+            # have their own per-IP rate limiting via _check_auth_rate_limit.
+            "/api/v1/auth/verify-email",
+            "/api/v1/auth/resend-verification",
+            "/api/v1/auth/resend-verification-from-token",
+            # SHU-745 password reset flow — same rationale as the SHU-507
+            # endpoints above. Token in body is the credential; the visitor
+            # is by definition not authenticated yet (lost their password).
+            # All three have per-IP rate limiting via _check_auth_rate_limit.
+            "/api/v1/auth/request-password-reset",
+            "/api/v1/auth/reset-password",
+            "/api/v1/auth/resend-password-reset-from-token",
             "/api/v1/auth/google/login",
             "/api/v1/auth/google/exchange-login",
             "/api/v1/auth/microsoft/login",
@@ -288,6 +302,45 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         status_code=400,
                         content={"detail": "User account is inactive. Please contact an administrator for activation."},
                     )
+
+                # SHU-745: invalidate JWTs issued before the most recent
+                # password change. password_changed_at is set whenever the
+                # user resets via the /reset-password flow; when it is
+                # newer than the token's `iat`, the token (and any siblings
+                # that share an `iat` window) is rejected. This is the
+                # session-invalidation primitive — JWTs are otherwise
+                # stateless and there is no token blacklist or refresh-
+                # token table. Skipped for API-key auth (no JWT iat to
+                # compare against).
+                #
+                # Both sides are floored to integer seconds before
+                # comparison: JWT `iat` is serialised as integer seconds by
+                # the encoder, but `password_changed_at` is microsecond-
+                # precision. Without flooring, a token issued in the same
+                # wall-clock second as the reset (iat second == floor of
+                # password_changed_at) compares as strictly less and gets a
+                # false-positive 401 — the user's freshly-issued token
+                # bounces on its first request. Flooring keeps the rejection
+                # second-grained, which matches the resolution of the iat
+                # claim itself.
+                if not getattr(request.state, "api_key_authenticated", False):
+                    from ..auth.jwt_manager import is_token_revoked_by_password_change
+
+                    token_iat = user_data.get("iat") if isinstance(user_data, dict) else None
+                    if is_token_revoked_by_password_change(token_iat, current_user.password_changed_at):
+                        logger.info(
+                            "Token revoked by password change for %s",
+                            current_user.email,
+                            extra={
+                                "event": "auth.token_revoked_by_password_change",
+                                "user_id": current_user.id,
+                                "email": current_user.email,
+                            },
+                        )
+                        return JSONResponse(
+                            status_code=401,
+                            content={"detail": "Session expired due to password change. Please sign in again."},
+                        )
 
                 # Update last_login on first request of the day
                 await self._update_daily_login(db, current_user)

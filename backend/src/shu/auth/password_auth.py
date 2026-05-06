@@ -135,11 +135,21 @@ class PasswordAuthService:
         db: AsyncSession = None,
         admin_created: bool = False,
         flush_only: bool = False,
+        requires_email_verification: bool = False,
     ) -> User:
         """Create a new user with password authentication.
 
         ``flush_only=True`` flushes the row (acquiring the unique-email
-        constraint) without committing — used by the admin create path.
+        constraint) without committing — used by the admin create path
+        and by the SHU-507 verification path so issuing the verification
+        token can ride the same transaction.
+
+        ``requires_email_verification=True`` (SHU-507) creates the user
+        active-but-unverified — `is_active=True` so admin activation is
+        not needed, but `email_verified=False` blocks login until the
+        user clicks the verification link. Only meaningful for self-
+        registration; admin-created accounts are vouched-for and skip
+        verification entirely.
         """
         # Check if user already exists
         stmt = select(User).where(User.email == email)
@@ -149,22 +159,39 @@ class PasswordAuthService:
         if existing_user:
             raise ValueError(f"User with email {email} already exists")
 
-        # Security: Only admins can create users with custom roles or active status
-        if not admin_created:
-            role = "regular_user"  # Force regular_user role for self-registration
-            is_active = False  # Require admin activation
-        else:
+        # Decide is_active / email_verified per the SHU-507 state machine.
+        # See the SHU-507 ticket "State machine" section.
+        if admin_created:
             # Validate role for admin-created users
             try:
                 UserRole(role)
             except ValueError:
                 raise ValueError(f"Invalid role: {role}")
-            is_active = True  # Admin-created users are active by default
+            is_active = True
+            email_verified = True  # admin vouches for the email
+        elif requires_email_verification:
+            role = "regular_user"
+            # SHU_AUTO_ACTIVATE_USERS controls whether email verification
+            # alone is sufficient to log in. When False (default), the
+            # admin activation gate is independently enforced — the user
+            # must verify AND the admin must activate before login works.
+            # When True, the operator has explicitly trusted email
+            # verification as sufficient activation signal, and verifying
+            # flips the only remaining gate.
+            is_active = bool(self.settings.auto_activate_users)
+            email_verified = False
+        else:
+            role = "regular_user"  # Force regular_user role for self-registration
+            is_active = False  # Require admin activation (current legacy behaviour)
+            email_verified = False
 
         # Hash password
         password_hash = self._hash_password(password)
 
-        # Create user
+        # Create user. last_login reflects actual logins, not creation —
+        # leave NULL for verification-pending accounts (they cannot log in
+        # yet). The pre-existing admin-created path keeps last_login=now()
+        # to preserve the behaviour external admin reports may rely on.
         user = User(
             email=email,
             name=name,
@@ -172,7 +199,8 @@ class PasswordAuthService:
             auth_method="password",
             role=role,
             is_active=is_active,
-            last_login=datetime.now(UTC) if is_active else None,
+            email_verified=email_verified,
+            last_login=datetime.now(UTC) if (is_active and email_verified) else None,
         )
 
         db.add(user)
@@ -183,6 +211,8 @@ class PasswordAuthService:
             await db.refresh(user)
 
         status = "active" if is_active else "inactive (requires admin activation)"
+        if not email_verified and is_active:
+            status = "active (pending email verification)"
         logger.info(f"Created password-authenticated user: {email} with role: {role}, status: {status}")
         return user
 
@@ -221,6 +251,34 @@ class PasswordAuthService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User account is inactive. Please contact an administrator for activation.",
+            )
+
+        # SHU-507: email verification gate. Only enforced when the *effective*
+        # email backend is configured (not just the raw setting). Self-hosted
+        # deployments with email_backend=disabled — or with a configured
+        # backend that the factory downgraded to disabled because of missing
+        # config — rely on the `is_active` admin gate above as the sole login
+        # gate; email_verified stays False on those rows but is never checked
+        # here, so admin activation alone is sufficient (legacy behaviour
+        # preserved).
+        from ..core.email.factory import get_effective_email_backend_name
+
+        if get_effective_email_backend_name() != "disabled" and not user.email_verified:
+            logger.info(
+                "Login blocked for %s (user %s): email not verified yet",
+                user.email,
+                user.id,
+                extra={
+                    "event": "login.blocked_unverified",
+                    "user_id": user.id,
+                    "email": user.email,
+                },
+            )
+            # Distinct error message from the inactive case so the frontend
+            # can offer a "resend verification" CTA. Same status code (400).
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please verify your email address. Check your inbox or use the resend link.",
             )
 
         # Update last login

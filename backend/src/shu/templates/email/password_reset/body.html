@@ -1,0 +1,27 @@
+{% extends "_base.html" %}
+{% block title %}Reset your {{ app_name }} password{% endblock %}
+{% block content %}
+<h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 600;">
+  Reset your password
+</h1>
+<p style="margin: 0 0 16px 0; line-height: 1.5;">
+  Hi {{ name }}, we received a request to reset the password for your
+  {{ app_name }} account.
+</p>
+<p style="margin: 24px 0;">
+  <a href="{{ reset_url }}"
+     style="display: inline-block; background-color: #1a1a1a; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+    Choose a new password
+  </a>
+</p>
+<p style="margin: 16px 0; color: #555555; font-size: 14px; line-height: 1.5;">
+  Or paste this link into your browser:<br>
+  <a href="{{ reset_url }}" style="color: #555555; word-break: break-all;">{{ reset_url }}</a>
+</p>
+<p style="margin: 16px 0; color: #888888; font-size: 13px;">
+  This link expires in {{ expires_in_hours }} hour{{ '' if expires_in_hours == 1 else 's' }}
+  and can only be used once. If you didn&apos;t request a password reset,
+  you can safely ignore this email &mdash; your current password will
+  continue to work.
+</p>
+{% endblock %}

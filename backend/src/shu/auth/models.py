@@ -1,10 +1,11 @@
 """User models for Shu authentication system."""
 
+from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, String
+from sqlalchemy import Boolean, Column, Index, String, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 
 from ..models.base import BaseModel
 
@@ -22,6 +23,17 @@ class User(BaseModel):
 
     __tablename__ = "users"
 
+    __table_args__ = (
+        # Partial index for the SHU-507 verification lookup. The hash is
+        # NULL in the steady state, so a full index is mostly empty rows;
+        # the partial form keeps it small. Mirrors migration 008_0014.
+        Index(
+            "ix_users_email_verification_token_hash",
+            "email_verification_token_hash",
+            postgresql_where=text("email_verification_token_hash IS NOT NULL"),
+        ),
+    )
+
     email = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
     role = Column(String, default=UserRole.REGULAR_USER.value)  # Store as string
@@ -35,6 +47,27 @@ class User(BaseModel):
     password_hash = Column(String(255), nullable=True)  # Nullable for Google OAuth users
     auth_method = Column(String(50), nullable=False, default="google")  # 'google' or 'password'
     must_change_password = Column(Boolean, default=False, nullable=False, server_default="false")
+
+    # Email verification (SHU-507) — separate from is_active. is_active is the
+    # admin-controlled gate; email_verified is the user-controlled gate proving
+    # ownership of the address. Login fails fast on is_active first, then on
+    # email_verified (only when an email backend is configured).
+    email_verified = Column(Boolean, default=False, nullable=False, server_default="false")
+    # sha256 hex of the plaintext token. Plaintext only ever appears in the
+    # verification email. NULL when no verification is pending.
+    email_verification_token_hash = Column(String(64), nullable=True)
+    email_verification_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    # Session-invalidation primitive for password reset (SHU-745). Set to
+    # `now()` whenever the user's password changes (see the
+    # `_bump_password_changed_at` validator below). The JWT auth middleware
+    # rejects access tokens whose `iat` claim is older than this column,
+    # which has the effect of forcibly logging the user out of every
+    # browser/device the next time they hit any protected endpoint.
+    # NULL means "no invalidation gate" — preserves the pre-SHU-745
+    # session validity for accounts that have never had their password
+    # changed.
+    password_changed_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     # Relationships
     preferences = relationship("UserPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -58,6 +91,36 @@ class User(BaseModel):
         foreign_keys="ProviderCredential.user_id",
         cascade="all, delete-orphan",
     )
+
+    @validates("password_hash")
+    def _bump_password_changed_at(self, _key: str, new_value: str | None) -> str | None:
+        """Bump ``password_changed_at`` whenever ``password_hash`` is set
+        via the ORM (SHU-745).
+
+        This fires on every attribute-set of ``password_hash`` — including
+        initial registration, change_password, admin reset_password, the
+        SHU-745 reset flow, and any future code path that mutates the
+        column. The DB-enforced effect is that every JWT issued *before*
+        the password change is rejected by the iat-vs-password_changed_at
+        gate in the auth middleware on its next request, forcibly signing
+        the user out of every browser/device.
+
+        Centralising this on the model means callers cannot forget — the
+        invariant survives refactors that move password updates between
+        services. SQLAlchemy's `@validates` does not fire on attribute
+        loads from the database, so reads stay free of side effects.
+
+        Bulk-INSERTs that go through SQL directly (alembic backfills,
+        seeders, raw `op.execute`) bypass the ORM and therefore bypass
+        this hook — preserving the migration's "NULL means no gate"
+        contract for existing rows.
+        """
+        # `now()` here is wall-clock-precision; the JWT iat-comparison
+        # gate floors both sides to integer seconds, so a token issued
+        # in the same wall-clock second as a password change still
+        # validates (see is_token_revoked_by_password_change).
+        self.password_changed_at = datetime.now(UTC)
+        return new_value
 
     def __repr__(self) -> str:
         """Represent user as string."""
@@ -94,6 +157,7 @@ class User(BaseModel):
             "role": self.role,
             "picture_url": self.picture_url,
             "is_active": self.is_active,
+            "email_verified": self.email_verified,
             "auth_method": self.auth_method,
             "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at is not None else None,

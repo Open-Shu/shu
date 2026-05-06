@@ -32,12 +32,14 @@ from .document import (
     ParticipantRole,
     RelationalContext,
 )
+from .email_send_log import EmailSendLog
 from .experience import Experience, ExperienceRun, ExperienceStep
 from .knowledge_base import KnowledgeBase
 from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message, ModelType
 from .mcp_server_connection import McpServerConnection
 from .model_configuration import ModelConfiguration
 from .model_configuration_kb_prompt import ModelConfigurationKBPrompt
+from .password_reset_token import PasswordResetToken
 from .plugin_execution import PluginExecution
 from .plugin_feed import PluginFeed
 from .plugin_registry import PluginDefinition
@@ -79,6 +81,7 @@ __all__ = [
     "DocumentParticipant",
     "DocumentProject",
     "DocumentQuery",
+    "EmailSendLog",
     "EntityType",
     "Experience",
     "ExperienceRun",
@@ -95,6 +98,7 @@ __all__ = [
     "ModelType",
     "ParticipantEntityType",
     "ParticipantRole",
+    "PasswordResetToken",
     "PluginDefinition",
     "PluginStorage",
     "Prompt",

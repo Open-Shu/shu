@@ -110,6 +110,12 @@ class WorkloadCapacityLimiter:
         if settings.profiling_max_concurrent_tasks > 0:
             limits[WorkloadType.PROFILING] = settings.profiling_max_concurrent_tasks
 
+        # Email concurrency limit (SHU-508): bounds a runaway sender's
+        # footprint on the worker pool. Default 5 — half of the default
+        # SHU_WORKER_CONCURRENCY=10 — so email never starves other workloads.
+        if settings.email_max_concurrent_jobs > 0:
+            limits[WorkloadType.EMAIL] = settings.email_max_concurrent_jobs
+
         return cls(limits=limits)
 
     async def acquire(self, work_type: WorkloadType) -> bool:

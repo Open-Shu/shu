@@ -1,0 +1,1 @@
+Reset your {{ app_name }} password

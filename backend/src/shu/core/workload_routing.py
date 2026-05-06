@@ -79,6 +79,14 @@ class WorkloadType(Enum):
             Examples: Re-generating embeddings for all chunks, synopses,
             and queries in a KB after the system embedding model changes.
 
+        EMAIL: Outbound transactional and operator-initiated email sends.
+            Examples: account verification, password reset, broadcast.
+            I/O-bound (SMTP / Resend / control-plane HTTP), low volume,
+            latency-sensitive (user-facing). Capped at
+            SHU_EMAIL_MAX_CONCURRENT_JOBS (default 5) to bound a runaway
+            sender's worker-pool footprint without affecting steady-state
+            email throughput.
+
     Example:
         # Scale ingestion workers independently
         # docker-compose.yml:
@@ -101,6 +109,7 @@ class WorkloadType(Enum):
     MAINTENANCE = "maintenance"
     PROFILING = "profiling"
     RE_EMBEDDING = "re_embedding"
+    EMAIL = "email"
 
     @property
     def queue_name(self) -> str:

@@ -50,8 +50,15 @@ export const AuthProvider = ({ children }) => {
           setToken(null);
           setUser(null);
 
-          // If we're not already on the auth page, redirect there
-          if (!window.location.pathname.includes('/auth')) {
+          // Don't redirect away from public unauthenticated recovery
+          // routes — /verify-email and /reset-password identify the
+          // visitor by the token in their query string, so a stale
+          // session JWT being invalid is irrelevant. The matching
+          // routes in App.js render these pages without auth.
+          const path = window.location.pathname;
+          const isPublicAuthPath =
+            path.includes('/auth') || path.startsWith('/verify-email') || path.startsWith('/reset-password');
+          if (!isPublicAuthPath) {
             log.info('Redirecting to auth due to invalid token');
             window.location.href = '/auth';
           }
@@ -144,16 +151,110 @@ export const AuthProvider = ({ children }) => {
         role,
       });
 
-      // Backend returns a success message and pending activation status; no tokens
+      // Backend returns a success envelope with a `status` indicating which
+      // gate the new account must clear (SHU-507):
+      //   - "activated"                  → admin / first-user, can log in immediately
+      //   - "pending_email_verification" → click the link in the verification email
+      //   - "pending_admin_activation"   → email backend disabled, admin must activate
       const responseData = extractDataFromResponse(response);
-      if (responseData?.status !== 'pending_activation') {
+      const knownStatuses = new Set(['activated', 'pending_email_verification', 'pending_admin_activation']);
+      if (!knownStatuses.has(responseData?.status)) {
         log.warn('Unexpected register response payload', responseData);
       }
 
-      // Do not set tokens or user; require login after activation by admin
+      // Do not set tokens or user; the user must log in after clearing whichever
+      // gate the response indicates.
       return responseData;
     } catch (error) {
       throw new Error(error.response?.data?.error?.message || 'Registration failed');
+    }
+  };
+
+  const verifyEmail = async (token) => {
+    try {
+      const response = await api.post('/auth/verify-email', { token });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      // Backend wraps every HTTPException into the standard envelope at
+      // main.py:http_exception_handler:
+      //   { "error": { "code": <HTTP_xxx | structured>, "message": <string> } }
+      // The verify-email endpoint surfaces a structured `code` on the
+      // expired branch (VERIFICATION_TOKEN_EXPIRED) so the page can switch
+      // to the token-based resend UX (no email entry — the token IS the
+      // identity, we hand it back to the server). Generic HTTP_xxx codes
+      // are filtered out so the page falls through to the unknown-token UI.
+      const envelope = error.response?.data?.error;
+      const message = envelope?.message || 'Email verification failed';
+      const code = envelope?.code && !envelope.code.startsWith('HTTP_') ? envelope.code : null;
+      const err = new Error(typeof message === 'string' ? message : 'Email verification failed');
+      err.code = code;
+      throw err;
+    }
+  };
+
+  const resendVerification = async (email) => {
+    // Always resolves with the generic success envelope — backend does not
+    // distinguish unknown / verified / rate-limited cases (no enumeration).
+    try {
+      const response = await api.post('/auth/resend-verification', { email });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Resend verification failed');
+    }
+  };
+
+  const resendVerificationFromToken = async (token) => {
+    // Token-based resend: caller passes the original (possibly expired)
+    // token and the server resolves the user from its hash. No email
+    // address required from the user. Used by the verify-email expired
+    // branch — see SHU-507.
+    try {
+      const response = await api.post('/auth/resend-verification-from-token', { token });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Resend verification failed');
+    }
+  };
+
+  const requestPasswordReset = async (email) => {
+    // Always resolves with a generic envelope — backend does not
+    // distinguish unknown / SSO-only / inactive / rate-limited (no
+    // enumeration). SHU-745.
+    try {
+      const response = await api.post('/auth/request-password-reset', { email });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Could not request a password reset.');
+    }
+  };
+
+  const resetPassword = async (token, newPassword) => {
+    // SHU-745. Mirrors verifyEmail's structured-error contract: on the
+    // expired branch the backend returns code=PASSWORD_RESET_TOKEN_EXPIRED
+    // so the page can render a one-click "send a new reset link" CTA
+    // (no retype). Auto-generated HTTP_xxx codes are filtered out.
+    try {
+      const response = await api.post('/auth/reset-password', { token, new_password: newPassword });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      const envelope = error.response?.data?.error;
+      const message = envelope?.message || 'Password reset failed';
+      const code = envelope?.code && !envelope.code.startsWith('HTTP_') ? envelope.code : null;
+      const err = new Error(typeof message === 'string' ? message : 'Password reset failed');
+      err.code = code;
+      throw err;
+    }
+  };
+
+  const resendPasswordResetFromToken = async (token) => {
+    // SHU-745. Token-as-identity recovery for an expired reset link —
+    // hands the original (stale) token back, server resolves the user
+    // from its hash and issues a fresh token. No email retype.
+    try {
+      const response = await api.post('/auth/resend-password-reset-from-token', { token });
+      return extractDataFromResponse(response);
+    } catch (error) {
+      throw new Error(error.response?.data?.error?.message || 'Could not resend reset email.');
     }
   };
 
@@ -220,8 +321,14 @@ export const AuthProvider = ({ children }) => {
     log.warn('Authentication error detected - logging out user');
     logout();
 
-    // Redirect to auth if not already there
-    if (!window.location.pathname.includes('/auth')) {
+    // Same exemption as initAuth: public unauthenticated recovery routes
+    // identify the visitor by the URL token, not by session, so they
+    // should not be redirected to /auth even when an invalid JWT was
+    // detected on a parallel API call.
+    const path = window.location.pathname;
+    const isPublicAuthPath =
+      path.includes('/auth') || path.startsWith('/verify-email') || path.startsWith('/reset-password');
+    if (!isPublicAuthPath) {
       window.location.href = '/auth';
     }
   };
@@ -262,6 +369,12 @@ export const AuthProvider = ({ children }) => {
     login,
     loginWithPassword,
     register,
+    verifyEmail,
+    resendVerification,
+    resendVerificationFromToken,
+    requestPasswordReset,
+    resetPassword,
+    resendPasswordResetFromToken,
     refreshToken,
     refreshUser,
     logout,
