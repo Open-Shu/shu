@@ -670,8 +670,6 @@ class KnowledgeBaseService:
 
         Raises:
             ValidationError: ``owner_id`` is missing.
-            ConflictError: a row with the owner-scoped slug exists with a
-                different owner_id.
 
         """
         if not owner_id:
