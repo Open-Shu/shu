@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
-import usePersonalKB, { resolvePersonalKBName } from '../usePersonalKB';
+import usePersonalKB from '../usePersonalKB';
 
 vi.mock('../../../../../hooks/useAuth', () => ({
   useAuth: vi.fn(),
@@ -9,7 +9,7 @@ vi.mock('../../../../../hooks/useAuth', () => ({
 vi.mock('../../../../../services/api', () => ({
   knowledgeBaseAPI: {
     list: vi.fn(),
-    create: vi.fn(),
+    ensurePersonal: vi.fn(),
     uploadDocuments: vi.fn(),
   },
   // Pass-through helpers that mirror what the production helpers do for the
@@ -44,111 +44,10 @@ import { useAuth } from '../../../../../hooks/useAuth';
 import { knowledgeBaseAPI } from '../../../../../services/api';
 import { log } from '../../../../../utils/log';
 
-describe('resolvePersonalKBName', () => {
-  describe('happy paths — name precedence', () => {
-    it('uses first + last name for a two-token name', () => {
-      expect(resolvePersonalKBName({ name: 'Eric Longville' })).toBe("Eric Longville's Knowledge");
-    });
-
-    it('uses single-token names as-is', () => {
-      expect(resolvePersonalKBName({ name: 'Madonna' })).toBe("Madonna's Knowledge");
-    });
-
-    it('drops middle names; keeps first + last', () => {
-      expect(resolvePersonalKBName({ name: 'Eric David Longville' })).toBe("Eric Longville's Knowledge");
-    });
-
-    it('preserves unicode in first and last names', () => {
-      expect(resolvePersonalKBName({ name: 'José García' })).toBe("José García's Knowledge");
-    });
-
-    it('strips leading and trailing whitespace before tokenizing', () => {
-      expect(resolvePersonalKBName({ name: '  Eric Longville  ' })).toBe("Eric Longville's Knowledge");
-    });
-
-    it('treats internal multiple spaces as a single delimiter', () => {
-      expect(resolvePersonalKBName({ name: 'Eric    Longville' })).toBe("Eric Longville's Knowledge");
-    });
-
-    it('prefers name over email when both are present', () => {
-      expect(resolvePersonalKBName({ name: 'Eric Longville', email: 'someone-else@example.com' })).toBe(
-        "Eric Longville's Knowledge"
-      );
-    });
-  });
-
-  describe('email fallback', () => {
-    it('uses email local part when name is empty', () => {
-      expect(resolvePersonalKBName({ name: '', email: 'user42@example.com' })).toBe("user42's Knowledge");
-    });
-
-    it('uses email local part when name is missing entirely', () => {
-      expect(resolvePersonalKBName({ email: 'j.doe@example.com' })).toBe("j.doe's Knowledge");
-    });
-
-    it('uses email local part when name is whitespace only', () => {
-      expect(resolvePersonalKBName({ name: '   ', email: 'eric@openshu.ai' })).toBe("eric's Knowledge");
-    });
-
-    it('keeps generic-looking local parts (admins still need to identify owner)', () => {
-      expect(resolvePersonalKBName({ email: 'user1234@example.com' })).toBe("user1234's Knowledge");
-    });
-
-    it('uses local part even when no domain follows the @', () => {
-      // 'foo@' contains '@' and split[0] = 'foo' (non-empty)
-      expect(resolvePersonalKBName({ email: 'foo@' })).toBe("foo's Knowledge");
-    });
-  });
-
-  describe('final fallback to "Personal Knowledge"', () => {
-    it('handles null user', () => {
-      expect(resolvePersonalKBName(null)).toBe('Personal Knowledge');
-    });
-
-    it('handles undefined user', () => {
-      expect(resolvePersonalKBName(undefined)).toBe('Personal Knowledge');
-    });
-
-    it('handles empty user object', () => {
-      expect(resolvePersonalKBName({})).toBe('Personal Knowledge');
-    });
-
-    it('handles null name and null email', () => {
-      expect(resolvePersonalKBName({ name: null, email: null })).toBe('Personal Knowledge');
-    });
-
-    it('falls back when email has no @', () => {
-      expect(resolvePersonalKBName({ email: 'no-at-sign' })).toBe('Personal Knowledge');
-    });
-
-    it('falls back when email has empty local part', () => {
-      expect(resolvePersonalKBName({ email: '@example.com' })).toBe('Personal Knowledge');
-    });
-
-    it('falls back when email local part is whitespace only', () => {
-      expect(resolvePersonalKBName({ email: '   @example.com' })).toBe('Personal Knowledge');
-    });
-
-    it('falls back when both name and email are present but unusable', () => {
-      expect(resolvePersonalKBName({ name: '   ', email: '@example.com' })).toBe('Personal Knowledge');
-    });
-  });
-
-  describe('garbage input — never throws', () => {
-    it('does not throw on numeric name', () => {
-      // Defensive: even unexpected types should be coerced gracefully.
-      expect(() => resolvePersonalKBName({ name: 123 })).not.toThrow();
-    });
-
-    it('does not throw on boolean fields', () => {
-      expect(() => resolvePersonalKBName({ name: false, email: true })).not.toThrow();
-    });
-
-    it('does not throw on array name', () => {
-      expect(() => resolvePersonalKBName({ name: ['Eric'] })).not.toThrow();
-    });
-  });
-});
+// Display-name precedence (firstName lastName / firstName / email local part /
+// fallback) is now derived server-side by `resolve_personal_kb_name` in the
+// backend service. Tests for that logic live in
+// `backend/src/tests/unit/services/test_knowledge_base_service.py`.
 
 describe('usePersonalKB hook', () => {
   const TEST_USER_ID = 'user-test-1';
@@ -206,16 +105,16 @@ describe('usePersonalKB hook', () => {
 
   it('auto-provisions a Personal KB on first upload when none exists', async () => {
     knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([]));
-    const created = {
+    const ensured = {
       id: 'kb-new',
       name: "Test User's Knowledge",
       is_personal: true,
       owner_id: TEST_USER_ID,
       document_count: 0,
     };
-    knowledgeBaseAPI.create.mockResolvedValueOnce(createResponse(created));
+    knowledgeBaseAPI.ensurePersonal.mockResolvedValueOnce(createResponse(ensured));
     knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(uploadResponse([{ filename: 'doc.pdf', success: true }]));
-    knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([{ ...created, document_count: 1 }]));
+    knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([{ ...ensured, document_count: 1 }]));
 
     const { result } = renderHook(() => usePersonalKB());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -226,18 +125,20 @@ describe('usePersonalKB hook', () => {
       await result.current.uploadFiles([file]);
     });
 
-    expect(knowledgeBaseAPI.create).toHaveBeenCalledTimes(1);
-    expect(knowledgeBaseAPI.create).toHaveBeenCalledWith({ name: "Test User's Knowledge", is_personal: true });
+    // No client-supplied body — server derives is_personal and the display
+    // name from the authenticated user's identity.
+    expect(knowledgeBaseAPI.ensurePersonal).toHaveBeenCalledTimes(1);
+    expect(knowledgeBaseAPI.ensurePersonal).toHaveBeenCalledWith();
     expect(result.current.errors).toEqual([]);
   });
 
-  it('deduplicates concurrent ensurePersonalKB calls — only one create', async () => {
+  it('deduplicates concurrent ensurePersonalKB calls — only one ensure call', async () => {
     knowledgeBaseAPI.list.mockResolvedValueOnce(listResponse([]));
 
-    let resolveCreate;
-    knowledgeBaseAPI.create.mockReturnValueOnce(
+    let resolveEnsure;
+    knowledgeBaseAPI.ensurePersonal.mockReturnValueOnce(
       new Promise((resolve) => {
-        resolveCreate = resolve;
+        resolveEnsure = resolve;
       })
     );
     knowledgeBaseAPI.uploadDocuments.mockResolvedValue(uploadResponse([{ filename: 'a.pdf', success: true }]));
@@ -259,13 +160,13 @@ describe('usePersonalKB hook', () => {
     const fileA = new File(['a'], 'a.pdf');
     const fileB = new File(['b'], 'b.pdf');
 
-    // Fire two upload calls before create resolves.
+    // Fire two upload calls before ensure resolves.
     let p1, p2;
     await act(async () => {
       p1 = result.current.uploadFiles([fileA]);
       p2 = result.current.uploadFiles([fileB]);
-      // Now resolve the in-flight create so both pending uploads can proceed.
-      resolveCreate(
+      // Now resolve the in-flight ensure so both pending uploads can proceed.
+      resolveEnsure(
         createResponse({
           id: 'kb-new',
           name: "Test User's Knowledge",
@@ -278,8 +179,8 @@ describe('usePersonalKB hook', () => {
     });
 
     // Despite two concurrent uploadFiles calls, ensurePersonalKB should have
-    // dedup'd to a single create.
-    expect(knowledgeBaseAPI.create).toHaveBeenCalledTimes(1);
+    // dedup'd to a single ensure call.
+    expect(knowledgeBaseAPI.ensurePersonal).toHaveBeenCalledTimes(1);
   });
 
   it('records per-file errors on partial failure and clears them on retry success', async () => {

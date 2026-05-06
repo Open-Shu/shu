@@ -4,46 +4,6 @@ import { useAuth } from '../../../../hooks/useAuth';
 import { log } from '../../../../utils/log';
 import { resolveUserId } from '../../../../utils/userHelpers';
 
-const FALLBACK_PERSONAL_KB_NAME = 'Personal Knowledge';
-
-/**
- * Resolve the display name for a user's Personal Knowledge KB.
- *
- * Precedence (always prefers something identifying so admins viewing the
- * full KB list can tell whose is whose):
- *   1. Multi-token name → `${firstName} ${lastName}'s Knowledge` using the
- *      first and last whitespace-delimited tokens (middle names dropped).
- *      Disambiguates two users sharing a first name — the common case.
- *   2. Single-token name → `${firstName}'s Knowledge`.
- *   3. `${emailLocalPart}'s Knowledge` — even if generic-looking ("user42"),
- *      because admins still need to identify the owner.
- *   4. "Personal Knowledge" — only when neither name nor email is present.
- */
-export const resolvePersonalKBName = (user) => {
-  // Coerce to String() so unexpected non-string inputs (e.g., numeric names
-  // from a malformed user object) don't blow up on `.trim()`.
-  const name = String(user?.name ?? '').trim();
-  if (name) {
-    const tokens = name.split(/\s+/).filter(Boolean);
-    const firstName = tokens[0];
-    if (firstName) {
-      const lastName = tokens.length > 1 ? tokens[tokens.length - 1] : null;
-      if (lastName) {
-        return `${firstName} ${lastName}'s Knowledge`;
-      }
-      return `${firstName}'s Knowledge`;
-    }
-  }
-  const email = String(user?.email ?? '').trim();
-  if (email && email.includes('@')) {
-    const localPart = email.split('@')[0].trim();
-    if (localPart) {
-      return `${localPart}'s Knowledge`;
-    }
-  }
-  return FALLBACK_PERSONAL_KB_NAME;
-};
-
 // Match BOTH the personal flag AND ownership. Admin users see every KB in the
 // system via the list endpoint (default-allow filtering), so a bare
 // kb.is_personal lookup would return whichever personal KB sorted first —
@@ -100,18 +60,20 @@ const usePersonalKB = () => {
     if (ensurePromiseRef.current) {
       return ensurePromiseRef.current;
     }
-    const name = resolvePersonalKBName(user);
+    // Server-side idempotent ensure. The display name is derived from the
+    // user's identity by the backend (mirrors the precedence we used to do
+    // here client-side); no body needed.
     const promise = (async () => {
-      const response = await knowledgeBaseAPI.create({ name, is_personal: true });
-      const created = extractDataFromResponse(response);
-      setPersonalKB(created);
-      return created;
+      const response = await knowledgeBaseAPI.ensurePersonal();
+      const kb = extractDataFromResponse(response);
+      setPersonalKB(kb);
+      return kb;
     })().finally(() => {
       ensurePromiseRef.current = null;
     });
     ensurePromiseRef.current = promise;
     return promise;
-  }, [personalKB, user]);
+  }, [personalKB]);
 
   /**
    * Upload an array of File objects to the user's Personal Knowledge KB.

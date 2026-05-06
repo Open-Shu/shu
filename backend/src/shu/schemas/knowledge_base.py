@@ -180,16 +180,12 @@ class KnowledgeBaseBase(BaseModel):
 
 
 class KnowledgeBaseCreate(KnowledgeBaseBase):
-    """Schema for creating a new knowledge base."""
+    """Schema for creating a new (non-personal) knowledge base.
 
-    is_personal: bool = Field(
-        False,
-        description=(
-            "Marks this KB as the user's auto-provisioned Personal Knowledge "
-            "(SHU-742). When True, the service applies Personal-specific RAG "
-            "defaults from config.py (e.g., Full Document Escalation enabled)."
-        ),
-    )
+    Personal KBs are provisioned via ``POST /knowledge-bases/personal`` and
+    don't go through this schema. The ``is_personal`` flag is server-controlled
+    per endpoint, not a client-supplied field.
+    """
 
 
 class KnowledgeBaseUpdate(BaseModel):

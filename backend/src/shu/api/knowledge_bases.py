@@ -30,7 +30,7 @@ from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, R
 from ..services.document_service import DocumentService
 from ..services.ingestion_service import ingest_document as ingest_document_service
 from ..services.kb_import_export_service import KBImportExportService
-from ..services.knowledge_base_service import KnowledgeBaseService
+from ..services.knowledge_base_service import KnowledgeBaseService, resolve_personal_kb_name
 from .dependencies import get_db
 
 logger = get_logger(__name__)
@@ -208,53 +208,98 @@ async def get_knowledge_base(
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
-@router.post("")
+def _serialize_kb_create_response(result) -> dict:
+    """Shape a KnowledgeBase row into the create-endpoint envelope payload."""
+    return {
+        "id": result.id,
+        "slug": result.slug,
+        "name": result.name,
+        "description": result.description,
+        "sync_enabled": result.sync_enabled,
+        "embedding_model": result.embedding_model,
+        "chunk_size": result.chunk_size,
+        "chunk_overlap": result.chunk_overlap,
+        "status": result.status,
+        "document_count": result.document_count or 0,
+        "total_chunks": result.total_chunks or 0,
+        "is_personal": result.is_personal,
+        "owner_id": result.owner_id,
+        "last_sync_at": result.last_sync_at.isoformat() if result.last_sync_at is not None else None,
+        "created_at": result.created_at.isoformat(),
+        "updated_at": result.updated_at.isoformat(),
+    }
+
+
+@router.post(
+    "",
+    summary="Create a knowledge base (power user / admin only)",
+    description=(
+        "Create a new non-personal knowledge base. Restricted to power_user and "
+        "admin roles. Regular users provision their Personal Knowledge KB via "
+        "POST /knowledge-bases/personal."
+    ),
+)
 async def create_knowledge_base(
     kb_data: KnowledgeBaseCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new knowledge base.
-
-    Creates a new knowledge base with the provided configuration.
-    The knowledge base will be empty initially and can accept documents
-    from any source_type label (for plugins, typically 'plugin:<plugin_name>').
-    """
+    """Create a new non-personal knowledge base."""
     logger.info("API: Create knowledge base", extra={"kb_name": kb_data.name})
 
     try:
         service = KnowledgeBaseService(db)
         result = await service.create_knowledge_base(kb_data, owner_id=current_user.id)
-
-        # Convert SQLAlchemy model to dictionary
-        response_data = {
-            "id": result.id,
-            "slug": result.slug,
-            "name": result.name,
-            "description": result.description,
-            "sync_enabled": result.sync_enabled,
-            "embedding_model": result.embedding_model,
-            "chunk_size": result.chunk_size,
-            "chunk_overlap": result.chunk_overlap,
-            "status": result.status,
-            "document_count": 0,  # New knowledge base has no documents
-            "total_chunks": 0,  # New knowledge base has no chunks
-            "is_personal": result.is_personal,
-            "owner_id": result.owner_id,
-            "last_sync_at": result.last_sync_at.isoformat() if result.last_sync_at is not None else None,
-            "created_at": result.created_at.isoformat(),
-            "updated_at": result.updated_at.isoformat(),
-        }
-
         logger.info("API: Created knowledge base", extra={"kb_id": result.id, "kb_name": result.name})
-
-        return ShuResponse.created(response_data)
+        return ShuResponse.created(_serialize_kb_create_response(result))
 
     except ShuException as e:
         logger.error("API: Failed to create knowledge base", extra={"kb_name": kb_data.name, "error": str(e)})
         return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_CREATE_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error("API: Failed to create knowledge base", extra={"kb_name": kb_data.name, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.post(
+    "/personal",
+    summary="Ensure the caller's Personal Knowledge KB exists",
+    description=(
+        "Idempotently provision the caller's Personal Knowledge KB. Returns the "
+        "existing row if one already exists (heal-on-flag-missing if needed), "
+        "otherwise creates a new owner-scoped KB. Available to any authenticated "
+        "user; the slug is owner-scoped so each user has exactly one Personal KB. "
+        "The display name is derived from the user's identity server-side."
+    ),
+)
+async def ensure_personal_knowledge_base(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ensure the caller's Personal Knowledge KB exists (idempotent)."""
+    logger.info("API: Ensure personal knowledge base", extra={"user_id": current_user.id})
+
+    try:
+        service = KnowledgeBaseService(db)
+        display_name = resolve_personal_kb_name(current_user)
+        result = await service.ensure_personal_knowledge_base(owner_id=current_user.id, display_name=display_name)
+        logger.info(
+            "API: Resolved personal knowledge base",
+            extra={"kb_id": result.id, "user_id": current_user.id},
+        )
+        return ShuResponse.created(_serialize_kb_create_response(result))
+
+    except ShuException as e:
+        logger.error(
+            "API: Failed to ensure personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
+        return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_CREATE_ERROR", status_code=e.status_code)
+    except Exception as e:
+        logger.error(
+            "API: Failed to ensure personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
