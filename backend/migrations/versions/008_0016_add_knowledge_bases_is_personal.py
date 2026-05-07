@@ -9,8 +9,8 @@ the user's identity).
 
 Existing rows receive FALSE via the column default.
 
-Revision ID: 008_0013
-Revises: 008_0012
+Revision ID: 008_0016
+Revises: 008_0015
 Create Date: 2026-05-04
 """
 
@@ -20,8 +20,8 @@ from alembic import op
 from migrations.helpers import add_column_if_not_exists
 
 # revision identifiers, used by Alembic.
-revision = "008_0013"
-down_revision = "008_0012"
+revision = "008_0016"
+down_revision = "008_0015"
 branch_labels = None
 depends_on = None
 
