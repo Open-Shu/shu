@@ -539,11 +539,19 @@ def upgrade() -> None:
         rows = conn.execute(
             sa.select(kb_table.c.id, kb_table.c.name).order_by(kb_table.c.created_at.asc())
         ).fetchall()
+        # Diverges from the original 008_0003 dev migration, which used a bare
+        # `continue` on collision and then attempted nullable=False below — that
+        # would crash on a DB with two KBs whose names slugify the same. Append
+        # a deterministic numeric suffix so every row gets a unique non-NULL
+        # slug.
         kb_seen_slugs: set[str] = set()
         for row in rows:
-            slug = slugify(row.name) or "kb"
-            if slug in kb_seen_slugs:
-                continue
+            base_slug = slugify(row.name) or "kb"
+            slug = base_slug
+            suffix = 2
+            while slug in kb_seen_slugs:
+                slug = f"{base_slug}-{suffix}"
+                suffix += 1
             kb_seen_slugs.add(slug)
             conn.execute(
                 kb_table.update().where(kb_table.c.id == row.id).values(slug=slug)
