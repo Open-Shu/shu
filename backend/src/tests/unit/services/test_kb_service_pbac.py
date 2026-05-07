@@ -92,7 +92,14 @@ def db():
     session.refresh = AsyncMock()
     session.add = MagicMock()
     session.delete = AsyncMock()
-    session.execute = AsyncMock()
+
+    # Default execute() result handles both .fetchall() (raw-row queries like
+    # the owner-escape lookup inside _get_denied_kb_slugs) and .scalars().all()
+    # (ORM queries). Tests that need specific results override via side_effect.
+    default_result = MagicMock()
+    default_result.fetchall.return_value = []
+    default_result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=default_result)
     return session
 
 
@@ -154,6 +161,41 @@ class TestGetKnowledgeBase:
              patch(f"{VERIFIER_PATH}.get_optional", return_value=None), \
              pytest.raises(NotFoundError):
             await service.get_knowledge_base("nonexistent-kb", REGULAR_USER_ID)
+
+    @pytest.mark.asyncio
+    async def test_owner_reads_own_kb_without_explicit_pbac_grant(self, service, pbac_cache):
+        """SHU-742 owner escape: a user always has kb.read on KBs they own.
+
+        This KB's slug is NOT in the user's policy (no kb.read grant), but the
+        user owns it via owner_id. Without the escape the PBAC default-deny
+        would 404 the owner; with it, get_knowledge_base returns the KB.
+        """
+        owned_kb = _make_mock_kb(kb_id="kb-owned", name="My Personal", slug="personal-knowledge-user-1")
+        owned_kb.owner_id = REGULAR_USER_ID
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=owned_kb):
+            result = await service.get_knowledge_base("kb-owned", REGULAR_USER_ID)
+
+        assert result is owned_kb
+
+    @pytest.mark.asyncio
+    async def test_non_owner_still_denied_without_pbac_grant(self, service, pbac_cache):
+        """Cross-user reads go through PBAC (default-deny) regardless of is_personal.
+
+        Owner escape applies only to the owner. Everyone else needs an
+        explicit ``kb.read`` allow policy — there is no public-read fallback
+        for non-personal KBs.
+        """
+        owned_kb = _make_mock_kb(kb_id="kb-someone-else", name="Other's KB", slug="someone-elses-kb")
+        owned_kb.owner_id = "some-other-user-id"
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache), \
+             patch(f"{VERIFIER_PATH}.get_optional", return_value=owned_kb), \
+             pytest.raises(NotFoundError):
+            await service.get_knowledge_base("kb-someone-else", REGULAR_USER_ID)
 
 
 class TestFilterAccessibleKbIds:
@@ -251,6 +293,29 @@ class TestCheckKbReadAccess:
             result = await service.check_kb_read_access(REGULAR_USER_ID, [])
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_owner_passes_check_without_pbac_grant(self, service, db, pbac_cache):
+        """SHU-742: owner can chat-attach their own KB even without a PBAC grant.
+
+        Without the owner escape in _get_denied_kb_slugs, chat send for a
+        regular/power user with no policies would always raise
+        "Access denied to knowledge base" because PolicyCache is default-deny.
+        """
+        owned_kb = _make_mock_kb(kb_id="kb-owned", name="My Personal", slug="personal-knowledge-user-1")
+        owned_kb.owner_id = REGULAR_USER_ID
+
+        # First execute: select(KnowledgeBase WHERE id IN ids) → returns the KB.
+        # Second execute: owner-escape query → returns its slug.
+        kb_lookup = MagicMock()
+        kb_lookup.scalars.return_value.all.return_value = [owned_kb]
+        db.execute = AsyncMock(side_effect=[kb_lookup, _make_slug_result(["personal-knowledge-user-1"])])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            result = await service.check_kb_read_access(REGULAR_USER_ID, ["kb-owned"])
+
+        assert result is None  # Owner is allowed; no denied ID returned.
+
 
 def _make_slug_result(slugs: list[str]) -> MagicMock:
     """Mock result for ``select(KnowledgeBase.slug)``."""
@@ -302,8 +367,11 @@ class TestListKnowledgeBases:
     @pytest.mark.asyncio
     async def test_user_sees_only_allowed_kbs(self, service, db, pbac_cache):
         """Regular user only sees KBs their policy grants access to."""
+        # When `denied` is non-empty the service issues an extra query for
+        # the user's owned slugs (owner escape) before the count + kb queries.
         db.execute = AsyncMock(side_effect=[
             _make_slug_result([ALLOWED_KB_SLUG, DENIED_KB_SLUG]),
+            _make_slug_result([]),  # owner escape: user owns nothing
             _make_count_result(1),
             _make_kb_result([MOCK_KB_ALLOWED]),
         ])
@@ -314,6 +382,100 @@ class TestListKnowledgeBases:
 
         assert total == 1
         assert kbs[0].id == ALLOWED_KB_ID
+
+    @pytest.mark.asyncio
+    async def test_owner_sees_own_kb_without_pbac_grant(self, service, db, pbac_cache):
+        """SHU-742 owner escape: owner sees their KB even when PBAC denies it.
+
+        The user has no policy granting kb.read on DENIED_KB_SLUG, so the PBAC
+        layer would deny it. But the user owns it (via owner_id), so the list
+        endpoint must subtract their owned slugs from the denied set and return
+        the row. Without this, a regular user with no policies whose only KB is
+        their auto-provisioned Personal Knowledge sees an empty list.
+        """
+        owned_kb = _make_mock_kb(kb_id="kb-owned", name="My Personal", slug="personal-knowledge-user-1")
+        owned_kb.owner_id = REGULAR_USER_ID
+
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([ALLOWED_KB_SLUG, "personal-knowledge-user-1"]),
+            _make_slug_result(["personal-knowledge-user-1"]),  # escape: user owns this
+            _make_count_result(2),
+            _make_kb_result([MOCK_KB_ALLOWED, owned_kb]),
+        ])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(REGULAR_USER_ID)
+
+        assert total == 2
+        assert {kb.slug for kb in kbs} == {ALLOWED_KB_SLUG, "personal-knowledge-user-1"}
+
+    @pytest.mark.asyncio
+    async def test_non_owner_does_not_see_non_personal_kb_without_pbac_grant(self, service, db, pbac_cache):
+        """Non-personal KBs are NOT public-read by default.
+
+        Cross-user reads require an explicit ``kb.read`` allow policy regardless
+        of whether the target KB is personal or not. The owner escape applies
+        only to the owner; everyone else goes through PBAC default-deny.
+        """
+        shared_kb = _make_mock_kb(kb_id="kb-shared", name="Shared Project Docs", slug="shared-project-docs")
+        shared_kb.owner_id = "some-other-user"
+
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result([ALLOWED_KB_SLUG, "shared-project-docs"]),
+            # Owner-escape query: user owns nothing in the denied set.
+            _make_slug_result([]),
+            _make_count_result(1),
+            _make_kb_result([MOCK_KB_ALLOWED]),
+        ])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", pbac_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", pbac_cache):
+            kbs, total = await service.list_knowledge_bases(REGULAR_USER_ID)
+
+        assert total == 1
+        assert {kb.slug for kb in kbs} == {ALLOWED_KB_SLUG}
+
+    @pytest.mark.asyncio
+    async def test_explicit_deny_on_non_personal_kb_blocks_read(self, service, db):
+        """Explicit PBAC deny on a non-personal KB takes effect.
+
+        With the public-read escape removed, deny policies behave normally:
+        a regular user with a deny policy on a non-personal KB they don't own
+        cannot see it in their list.
+        """
+        deny_policy_id = "policy-deny-shared"
+        deny_settings = MagicMock()
+        deny_settings.policy_cache_ttl = 9999
+        deny_cache = PolicyCache(settings=deny_settings)
+        deny_cache._stale = False
+        deny_cache._last_refresh = 1e12
+        deny_cache._admin_user_ids = {ADMIN_USER_ID}
+        deny_cache._policies = {
+            deny_policy_id: CachedPolicy(
+                id=deny_policy_id,
+                effect="deny",
+                statements=[_make_statement(["kb.read"], ["kb:shared-project-docs"])],
+            ),
+        }
+        deny_cache._user_policies = {REGULAR_USER_ID: {deny_policy_id}}
+        deny_cache._group_policies = {}
+        deny_cache._user_groups = {}
+
+        db.execute = AsyncMock(side_effect=[
+            _make_slug_result(["shared-project-docs"]),
+            # Owner-escape query: user owns nothing.
+            _make_slug_result([]),
+            _make_count_result(0),
+            _make_kb_result([]),
+        ])
+
+        with patch("shu.services.policy_engine.POLICY_CACHE", deny_cache), \
+             patch("shu.services.knowledge_base_service.POLICY_CACHE", deny_cache):
+            kbs, total = await service.list_knowledge_bases(REGULAR_USER_ID)
+
+        assert total == 0
+        assert kbs == []
 
     @pytest.mark.asyncio
     async def test_pagination_applied(self, service, db, pbac_cache):

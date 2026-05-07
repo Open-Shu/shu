@@ -1,13 +1,14 @@
-"""Unit tests for KnowledgeBaseService performance optimizations.
+"""Unit tests for KnowledgeBaseService.
 
-Tests the recalculate_kb_stats function and verifies that denormalized
-stats are properly maintained.
+Covers performance-optimized stats recalculation and create_knowledge_base
+behavior, including the SHU-742 Personal Knowledge defaults flow.
 """
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from shu.models.document import Document
+from shu.schemas.knowledge_base import KnowledgeBaseCreate
 from shu.services.knowledge_base_service import KnowledgeBaseService
 
 
@@ -398,3 +399,477 @@ class TestAdjustDocumentStats:
             await service.adjust_document_stats("test-kb-id", doc_delta=1, chunk_delta=10)
 
         mock_db.rollback.assert_called_once()
+
+
+def _slug_violation_orig():
+    orig = MagicMock()
+    orig.constraint_name = "knowledge_bases_slug_key"
+    return orig
+
+
+def _fk_violation_orig():
+    orig = MagicMock()
+    orig.constraint_name = "knowledge_bases_owner_id_fkey"
+    return orig
+
+
+def _build_service_capturing_add(mock_db, captured):
+    """Build a service whose db.add captures the KB; both pre-flight lookups miss.
+
+    ``_get_kb_by_slug`` (used by ``create_knowledge_base``) and
+    ``_get_personal_kb_by_owner`` (used by ``ensure_personal_knowledge_base``)
+    both default to returning None so tests start in the "no existing KB" state.
+    Individual tests override either to assert the existing-row path.
+    """
+    service = KnowledgeBaseService(mock_db)
+    service._get_kb_by_slug = AsyncMock(return_value=None)
+    service._get_personal_kb_by_owner = AsyncMock(return_value=None)
+    mock_db.add = MagicMock(side_effect=lambda obj: captured.append(obj))
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+    return service
+
+
+class TestCreateKnowledgeBase:
+    """Non-personal create flow via ``create_knowledge_base``.
+
+    Personal KBs have their own endpoint and service method
+    (``ensure_personal_knowledge_base``) — this class covers only the
+    role-gated, name-derived-slug, non-personal path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_does_not_apply_personal_defaults(self):
+        """Non-personal KBs leave rag_fetch_full_documents at the model default (None)."""
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        await service.create_knowledge_base(
+            KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1"
+        )
+
+        assert len(captured) == 1
+        kb = captured[0]
+        assert kb.is_personal is False
+        assert kb.rag_fetch_full_documents is None
+        assert kb.owner_id == "user-1"
+        assert kb.slug == "project-alpha"
+
+    @pytest.mark.asyncio
+    async def test_existing_slug_raises_conflict(self):
+        """Pre-flight slug hit returns ConflictError (not idempotent)."""
+        from shu.core.exceptions import ConflictError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        service._get_kb_by_slug = AsyncMock(return_value=MagicMock(name="ExistingNamedKB"))
+
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(
+                KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1"
+            )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_create_raises_conflict(self):
+        """IntegrityError on commit (slug race) → ConflictError, not idempotent."""
+        from shu.core.exceptions import ConflictError
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, _slug_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(
+                KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1"
+            )
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_slug_integrity_error_propagates_as_shu_exception(self):
+        """FK violations must not masquerade as slug ConflictError."""
+        from shu.core.exceptions import ConflictError, ShuException
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, _fk_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        with pytest.raises(ShuException) as exc_info:
+            await service.create_knowledge_base(
+                KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1"
+            )
+        assert not isinstance(exc_info.value, ConflictError)
+
+
+class TestEnsurePersonalKnowledgeBase:
+    """SHU-742: idempotent ensure flow for the user's Personal Knowledge KB."""
+
+    @pytest.mark.asyncio
+    async def test_applies_full_doc_fetch_default_from_config(self):
+        """Personal KB copies personal_kb_rag_fetch_full_documents onto the row."""
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        mock_settings = MagicMock()
+        mock_settings.personal_kb_rag_fetch_full_documents = True
+
+        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
+            await service.ensure_personal_knowledge_base(
+                owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+            )
+
+        assert len(captured) == 1
+        kb = captured[0]
+        assert kb.is_personal is True
+        assert kb.rag_fetch_full_documents is True
+        assert kb.owner_id == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_respects_config_value_false(self):
+        """If ops disable the personal default via config, the KB reflects that."""
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        mock_settings = MagicMock()
+        mock_settings.personal_kb_rag_fetch_full_documents = False
+
+        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
+            await service.ensure_personal_knowledge_base(
+                owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+            )
+
+        kb = captured[0]
+        assert kb.is_personal is True
+        assert kb.rag_fetch_full_documents is False
+
+    @pytest.mark.asyncio
+    async def test_slug_embeds_token_and_owner_id(self):
+        """Slug format: ``personal-knowledge-{token}-{owner_id}``.
+
+        The token gives admins authoring PBAC policies a hint about who the
+        KB belongs to without a separate UUID lookup. The owner_id suffix
+        keeps the slug globally unique even when two users share a token.
+        """
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        await service.ensure_personal_knowledge_base(
+            owner_id="user-aaaa", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        assert captured[0].slug == "personal-knowledge-eric-user-aaaa"
+
+    @pytest.mark.asyncio
+    async def test_two_users_with_same_token_still_get_distinct_slugs(self):
+        """Two users sharing a first-name token are disambiguated by the owner_id suffix."""
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        await service.ensure_personal_knowledge_base(
+            owner_id="user-aaaa", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        await service.ensure_personal_knowledge_base(
+            owner_id="user-bbbb", display_name="Eric's Knowledge", slug_token="eric"
+        )
+
+        assert len(captured) == 2
+        assert captured[0].slug == "personal-knowledge-eric-user-aaaa"
+        assert captured[1].slug == "personal-knowledge-eric-user-bbbb"
+        assert captured[0].name == captured[1].name == "Eric's Knowledge"
+
+    @pytest.mark.asyncio
+    async def test_without_owner_id_raises_validation_error(self):
+        """Personal KB ensure requires an owner_id."""
+        from shu.core.exceptions import ValidationError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        with pytest.raises(ValidationError, match="owner_id"):
+            await service.ensure_personal_knowledge_base(
+                owner_id=None, display_name="Eric's Knowledge", slug_token="eric"
+            )
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_concurrent_create_returns_existing_row(self):
+        """IntegrityError on commit (slug race) → re-fetch by owner, succeed idempotently."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        # Pre-flight by owner: nothing. Post-IntegrityError by owner: racing row.
+        existing_kb = MagicMock(name="ExistingPersonalKB")
+        existing_kb.owner_id = "user-1"
+        existing_kb.is_personal = True
+        service._get_personal_kb_by_owner = AsyncMock(side_effect=[None, existing_kb])
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, _slug_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        result = await service.ensure_personal_knowledge_base(
+            owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        assert result is existing_kb
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_existing_personal_kb_returns_existing_idempotently(self):
+        """Pre-flight owner-lookup hit returns the existing row without writing."""
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        existing_kb = MagicMock(name="ExistingPersonalKB")
+        existing_kb.is_personal = True
+        existing_kb.owner_id = "user-1"
+        service._get_personal_kb_by_owner = AsyncMock(return_value=existing_kb)
+
+        result = await service.ensure_personal_knowledge_base(
+            owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        assert result is existing_kb
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_existing_personal_kb_heals_is_personal_flag(self):
+        """Legacy rows that predate the is_personal column get healed on ensure.
+
+        Note: ``_get_personal_kb_by_owner`` filters by ``is_personal=True`` so a
+        truly-legacy row with ``is_personal=False`` won't be found via the
+        owner-lookup path in production. This test pins the heal logic in the
+        helper itself — useful when the owner-lookup eventually picks up a row
+        that was healed concurrently or when the helper is reused elsewhere.
+        """
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        existing_kb = MagicMock(name="LegacyKB")
+        existing_kb.is_personal = False
+        existing_kb.owner_id = "user-1"
+        service._get_personal_kb_by_owner = AsyncMock(return_value=existing_kb)
+
+        result = await service.ensure_personal_knowledge_base(
+            owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        assert result is existing_kb
+        assert existing_kb.is_personal is True
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_user_rename_does_not_create_second_personal_kb(self):
+        """If the user's display name changes, ensure() returns the existing row.
+
+        The slug embeds the user's identity token at creation time. Looking up
+        by ``owner_id`` (not slug) keeps the "one personal KB per user"
+        invariant across renames. The original slug stays unchanged so existing
+        PBAC policies referencing it continue to match.
+        """
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        # User originally created their KB with token "eric"; that's the slug
+        # baked into the row. Now the user renamed and the new slug_token is
+        # "erica". The lookup-by-owner finds the original row regardless.
+        original_kb = MagicMock(name="OriginalKB")
+        original_kb.is_personal = True
+        original_kb.owner_id = "user-1"
+        original_kb.slug = "personal-knowledge-eric-user-1"
+        service._get_personal_kb_by_owner = AsyncMock(return_value=original_kb)
+
+        result = await service.ensure_personal_knowledge_base(
+            owner_id="user-1", display_name="Erica's Knowledge", slug_token="erica"
+        )
+
+        assert result is original_kb
+        assert original_kb.slug == "personal-knowledge-eric-user-1"  # unchanged
+        assert captured == []  # no new row inserted
+
+    @pytest.mark.asyncio
+    async def test_non_slug_integrity_error_propagates_as_shu_exception(self):
+        """FK violations must not masquerade as a slug conflict."""
+        from shu.core.exceptions import ConflictError, ShuException
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        mock_db.commit = AsyncMock(
+            side_effect=IntegrityError("INSERT...", {}, _fk_violation_orig())
+        )
+        mock_db.rollback = AsyncMock()
+
+        with pytest.raises(ShuException) as exc_info:
+            await service.ensure_personal_knowledge_base(
+                owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+            )
+        assert not isinstance(exc_info.value, ConflictError)
+
+
+class TestReturnOrHealExistingPersonalKb:
+    """SHU-742: defense-in-depth invariants on the heal helper itself.
+
+    The owner-lookup filter in ``ensure_personal_knowledge_base`` prevents
+    foreign-owner rows from reaching this helper through the public API,
+    so these tests exercise the helper directly. They pin the contract so a
+    future caller that doesn't pre-filter still fails loud rather than
+    silently transferring a KB.
+    """
+
+    @pytest.mark.asyncio
+    async def test_refuses_foreign_owner(self):
+        """Helper raises ConflictError when given a row owned by a different user."""
+        from shu.core.exceptions import ConflictError
+
+        mock_db = AsyncMock()
+        service = KnowledgeBaseService(mock_db)
+
+        foreign_row = MagicMock()
+        foreign_row.owner_id = "attacker-user-id"
+        foreign_row.is_personal = True
+
+        with pytest.raises(ConflictError):
+            await service._return_or_heal_existing_personal_kb(foreign_row, "user-1")
+
+    @pytest.mark.asyncio
+    async def test_heals_is_personal_when_caller_owns_row(self):
+        """Helper flips is_personal=True (and commits) when ownership matches."""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        service = KnowledgeBaseService(mock_db)
+
+        legacy_row = MagicMock()
+        legacy_row.owner_id = "user-1"
+        legacy_row.is_personal = False
+
+        result = await service._return_or_heal_existing_personal_kb(legacy_row, "user-1")
+        assert result is legacy_row
+        assert legacy_row.is_personal is True
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_op_when_already_personal_and_owned(self):
+        """Helper short-circuits without writing when nothing to heal."""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        service = KnowledgeBaseService(mock_db)
+
+        clean_row = MagicMock()
+        clean_row.owner_id = "user-1"
+        clean_row.is_personal = True
+
+        result = await service._return_or_heal_existing_personal_kb(clean_row, "user-1")
+        assert result is clean_row
+        mock_db.commit.assert_not_awaited()
+
+
+class TestResolvePersonalKbName:
+    """SHU-742: server-side display-name precedence for Personal KBs."""
+
+    def test_multi_token_name_uses_first_and_last(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_name
+
+        user = MagicMock(name="Eric Williams Longville", email="eric@openshu.ai")
+        user.name = "Eric Williams Longville"
+        user.email = "eric@openshu.ai"
+        assert resolve_personal_kb_name(user) == "Eric Longville's Knowledge"
+
+    def test_single_token_name(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_name
+
+        user = MagicMock()
+        user.name = "Eric"
+        user.email = "eric@openshu.ai"
+        assert resolve_personal_kb_name(user) == "Eric's Knowledge"
+
+    def test_falls_back_to_email_local_part(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_name
+
+        user = MagicMock()
+        user.name = ""
+        user.email = "user42@openshu.ai"
+        assert resolve_personal_kb_name(user) == "user42's Knowledge"
+
+    def test_falls_back_to_personal_knowledge_when_no_identity(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_name
+
+        user = MagicMock()
+        user.name = ""
+        user.email = ""
+        assert resolve_personal_kb_name(user) == "Personal Knowledge"
+
+
+class TestResolvePersonalKbSlugToken:
+    """SHU-742: readable token embedded in personal-KB slugs."""
+
+    def test_first_name_becomes_token(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_slug_token
+
+        user = MagicMock()
+        user.name = "Eric Longville"
+        user.email = "eric@openshu.ai"
+        assert resolve_personal_kb_slug_token(user) == "eric"
+
+    def test_unicode_first_name_is_slugified(self):
+        """Slugify strips diacritics so non-ASCII names produce safe URL tokens."""
+        from shu.services.knowledge_base_service import resolve_personal_kb_slug_token
+
+        user = MagicMock()
+        user.name = "José García"
+        user.email = ""
+        assert resolve_personal_kb_slug_token(user) == "jose"
+
+    def test_falls_back_to_email_local_part(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_slug_token
+
+        user = MagicMock()
+        user.name = ""
+        user.email = "user42@openshu.ai"
+        assert resolve_personal_kb_slug_token(user) == "user42"
+
+    def test_email_local_part_with_dots_is_slugified(self):
+        from shu.services.knowledge_base_service import resolve_personal_kb_slug_token
+
+        user = MagicMock()
+        user.name = ""
+        user.email = "j.doe@openshu.ai"
+        assert resolve_personal_kb_slug_token(user) == "j-doe"
+
+    def test_falls_back_to_user_when_no_identity(self):
+        """Fallback prevents an empty token from producing a double-hyphen slug."""
+        from shu.services.knowledge_base_service import resolve_personal_kb_slug_token
+
+        user = MagicMock()
+        user.name = ""
+        user.email = ""
+        assert resolve_personal_kb_slug_token(user) == "user"
+
+    def test_falls_back_to_user_when_first_token_slugifies_to_empty(self):
+        """A name made entirely of non-alphanumeric chars slugifies to empty."""
+        from shu.services.knowledge_base_service import resolve_personal_kb_slug_token
+
+        user = MagicMock()
+        user.name = "###"
+        user.email = ""
+        assert resolve_personal_kb_slug_token(user) == "user"

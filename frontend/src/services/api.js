@@ -333,6 +333,9 @@ export const knowledgeBaseAPI = {
   list: (params) => api.get('/knowledge-bases', { params }),
   get: (id) => api.get(`/knowledge-bases/${id}`),
   create: (data) => api.post('/knowledge-bases', data),
+  // Idempotent ensure for the caller's Personal Knowledge KB. Server derives
+  // the display name from the user's identity; no body needed.
+  ensurePersonal: () => api.post('/knowledge-bases/personal'),
   update: (id, data) => api.put(`/knowledge-bases/${id}`, data),
   delete: (id) => api.delete(`/knowledge-bases/${id}`),
   getDocuments: (id, params = {}) => api.get(`/knowledge-bases/${id}/documents`, { params }),

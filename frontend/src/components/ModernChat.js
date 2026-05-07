@@ -38,6 +38,7 @@ import usePluginFlow from './chat/ModernChat/hooks/usePluginFlow';
 import ModernChatView from './chat/ModernChat/ModernChatView';
 import useEnsembleMode from './chat/ModernChat/hooks/useEnsembleMode';
 import useKBPicker from './chat/ModernChat/hooks/useKBPicker';
+import usePersonalKB from './chat/ModernChat/hooks/usePersonalKB';
 
 import {
   CHAT_WINDOW_SIZE,
@@ -189,7 +190,29 @@ const ModernChat = () => {
     closeKBPickerDialog,
     applyKBSelection,
     removeKB,
+    ensureKBAttached,
   } = useKBPicker();
+
+  // Personal Knowledge — v1 in-chat upload entry point.
+  const {
+    personalKB,
+    loading: personalKBLoading,
+    uploading: personalKBUploading,
+    errors: personalKBErrors,
+    uploadFiles: uploadToPersonalKB,
+    retryFile: retryPersonalKBFile,
+    dismissError: dismissPersonalKBError,
+  } = usePersonalKB();
+
+  // Auto-attach Personal Knowledge once on initial discovery.
+  // Refs let users detach via the chip × without re-attaching on every render.
+  const personalKBAutoAttachedRef = useRef(false);
+  useEffect(() => {
+    if (personalKB && !personalKBAutoAttachedRef.current) {
+      ensureKBAttached(personalKB);
+      personalKBAutoAttachedRef.current = true;
+    }
+  }, [personalKB, ensureKBAttached]);
   useEffect(() => {
     clearEnsembleModeRef.current = clearEnsembleSelection;
   }, [clearEnsembleSelection]);
@@ -1315,6 +1338,13 @@ const ModernChat = () => {
     onOpenKBPicker: openKBPickerDialog,
     selectedKBs,
     onRemoveKB: removeKB,
+    personalKB,
+    personalKBLoading,
+    personalKBUploading,
+    personalKBErrors,
+    onUploadToPersonalKB: uploadToPersonalKB,
+    onRetryPersonalKBFile: retryPersonalKBFile,
+    onDismissPersonalKBError: dismissPersonalKBError,
   };
 
   const pluginPickerDialogProps = {

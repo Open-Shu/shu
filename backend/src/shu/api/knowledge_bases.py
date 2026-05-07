@@ -17,6 +17,7 @@ from ..auth.models import User
 from ..auth.rbac import (
     get_current_user,
     require_admin,
+    require_kb_write_access,
     require_power_user,
 )
 from ..core.config import get_settings_instance
@@ -29,7 +30,11 @@ from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, R
 from ..services.document_service import DocumentService
 from ..services.ingestion_service import ingest_document as ingest_document_service
 from ..services.kb_import_export_service import KBImportExportService
-from ..services.knowledge_base_service import KnowledgeBaseService
+from ..services.knowledge_base_service import (
+    KnowledgeBaseService,
+    resolve_personal_kb_name,
+    resolve_personal_kb_slug_token,
+)
 from .dependencies import get_db
 
 logger = get_logger(__name__)
@@ -95,6 +100,8 @@ async def list_knowledge_bases(
                     "import_progress": kb.import_progress,
                     "document_count": kb.document_count,
                     "total_chunks": kb.total_chunks,
+                    "is_personal": kb.is_personal,
+                    "owner_id": kb.owner_id,
                     "last_sync_at": kb.last_sync_at.isoformat() if kb.last_sync_at is not None else None,
                     "created_at": kb.created_at.isoformat(),
                     "updated_at": kb.updated_at.isoformat(),
@@ -186,6 +193,8 @@ async def get_knowledge_base(
             "status": result.status,
             "document_count": stats["document_count"],
             "total_chunks": stats["total_chunks"],
+            "is_personal": result.is_personal,
+            "owner_id": result.owner_id,
             "last_sync_at": result.last_sync_at.isoformat() if result.last_sync_at is not None else None,
             "created_at": result.created_at.isoformat(),
             "updated_at": result.updated_at.isoformat(),
@@ -203,52 +212,101 @@ async def get_knowledge_base(
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
-@router.post("")
-# RBAC: require_power_user expects no path param
+def _serialize_kb_create_response(result) -> dict:
+    """Shape a KnowledgeBase row into the create-endpoint envelope payload."""
+    return {
+        "id": result.id,
+        "slug": result.slug,
+        "name": result.name,
+        "description": result.description,
+        "sync_enabled": result.sync_enabled,
+        "embedding_model": result.embedding_model,
+        "chunk_size": result.chunk_size,
+        "chunk_overlap": result.chunk_overlap,
+        "status": result.status,
+        "document_count": result.document_count or 0,
+        "total_chunks": result.total_chunks or 0,
+        "is_personal": result.is_personal,
+        "owner_id": result.owner_id,
+        "last_sync_at": result.last_sync_at.isoformat() if result.last_sync_at is not None else None,
+        "created_at": result.created_at.isoformat(),
+        "updated_at": result.updated_at.isoformat(),
+    }
+
+
+@router.post(
+    "",
+    summary="Create a knowledge base (power user / admin only)",
+    description=(
+        "Create a new non-personal knowledge base. Restricted to power_user and "
+        "admin roles. Regular users provision their Personal Knowledge KB via "
+        "POST /knowledge-bases/personal."
+    ),
+)
 async def create_knowledge_base(
     kb_data: KnowledgeBaseCreate,
     current_user: User = Depends(require_power_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new knowledge base.
-
-    Creates a new knowledge base with the provided configuration.
-    The knowledge base will be empty initially and can accept documents
-    from any source_type label (for plugins, typically 'plugin:<plugin_name>').
-    """
+    """Create a new non-personal knowledge base."""
     logger.info("API: Create knowledge base", extra={"kb_name": kb_data.name})
 
     try:
         service = KnowledgeBaseService(db)
         result = await service.create_knowledge_base(kb_data, owner_id=current_user.id)
-
-        # Convert SQLAlchemy model to dictionary
-        response_data = {
-            "id": result.id,
-            "slug": result.slug,
-            "name": result.name,
-            "description": result.description,
-            "sync_enabled": result.sync_enabled,
-            "embedding_model": result.embedding_model,
-            "chunk_size": result.chunk_size,
-            "chunk_overlap": result.chunk_overlap,
-            "status": result.status,
-            "document_count": 0,  # New knowledge base has no documents
-            "total_chunks": 0,  # New knowledge base has no chunks
-            "last_sync_at": result.last_sync_at.isoformat() if result.last_sync_at is not None else None,
-            "created_at": result.created_at.isoformat(),
-            "updated_at": result.updated_at.isoformat(),
-        }
-
         logger.info("API: Created knowledge base", extra={"kb_id": result.id, "kb_name": result.name})
-
-        return ShuResponse.created(response_data)
+        return ShuResponse.created(_serialize_kb_create_response(result))
 
     except ShuException as e:
         logger.error("API: Failed to create knowledge base", extra={"kb_name": kb_data.name, "error": str(e)})
         return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_CREATE_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error("API: Failed to create knowledge base", extra={"kb_name": kb_data.name, "error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.post(
+    "/personal",
+    summary="Ensure the caller's Personal Knowledge KB exists",
+    description=(
+        "Idempotently provision the caller's Personal Knowledge KB. Returns the "
+        "existing row if one already exists (heal-on-flag-missing if needed), "
+        "otherwise creates a new owner-scoped KB. Available to any authenticated "
+        "user; the slug is owner-scoped so each user has exactly one Personal KB. "
+        "The display name is derived from the user's identity server-side."
+    ),
+)
+async def ensure_personal_knowledge_base(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ensure the caller's Personal Knowledge KB exists (idempotent)."""
+    logger.info("API: Ensure personal knowledge base", extra={"user_id": current_user.id})
+
+    try:
+        service = KnowledgeBaseService(db)
+        display_name = resolve_personal_kb_name(current_user)
+        slug_token = resolve_personal_kb_slug_token(current_user)
+        result = await service.ensure_personal_knowledge_base(
+            owner_id=current_user.id, display_name=display_name, slug_token=slug_token
+        )
+        logger.info(
+            "API: Resolved personal knowledge base",
+            extra={"kb_id": result.id, "user_id": current_user.id},
+        )
+        return ShuResponse.created(_serialize_kb_create_response(result))
+
+    except ShuException as e:
+        logger.error(
+            "API: Failed to ensure personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
+        return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_CREATE_ERROR", status_code=e.status_code)
+    except Exception as e:
+        logger.error(
+            "API: Failed to ensure personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -287,6 +345,8 @@ async def update_knowledge_base(
             "status": result.status,
             "document_count": stats["document_count"],
             "total_chunks": stats["total_chunks"],
+            "is_personal": result.is_personal,
+            "owner_id": result.owner_id,
             "last_sync_at": result.last_sync_at.isoformat() if result.last_sync_at is not None else None,
             "created_at": result.created_at.isoformat(),
             "updated_at": result.updated_at.isoformat(),
@@ -881,12 +941,16 @@ def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
 @router.post(
     "/{kb_id}/documents/upload",
     summary="Upload documents to knowledge base",
-    description="Upload one or more documents directly to a knowledge base. Power user or admin only.",
+    description=(
+        "Upload one or more documents directly to a knowledge base. "
+        "Allowed when the caller is a KB owner, has power_user/admin role, "
+        "or has a PBAC kb.write grant on the target KB."
+    ),
 )
 async def upload_documents(
     kb_id: str,
     files: list[UploadFile] = File(..., description="Files to upload"),
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_write_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload documents directly to a knowledge base.
@@ -897,11 +961,15 @@ async def upload_documents(
 
     Returns results for each file indicating success or failure.
 
-    Requires power_user or admin role. Access to the specific KB is still enforced via PBAC.
+    Write access is gated by ``require_kb_write_access``: power_user/admin can
+    upload to any KB; regular users can upload to KBs they own; PBAC policies
+    can grant cross-user write on a per-KB basis.
     """
     try:
+        # require_kb_write_access has already verified KB existence and write
+        # permission; re-running get_knowledge_base here would redundantly query
+        # the DB and incorrectly gate write on the kb.read PBAC check.
         kb_service = KnowledgeBaseService(db)
-        await kb_service.get_knowledge_base(kb_id, str(current_user.id))
 
         # Get upload restrictions from KB-specific settings
         allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]

@@ -180,9 +180,12 @@ class KnowledgeBaseBase(BaseModel):
 
 
 class KnowledgeBaseCreate(KnowledgeBaseBase):
-    """Schema for creating a new knowledge base."""
+    """Schema for creating a new (non-personal) knowledge base.
 
-    pass
+    Personal KBs are provisioned via ``POST /knowledge-bases/personal`` and
+    don't go through this schema. The ``is_personal`` flag is server-controlled
+    per endpoint, not a client-supplied field.
+    """
 
 
 class KnowledgeBaseUpdate(BaseModel):

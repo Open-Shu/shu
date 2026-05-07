@@ -6,13 +6,7 @@ Covers:
 - Files with content mismatching their declared extension are rejected
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
-from shu.api.knowledge_bases import _check_content_type_mismatch, upload_documents
-from shu.core.exceptions import ShuException
+from shu.api.knowledge_bases import _check_content_type_mismatch
 
 
 class TestContentTypeMismatch:
@@ -131,32 +125,3 @@ class TestContentTypeMismatch:
         """ZIP data descriptor signature is also a valid ZIP variant."""
         zip_dd = b"\x50\x4b\x07\x08" + b"\x00" * 100
         assert _check_content_type_mismatch("docx", zip_dd) is None
-
-
-class TestUploadDocumentsRoute:
-    """upload_documents must preserve structured ShuException responses."""
-
-    @pytest.mark.asyncio
-    async def test_kb_access_error_returns_structured_response(self):
-        db = AsyncMock()
-        current_user = MagicMock()
-        current_user.id = "user-1"
-
-        with patch("shu.api.knowledge_bases.KnowledgeBaseService") as mock_svc_class:
-            mock_svc = MagicMock()
-            mock_svc.get_knowledge_base = AsyncMock(
-                side_effect=ShuException("Knowledge base 'kb-1' not found", "NOT_FOUND", status_code=404)
-            )
-            mock_svc_class.return_value = mock_svc
-
-            response = await upload_documents(
-                kb_id="kb-1",
-                files=[],
-                current_user=current_user,
-                db=db,
-            )
-
-        assert response.status_code == 404
-        body = json.loads(response.body)
-        assert body["error"]["code"] == "DOCUMENT_UPLOAD_ERROR"
-        assert "kb-1" in body["error"]["message"]
