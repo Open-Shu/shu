@@ -1,10 +1,18 @@
 """Tests for billing enforcement — user limit checking logic."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from shu.billing.enforcement import UserLimitStatus, check_user_limit
+from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
+from shu.billing.enforcement import (
+    SubscriptionInactiveError,
+    UserLimitStatus,
+    assert_subscription_active,
+    check_user_limit,
+    get_current_billing_state,
+)
 
 _P_BILLING_CONFIG = "shu.billing.enforcement.get_billing_config"
 _P_ACTIVE_USER_COUNT = "shu.billing.enforcement.get_active_user_count"
@@ -188,3 +196,61 @@ class TestUserLimitStatus:
         s = UserLimitStatus(enforcement="soft", at_limit=True, current_count=5, user_limit=5)
         with pytest.raises(AttributeError):
             s.at_limit = False  # type: ignore[misc]
+
+
+class TestAssertSubscriptionActive:
+    """Tests for the SHU-703 subscription-active gate."""
+
+    @pytest.mark.asyncio
+    async def test_no_cache_does_not_raise(self, install_stub_cache):
+        """Self-hosted bypass: cache is None → HEALTHY_DEFAULT → no raise.
+
+        The fixture resets `_cache` on setup; we don't call `_install`, so
+        the helper sees None and falls through to the healthy default.
+        """
+        await assert_subscription_active()
+
+    @pytest.mark.asyncio
+    async def test_healthy_default_does_not_raise(self, install_stub_cache):
+        """Cache returns the cold-start fallback → no raise."""
+        install_stub_cache(HEALTHY_DEFAULT)
+        await assert_subscription_active()
+
+    @pytest.mark.asyncio
+    async def test_within_grace_does_not_raise(self, install_stub_cache):
+        """Payment failed but key still active (within grace) → no raise.
+
+        CP only flips `openrouter_key_disabled=True` after grace ends, so
+        a populated `payment_failed_at` with the flag still false is the
+        normal in-grace state.
+        """
+        install_stub_cache(
+            BillingState(
+                openrouter_key_disabled=False,
+                payment_failed_at=datetime(2026, 1, 1, tzinfo=UTC),
+                payment_grace_days=7,
+            )
+        )
+        await assert_subscription_active()
+
+    @pytest.mark.asyncio
+    async def test_disabled_key_raises_with_computed_deadline(self, install_stub_cache):
+        """Lockout state → raises with grace_deadline = failed_at + grace_days."""
+        failed_at = datetime(2026, 1, 1, tzinfo=UTC)
+        install_stub_cache(
+            BillingState(
+                openrouter_key_disabled=True,
+                payment_failed_at=failed_at,
+                payment_grace_days=7,
+            )
+        )
+
+        with pytest.raises(SubscriptionInactiveError) as exc_info:
+            await assert_subscription_active()
+
+        err = exc_info.value
+        assert err.error_code == "subscription_inactive"
+        assert err.status_code == 402
+        assert err.details["payment_failed_at"] == failed_at.isoformat()
+        expected_deadline = failed_at + timedelta(days=7)
+        assert err.details["grace_deadline"] == expected_deadline.isoformat()

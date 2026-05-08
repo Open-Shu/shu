@@ -15,6 +15,7 @@ enforcement) talks to the cache, never directly to this client.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -62,8 +63,14 @@ class BillingState:
         # through. bool is a subclass of int, but AwareDatetime rejects it
         # downstream so no special-casing here.
         if isinstance(v, (int, float)) and not isinstance(v, bool):
-            raise TypeError(f"payment_failed_at must be ISO string or datetime, " f"not {type(v).__name__}")
+            raise TypeError(f"payment_failed_at must be ISO string or datetime, not {type(v).__name__}")
         return v
+
+    @property
+    def grace_deadline(self) -> datetime | None:
+        if self.payment_failed_at is None:
+            return None
+        return self.payment_failed_at + timedelta(days=self.payment_grace_days)
 
 
 _BILLING_STATE_ADAPTER = TypeAdapter(BillingState)

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   Box,
-  Toolbar,
   Typography,
   Drawer,
   List,
@@ -116,7 +115,6 @@ const AdminLayout = ({ children }) => {
 
   const drawerContent = (
     <>
-      <Toolbar />
       <Divider />
 
       {/* Scrollable Menu Content */}
@@ -221,14 +219,13 @@ const AdminLayout = ({ children }) => {
   );
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Shared TopBar */}
       <TopBar
         sectionTitle={isMobile ? undefined : 'Admin Panel'}
         sectionIcon={<AdminIcon />}
         leftOffset={isMobile ? 56 : DRAWER_WIDTH + 16}
-        appBarPosition="fixed"
-        fixedOverDrawer
+        appBarPosition="static"
         showAdminLink={false}
         hamburgerButton={
           isMobile ? (
@@ -246,58 +243,62 @@ const AdminLayout = ({ children }) => {
       />
 
       {/* Desktop Sidebar */}
-      {!isMobile && (
-        <Drawer
-          sx={{
-            width: DRAWER_WIDTH,
-            flexShrink: 0,
-            '& .MuiDrawer-paper': {
-              width: DRAWER_WIDTH,
-              boxSizing: 'border-box',
-              height: '100vh',
-              display: 'flex',
-              flexDirection: 'column',
-            },
-          }}
-          variant="permanent"
-          anchor="left"
-        >
-          {drawerContent}
-        </Drawer>
-      )}
 
-      {/* Mobile Sidebar */}
-      {isMobile && (
-        <Drawer
-          variant="temporary"
-          open={mobileOpen}
-          onClose={handleDrawerToggle}
-          ModalProps={{ keepMounted: true }}
-          sx={{
-            '& .MuiDrawer-paper': {
+      <Box sx={{ display: 'flex', flexGrow: 1, minHeight: 0 }}>
+        {!isMobile && (
+          <Drawer
+            sx={{
               width: DRAWER_WIDTH,
-              boxSizing: 'border-box',
-              height: '100vh',
-              display: 'flex',
-              flexDirection: 'column',
-            },
+              flexShrink: 0,
+              '& .MuiDrawer-paper': {
+                width: DRAWER_WIDTH,
+                boxSizing: 'border-box',
+                position: 'static',
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+              },
+            }}
+            variant="permanent"
+            anchor="left"
+          >
+            {drawerContent}
+          </Drawer>
+        )}
+
+        {/* Mobile Sidebar */}
+        {isMobile && (
+          <Drawer
+            variant="temporary"
+            open={mobileOpen}
+            onClose={handleDrawerToggle}
+            ModalProps={{ keepMounted: true }}
+            sx={{
+              '& .MuiDrawer-paper': {
+                width: DRAWER_WIDTH,
+                boxSizing: 'border-box',
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+              },
+            }}
+          >
+            {drawerContent}
+          </Drawer>
+        )}
+
+        {/* Main Content */}
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            bgcolor: 'background.default',
+            p: { xs: 1.5, sm: 3 },
+            overflow: 'auto',
           }}
         >
-          {drawerContent}
-        </Drawer>
-      )}
-
-      {/* Main Content */}
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          bgcolor: 'background.default',
-          p: { xs: 1.5, sm: 3 },
-        }}
-      >
-        <Toolbar />
-        {children}
+          {children}
+        </Box>
       </Box>
     </Box>
   );

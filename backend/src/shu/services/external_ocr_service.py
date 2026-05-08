@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 
+from ..billing.enforcement import assert_subscription_active
 from ..core.database import get_async_session_local
 from ..core.external_model_resolver import ensure_provider_and_model_active
 from ..core.logging import get_logger
@@ -206,10 +207,12 @@ class ExternalOCRService:
         Raises:
             httpx.HTTPStatusError: On API errors (4xx/5xx).
             ValueError: On unsupported mime types or invalid arg combos.
+            SubscriptionInactiveError: When CP has disabled the OpenRouter key.
 
         """
         if (file_bytes is None) == (file_path is None):
             raise ValueError("Provide exactly one of file_bytes or file_path")
+        await assert_subscription_active()
 
         prefix = OCR_ELIGIBLE_MIME_PREFIXES.get(mime_type)
         if prefix is None:

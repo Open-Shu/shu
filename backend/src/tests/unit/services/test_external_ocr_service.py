@@ -3,15 +3,18 @@
 import base64
 import json
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from shu.billing.enforcement import SubscriptionInactiveError
 from shu.core.exceptions import InactiveProviderError
 from shu.core.ocr_service import OCRResult
 from shu.services.external_ocr_service import ExternalOCRService
+from tests.unit.conftest import disabled_billing_state
 
 
 async def _consume_post_body(mock_client: MagicMock) -> tuple[dict, int]:
@@ -584,3 +587,26 @@ class TestExtractTextInactiveGuard:
             assert args == (provider_id, model_id)
             assert kwargs["call_type"] == "OCR"
             assert kwargs["session"] is not None
+
+
+class TestExtractTextSubscriptionGate:
+    """The subscription gate must fire before any billable work.
+
+    Pins the chokepoint invariant: regardless of caller (worker, plugin
+    host, or direct test invocation), `extract_text` must raise
+    `SubscriptionInactiveError` and never reach httpx.
+    """
+
+    @pytest.mark.asyncio
+    async def test_inactive_subscription_raises_before_any_work(self, install_stub_cache):
+        """Disabled cache → `extract_text` raises before any httpx call.
+
+        No httpx patching: a regression that lets the gate fall through would
+        attempt a real network call, which surfaces as a louder failure
+        (connection error) than a subtle missed assertion.
+        """
+        install_stub_cache(disabled_billing_state())
+        svc = _make_service()
+
+        with pytest.raises(SubscriptionInactiveError):
+            await svc.extract_text(file_bytes=b"image-bytes", mime_type="image/png")

@@ -23,8 +23,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from fastapi import FastAPI
-
 from shu.billing.config import get_billing_settings
 from shu.billing.cp_client import (
     HEALTHY_DEFAULT,
@@ -113,19 +111,42 @@ class BillingStateCache:
         return HEALTHY_DEFAULT
 
 
-async def initialize_billing_state_cache(app: FastAPI) -> None:
-    """Eager-load the cache so SHU-703 enforcement (when it lands) sees a
-    fresh value on the first request rather than the cold-start fallback.
+# Module-level singleton so both the FastAPI app and the worker process
+# read the same cache. Kept as module state rather than `app.state` because
+# the worker has no FastAPI app — gating OCR jobs at dequeue time
+# (SHU-703) needs reachability from a non-FastAPI context.
+_cache: BillingStateCache | None = None
+
+
+def get_billing_state_cache() -> BillingStateCache | None:
+    """Return the process-wide cache singleton, or None if CP is not configured.
+
+    Callers must treat None as "self-hosted / dev — enforcement disabled."
+    """
+    return _cache
+
+
+def reset_billing_state_cache() -> None:
+    """Reset the singleton. Test-only."""
+    global _cache  # noqa: PLW0603
+    _cache = None
+
+
+async def initialize_billing_state_cache() -> None:
+    """Eager-load the cache so SHU-703 enforcement sees a fresh value on the
+    first request rather than the cold-start fallback.
 
     Skipped on self-hosted / dev deployments where CP isn't configured —
     presence of all three of `tenant_id`, `router_shared_secret`, and
     `cp_base_url` is the signal that the tenant is meant to talk to CP.
 
-    `app.state.billing_state_cache` is always set after this returns —
-    either to a `BillingStateCache` instance or to `None`. Consumers can
-    then check for `None` deterministically rather than handling
-    AttributeError.
+    Idempotent: a second call is a no-op once the singleton is populated,
+    so FastAPI startup and worker startup can both invoke this safely.
     """
+    global _cache  # noqa: PLW0603
+    if _cache is not None:
+        return
+
     settings = get_settings_instance()
     billing_settings = get_billing_settings()
     if not (settings.tenant_id and billing_settings.router_shared_secret and billing_settings.cp_base_url):
@@ -133,11 +154,8 @@ async def initialize_billing_state_cache(app: FastAPI) -> None:
             "CP billing-state cache disabled — tenant_id, router secret, or "
             "CP base URL not configured (self-hosted / dev)"
         )
-        app.state.billing_state_cache = None
         return
 
-    # Set None up-front so any failure below still leaves a discoverable attr.
-    app.state.billing_state_cache = None
     try:
         http_client = await get_http_client()
         cache = BillingStateCache(
@@ -150,11 +168,11 @@ async def initialize_billing_state_cache(app: FastAPI) -> None:
             ),
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
         )
-        # Assign before the eager fetch so a programmer error in get() still
-        # leaves the cache reachable. CpClientError is absorbed inside get();
-        # only programmer errors (bad UUID, broken httpx, etc.) reach here.
-        app.state.billing_state_cache = cache
-        cache = await cache.get()
-        _logger.info("CP billing-state cache initialized: %s", cache)
+        # Publish the singleton before the eager fetch so a programmer
+        # error in get() still leaves the cache reachable. CpClientError
+        # is absorbed inside get(); only programmer errors (bad UUID,
+        # broken httpx, etc.) escape here.
+        _cache = cache
+        _logger.info("CP billing-state cache initialized: %s", await cache.get())
     except Exception as e:
         _logger.warning(f"CP billing-state cache initialization failed: {e}")

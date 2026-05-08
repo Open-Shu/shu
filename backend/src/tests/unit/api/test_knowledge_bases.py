@@ -6,15 +6,26 @@ Tests cover:
 - User ID is passed to the service for PBAC filtering
 - Service results are correctly formatted in the response
 - create_knowledge_base accepts any authenticated user and stamps owner_id
+- Subscription gate (SHU-703) on POST /{kb_id}/documents/upload
 """
 
+import io
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
-from shu.api.knowledge_bases import create_knowledge_base, list_knowledge_bases
+from shu.api.dependencies import get_db
+from shu.api.knowledge_bases import (
+    create_knowledge_base,
+    list_knowledge_bases,
+    router as kb_router,
+)
+from shu.auth.rbac import require_kb_write_access
+from shu.billing.cp_client import BillingState
 from shu.schemas.knowledge_base import KnowledgeBaseCreate
+from tests.unit.api.conftest import make_app_with_router
 
 
 def _mock_user(user_id: str = "user-1"):
@@ -155,3 +166,60 @@ class TestCreateKnowledgeBase:
 
             call_kwargs = mock_svc.create_knowledge_base.call_args.kwargs
             assert call_kwargs["owner_id"] == "00000000-1111-2222-3333-444444444444"
+
+
+# Subscription-gating tests below need FastAPI's dependency-resolution machinery
+# to fire. Calling the route function directly bypasses Depends() defaults, so
+# the dep never raises and we cannot observe the 402 short-circuit. TestClient
+# is the minimum surface that exercises the actual gate behavior — the gate is
+# a framework concern, not application logic. Mirrors the deviation called out
+# in test_chat.py for the same reason.
+
+
+class TestUploadDocumentsSubscriptionGate:
+    """The subscription gate must fire before staging or job enqueue."""
+
+    def test_inactive_subscription_returns_402_and_blocks_ingestion(self, install_stub_cache):
+        """Disabled key → 402 JSON envelope; no staging write, no OCR enqueue."""
+        failed_at = datetime(2026, 1, 1, tzinfo=UTC)
+        install_stub_cache(
+            BillingState(
+                openrouter_key_disabled=True,
+                payment_failed_at=failed_at,
+                payment_grace_days=7,
+            )
+        )
+
+        app = make_app_with_router(kb_router)
+        fake_user = _mock_user("user-123")
+        fake_db = AsyncMock()
+
+        app.dependency_overrides[require_kb_write_access] = lambda: fake_user
+        app.dependency_overrides[get_db] = lambda: fake_db
+
+        # Patch the route's local entry point to ingestion plus the lazy-imported
+        # staging class and enqueue_job at their definition sites. The gate must
+        # short-circuit before any of these are reachable.
+        with (
+            patch("shu.api.knowledge_bases.ingest_document_service") as mock_ingest,
+            patch("shu.services.file_staging_service.FileStagingService") as mock_staging_cls,
+            patch("shu.core.workload_routing.enqueue_job") as mock_enqueue,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/knowledge-bases/kb-1/documents/upload",
+                    files={"files": ("test.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+                )
+
+            assert response.status_code == 402
+            assert response.headers["content-type"].startswith("application/json")
+
+            body = response.json()
+            assert body["error"]["code"] == "subscription_inactive"
+            assert body["error"]["details"]["payment_failed_at"] == failed_at.isoformat()
+            assert body["error"]["details"]["grace_deadline"] is not None
+
+            # The gate must fire BEFORE the route reads bytes or stages anything.
+            mock_ingest.assert_not_called()
+            mock_staging_cls.assert_not_called()
+            mock_enqueue.assert_not_called()

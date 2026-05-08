@@ -19,6 +19,7 @@ import httpx
 import jmespath
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.billing.enforcement import assert_subscription_active
 from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 from shu.services.plugin_execution import build_agent_tools
@@ -306,6 +307,11 @@ class UnifiedLLMClient:
             ProviderStreamEvent object or async generator for streaming
 
         """
+        # SHU-703 chokepoint for paid chat: every chat_completion path
+        # (chat send/regenerate, side-call summary/auto-rename, experience
+        # execution, profiling) reaches here.
+        await assert_subscription_active()
+
         start_time = datetime.now(UTC)
 
         payload = {}

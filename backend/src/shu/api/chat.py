@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user
+from ..billing.enforcement import assert_subscription_active
 from ..core.config import ConfigurationManager, get_config_manager_dependency, get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
@@ -842,6 +843,8 @@ async def send_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
+    # WHY — short-circuits before any LLM call; fires before StreamingResponse starts.
+    _subscription_active: None = Depends(assert_subscription_active),
 ):
     """Send a user message to a conversation and stream LLM response events as server-sent events (SSE).
 
@@ -1047,6 +1050,8 @@ async def regenerate_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     config_manager: ConfigurationManager = Depends(get_config_manager_dependency),
+    # WHY — short-circuits before any LLM call; fires before StreamingResponse starts.
+    _subscription_active: None = Depends(assert_subscription_active),
 ):
     """Stream a regenerated assistant message as Server-Sent Events (SSE).
 
