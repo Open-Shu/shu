@@ -8,15 +8,20 @@ Feature: queue-backend-interface
 """
 
 import asyncio
+import logging
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from shu.billing.enforcement import SubscriptionInactiveError
+from tests.unit.conftest import disabled_billing_state, healthy_billing_state
 from shu.core.queue_backend import InMemoryQueueBackend, Job
 from shu.core.worker import Worker, WorkerConfig
 from shu.core.workload_routing import WorkloadType, enqueue_job
+from shu.models.document import DocumentStatus
 
 # =============================================================================
 # Test Fixtures
@@ -804,3 +809,199 @@ class TestWorkloadCapacityLimiter:
             assert await limiter.acquire(wt) is True
             assert limiter.get_available(wt) is None
             assert limiter.get_limit(wt) == 0
+
+
+# =============================================================================
+# Subscription Gate Tests (SHU-703)
+#
+# When the service-layer gate inside `ExternalOCRService` /
+# `ExternalEmbeddingService` raises `SubscriptionInactiveError`, the worker
+# handler must drop the job cleanly — propagating would log a stack trace
+# and requeue, neither of which is correct for a known billing state.
+# =============================================================================
+
+
+class _MockOcrJob:
+    """Minimal mock job for the OCR handler tests."""
+
+    def __init__(self, payload: dict, job_id: str = "ocr-job-001") -> None:
+        self.id = job_id
+        self.payload = payload
+        self.attempts = 1
+        self.max_attempts = 3
+        self.queue_name = WorkloadType.INGESTION_OCR.queue_name
+
+
+def _make_ocr_payload() -> dict:
+    return {
+        "document_id": "doc-123",
+        "knowledge_base_id": "kb-456",
+        "staging_key": "file_staging:doc-123",
+        "filename": "test.pdf",
+        "mime_type": "application/pdf",
+    }
+
+
+def _make_session_with_doc_and_kb(document, kb):
+    """Async session that returns `document` for select(Document) and `kb` for session.get(KB, ...)."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = document
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.get = AsyncMock(return_value=kb)
+    mock_session.commit = AsyncMock()
+
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
+    return mock_session_local, mock_session
+
+
+
+
+class _MockEmbedJob:
+    """Minimal mock job for the embed handler tests."""
+
+    def __init__(self, payload: dict, job_id: str = "embed-job-001") -> None:
+        self.id = job_id
+        self.payload = payload
+        self.attempts = 1
+        self.max_attempts = 3
+        self.queue_name = WorkloadType.INGESTION_EMBED.queue_name
+
+
+def _make_embed_payload(action: str = "embed_document") -> dict:
+    return {
+        "document_id": "doc-789",
+        "knowledge_base_id": "kb-789",
+        "user_id": "user-1",
+        "action": action,
+    }
+
+
+class TestProcessJobSubscriptionGate:
+    """`SubscriptionInactiveError` raised anywhere in a handler chain must be
+    caught at the dispatch level (`process_job`) and turned into a clean drop
+    — no stack trace, no retry. Catching here (not in each handler) means new
+    workload types inherit the drop behavior automatically.
+
+    The `RE_EMBEDDING` case is the load-bearing one: it wasn't covered by the
+    earlier per-handler catches and surfaced as 3-attempt retry storms in
+    production logs.
+    """
+
+    @pytest.fixture
+    def _MockJob(self):
+        class _Job:
+            def __init__(self, queue_name: str, payload: dict | None = None):
+                self.id = "job-001"
+                self.queue_name = queue_name
+                self.payload = payload or {"document_id": "doc-1", "knowledge_base_id": "kb-1"}
+                self.attempts = 1
+                self.max_attempts = 3
+
+        return _Job
+
+    @pytest.mark.parametrize(
+        "queue_attr,handler_path",
+        [
+            ("INGESTION_OCR", "shu.worker._handle_ocr_job"),
+            ("INGESTION_EMBED", "shu.worker._handle_embed_job"),
+            ("RE_EMBEDDING", "shu.worker._handle_re_embedding_job"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_subscription_inactive_drops_without_retry(
+        self, install_stub_cache, caplog, _MockJob, queue_attr, handler_path
+    ):
+        install_stub_cache(healthy_billing_state())
+
+        from shu.core.workload_routing import WorkloadType
+        from shu.worker import process_job
+
+        job = _MockJob(queue_name=getattr(WorkloadType, queue_attr).queue_name)
+        raising = AsyncMock(
+            side_effect=SubscriptionInactiveError(payment_failed_at=None, grace_deadline=None)
+        )
+
+        with patch(handler_path, new=raising), caplog.at_level(logging.INFO, logger="shu.worker"):
+            # Must NOT raise — the dispatch-level catch handles it.
+            await process_job(job)
+
+        drop_records = [
+            r
+            for r in caplog.records
+            if r.name == "shu.worker" and "Subscription inactive" in r.getMessage()
+        ]
+        assert len(drop_records) == 1, (
+            f"Expected exactly one drop log; got {[r.getMessage() for r in caplog.records]}"
+        )
+        record = drop_records[0]
+        assert record.levelno == logging.INFO
+        assert getattr(record, "job_id", None) == "job-001"
+        assert getattr(record, "document_id", None) == "doc-1"
+        assert getattr(record, "knowledge_base_id", None) == "kb-1"
+
+
+class TestHandlerPreCheckBeforeStateMutation:
+    """Each per-workload handler must short-circuit before opening a session
+    or touching staged files when CP has paused the tenant.
+
+    Without this pre-check, the OCR/embed handlers mark documents
+    EXTRACTING / EMBEDDING and then leave them stuck when the dispatch
+    catch drops the job. The pre-check keeps the document state machine
+    clean — drops happen before any DB write.
+    """
+
+    @pytest.mark.parametrize(
+        "handler_name,payload,blocked_path",
+        [
+            (
+                "_handle_ocr_job",
+                {
+                    "document_id": "doc-1",
+                    "knowledge_base_id": "kb-1",
+                    "staging_key": "k",
+                    "filename": "f.pdf",
+                    "mime_type": "application/pdf",
+                },
+                # If the gate fell through, the handler would open a real DB
+                # session here. Patching at the source module so the inner
+                # `from .core.database import get_async_session_local` picks
+                # up the mock regardless of binding location.
+                "shu.core.database.get_async_session_local",
+            ),
+            (
+                "_handle_embed_job",
+                {"document_id": "doc-1", "knowledge_base_id": "kb-1", "action": "embed_document"},
+                # _handle_embed_job dispatches to _handle_content_embed_job
+                # (the EMBEDDING-status mutation lives there). Assert the
+                # pre-check fires before dispatch.
+                "shu.worker._handle_content_embed_job",
+            ),
+            (
+                "_handle_re_embedding_job",
+                {"document_id": "doc-1", "knowledge_base_id": "kb-1"},
+                # The handler lazy-imports re_embedding_handler; patch the
+                # symbol that import would resolve to.
+                "shu.re_embedding_handler.handle_re_embedding_job",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_paused_cache_short_circuits_before_side_effects(
+        self, install_stub_cache, handler_name, payload, blocked_path
+    ):
+        install_stub_cache(disabled_billing_state())
+
+        import shu.worker as worker_module
+
+        job = MagicMock(id="job-pre-1", payload=payload, attempts=1, max_attempts=3)
+        handler = getattr(worker_module, handler_name)
+
+        with patch(blocked_path, new=AsyncMock()) as blocked:
+            with pytest.raises(SubscriptionInactiveError):
+                await handler(job)
+
+        blocked.assert_not_called()

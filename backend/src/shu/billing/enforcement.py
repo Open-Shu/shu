@@ -2,18 +2,82 @@
 
 Checks whether the current user count is at or over the subscription
 limit and returns a status object the caller can act on.
+
+Also hosts the SHU-703 subscription-active gate consumed by every
+billable chokepoint (OCR, embedding, chat, KB upload). Keeping the
+two helpers in one module mirrors the "billing enforcement" boundary
+in the design doc — there is no per-chokepoint policy.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.adapters import get_billing_config, get_user_count
+from shu.billing.billing_state_cache import get_billing_state_cache
+from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
+from shu.core.exceptions import ShuException
 from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class SubscriptionInactiveError(ShuException):
+    """Raised when CP has disabled the OpenRouter key (post-grace lockout).
+
+    Carries the wire payload the frontend banner consumes — `grace_deadline`
+    is informational here (grace is already over by the time we raise),
+    but including it lets the banner render "service paused on {date}"
+    without a follow-up request.
+    """
+
+    def __init__(
+        self,
+        *,
+        payment_failed_at: datetime | None,
+        grace_deadline: datetime | None,
+    ) -> None:
+        super().__init__(
+            message="Subscription is inactive — service paused.",
+            error_code="subscription_inactive",
+            status_code=402,
+            details={
+                "payment_failed_at": payment_failed_at.isoformat() if payment_failed_at else None,
+                "grace_deadline": grace_deadline.isoformat() if grace_deadline else None,
+            },
+        )
+
+
+async def get_current_billing_state() -> BillingState:
+    """Return the latest cached CP billing state, or HEALTHY_DEFAULT.
+
+    HEALTHY_DEFAULT covers two distinct cases by design:
+    - Self-hosted / dev: the cache singleton was never populated because
+      CP isn't configured. Enforcement is a no-op.
+    - Cold-start with CP unreachable: SHU-743 fail-open behavior — we
+      prefer letting traffic through over locking customers out on a
+      transient outage. The OpenRouter side gates chat/embed cost
+      independently, so the leak surface is bounded.
+    """
+    cache = get_billing_state_cache()
+    if cache is None:
+        return HEALTHY_DEFAULT
+    return await cache.get()
+
+
+async def assert_subscription_active() -> None:
+    """Raise ``SubscriptionInactiveError`` if CP has paused service."""
+    state = await get_current_billing_state()
+    if not state.openrouter_key_disabled:
+        return
+
+    raise SubscriptionInactiveError(
+        payment_failed_at=state.payment_failed_at,
+        grace_deadline=state.grace_deadline,
+    )
 
 
 @dataclass(frozen=True)

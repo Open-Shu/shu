@@ -40,6 +40,8 @@ import sys
 from sqlalchemy import select
 
 from .auth.models import User
+from .billing.billing_state_cache import initialize_billing_state_cache
+from .billing.enforcement import SubscriptionInactiveError, assert_subscription_active
 from .core.config import get_settings_instance
 from .core.database import get_async_session_local, init_db
 from .core.exceptions import ShuException
@@ -141,6 +143,12 @@ async def _handle_ocr_job(job) -> None:  # noqa: PLR0915
 
     ocr_mode = job.payload.get("ocr_mode")
     user_id = job.payload.get("user_id")
+
+    # Short-circuit before any DB write or staged-file read so a paused
+    # tenant doesn't leave documents stuck in EXTRACTING. The OCR
+    # service-layer gate would also catch this; this pre-check just
+    # avoids the dirty status transition in the documented drop case.
+    await assert_subscription_active()
 
     logger.info(
         "Processing OCR job",
@@ -331,6 +339,13 @@ async def _handle_embed_job(job) -> None:
         Exception: If embedding generation fails (triggers retry).
 
     """
+    # Single chokepoint for both embed actions — fires before either
+    # downstream handler can mutate document status to EMBEDDING. The
+    # embedding service-layer gate is still load-bearing for direct
+    # callers (plugin host, future entry points); this pre-check just
+    # avoids the dirty status transition in the documented drop case.
+    await assert_subscription_active()
+
     action = job.payload.get("action", "embed_document")
 
     if action == "embed_profile_artifacts":
@@ -1067,6 +1082,11 @@ async def _handle_profiling_job(job) -> None:
 
 async def _handle_re_embedding_job(job) -> None:
     """Route RE_EMBEDDING jobs to the handler module."""
+    # Pre-check before loading the handler module / opening any session.
+    # Re-embedding is the load-bearing case the dispatch-level catch was
+    # added for; gating here keeps the document state machine clean too.
+    await assert_subscription_active()
+
     from .re_embedding_handler import handle_re_embedding_job
 
     await handle_re_embedding_job(job)
@@ -1149,6 +1169,22 @@ async def process_job(job):  # noqa: PLR0912 — dispatch table by workload type
 
         else:
             raise ValueError(f"Unsupported workload type: {workload_type}")
+    except SubscriptionInactiveError:
+        # SHU-703: any handler whose chain reaches the OCR or embedding
+        # service-layer gate raises this. Drop without retry — propagating
+        # would log a stack trace and requeue, neither correct for a known
+        # billing state. Catching here (not in each handler) means future
+        # handlers that touch billable services inherit the drop behavior.
+        payload = job.payload or {}
+        logger.info(
+            f"Subscription inactive — dropping {workload_type.value if workload_type else 'unknown'} job",
+            extra={
+                "job_id": job.id,
+                "document_id": payload.get("document_id"),
+                "knowledge_base_id": payload.get("knowledge_base_id"),
+            },
+        )
+        return
     finally:
         if log_rss:
             rss_after = current_rss_bytes()
@@ -1218,6 +1254,16 @@ async def run_worker(  # noqa: PLR0915 — linear startup/shutdown sequence; spl
     except Exception as e:
         logger.error("Failed to initialize queue backend: %s", e, exc_info=True)
         sys.exit(1)
+
+    # CP billing-state cache: needed so OCR jobs can re-check at dequeue
+    # time (SHU-703) and short-circuit before incurring Mistral cost when
+    # the tenant has been disabled by CP between enqueue and dequeue.
+    # Best-effort: cache init absorbs CP failures internally and falls
+    # back to HEALTHY_DEFAULT, so a CP outage doesn't block worker boot.
+    try:
+        await initialize_billing_state_cache()
+    except Exception as e:
+        logger.warning("Billing-state cache init failed in worker: %s", e)
 
     # Start a lightweight log-maintenance loop so that worker processes
     # (which are long-lived but don't run the full unified scheduler)

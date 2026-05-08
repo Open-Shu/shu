@@ -30,6 +30,7 @@ from shu.billing.adapters import (
     get_user_count,
 )
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
+from shu.billing.enforcement import get_current_billing_state
 from shu.billing.router_envelope import verify_router_envelope_dep
 from shu.billing.schemas import WebhookEventResponse
 from shu.billing.service import BillingService, CustomerMismatchError
@@ -128,11 +129,17 @@ async def get_subscription_status(
     user_limit = billing_config.get("quantity", 0)
     enforcement = billing_config.get("user_limit_enforcement", "soft")
 
+    state = await get_current_billing_state()
+
     payload: dict = {
         "user_count": user_count,
         "user_limit": user_limit,
         "user_limit_enforcement": enforcement,
         "at_user_limit": user_count >= user_limit > 0,
+        "payment_failed_at": state.payment_failed_at.isoformat() if state.payment_failed_at else None,
+        "payment_grace_days": state.payment_grace_days,
+        "grace_deadline": state.grace_deadline.isoformat() if state.grace_deadline else None,
+        "service_paused": state.openrouter_key_disabled,
     }
 
     if user.can_manage_users():
