@@ -41,7 +41,7 @@ from sqlalchemy import select
 
 from .auth.models import User
 from .core.config import get_settings_instance
-from .core.database import get_async_session_local, init_db
+from .core.database import get_async_session_local, verify_schema_version
 from .core.exceptions import ShuException
 from .core.logging import get_logger, setup_logging
 from .core.queue_backend import get_queue_backend
@@ -1364,12 +1364,10 @@ async def run_worker(  # noqa: PLR0915 — linear startup/shutdown sequence; spl
         concurrency: Number of concurrent worker tasks to run.
 
     """
-    # Initialize database connection
     try:
-        await init_db()
-        logger.info("Database initialized successfully")
+        await verify_schema_version()
     except Exception as e:
-        logger.error("Failed to initialize database: %s", e, exc_info=True)
+        logger.error("Schema verification failed: %s", e, exc_info=True)
         sys.exit(1)
 
     # Get queue backend (shared by all workers)

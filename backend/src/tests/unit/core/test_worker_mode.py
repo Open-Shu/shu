@@ -297,14 +297,14 @@ async def test_workers_enabled_starts_with_api():
         # Mock the worker components and expensive lifespan operations
         with patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
              patch('shu.core.worker.Worker') as mock_worker_class, \
-             patch('shu.main.init_db') as mock_init_db, \
+             patch('shu.main.verify_schema_version') as mock_verify_schema, \
              patch('shu.services.scheduler_service.start_scheduler', new_callable=AsyncMock) as mock_scheduler, \
              patch('shu.main._initialize_policy_cache', new_callable=AsyncMock):
 
             # Setup mocks
             mock_backend = AsyncMock()
             mock_get_backend.return_value = mock_backend
-            mock_init_db.return_value = None
+            mock_verify_schema.return_value = None
             mock_scheduler_task = MagicMock()
             mock_scheduler_task.done.return_value = True
             mock_scheduler.return_value = mock_scheduler_task
@@ -359,14 +359,14 @@ async def test_workers_enabled_with_concurrency():
     with patch('shu.main.settings', mock_settings), \
          patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
          patch('shu.core.worker.Worker') as mock_worker_class, \
-         patch('shu.main.init_db') as mock_init_db, \
+         patch('shu.main.verify_schema_version') as mock_verify_schema, \
          patch('shu.services.scheduler_service.start_scheduler', new_callable=AsyncMock) as mock_scheduler, \
          patch('shu.main._initialize_policy_cache', new_callable=AsyncMock):
 
         # Setup mocks
         mock_backend = AsyncMock()
         mock_get_backend.return_value = mock_backend
-        mock_init_db.return_value = None
+        mock_verify_schema.return_value = None
         mock_scheduler_task = MagicMock()
         mock_scheduler_task.done.return_value = True
         mock_scheduler.return_value = mock_scheduler_task
@@ -428,10 +428,10 @@ async def test_worker_entrypoint_starts_without_api():
 
     # Mock database and backend initialization
     with (
-        patch("shu.worker.init_db") as mock_init_db,
+        patch("shu.worker.verify_schema_version") as mock_verify_schema,
         patch("shu.worker.get_queue_backend") as mock_get_backend,
     ):
-        mock_init_db.return_value = None
+        mock_verify_schema.return_value = None
         mock_backend = InMemoryQueueBackend()
         mock_get_backend.return_value = mock_backend
 
@@ -452,7 +452,7 @@ async def test_worker_entrypoint_starts_without_api():
             pass
 
         # Verify database was initialized
-        mock_init_db.assert_called_once()
+        mock_verify_schema.assert_called_once()
 
         # Verify backend was retrieved
         mock_get_backend.assert_called_once()
@@ -480,11 +480,11 @@ async def test_api_starts_cleanly_with_workers_enabled():
         # Mock worker components to avoid actual startup
         with patch('shu.core.queue_backend.get_queue_backend') as mock_get_backend, \
              patch('shu.core.worker.Worker') as mock_worker_class, \
-             patch('shu.main.init_db') as mock_init_db:
+             patch('shu.main.verify_schema_version') as mock_verify_schema:
 
             mock_backend = AsyncMock()
             mock_get_backend.return_value = mock_backend
-            mock_init_db.return_value = None
+            mock_verify_schema.return_value = None
 
 
             mock_worker = MagicMock()
@@ -515,9 +515,9 @@ async def test_api_starts_cleanly_with_workers_disabled():
     from shu.main import create_app
 
     with patch.dict(os.environ, {'SHU_WORKERS_ENABLED': 'false'}, clear=False):
-        # Mock init_db to avoid database connection
-        with patch("shu.main.init_db") as mock_init_db:
-            mock_init_db.return_value = None
+        # Mock schema verification to avoid database connection
+        with patch("shu.main.verify_schema_version") as mock_verify_schema:
+            mock_verify_schema.return_value = None
 
 
             # Create app
