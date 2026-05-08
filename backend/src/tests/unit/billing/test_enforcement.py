@@ -1,11 +1,13 @@
 """Tests for billing enforcement — user limit checking logic."""
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
+from shu.billing.entitlements import EntitlementSet
 from shu.billing.enforcement import (
     SubscriptionInactiveError,
     UserLimitStatus,
@@ -229,6 +231,12 @@ class TestAssertSubscriptionActive:
                 openrouter_key_disabled=False,
                 payment_failed_at=datetime(2026, 1, 1, tzinfo=UTC),
                 payment_grace_days=7,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
             )
         )
         await assert_subscription_active()
@@ -242,6 +250,12 @@ class TestAssertSubscriptionActive:
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
             )
         )
 

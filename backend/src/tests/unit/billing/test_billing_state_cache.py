@@ -13,6 +13,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,6 +26,7 @@ from shu.billing.cp_client import (
     CpClient,
     CpUnreachable,
 )
+from shu.billing.entitlements import EntitlementSet
 
 # Module logger name used by BillingStateCache — caplog filters target this.
 _CACHE_LOGGER = "shu.billing.billing_state_cache"
@@ -34,10 +36,18 @@ _TTL = 60
 
 
 def _state(disabled: bool = False) -> BillingState:
+    # Trial/grant fields default to inert values; tests targeting trial
+    # behavior construct dedicated states inline.
     return BillingState(
         openrouter_key_disabled=disabled,
         payment_failed_at=None,
         payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
     )
 
 
@@ -90,11 +100,13 @@ def _make_cache(
     *,
     ttl: int = _TTL,
     clock: Callable[[], datetime] | None = None,
+    persister: MagicMock | None = None,
 ) -> BillingStateCache:
     return BillingStateCache(
         client=client,
         ttl_seconds=ttl,
         clock=clock if clock is not None else lambda: _T0,
+        persister=persister,
     )
 
 
@@ -315,3 +327,117 @@ async def test_cp_auth_failed_is_treated_identically_to_unreachable() -> None:
     clock.advance(timedelta(seconds=_TTL // 2))
     assert await cache.get() == seeded  # within backoff, no fetch
     assert client.fetch_billing_state.await_count == 2
+
+
+# Conservative cold-start contract: HEALTHY_DEFAULT must not silently
+# expand the feature surface during a CP outage. Pinning the shape here
+# keeps a future "default to standard tier" change from quietly leaking
+# paid features to free tenants when CP is down.
+
+
+def test_healthy_default_blocks_llm_via_trial_cap_and_keeps_or_key_open() -> None:
+    # Cold-start CP-down posture: chat entitlement on so OCR/embeddings keep
+    # working (those don't go through the trial-cap), but is_trial=True with
+    # zero grant so the LLM-side trial-cap blocks. A trial tenant whose
+    # process restarts during a CP outage cannot rack up unbounded LLM cost
+    # before we get a real value back.
+    assert HEALTHY_DEFAULT.entitlements == EntitlementSet()
+    assert HEALTHY_DEFAULT.entitlements.chat is True
+    assert HEALTHY_DEFAULT.entitlements.plugins is False
+    assert HEALTHY_DEFAULT.entitlements.experiences is False
+    assert HEALTHY_DEFAULT.entitlements.provider_management is False
+    assert HEALTHY_DEFAULT.entitlements.model_config_management is False
+    assert HEALTHY_DEFAULT.entitlements.mcp_servers is False
+    assert HEALTHY_DEFAULT.openrouter_key_disabled is False
+    assert HEALTHY_DEFAULT.is_trial is True
+    assert HEALTHY_DEFAULT.total_grant_amount == Decimal(0)
+    assert HEALTHY_DEFAULT.remaining_grant_amount == Decimal(0)
+    assert HEALTHY_DEFAULT.trial_deadline is None
+    assert HEALTHY_DEFAULT.seat_price_usd == Decimal(0)
+
+
+# Persister integration: on cold-start CP failure we restore the
+# last-known good state from disk before falling back to HEALTHY_DEFAULT.
+# Closes the "deploy coincides with CP blip" gap that would otherwise
+# block paying customers on the trial-cap fail-closed default.
+
+
+@pytest.mark.asyncio
+async def test_cold_start_failure_with_persisted_value_serves_it_not_default() -> None:
+    seeded = BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(plugins=True),
+        is_trial=False,  # paying customer state we don't want to lose
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal("20.00"),
+    )
+    persister = MagicMock()
+    persister.load = AsyncMock(return_value=seeded)
+    persister.save = AsyncMock()
+    client = _stub_client(side_effects=[CpUnreachable("down")])
+
+    result = await _make_cache(client, persister=persister).get()
+
+    assert result == seeded
+    persister.load.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cold_start_failure_with_no_persisted_value_serves_healthy_default() -> None:
+    persister = MagicMock()
+    persister.load = AsyncMock(return_value=None)
+    persister.save = AsyncMock()
+    client = _stub_client(side_effects=[CpUnreachable("down")])
+
+    result = await _make_cache(client, persister=persister).get()
+
+    assert result == HEALTHY_DEFAULT
+    persister.load.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_successful_fetch_persists_value_to_disk() -> None:
+    seeded = _state(disabled=True)
+    persister = MagicMock()
+    persister.save = AsyncMock()
+    persister.load = AsyncMock()
+    client = _stub_client(return_values=[seeded])
+
+    await _make_cache(client, persister=persister).get()
+
+    persister.save.assert_awaited_once_with(seeded)
+    # Load is only consulted on the cold-start failure path.
+    persister.load.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warm_cache_failure_preserves_trial_and_grant_fields() -> None:
+    """Stale-while-error must hand back the *whole* prior state, not a
+    partially-reconstructed one — the trial banner and entitlement gating
+    rely on these fields being present on every served value.
+    """
+    seeded = BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(plugins=True, experiences=True),
+        is_trial=True,
+        trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+        total_grant_amount=Decimal("50.00"),
+        remaining_grant_amount=Decimal("12.34"),
+        seat_price_usd=Decimal("20.00"),
+    )
+    client = _stub_client(side_effects=[seeded, CpUnreachable("down")])
+    cache = _make_cache(client, clock=_stepping_clock(_T0, timedelta(seconds=_TTL + 1)))
+
+    await cache.get()  # cold-start success
+    stale = await cache.get()  # past TTL, CP failing
+
+    assert stale == seeded
+    assert stale.is_trial is True
+    assert stale.entitlements.plugins is True
+    assert stale.remaining_grant_amount == Decimal("12.34")

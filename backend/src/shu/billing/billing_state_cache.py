@@ -23,6 +23,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from shu.billing.billing_state_persister import BillingStatePersister
 from shu.billing.config import get_billing_settings
 from shu.billing.cp_client import (
     HEALTHY_DEFAULT,
@@ -47,10 +48,16 @@ class BillingStateCache:
         client: CpClient,
         ttl_seconds: int,
         clock: Callable[[], datetime] = _utc_now,
+        persister: BillingStatePersister | None = None,
     ) -> None:
         self._client = client
         self._ttl_seconds = ttl_seconds
         self._clock = clock
+        # Optional disk-backed fallback. When set, successful polls are
+        # mirrored to system_settings and a cold-start CP failure attempts
+        # to restore from there before falling back to HEALTHY_DEFAULT.
+        # Tests pass None to stay DB-free.
+        self._persister = persister
         self._value: BillingState | None = None
         self._last_success_at: datetime | None = None
         # Set on every failed fetch attempt to `now + ttl`. While the clock
@@ -77,10 +84,12 @@ class BillingStateCache:
                 value = await self._client.fetch_billing_state()
             except CpClientError as exc:
                 self._next_retry_after = self._clock() + timedelta(seconds=self._ttl_seconds)
-                return self._serve_stale_or_default(exc)
+                return await self._serve_stale_or_default(exc)
 
             self._value = value
             self._last_success_at = self._clock()
+            if self._persister is not None:
+                await self._persister.save(value)
             return value
 
     def _is_fresh(self) -> bool:
@@ -92,7 +101,7 @@ class BillingStateCache:
     def _is_in_failure_backoff(self) -> bool:
         return self._next_retry_after is not None and self._clock() < self._next_retry_after
 
-    def _serve_stale_or_default(self, exc: CpClientError) -> BillingState:
+    async def _serve_stale_or_default(self, exc: CpClientError) -> BillingState:
         # _last_success_at is deliberately NOT advanced on failure; the retry
         # cadence is bounded by _next_retry_after instead.
         if self._value is not None:
@@ -104,6 +113,23 @@ class BillingStateCache:
                 },
             )
             return self._value
+        # Cold start with no in-memory value: try the persisted last-known
+        # state before falling back to HEALTHY_DEFAULT. A restart that
+        # coincides with a CP outage shouldn't drop a paying tenant to the
+        # trial-cap-blocked default if we have their prior state.
+        if self._persister is not None:
+            persisted = await self._persister.load()
+            if persisted is not None:
+                _logger.warning(
+                    "CP unreachable on cold start, restored billing state from disk",
+                    extra={"exc_type": type(exc).__name__},
+                )
+                # Populate as if it were a fresh fetch — _last_success_at
+                # left unset so the next call past the failure backoff
+                # retries CP rather than treating disk-restored data as
+                # eternally fresh.
+                self._value = persisted
+                return persisted
         _logger.warning(
             "CP unreachable on cold start, serving healthy default",
             extra={"exc_type": type(exc).__name__},
@@ -167,6 +193,7 @@ async def initialize_billing_state_cache() -> None:
                 logger=get_logger("shu.billing.cp_client"),
             ),
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
+            persister=BillingStatePersister(),
         )
         # Publish the singleton before the eager fetch so a programmer
         # error in get() still leaves the cache reachable. CpClientError

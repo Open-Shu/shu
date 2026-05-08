@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -32,6 +33,7 @@ from pydantic import (
 )
 from pydantic.dataclasses import dataclass
 
+from shu.billing.entitlements import EntitlementSet
 from shu.billing.router_envelope import (
     SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
@@ -48,13 +50,24 @@ class BillingState:
     through as truthy and lock healthy users out of OCR. AwareDatetime +
     the validator below reject Unix timestamps and naive datetimes —
     downstream tz-aware arithmetic would crash on naive values.
+
+    `extra="ignore"` is intentional: CP can add new fields to the
+    billing-state response in future releases without forcing every
+    deployed tenant to re-deploy first. Removing or renaming a field is
+    still a coordinated change.
     """
 
     openrouter_key_disabled: StrictBool
     payment_failed_at: AwareDatetime | None
     payment_grace_days: Annotated[StrictInt, Field(ge=0)]
+    entitlements: EntitlementSet
+    is_trial: StrictBool
+    trial_deadline: AwareDatetime | None
+    total_grant_amount: Annotated[Decimal, Field(ge=0)]
+    remaining_grant_amount: Annotated[Decimal, Field(ge=0)]
+    seat_price_usd: Annotated[Decimal, Field(ge=0)]
 
-    @field_validator("payment_failed_at", mode="before")
+    @field_validator("payment_failed_at", "trial_deadline", mode="before")
     @classmethod
     def _reject_unix_timestamp(cls, v: object) -> object:
         # AwareDatetime in lax mode coerces Unix timestamps (int/float) to
@@ -63,7 +76,9 @@ class BillingState:
         # through. bool is a subclass of int, but AwareDatetime rejects it
         # downstream so no special-casing here.
         if isinstance(v, (int, float)) and not isinstance(v, bool):
-            raise TypeError(f"payment_failed_at must be ISO string or datetime, not {type(v).__name__}")
+            # Generic message because this validator now applies to both
+            # payment_failed_at and trial_deadline.
+            raise TypeError(f"datetime field must be ISO string or datetime, not {type(v).__name__}")
         return v
 
     @property
@@ -79,10 +94,27 @@ _BILLING_STATE_ADAPTER = TypeAdapter(BillingState)
 # Cold-start fallback when the cache has never observed a successful
 # response. Once a real value lands the cache hands that out instead;
 # this constant is only reached in the (cold-start ∧ CP-unreachable) corner.
+#
+# Posture asymmetry:
+#   - OR-key path stays fail-open (`openrouter_key_disabled=False`) so OCR
+#     and embeddings keep working during a CP outage.
+#   - Trial-cap path fails CLOSED (`is_trial=True` with zero grant) so a
+#     trial tenant whose process restarts during a CP outage cannot rack
+#     up unbounded LLM costs while we wait for CP to come back. The cost
+#     of this asymmetry is that a standard tenant caught in the same
+#     window also sees chat blocked with a misleading "trial exhausted"
+#     message — bounded by the outage duration, and judged a much smaller
+#     exposure than uncapped trial spend across N tenants.
 HEALTHY_DEFAULT = BillingState(
     openrouter_key_disabled=False,
     payment_failed_at=None,
     payment_grace_days=0,
+    entitlements=EntitlementSet(),
+    is_trial=True,
+    trial_deadline=None,
+    total_grant_amount=Decimal(0),
+    remaining_grant_amount=Decimal(0),
+    seat_price_usd=Decimal(0),
 )
 
 

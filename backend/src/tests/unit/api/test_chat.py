@@ -8,6 +8,7 @@ Tests cover:
 """
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ from shu.api.chat import SendMessageRequest, router as chat_router
 from shu.api.dependencies import get_db
 from shu.auth.rbac import get_current_user
 from shu.billing.cp_client import BillingState
+from shu.billing.entitlements import EntitlementSet
 from shu.core.config import get_config_manager_dependency
 from tests.unit.api.conftest import make_app_with_router
 
@@ -105,6 +107,12 @@ class TestSendMessageSubscriptionGate:
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
             )
         )
         client, _ = client_with_overrides
@@ -140,6 +148,12 @@ class TestRegenerateMessageSubscriptionGate:
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
             )
         )
         client, _ = client_with_overrides

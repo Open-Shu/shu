@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
+from shu.billing.entitlements import EntitlementSet
 from shu.billing.router import get_subscription_status
 
 _P_BILLING_CONFIG = "shu.billing.router.get_billing_config"
@@ -81,6 +83,12 @@ class TestSubscriptionPaymentStatus:
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
             )
         )
 
