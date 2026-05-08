@@ -177,12 +177,15 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     # SHU-759: surface the test-only local-stream delay knob loudly when set,
     # so it's never silently active in non-test environments. Production is
     # already blocked by the Pydantic model_validator in core/config.py.
-    if settings.local_stream_test_chunk_delay_ms:
+    # getattr() tolerates Mock(spec=Settings) fixtures in unit tests that
+    # don't explicitly populate every Pydantic field.
+    chunk_delay_ms = getattr(settings, "local_stream_test_chunk_delay_ms", 0) or 0
+    if chunk_delay_ms:
         logger.warning(
             "SHU_LOCAL_STREAM_TEST_CHUNK_DELAY_MS=%d active — every `local` provider "
             "chunk will sleep this long. This is a TEST-ONLY knob (SHU-759). "
             "Confirm it is unset in any non-test deployment.",
-            settings.local_stream_test_chunk_delay_ms,
+            chunk_delay_ms,
         )
 
     # Cap the MuPDF process-global store so a malicious PDF with thousands of
