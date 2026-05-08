@@ -5,6 +5,7 @@ and utilities for database operations.
 """
 
 import os
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -159,31 +160,55 @@ async def get_db_session() -> AsyncSession:
     return session_local()
 
 
-async def verify_schema_version() -> None:
-    """Raise DatabaseSessionError unless alembic_version matches the bundled head."""
+_REVISION_RE = re.compile(r'^revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]', re.MULTILINE)
+_DOWN_REVISION_RE = re.compile(r'^down_revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]', re.MULTILINE)
+
+
+def _resolve_alembic_head() -> str:
+    """Find the head revision in the bundled migrations/versions/ tree.
+
+    Regex-parses each file's `revision` and `down_revision` strings rather
+    than importing the modules. Migration modules can have side-effecting
+    imports (e.g. `from migrations.seed_data...`) that only resolve under
+    alembic's runtime sys.path setup; importing them at app startup would
+    couple shu-api to alembic's CLI conventions.
+    """
     from pathlib import Path
 
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    from ..models.registry import register_all_models
-
-    register_all_models()
-
     candidates = [
-        Path("/app/alembic.ini"),
-        Path(__file__).resolve().parents[3] / "alembic.ini",
+        Path("/app/migrations/versions"),
+        Path(__file__).resolve().parents[3] / "migrations" / "versions",
     ]
-    alembic_ini = next((p for p in candidates if p.exists()), None)
-    if alembic_ini is None:
-        raise DatabaseSessionError(
-            "alembic.ini not found in any expected location; cannot verify schema version. "
-            f"Looked in: {[str(p) for p in candidates]}"
-        )
+    versions_dir = next((p for p in candidates if p.is_dir()), None)
+    if versions_dir is None:
+        raise DatabaseSessionError(f"migrations/versions/ not found; looked in {[str(p) for p in candidates]}")
 
-    expected = ScriptDirectory.from_config(Config(str(alembic_ini))).get_current_head()
-    if expected is None:
-        raise DatabaseSessionError("alembic migrations directory has no head revision")
+    revisions: dict[str, str | None] = {}
+    for path in versions_dir.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        text_ = path.read_text()
+        rev = _REVISION_RE.search(text_)
+        if rev is None:
+            continue
+        down = _DOWN_REVISION_RE.search(text_)
+        revisions[rev.group(1)] = down.group(1) if down else None
+
+    if not revisions:
+        raise DatabaseSessionError(f"no migration files found under {versions_dir}")
+
+    pointed_to = {d for d in revisions.values() if d is not None}
+    heads = [r for r in revisions if r not in pointed_to]
+    if len(heads) != 1:
+        raise DatabaseSessionError(
+            f"expected exactly one alembic head; found {heads}. " "Migrations have branched and need to be reconciled."
+        )
+    return heads[0]
+
+
+async def verify_schema_version() -> None:
+    """Raise DatabaseSessionError unless alembic_version matches the bundled head."""
+    expected = _resolve_alembic_head()
 
     engine = get_async_engine()
     async with engine.begin() as conn:
