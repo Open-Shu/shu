@@ -980,6 +980,12 @@ class UnifiedLLMClient:
     def _local_stream(
         self, payload: dict[str, Any], model: str, start_time: datetime
     ) -> AsyncGenerator[ProviderEventResult, None]:
+        # SHU-759: optional test-only per-chunk delay to simulate slow LLM
+        # streams for baseline + concurrency tests. Defaults to 0 in
+        # production (Pydantic model_validator enforces this in
+        # core/config.py).
+        chunk_delay_seconds = max(0, getattr(self.settings, "local_stream_test_chunk_delay_ms", 0)) / 1000.0
+
         async def gen():
             input_path = self._apply_override("get_message_input_path", "messages")
             messages = DotPath.get(payload, input_path, default=payload.get("messages", []))
@@ -991,7 +997,10 @@ class UnifiedLLMClient:
             for i in range(0, len(content), max(1, len(content) // 3)):
                 chunk = content[i : i + max(1, len(content) // 3)]
                 yield ProviderContentDeltaEventResult(content=chunk)
-                await asyncio.sleep(0)  # yield control
+                if chunk_delay_seconds > 0:
+                    await asyncio.sleep(chunk_delay_seconds)
+                else:
+                    await asyncio.sleep(0)  # yield control
             yield ProviderFinalEventResult(content=content)
 
         return gen()

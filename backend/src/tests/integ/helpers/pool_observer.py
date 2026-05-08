@@ -1,9 +1,20 @@
 """Pool checkout observer for SQLAlchemy async engine (SHU-759).
 
-Used by chat session-release tests to assert that pool checkouts during the
-LLM streaming window stay below a known small constant. Hooks the SQLAlchemy
-``checkout`` and ``checkin`` pool events on a target engine and tracks both a
-running count and the maximum observed within an opened window.
+Hooks the SQLAlchemy ``checkout`` and ``checkin`` pool events on a target
+engine. While a window is open, tracks:
+
+- ``max_in_window`` — peak concurrent checkouts during the window.
+- ``cumulative_hold_seconds`` — area under the active-checkouts curve over
+  the window (i.e., total connection-seconds held). One session held for
+  100 ms registers 0.1 s; two sessions held simultaneously for 100 ms
+  registers 0.2 s.
+- ``window_duration_seconds`` — wall-clock window length.
+
+The ratio ``cumulative_hold_seconds / window_duration_seconds`` collapses
+to "average concurrent checkouts during the window," which is the headline
+metric for the SHU-759 refactor: today the chat request session is held
+the entire time the LLM is streaming, so the ratio is ≥1; post-refactor it
+should approach 0 in the no-tools / no-RAG path.
 
 Listeners run synchronously on the same event loop the async engine drives,
 so no synchronization primitive is needed.
@@ -16,8 +27,10 @@ Usage::
     with PoolObserver(get_async_engine()) as observer:
         observer.open_window()
         # ... drive a request that streams ...
-        max_during_window = observer.close_window()
-        assert max_during_window <= 2
+        stats = observer.close_window()
+        assert stats.max_in_window <= 2
+        print(f"held {stats.cumulative_hold_seconds:.3f}s over "
+              f"{stats.window_duration_seconds:.3f}s window")
 
 For SSE-bracketed measurement, the caller opens the window when the first
 ``content_delta`` event arrives and closes it on ``final_message``.
@@ -26,6 +39,8 @@ For SSE-bracketed measurement, the caller opens the window when the first
 from __future__ import annotations
 
 import logging
+import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event
@@ -36,17 +51,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class WindowStats:
+    """Snapshot of pool activity captured between open_window and close_window."""
+
+    max_in_window: int
+    cumulative_hold_seconds: float
+    window_duration_seconds: float
+
+    @property
+    def average_concurrent_checkouts(self) -> float:
+        """cumulative_hold / window_duration. 0.0 when the window has no duration."""
+        if self.window_duration_seconds <= 0:
+            return 0.0
+        return self.cumulative_hold_seconds / self.window_duration_seconds
+
+
 class PoolObserver:
     """Tracks SQLAlchemy connection pool checkouts via event listeners.
 
-    Maintains a running ``current_checkouts`` counter and, when a window is
-    opened, captures the maximum value observed during that window.
+    Maintains a running ``current_checkouts`` counter. While a window is
+    open, captures the peak value AND integrates the active-checkouts curve
+    over time to produce ``cumulative_hold_seconds``.
 
     Limitations:
     - Counts pool-level checkouts on the wrapped engine only. Other engines
       (e.g., a separate one created for migrations or tests) are not observed.
     - Multiple overlapping windows are not supported; a fresh ``open_window``
-      resets the captured maximum.
+      resets all captured stats.
+    - Time integration is event-driven: it advances the integral on each
+      checkout/checkin event and on close_window. Idle stretches between
+      events are accounted for at close-time, so the integral is exact for
+      step-function load (which connection counts are).
     """
 
     def __init__(self, engine: AsyncEngine) -> None:
@@ -57,6 +93,9 @@ class PoolObserver:
         self._current_checkouts = 0
         self._window_open = False
         self._max_in_window = 0
+        self._cumulative_hold_seconds = 0.0
+        self._window_open_time: float | None = None
+        self._last_integration_time: float | None = None
         self._listening = False
 
     def start(self) -> None:
@@ -84,25 +123,56 @@ class PoolObserver:
         return self._current_checkouts
 
     def open_window(self) -> None:
-        """Begin recording the max checkouts observed.
+        """Begin recording window stats.
 
-        Resets ``max_in_window`` to the current count so concurrent activity
-        already in flight at window-open time isn't double-counted.
+        Resets the integral and the max so concurrent activity already in
+        flight at window-open time isn't double-counted.
         """
+        now = time.perf_counter()
         self._max_in_window = self._current_checkouts
+        self._cumulative_hold_seconds = 0.0
+        self._window_open_time = now
+        self._last_integration_time = now
         self._window_open = True
 
-    def close_window(self) -> int:
-        """Stop recording and return max checkouts observed during the window."""
+    def close_window(self) -> WindowStats:
+        """Stop recording and return the captured WindowStats."""
+        if self._window_open:
+            self._integrate_to(time.perf_counter())
         self._window_open = False
-        return self._max_in_window
+
+        window_duration = 0.0
+        if self._window_open_time is not None:
+            window_duration = (self._last_integration_time or self._window_open_time) - self._window_open_time
+
+        return WindowStats(
+            max_in_window=self._max_in_window,
+            cumulative_hold_seconds=self._cumulative_hold_seconds,
+            window_duration_seconds=window_duration,
+        )
+
+    def _integrate_to(self, now: float) -> None:
+        """Advance the cumulative-hold integral up to ``now``.
+
+        Each session active during the elapsed slice contributes ``elapsed``
+        seconds to the integral. Connection counts are step functions, so
+        integrating only at event boundaries is exact.
+        """
+        if not self._window_open or self._last_integration_time is None:
+            return
+        elapsed = now - self._last_integration_time
+        if elapsed > 0:
+            self._cumulative_hold_seconds += self._current_checkouts * elapsed
+        self._last_integration_time = now
 
     def _on_checkout(self, dbapi_conn: Any, conn_record: Any, conn_proxy: Any) -> None:
+        self._integrate_to(time.perf_counter())
         self._current_checkouts += 1
         if self._window_open and self._current_checkouts > self._max_in_window:
             self._max_in_window = self._current_checkouts
 
     def _on_checkin(self, dbapi_conn: Any, conn_record: Any) -> None:
+        self._integrate_to(time.perf_counter())
         # Defensive: never go negative even if listeners attach mid-flight
         if self._current_checkouts > 0:
             self._current_checkouts -= 1
