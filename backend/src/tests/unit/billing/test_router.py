@@ -188,3 +188,134 @@ class TestSubscriptionAdminBlock:
 
         leaked = [key for key in _ADMIN_ONLY_KEYS if key in body]
         assert leaked == [], f"admin-only fields leaked to non-admin: {leaked}"
+
+
+# Trial / entitlement payload — visible to all authenticated users so the
+# frontend banner and entitlement-driven route gating work without admin
+# privileges. These fields ride on the same endpoint payload (no new endpoint).
+_TRIAL_PAYLOAD_KEYS = (
+    "is_trial",
+    "trial_deadline",
+    "total_grant_amount",
+    "remaining_grant_amount",
+    "seat_price_usd",
+    "entitlements",
+)
+
+
+class TestSubscriptionTrialAndEntitlements:
+    """Trial / grant / entitlement fields propagate to all authenticated users."""
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_payload_includes_all_new_trial_and_entitlement_fields(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        install_stub_cache(
+            BillingState(
+                openrouter_key_disabled=False,
+                payment_failed_at=None,
+                payment_grace_days=0,
+                entitlements=EntitlementSet(plugins=True, experiences=True),
+                is_trial=True,
+                trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+                total_grant_amount=Decimal("50.00"),
+                remaining_grant_amount=Decimal("12.34"),
+                seat_price_usd=Decimal("20.00"),
+            )
+        )
+
+        response = await get_subscription_status(
+            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        for key in _TRIAL_PAYLOAD_KEYS:
+            assert key in body, f"trial/entitlement payload missing field: {key}"
+        assert body["is_trial"] is True
+        assert body["trial_deadline"] == "2026-05-30T12:00:00+00:00"
+        # Decimals stringified to dodge JSON-number precision loss.
+        assert body["total_grant_amount"] == "50.00"
+        assert body["remaining_grant_amount"] == "12.34"
+        assert body["seat_price_usd"] == "20.00"
+        assert body["entitlements"] == {
+            "chat": True,
+            "plugins": True,
+            "experiences": True,
+            "provider_management": False,
+            "model_config_management": False,
+            "mcp_servers": False,
+        }
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_trial_deadline_serializes_to_null_when_absent(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        # HEALTHY_DEFAULT has trial_deadline=None — covers the null path; the
+        # ISO 8601 path is asserted above.
+        install_stub_cache(HEALTHY_DEFAULT)
+
+        response = await get_subscription_status(
+            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        assert body["trial_deadline"] is None
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_non_admin_user_receives_trial_and_entitlement_fields(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        """Trial / entitlement fields are NOT admin-gated — the banner needs
+        them on every authenticated session.
+        """
+        mock_config.return_value = _FULL_BILLING_CONFIG
+        mock_count.return_value = 2
+        install_stub_cache(HEALTHY_DEFAULT)
+
+        response = await get_subscription_status(
+            db=AsyncMock(),
+            user=_mock_user(is_admin=False),
+            settings=_mock_settings(is_configured=False),
+        )
+        body = _decode(response)
+
+        for key in _TRIAL_PAYLOAD_KEYS:
+            assert key in body, f"non-admin missing trial/entitlement field: {key}"
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_entitlements_dump_carries_all_six_keys(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        """The wire shape must include every entitlement key, even those at
+        their default value, so the frontend can rely on key presence rather
+        than `.get(key, default)` everywhere.
+        """
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        install_stub_cache(HEALTHY_DEFAULT)
+
+        response = await get_subscription_status(
+            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        assert set(body["entitlements"].keys()) == {
+            "chat",
+            "plugins",
+            "experiences",
+            "provider_management",
+            "model_config_management",
+            "mcp_servers",
+        }

@@ -92,6 +92,18 @@ class BillingStateCache:
                 await self._persister.save(value)
             return value
 
+    async def invalidate(self) -> None:
+        # Acquired under the same lock as get() so an in-flight fetch can't
+        # write its result back AFTER we've cleared state — that would
+        # silently restore the stale value the admin action just superseded.
+        # Clearing the failure-backoff window too: an admin upgrade right
+        # after a CP blip should re-poll on the next read, not wait out
+        # the backoff timer.
+        async with self._lock:
+            self._value = None
+            self._last_success_at = None
+            self._next_retry_after = None
+
     def _is_fresh(self) -> bool:
         if self._value is None or self._last_success_at is None:
             return False

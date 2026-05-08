@@ -166,6 +166,12 @@ async def get_subscription_status(
         "payment_grace_days": state.payment_grace_days,
         "grace_deadline": state.grace_deadline.isoformat() if state.grace_deadline else None,
         "service_paused": state.openrouter_key_disabled,
+        "is_trial": state.is_trial,
+        "trial_deadline": state.trial_deadline.isoformat() if state.trial_deadline else None,
+        "total_grant_amount": str(state.total_grant_amount),
+        "remaining_grant_amount": str(state.remaining_grant_amount),
+        "seat_price_usd": str(state.seat_price_usd),
+        "entitlements": state.entitlements.model_dump(),
     }
 
     if user.can_manage_users():

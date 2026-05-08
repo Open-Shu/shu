@@ -441,3 +441,104 @@ async def test_warm_cache_failure_preserves_trial_and_grant_fields() -> None:
     assert stale.is_trial is True
     assert stale.entitlements.plugins is True
     assert stale.remaining_grant_amount == Decimal("12.34")
+
+
+# invalidate() — admin force-refresh hook used by upgrade-now / cancel-trial.
+# The lock interaction is the load-bearing invariant: a concurrent in-flight
+# fetch must not silently restore the value invalidate just cleared.
+
+
+@pytest.mark.asyncio
+async def test_invalidate_clears_value_and_metadata() -> None:
+    seeded = _state(disabled=True)
+    client = _stub_client(return_values=[seeded])
+    cache = _make_cache(client)
+    await cache.get()  # populate
+
+    await cache.invalidate()
+
+    assert cache._value is None
+    assert cache._last_success_at is None
+    assert cache._next_retry_after is None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_forces_refetch_on_next_get() -> None:
+    """Without invalidate, a fresh-TTL hit serves from memory. After
+    invalidate, the next get must re-poll CP regardless of TTL state.
+    """
+    s1, s2 = _state(disabled=False), _state(disabled=True)
+    client = _stub_client(return_values=[s1, s2])
+    cache = _make_cache(client)
+
+    assert await cache.get() == s1
+    await cache.invalidate()
+    assert await cache.get() == s2
+
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_clears_failure_backoff_window() -> None:
+    """An admin upgrade-now landing right after a CP blip should re-poll
+    on the next read, not get stuck in the (now-irrelevant) backoff.
+    """
+    client = _stub_client(side_effects=[CpUnreachable("blip"), _state(disabled=True)])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    await cache.get()  # cold-start fetch fails, arms backoff
+    assert cache._next_retry_after is not None  # sanity
+
+    await cache.invalidate()
+    clock.advance(timedelta(seconds=1))  # well within what would have been the backoff
+    assert await cache.get() == _state(disabled=True)
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_serializes_with_in_flight_fetch() -> None:
+    """A get() in mid-fetch holds the lock through fetch+write. Invalidate
+    must wait for that to finish, then clear — so a concurrent invalidate
+    cannot return before the in-flight fetch's write happens, and the next
+    get sees a cleared cache (not the now-stale write).
+
+    Sequence pinned: in-flight get holds lock → invalidate queues → fetch
+    finishes and writes → lock releases → invalidate clears → next get
+    triggers a NEW fetch.
+    """
+    s_inflight = _state(disabled=False)
+    s_after_invalidate = _state(disabled=True)
+    fetch_started = asyncio.Event()
+    fetch_unblock = asyncio.Event()
+    fetch_count = 0
+
+    async def slow_then_fast() -> BillingState:
+        nonlocal fetch_count
+        fetch_count += 1
+        if fetch_count == 1:
+            fetch_started.set()
+            await fetch_unblock.wait()
+            return s_inflight
+        return s_after_invalidate
+
+    client = MagicMock(spec=CpClient)
+    client.fetch_billing_state = AsyncMock(side_effect=slow_then_fast)
+    cache = _make_cache(client)
+
+    inflight_task = asyncio.create_task(cache.get())
+    await fetch_started.wait()  # lock is held by inflight_task here
+
+    invalidate_task = asyncio.create_task(cache.invalidate())
+    # The invalidate cannot complete while the lock is held — give the
+    # event loop a tick to confirm it's blocked rather than running.
+    await asyncio.sleep(0)
+    assert not invalidate_task.done()
+
+    fetch_unblock.set()
+    await inflight_task
+    await invalidate_task
+
+    # Cache cleared — the next read must fetch fresh, not return s_inflight.
+    assert await cache.get() == s_after_invalidate
+    assert fetch_count == 2
