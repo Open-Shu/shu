@@ -44,7 +44,7 @@ from .billing.billing_state_cache import initialize_billing_state_cache
 from .billing.router import router as billing_router
 from .core.cache_backend import initialize_cache_backend
 from .core.config import get_settings_instance
-from .core.database import init_db
+from .core.database import verify_schema_version
 from .core.exceptions import ShuException
 from .core.http_client import close_http_client
 from .core.logging import get_logger, setup_logging
@@ -183,10 +183,8 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
 
     configure_mupdf_store()
 
-    # Initialize database connection
     try:
-        await init_db()
-        logger.info("Database initialized successfully")
+        await verify_schema_version()
 
         # Log database configuration
         from .core.database import get_database_url
@@ -233,10 +231,9 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         except Exception as e:
             logger.warning(f"Startup DB release check error: {e}")
 
-    except Exception as e:
-        # Do not crash the app if DB is unavailable; log and continue. Health/readiness will reflect DB status.
-        logger.error(f"Failed to initialize database: {e}", exc_info=True)
-        # continue without raising to allow the app to start
+    except Exception:
+        logger.error("Schema verification failed — refusing to start", exc_info=True)
+        raise
 
     # Initialize eagerly so backend connection errors surface at startup, not on first request.
     await initialize_cache_backend()

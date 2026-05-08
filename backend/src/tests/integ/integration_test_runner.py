@@ -129,7 +129,7 @@ class IntegrationTestRunner:
         logging.getLogger("src.shu.core.middleware").setLevel(logging.WARNING)
 
         try:
-            # Run FastAPI lifespan startup to ensure init_db() is executed
+            # Run FastAPI lifespan startup to wire DI, schema verification, etc.
             try:
                 self._lifespan_cm = self.app.router.lifespan_context(self.app)
                 await self._lifespan_cm.__aenter__()

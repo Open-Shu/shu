@@ -159,42 +159,59 @@ async def get_db_session() -> AsyncSession:
     return session_local()
 
 
-async def init_db() -> None:
-    try:
-        # Ensure all models are imported so Base.metadata has all tables
-        from ..models.registry import register_all_models
+async def verify_schema_version() -> None:
+    """Raise DatabaseSessionError unless alembic_version matches the bundled head."""
+    from pathlib import Path
 
-        register_all_models()
-        engine = get_async_engine()
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
 
-        # Log database initialization
-        database_url = get_database_url()
-        parsed_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-        if "@" in parsed_url:
-            parts = parsed_url.split("@")
-            if len(parts) == 2:
-                host_part = parts[1]
-                if "/" in host_part:
-                    host_db = host_part.split("/")
-                    if len(host_db) == 2:
-                        host_port = host_db[0]
-                        database_name = host_db[1]
-                        logger.debug(f"Initializing database tables: Host={host_port}, Database={database_name}")
-                    else:
-                        logger.debug(f"Initializing database tables: Host={host_part}")
-                else:
-                    logger.debug(f"Initializing database tables: Host={host_part}")
-            else:
-                logger.debug("Initializing database tables")
-        else:
-            logger.debug("Initializing database tables")
+    from ..models.registry import register_all_models
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e!s}")
-        raise DatabaseSessionError(f"database initialization: {e!s}")
+    register_all_models()
+
+    candidates = [
+        Path("/app/alembic.ini"),
+        Path(__file__).resolve().parents[3] / "alembic.ini",
+    ]
+    alembic_ini = next((p for p in candidates if p.exists()), None)
+    if alembic_ini is None:
+        raise DatabaseSessionError(
+            "alembic.ini not found in any expected location; cannot verify schema version. "
+            f"Looked in: {[str(p) for p in candidates]}"
+        )
+
+    expected = ScriptDirectory.from_config(Config(str(alembic_ini))).get_current_head()
+    if expected is None:
+        raise DatabaseSessionError("alembic migrations directory has no head revision")
+
+    engine = get_async_engine()
+    async with engine.begin() as conn:
+        try:
+            result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+            row = result.first()
+        except SQLAlchemyError as e:
+            raise DatabaseSessionError(
+                "alembic_version table missing — migrations have not run. "
+                "Run the shu-db-migrate Job (hosted) or `make migrate-local-lab` (dev) "
+                "before starting shu-api."
+            ) from e
+
+    if row is None or row[0] is None:
+        raise DatabaseSessionError(
+            "alembic_version row missing — migrations have not run. "
+            "Run the shu-db-migrate Job (hosted) or `make migrate-local-lab` (dev)."
+        )
+
+    current = row[0]
+    if current != expected:
+        raise DatabaseSessionError(
+            f"schema at revision {current!r}, code expects {expected!r}. "
+            "Run migrations (shu-db-migrate Job in hosted, `make migrate-local-lab` in dev) "
+            "before starting shu-api."
+        )
+
+    logger.info("Schema verified at alembic revision %s", current)
 
 
 async def close_db() -> None:
