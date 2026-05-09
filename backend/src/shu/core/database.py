@@ -4,8 +4,8 @@ This module provides database connection management, session handling,
 and utilities for database operations.
 """
 
+import ast
 import os
-import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -160,18 +160,51 @@ async def get_db_session() -> AsyncSession:
     return session_local()
 
 
-_REVISION_RE = re.compile(r'^revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]', re.MULTILINE)
-_DOWN_REVISION_RE = re.compile(r'^down_revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]', re.MULTILINE)
+def _read_revision_identifiers(source: str) -> tuple[str | None, tuple[str, ...]]:
+    """Return (revision, parents) parsed from module-level assignments.
+
+    `revision` is a single string. `down_revision` is normalised to a tuple of
+    parent ids — empty for the base, single-element for a normal migration,
+    multi-element for an alembic merge migration.
+    """
+    tree = ast.parse(source)
+    revision: str | None = None
+    parents: tuple[str, ...] = ()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+            value_expr: ast.expr = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            value_expr = node.value
+        else:
+            continue
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        try:
+            value = ast.literal_eval(value_expr)
+        except (ValueError, SyntaxError):
+            continue
+        if "revision" in names and isinstance(value, str):
+            revision = value
+        if "down_revision" in names:
+            if value is None:
+                parents = ()
+            elif isinstance(value, str):
+                parents = (value,)
+            elif isinstance(value, (tuple, list)) and all(isinstance(v, str) for v in value):
+                parents = tuple(value)
+    return revision, parents
 
 
 def _resolve_alembic_head() -> str:
     """Find the head revision in the bundled migrations/versions/ tree.
 
-    Regex-parses each file's `revision` and `down_revision` strings rather
-    than importing the modules. Migration modules can have side-effecting
-    imports (e.g. `from migrations.seed_data...`) that only resolve under
-    alembic's runtime sys.path setup; importing them at app startup would
-    couple shu-api to alembic's CLI conventions.
+    Reads each file with `ast.parse` + `ast.literal_eval` rather than importing
+    it. Migration modules can have side-effecting imports (e.g.
+    `from migrations.seed_data...`) that only resolve under alembic's runtime
+    sys.path setup; importing them at app startup would couple shu-api to
+    alembic's CLI conventions. AST parsing also correctly handles merge
+    migrations where `down_revision` is a tuple of parents.
     """
     from pathlib import Path
 
@@ -183,21 +216,19 @@ def _resolve_alembic_head() -> str:
     if versions_dir is None:
         raise DatabaseSessionError(f"migrations/versions/ not found; looked in {[str(p) for p in candidates]}")
 
-    revisions: dict[str, str | None] = {}
+    revisions: dict[str, tuple[str, ...]] = {}
     for path in versions_dir.glob("*.py"):
         if path.name == "__init__.py":
             continue
-        text_ = path.read_text()
-        rev = _REVISION_RE.search(text_)
-        if rev is None:
+        revision, parents = _read_revision_identifiers(path.read_text(encoding="utf-8"))
+        if revision is None:
             continue
-        down = _DOWN_REVISION_RE.search(text_)
-        revisions[rev.group(1)] = down.group(1) if down else None
+        revisions[revision] = parents
 
     if not revisions:
         raise DatabaseSessionError(f"no migration files found under {versions_dir}")
 
-    pointed_to = {d for d in revisions.values() if d is not None}
+    pointed_to = {parent for parents in revisions.values() for parent in parents}
     heads = [r for r in revisions if r not in pointed_to]
     if len(heads) != 1:
         raise DatabaseSessionError(
