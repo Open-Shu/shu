@@ -19,6 +19,7 @@ import httpx
 import jmespath
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.database import get_async_session_local
 from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 from shu.services.plugin_execution import build_agent_tools
@@ -229,7 +230,14 @@ class UnifiedLLMClient:
     async def _build_tool_context(self, payload: dict[str, Any], tools_enabled: bool) -> dict[str, Any]:
         if not tools_enabled or not self.conversation_owner_id:
             return payload
-        tools: list[CallableTool] = await build_agent_tools(self.db_session, user_id=self.conversation_owner_id)
+        # SHU-759: build_agent_tools needs a session, but by the time this
+        # method runs (mid-stream) the request session may already be closed
+        # (the chat endpoint releases it before yielding the StreamingResponse).
+        # Open a short-lived session at the point of use instead of relying on
+        # self.db_session being live.
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            tools: list[CallableTool] = await build_agent_tools(session, user_id=self.conversation_owner_id)
         return await self.provider_adapter.inject_tool_payload(tools, payload)
 
     def _build_client_headers(self):

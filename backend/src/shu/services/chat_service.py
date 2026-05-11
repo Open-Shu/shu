@@ -8,7 +8,6 @@ import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import asc, desc, func, select
@@ -39,7 +38,6 @@ from ..services.message_utils import serialize_message_for_sse
 from ..services.prompt_service import PromptService
 from ..services.query_service import QueryService
 from ..services.side_call_service import SideCallService
-from ..services.usage_recording import get_usage_recorder
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 from .knowledge_base_service import KnowledgeBaseService
 from .providers.adapter_base import get_adapter_from_provider
@@ -90,17 +88,21 @@ class ModelExecutionInputs:
     # SHU-759 snapshot fields — precomputed during prepare so the stream
     # phase never reaches for the request session.
     #
-    # tools_enabled: result of the provider adapter's capability check
-    #   ([chat_streaming.py:_get_tools_enabled]) AND the model config's
-    #   functionalities AND chat_plugins_enabled. Snapshotted once.
+    # tools_enabled: result of the provider adapter's capability check AND
+    #   the model config's functionalities AND chat_plugins_enabled.
+    #   Snapshotted once via _compute_tools_enabled.
     # kb_include_references_map: per-KB-id `include_references` setting,
     #   precomputed for [_post_process_references] so it doesn't hit the
     #   KnowledgeBaseService mid-stream.
     # conversation_owner_id: the conversation owner's user_id, eliminating
-    #   the [_get_conversation_owner] mid-stream re-query.
+    #   the mid-stream conversation-owner re-query.
+    # provider: the LLMProvider ORM object with provider_definition eagerly
+    #   loaded. Snapshotted so _stream_variant_phase can construct the
+    #   UnifiedLLMClient without a fresh get_provider_by_id DB query.
     tools_enabled: bool = False
     kb_include_references_map: dict[str, bool] = field(default_factory=dict)
     conversation_owner_id: str | None = None
+    provider: LLMProvider | None = None
 
 
 @dataclass
@@ -340,14 +342,15 @@ class ChatService:
             tools_enabled=tools_enabled,
             kb_include_references_map=kb_include_references_map,
             conversation_owner_id=getattr(base_conversation, "user_id", None),
+            provider=provider,
         )
 
     def _compute_tools_enabled(self, provider: LLMProvider, model_configuration: ModelConfiguration) -> bool:
         """Snapshot whether tools are enabled for this variant (SHU-759).
 
-        Mirrors EnsembleStreamingHelper._get_tools_enabled exactly — same
-        adapter capability check, model_configuration.functionalities check,
-        and chat_plugins_enabled setting — but evaluated during prepare
+        Combines the provider adapter's `tools` capability flag, the model
+        configuration's `supports_functions` / `supports_tools` flags, and
+        the global `chat_plugins_enabled` setting. Evaluated during prepare
         while a DB session is still available, then stored on
         ModelExecutionInputs.tools_enabled so the stream phase needs zero
         DB access for this decision.
@@ -1251,43 +1254,6 @@ class ChatService:
         # finally:
         #     await release_conversation_lock(self.db_session, conversation_id, lock_id)
 
-    async def _handle_exception(
-        self,
-        conversation_id: str,
-        model: LLMModel,
-        e: Exception | ShuException,
-        user_id: str | None = None,
-    ) -> Message:
-        logger.error("LLM completion failed: %s", e)
-
-        # Record failed usage. Tokens and cost stay at 0 — the request never
-        # produced output, so there's nothing to bill. user_id is still
-        # populated so failed attempts appear under the originating user in
-        # any per-user usage dashboard.
-        try:
-            await get_usage_recorder().record(
-                provider_id=model.provider_id,
-                model_id=model.id,
-                request_type="chat",
-                input_tokens=0,
-                output_tokens=0,
-                total_cost=Decimal("0"),
-                user_id=user_id,
-                success=False,
-                error_message=str(e),
-            )
-        except Exception as usage_error:
-            logger.warning("Failed to record LLM usage: %s", usage_error)
-
-        # Create error message
-        return await self.add_message(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=f"I apologize, but I encountered an error: {e!s}",
-            model_id=model.id,
-            metadata={"error": e.details if isinstance(e, ShuException) else str(e)},
-        )
-
     # TODO: Refactor this function. It's too complex (number of branches and statements).
     async def regenerate_message(
         self,
@@ -1388,6 +1354,21 @@ class ChatService:
             f"REGENERATE DEBUG: message_id={message_id}, parent_message_id={parent_message_id}, target.id={target.id}, root_id={root_id}"
         )
 
+        # SHU-759: the regen path also has to populate the prepare snapshot
+        # fields on ModelExecutionInputs — the stream phase reads them
+        # directly (provider, tools_enabled, kb_include_references_map,
+        # conversation_owner_id) and has no DB session to fall back on after
+        # the endpoint closes it. Mirrors the snapshot population in
+        # _build_model_execution_inputs for the send_message path.
+        provider = await self.llm_service.get_provider_by_id(provider_id)
+        if not provider:
+            raise LLMProviderError(f"Provider '{provider_id}' not found")
+        tools_enabled = self._compute_tools_enabled(provider, conversation.model_configuration)
+        kb_include_references_map = await self._compute_kb_include_references_map(
+            explicit_knowledge_base_ids=knowledge_base_ids,
+            source_metadata=source_metadata,
+        )
+
         execution_inputs = [
             ModelExecutionInputs(
                 model_configuration=conversation.model_configuration,
@@ -1396,6 +1377,10 @@ class ChatService:
                 context_messages=chat_context,
                 source_metadata=source_metadata,
                 knowledge_base_ids=knowledge_base_ids,
+                tools_enabled=tools_enabled,
+                kb_include_references_map=kb_include_references_map,
+                conversation_owner_id=getattr(conversation, "user_id", None),
+                provider=provider,
             )
         ]
 

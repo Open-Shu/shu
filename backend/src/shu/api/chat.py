@@ -875,6 +875,17 @@ async def send_message(
             attachment_ids=request_data.attachment_ids,
         )
 
+        # SHU-759: release the request-scoped DB session before yielding the
+        # StreamingResponse. The prepare phase has already loaded everything
+        # the stream and finalize phases need into the prepared snapshot on
+        # ModelExecutionInputs; finalize opens its own fresh short-lived
+        # session for the Message + LLMUsage write. Without this close, the
+        # session would be held for the entire 30-120s SSE lifetime — the
+        # core pool-pressure issue this ticket fixes. AsyncSession.close is
+        # idempotent, so FastAPI's dependency-cleanup finally block will be
+        # a no-op second close.
+        await db.close()
+
         async def stream_generator():
             async for data in create_sse_stream_generator(event_gen, "send_message"):
                 yield data
@@ -1063,6 +1074,10 @@ async def regenerate_message(
             rag_rewrite_mode=request.rag_rewrite_mode,
             knowledge_base_ids=request.knowledge_base_ids,
         )
+
+        # SHU-759: release the request-scoped DB session before yielding the
+        # StreamingResponse. See the matching comment in send_message above.
+        await db.close()
 
         async def stream_generator():
             async for data in create_sse_stream_generator(event_gen, "regenerate_message"):

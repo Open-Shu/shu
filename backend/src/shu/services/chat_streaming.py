@@ -26,11 +26,10 @@ from shu.services.providers.adapter_base import (
     ProviderFinalEventResult,
     ProviderReasoningDeltaEventResult,
     ProviderToolCallEventResult,
-    get_adapter_from_provider,
 )
 from shu.services.providers.events import ProviderStreamEvent
 
-from ..models.llm_provider import Conversation, LLMProvider, Message
+from ..models.llm_provider import Conversation, Message
 from ..services.chat_types import ChatContext, ChatMessage
 from ..services.message_utils import serialize_message_for_sse
 from ..services.usage_recording import get_usage_recorder
@@ -139,40 +138,6 @@ class EnsembleStreamingHelper:
             model_name=model_display_name,
             model_display_name=model_display_name,
         )
-
-    def _get_tools_enabled(self, client: UnifiedLLMClient, inputs: "ModelExecutionInputs"):
-        model_functionalities = inputs.model_configuration.functionalities or {}
-        provider: LLMProvider = getattr(client, "provider", None)
-        capabilities = get_adapter_from_provider(self.db_session, provider).get_field_with_override("get_capabilities")
-        provider_and_model_support_tools = (
-            capabilities.get("tools", {}).get("value", False)
-            and (
-                model_functionalities.get("supports_functions", False)
-                or model_functionalities.get("supports_tools", False)
-            )  # We used to call it `supports_functions`
-        )
-        chat_plugins_enabled = getattr(self.config_manager.settings, "chat_plugins_enabled", False)
-        return provider_and_model_support_tools and chat_plugins_enabled
-
-    async def _get_conversation_owner(self, conversation_id):
-        """Fetch the owner user ID for a conversation by its ID.
-
-        Parameters
-        ----------
-            conversation_id: Identifier of the conversation to look up.
-
-        Returns
-        -------
-            `str` user ID if the conversation exists and has a user_id, `None` if the conversation is missing, has no user_id, or an error occurs while fetching it.
-
-        """
-        conversation_owner_id = None
-        try:
-            conv_obj = await self.chat_service.get_conversation_by_id(conversation_id)
-            conversation_owner_id = getattr(conv_obj, "user_id", None) if conv_obj else None
-        except Exception:
-            conversation_owner_id = None
-        return conversation_owner_id
 
     async def _check_provider_rate_limits(
         self,
@@ -351,7 +316,7 @@ class EnsembleStreamingHelper:
 
         return final_message_event, followup_messages
 
-    async def _stream_variant_phase(
+    async def _stream_variant_phase(  # noqa: PLR0915
         self,
         *,
         variant_index: int,
@@ -370,9 +335,11 @@ class EnsembleStreamingHelper:
         failure (error message + type). No DB writes happen here — those are
         the responsibility of `_finalize_variant_phase`.
 
-        Step 6 still uses self.db_session inside this method for the
-        provider client setup and reference post-processing; step 9 will
-        replace those with snapshot reads and short-lived sessions.
+        The provider is read from the prepare-time snapshot
+        (inputs.provider) rather than re-fetched mid-stream, so this method
+        holds zero pool checkouts on the simple path. Conditional DB work
+        — _build_tool_context (when tools enabled) and KB rag-config lookup
+        — opens its own short-lived session at the point of use.
         """
         # Late import to avoid circular dependency with chat_service.
         from .chat_service import VariantStreamResult as _VariantStreamResult
@@ -380,8 +347,17 @@ class EnsembleStreamingHelper:
         service = self.chat_service
         conversation_owner_id = inputs.conversation_owner_id  # SHU-759 prepare snapshot
         kb_ids = inputs.knowledge_base_ids or getattr(inputs.model_configuration, "knowledge_base_ids", None) or None
-        client = await service.llm_service.get_client(
-            inputs.provider_id, conversation_owner_id, knowledge_base_ids=kb_ids
+        # SHU-759: use the snapshotted provider and construct the client directly,
+        # avoiding the mid-stream get_provider_by_id query in LLMService.get_client.
+        if inputs.provider is None:
+            raise LLMProviderError(
+                "ModelExecutionInputs.provider snapshot is missing; prepare phase did not populate it"
+            )
+        client = UnifiedLLMClient(
+            db_session=service.db_session,
+            provider=inputs.provider,
+            conversation_owner_id=conversation_owner_id,
+            knowledge_base_ids=kb_ids,
         )
         config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
         model_snapshot = dict(config_metadata.get("model_configuration") or {})
@@ -469,6 +445,7 @@ class EnsembleStreamingHelper:
                 final_message_event.content,
                 inputs.source_metadata or [],
                 inputs.knowledge_base_ids,
+                kb_include_references_map=inputs.kb_include_references_map,
             )
 
             if full_content != final_message_event.content and len(full_content) > len(final_message_event.content):
@@ -565,9 +542,6 @@ class EnsembleStreamingHelper:
           UNIQUE constraint trips (SHU-759 N10 race fix),
         - stamps `regenerated=True` and `regenerated_from_message_id` onto
           the new assistant message's metadata.
-
-        Step 8 will delete the now-unreachable `_handle_exception` in
-        chat_service.
         """
         service = self.chat_service
         config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
