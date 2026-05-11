@@ -6,7 +6,7 @@ Handles conversation management, message processing, and LLM integration.
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -49,7 +49,15 @@ settings = get_settings_instance()
 
 @dataclass
 class PreparedTurnContext:
-    """Data container for a prepared user turn and its LLM context."""
+    """Data container for a prepared user turn and its LLM context.
+
+    Snapshot contract (SHU-759): instances may carry ORM-attached objects
+    (Conversation, Message). Consumers MUST treat them as read-only and MUST
+    NOT traverse relationships beyond those eager-loaded in prepare. The
+    request session is closed before stream/finalize phases run, so a lazy
+    load would raise DetachedInstanceError. expunge_all() is called at the
+    end of prepare to make any contract violation fail fast.
+    """
 
     conversation: Conversation
     user_message: Message
@@ -59,7 +67,14 @@ class PreparedTurnContext:
 
 @dataclass
 class ModelExecutionInputs:
-    """Resolved inputs for executing a single model configuration."""
+    """Resolved inputs for executing a single model configuration.
+
+    Snapshot contract (SHU-759): the ORM fields (model_configuration,
+    model) are read-only snapshots; do not traverse relationships beyond
+    those eager-loaded in prepare. The new boolean / dict / id fields
+    precompute everything previously fetched mid-stream so the stream
+    phase needs no DB session.
+    """
 
     model_configuration: ModelConfiguration
     provider_id: str
@@ -70,6 +85,68 @@ class ModelExecutionInputs:
     # Per-provider rate limits
     rate_limit_rpm: int = 60
     rate_limit_tpm: int = 60000
+
+    # SHU-759 snapshot fields — precomputed during prepare so the stream
+    # phase never reaches for the request session.
+    #
+    # tools_enabled: result of the provider adapter's capability check
+    #   ([chat_streaming.py:_get_tools_enabled]) AND the model config's
+    #   functionalities AND chat_plugins_enabled. Snapshotted once.
+    # kb_include_references_map: per-KB-id `include_references` setting,
+    #   precomputed for [_post_process_references] so it doesn't hit the
+    #   KnowledgeBaseService mid-stream.
+    # conversation_owner_id: the conversation owner's user_id, eliminating
+    #   the [_get_conversation_owner] mid-stream re-query.
+    tools_enabled: bool = False
+    kb_include_references_map: dict[str, bool] = field(default_factory=dict)
+    conversation_owner_id: str | None = None
+
+
+@dataclass
+class VariantStreamResult:
+    """Outcome of `_stream_variant_phase` — handed to `_finalize_variant_phase` (SHU-759).
+
+    Discriminated by `success`. Fields are primitive types only (str, int,
+    dict, list of primitives); no ORM-attached objects. Finalize opens a
+    fresh session and writes the assistant Message + LLMUsage row using
+    these primitives only, avoiding any cross-session ORM identity issues.
+    """
+
+    success: bool
+
+    # Success-path fields (populated when success is True)
+    full_content: str | None = None
+    final_source_metadata: list[dict] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
+    model_name_for_event: str | None = None
+    final_event_type: str | None = None  # e.g. "final_message" or "error" from provider
+
+    # Failure-path fields (populated when success is False)
+    error_message: str | None = None
+    error_type: str | None = None
+    error_details: dict[str, Any] | None = None
+
+
+@dataclass
+class RegenLineageInfo:
+    """Optional regen-specific lineage data threaded into finalize (SHU-759).
+
+    When present, finalize:
+    - Computes `next_variant_index` from sibling rows of `root_id` (with
+      retry-on-conflict against the UNIQUE constraint added in N10).
+    - Updates the original target message's `parent_message_id` /
+      `variant_index` if they are currently NULL (legacy backfill).
+    - Stamps `regenerated=True` and `regenerated_from_message_id=target_id`
+      onto the new assistant message's metadata.
+
+    All three operations live in the same fresh-session transaction as the
+    Message + LLMUsage write, so the regen path commits once instead of the
+    two-commit pattern in [chat_service.py:1229-1264].
+    """
+
+    target_message_id: str
+    root_id: str
 
 
 class ChatService:
@@ -750,6 +827,7 @@ class ChatService:
         variant_index: int | None = None,
         message_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        commit: bool = True,
     ) -> Message:
         """Add a message to a conversation.
 
@@ -759,6 +837,15 @@ class ChatService:
             content: Message content
             model_id: Optional model ID for assistant messages
             metadata: Optional message metadata
+            commit: When True (default) this method commits the session
+                after inserting. Pass False to defer the commit to the
+                caller — used by SHU-759's `_finalize_variant_phase` so
+                the assistant Message, LLMUsage row, and optional regen
+                lineage update all land in a single transaction. The
+                flush, attachment linking, conversation timestamp bump,
+                and eager-relationship reload still run unconditionally
+                so the returned message is usable for SSE serialization
+                regardless of who commits.
 
         Returns:
             Created message
@@ -837,8 +924,14 @@ class ChatService:
         # Update conversation timestamp
         conversation.updated_at = datetime.now(UTC)
 
-        await self.db_session.commit()
-        await self.db_session.refresh(message)
+        if commit:
+            await self.db_session.commit()
+            await self.db_session.refresh(message)
+        # When commit=False the caller is responsible for committing the
+        # surrounding transaction. Skipping refresh is fine — the row is
+        # already in the session's identity map from the flush above, and
+        # the eager-relationship reload below sees the just-inserted row
+        # via the same uncommitted transaction.
 
         # Eagerly load relationships to avoid MissingGreenlet errors
         stmt = (
