@@ -859,37 +859,23 @@ async def send_message(
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)
 
-        if not request_data.message:
-            return create_error_response(
-                code="INVALID_REQUEST",
-                message="The user message can not be empty.",
-                status_code=400,
-            )
+        # SHU-759: validation lives inside the service's prepare phase now.
+        # Hoisting the await out of the nested generator ensures
+        # ShuException raises here are converted to HTTP 4xx responses by
+        # the except branches below; if they fired inside the generator
+        # they'd surface as SSE error events on a 200 response instead.
+        event_gen = await chat_service.send_message(
+            conversation_id=conversation_id,
+            user_message=request_data.message,
+            current_user=current_user,
+            knowledge_base_ids=request_data.knowledge_base_ids,
+            rag_rewrite_mode=request_data.rag_rewrite_mode,
+            client_temp_id=getattr(request_data, "client_temp_id", None),
+            ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
+            attachment_ids=request_data.attachment_ids,
+        )
 
-        # Check if conversation exists and user owns it
-        conversation = await chat_service.get_conversation_by_id(conversation_id)
-        if not conversation:
-            return create_error_response(
-                code="CONVERSATION_NOT_FOUND",
-                message=f"Conversation '{conversation_id}' not found",
-                status_code=404,
-            )
-
-        if conversation.user_id != current_user.id:
-            return create_error_response(code="UNAUTHORIZED", status_code=403)
-
-        # Send message and get response
         async def stream_generator():
-            event_gen = await chat_service.send_message(
-                conversation_id=conversation_id,
-                user_message=request_data.message,
-                current_user=current_user,
-                knowledge_base_ids=request_data.knowledge_base_ids,
-                rag_rewrite_mode=request_data.rag_rewrite_mode,
-                client_temp_id=getattr(request_data, "client_temp_id", None),
-                ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
-                attachment_ids=request_data.attachment_ids,
-            )
             async for data in create_sse_stream_generator(event_gen, "send_message"):
                 yield data
 
@@ -1066,14 +1052,19 @@ async def regenerate_message(
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)
 
+        # SHU-759: hoist the await out of the nested generator so prepare-
+        # phase validation (existence, ownership, role check) raises here
+        # and is converted to an HTTP 4xx response by the except branches
+        # — not deferred until SSE iteration.
+        event_gen = await chat_service.regenerate_message(
+            message_id=message_id,
+            current_user=current_user,
+            parent_message_id=request.parent_message_id,
+            rag_rewrite_mode=request.rag_rewrite_mode,
+            knowledge_base_ids=request.knowledge_base_ids,
+        )
+
         async def stream_generator():
-            event_gen = await chat_service.regenerate_message(
-                message_id=message_id,
-                current_user=current_user,
-                parent_message_id=request.parent_message_id,
-                rag_rewrite_mode=request.rag_rewrite_mode,
-                knowledge_base_ids=request.knowledge_base_ids,
-            )
             async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
                 yield data
 

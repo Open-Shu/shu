@@ -42,6 +42,7 @@ from ..services.side_call_service import SideCallService
 from ..services.usage_recording import get_usage_recorder
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 from .knowledge_base_service import KnowledgeBaseService
+from .providers.adapter_base import get_adapter_from_provider
 
 logger = logging.getLogger(__name__)
 settings = get_settings_instance()
@@ -319,6 +320,14 @@ class ChatService:
             kb_access_verified=bool(turn_context.knowledge_base_ids),
         )
 
+        # SHU-759: precompute everything the stream phase used to fetch
+        # mid-stream so it can run with no DB session at all.
+        tools_enabled = self._compute_tools_enabled(provider, model_configuration)
+        kb_include_references_map = await self._compute_kb_include_references_map(
+            explicit_knowledge_base_ids=turn_context.knowledge_base_ids,
+            source_metadata=source_metadata,
+        )
+
         return ModelExecutionInputs(
             model_configuration=model_configuration,
             provider_id=provider_id,
@@ -328,7 +337,68 @@ class ChatService:
             knowledge_base_ids=turn_context.knowledge_base_ids,
             rate_limit_rpm=provider.rate_limit_rpm or 60,
             rate_limit_tpm=provider.rate_limit_tpm or 60000,
+            tools_enabled=tools_enabled,
+            kb_include_references_map=kb_include_references_map,
+            conversation_owner_id=getattr(base_conversation, "user_id", None),
         )
+
+    def _compute_tools_enabled(self, provider: LLMProvider, model_configuration: ModelConfiguration) -> bool:
+        """Snapshot whether tools are enabled for this variant (SHU-759).
+
+        Mirrors EnsembleStreamingHelper._get_tools_enabled exactly — same
+        adapter capability check, model_configuration.functionalities check,
+        and chat_plugins_enabled setting — but evaluated during prepare
+        while a DB session is still available, then stored on
+        ModelExecutionInputs.tools_enabled so the stream phase needs zero
+        DB access for this decision.
+        """
+        model_functionalities = model_configuration.functionalities or {}
+        capabilities = get_adapter_from_provider(self.db_session, provider).get_field_with_override("get_capabilities")
+        provider_and_model_support_tools = capabilities.get("tools", {}).get("value", False) and (
+            model_functionalities.get("supports_functions", False) or model_functionalities.get("supports_tools", False)
+        )
+        chat_plugins_enabled = getattr(self.config_manager.settings, "chat_plugins_enabled", False)
+        return bool(provider_and_model_support_tools and chat_plugins_enabled)
+
+    async def _compute_kb_include_references_map(
+        self,
+        *,
+        explicit_knowledge_base_ids: list[str] | None,
+        source_metadata: list[dict],
+    ) -> dict[str, bool]:
+        """Snapshot per-KB `include_references` settings for _post_process_references.
+
+        Walks the union of explicit `knowledge_base_ids` (when the caller
+        attached KBs directly) and the KB IDs that actually appear in
+        `source_metadata` (when RAG already ran against the model config's
+        KBs). Looks up each KB's `include_references` setting once during
+        prepare so MessageContextBuilder._post_process_references can read
+        it from the snapshot instead of opening a session mid-stream.
+
+        Failures on individual KBs are logged and treated as `True` (the
+        existing _post_process_references default).
+        """
+        candidate_kb_ids: set[str] = set()
+        if explicit_knowledge_base_ids:
+            candidate_kb_ids.update(explicit_knowledge_base_ids)
+        for meta in source_metadata or []:
+            kb_id = meta.get("knowledge_base_id")
+            if kb_id:
+                candidate_kb_ids.add(kb_id)
+
+        if not candidate_kb_ids:
+            return {}
+
+        kb_service = KnowledgeBaseService(self.db_session)
+        kb_include_references_map: dict[str, bool] = {}
+        for kb_id in candidate_kb_ids:
+            try:
+                rag_config = await kb_service.get_rag_config(kb_id)
+                kb_include_references_map[kb_id] = bool(getattr(rag_config, "include_references", True))
+            except Exception as e:
+                logger.warning("Failed to snapshot KB include_references for %s: %s", kb_id, e)
+                kb_include_references_map[kb_id] = True
+        return kb_include_references_map
 
     @staticmethod
     def _build_model_configuration_metadata(
@@ -1075,9 +1145,26 @@ class ChatService:
         # )
         # try:
 
+        # SHU-759: prepare-phase validation moved out of the API router so the
+        # endpoint stays a thin HTTP shim. Order: cheap input check first, then
+        # existence, then ownership.
+        if not user_message or not user_message.strip():
+            raise ShuException(
+                message="The user message can not be empty.",
+                error_code="INVALID_REQUEST",
+                status_code=400,
+            )
+
         conversation = await self.get_conversation_by_id(conversation_id)
         if not conversation:
-            raise ConversationNotFoundError(f"Conversation with ID '{conversation_id}' not found")
+            raise ConversationNotFoundError(conversation_id)
+
+        if hasattr(current_user, "id") and conversation.user_id != current_user.id:
+            raise ShuException(
+                message="You don't have access to this conversation",
+                error_code="UNAUTHORIZED",
+                status_code=403,
+            )
 
         model_config_provider_stmt = (
             selectinload(Conversation.model_configuration)
