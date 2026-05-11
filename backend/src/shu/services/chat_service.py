@@ -1289,7 +1289,7 @@ class ChatService:
         )
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def regenerate_message(  # noqa: PLR0915
+    async def regenerate_message(
         self,
         message_id: str,
         current_user,
@@ -1399,51 +1399,20 @@ class ChatService:
             )
         ]
 
-        # Determine per-model parameter overrides from configuration (regenerate path)
-        base_stream = self.streaming_helper.stream_ensemble_responses(
+        # SHU-759: the regen-specific lineage logic (legacy backfill of
+        # target.parent_message_id / variant_index, next sibling
+        # variant_index computation, regen-metadata stamp) is folded into
+        # _finalize_variant_phase via RegenLineageInfo. All of it now lands
+        # in the same fresh-session transaction as the Message + LLMUsage
+        # write, replacing the two-commit pattern of the old regen_stream
+        # wrapper and gaining UNIQUE-constraint retry on variant_index
+        # collisions (r009_0001).
+        return self.streaming_helper.stream_ensemble_responses(
             ensemble_inputs=execution_inputs,
             conversation_id=conversation.id,
             parent_message_id_override=root_id,
+            regen_lineage=RegenLineageInfo(target_message_id=target.id, root_id=root_id),
         )
-
-        async def regen_stream() -> AsyncGenerator[dict[str, Any], None]:
-            async for event in base_stream:
-                if event.type == "final_message":
-                    if target.parent_message_id is None:
-                        target.parent_message_id = root_id
-                        if target.id == root_id:
-                            target.variant_index = 0
-
-                    msg_payload = event.content or {}
-                    msg_id = msg_payload.get("id")
-                    new_assistant: Message | None = None
-                    if msg_id:
-                        new_assistant = await self.get_message_by_id(msg_id)
-
-                    if new_assistant:
-                        stmt = select(Message.variant_index).where(Message.parent_message_id == root_id)
-                        res = await self.db_session.execute(stmt)
-                        existing = [vi for (vi,) in res.all() if vi is not None]
-                        next_idx = (max(existing) + 1) if existing else 1
-
-                        new_assistant.parent_message_id = root_id
-                        new_assistant.variant_index = next_idx
-                        meta = dict(getattr(new_assistant, "message_metadata", {}) or {})
-                        meta["regenerated"] = True
-                        meta["regenerated_from_message_id"] = target.id
-                        new_assistant.message_metadata = meta
-
-                        await self.db_session.commit()
-                        await self.db_session.refresh(new_assistant)
-
-                        event.variant_index = next_idx
-                        event.content = serialize_message_for_sse(new_assistant)
-                    else:
-                        await self.db_session.commit()
-
-                yield event
-
-        return regen_stream()
 
     def _locate_regeneration_indices(
         self,
