@@ -470,6 +470,12 @@ class UnifiedLLMClient:
 
         try:
             async with self.client.stream("POST", endpoint, json=payload, **stream_kwargs) as response:
+                # httpx streams the body lazily; on a 4xx/5xx the body hasn't been read yet,
+                # so downstream error extraction (ErrorSanitizer.extract_provider_error → response.text)
+                # would silently fail and we'd lose the provider's actual error message. Materialize
+                # the body before raising so the error path can see it.
+                if response.status_code >= 400:
+                    await response.aread()
                 response.raise_for_status()
 
                 # DEBUG: Log response headers for debugging
@@ -736,10 +742,12 @@ class UnifiedLLMClient:
             ) from e
         elif status_code == 400:
             logger.error(
-                "LLM configuration error (400) for provider %s: %s (request_id=%s)",
+                "LLM configuration error (400) for provider %s: %s (request_id=%s, endpoint=%s, body=%s)",
                 self.provider.name,
                 details.get("provider_message") or str(e),
                 details.get("request_id"),
+                details.get("endpoint"),
+                body_str,
             )
             # Use simple sanitized message - suggestions are in details for /test endpoint
             raise LLMConfigurationError(

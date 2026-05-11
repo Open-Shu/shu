@@ -249,3 +249,31 @@ async def test_inject_functions(responses_adapter):
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_assistant_string_content_is_wrapped_with_annotations(responses_adapter):
+    """Prior-turn assistant text replays as an explicit output_text content part with
+    annotations=[]. OpenAI's documented ResponseOutputTextParam declares annotations
+    as required; the bare-string shortcut is accepted by OpenAI's server-side
+    normalization but is not the spec-correct wire form.
+    """
+    messages = ChatContext.from_dicts(
+        [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "follow up"},
+        ],
+        system_prompt=None,
+    )
+
+    payload = await responses_adapter.set_messages_in_payload(messages, {})
+
+    assert payload["input"] == [
+        {"role": "user", "content": "first question"},
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "first answer", "annotations": []}],
+        },
+        {"role": "user", "content": "follow up"},
+    ]
