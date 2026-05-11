@@ -58,6 +58,7 @@ import httpx
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.baseline._setup import create_local_chat_setup
+from integ.helpers.auth import cleanup_framework_test_admin
 from integ.helpers.pool_observer import PoolObserver, WindowStats
 from shu.core.database import get_async_engine
 
@@ -236,11 +237,18 @@ async def test_pool_pressure_baseline(client, db, auth_headers):
     )
 
 
+async def test_zz_teardown_test_admin(client, db, auth_headers):
+    """Sentinel teardown — must run last. Deletes the framework-created
+    test-admin user so each baseline run leaves the DB clean.
+    """
+    await cleanup_framework_test_admin(db)
+
+
 class PoolPressureBaselineSuite(BaseIntegrationTestSuite):
     """Pool pressure baseline runner for SHU-759 AC#1 — operator-driven, not part of CI."""
 
     def get_test_functions(self) -> list[Callable]:
-        return [test_pool_pressure_baseline]
+        return [test_pool_pressure_baseline, test_zz_teardown_test_admin]
 
     def get_suite_name(self) -> str:
         return "Chat Pool Pressure Baseline (SHU-759 AC#1)"

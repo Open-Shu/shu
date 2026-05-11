@@ -34,6 +34,7 @@ from collections.abc import Callable
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.baseline._setup import create_local_chat_setup
 from integ.helpers.api_helpers import process_streaming_result
+from integ.helpers.auth import cleanup_framework_test_admin
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +109,18 @@ async def test_chat_latency_baseline(client, db, auth_headers):
     logger.info("Copy the JSON above into the PR description for AC#8 before/after comparison.")
 
 
+async def test_zz_teardown_test_admin(client, db, auth_headers):
+    """Sentinel teardown — must run last. Deletes the framework-created
+    test-admin user so each baseline run leaves the DB clean.
+    """
+    await cleanup_framework_test_admin(db)
+
+
 class ChatLatencyBaselineSuite(BaseIntegrationTestSuite):
     """Latency baseline runner for SHU-759 AC#8 — operator-driven, not part of CI."""
 
     def get_test_functions(self) -> list[Callable]:
-        return [test_chat_latency_baseline]
+        return [test_chat_latency_baseline, test_zz_teardown_test_admin]
 
     def get_suite_name(self) -> str:
         return "Chat Latency Baseline (SHU-759 AC#8)"
