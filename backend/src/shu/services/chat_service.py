@@ -185,7 +185,6 @@ class ChatService:
         self.streaming_helper = EnsembleStreamingHelper(
             self,
             self.message_context_builder,
-            db_session=self.db_session,
             config_manager=config_manager,
         )
 
@@ -1151,6 +1150,7 @@ class ChatService:
         # SHU-759: prepare-phase validation moved out of the API router so the
         # endpoint stays a thin HTTP shim. Order: cheap input check first, then
         # existence, then ownership.
+        prepare_phase_start = datetime.now(UTC)
         if not user_message or not user_message.strip():
             raise ShuException(
                 message="The user message can not be empty.",
@@ -1232,12 +1232,35 @@ class ChatService:
             for model_config in model_configurations
         ]
 
+        # Serialize the user message for the SSE prologue BEFORE expunging the
+        # session — turn_context.user_message is an ORM instance and serialization
+        # touches its relationships.
+        serialized_user_message = serialize_message_for_sse(turn_context.user_message)
+
+        # SHU-759: detach all ORM instances and null the service's session ref.
+        # Eager-loaded attributes on the snapshot ORM objects remain readable in
+        # the stream phase; any lazy load (i.e. a contract violation) raises
+        # DetachedInstanceError at the access site, not the much-nastier
+        # MissingGreenlet from a closed-async-session lazy load.
+        self.db_session.expunge_all()
+        self.db_session = None
+
+        logger.info(
+            "Chat prepare complete",
+            extra={
+                "phase": "prepare_complete",
+                "conversation_id": conversation_id,
+                "variant_count": len(execution_inputs),
+                "elapsed_ms": (datetime.now(UTC) - prepare_phase_start).total_seconds() * 1000,
+            },
+        )
+
         async def _gen():
             # Emit persisted user message early so client can replace placeholder deterministically
             try:
                 yield ProviderResponseEvent(
                     type="user_message",
-                    content=serialize_message_for_sse(turn_context.user_message),
+                    content=serialized_user_message,
                     client_temp_id=client_temp_id,
                 )
             except Exception as ser_e:
@@ -1264,6 +1287,7 @@ class ChatService:
         knowledge_base_ids: list[str] | None = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """Regenerate an assistant message by rebuilding context up to the preceding user turn."""
+        prepare_phase_start = datetime.now(UTC)
         if knowledge_base_ids:
             await self._verify_knowledge_base_access(knowledge_base_ids, str(current_user.id))
 
@@ -1383,6 +1407,22 @@ class ChatService:
                 provider=provider,
             )
         ]
+
+        # SHU-759: detach all ORM instances and null the service's session ref
+        # before returning the event generator. See send_message for rationale.
+        self.db_session.expunge_all()
+        self.db_session = None
+
+        logger.info(
+            "Chat regenerate prepare complete",
+            extra={
+                "phase": "prepare_complete",
+                "conversation_id": conversation.id,
+                "target_message_id": target.id,
+                "root_id": root_id,
+                "elapsed_ms": (datetime.now(UTC) - prepare_phase_start).total_seconds() * 1000,
+            },
+        )
 
         # SHU-759: the regen-specific lineage logic (legacy backfill of
         # target.parent_message_id / variant_index, next sibling

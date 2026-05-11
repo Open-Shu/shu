@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from shu.core.config import ConfigurationManager, get_settings_instance
@@ -112,12 +111,10 @@ class EnsembleStreamingHelper:
         self,
         chat_service: "ChatService",
         message_context_builder: MessageContextBuilder,
-        db_session: AsyncSession,
         config_manager: ConfigurationManager,
     ) -> None:
         self.chat_service = chat_service
         self.message_context_builder = message_context_builder
-        self.db_session = db_session
         self.config_manager = config_manager
 
     @staticmethod
@@ -344,6 +341,26 @@ class EnsembleStreamingHelper:
         # Late import to avoid circular dependency with chat_service.
         from .chat_service import VariantStreamResult as _VariantStreamResult
 
+        # SHU-759 drift guard: the prepare phase must have detached the
+        # request session and nulled chat_service.db_session before this
+        # method runs. If this fires, someone re-introduced a mid-stream
+        # access path that bypasses the prepared snapshot — fix that, don't
+        # remove the assert.
+        assert self.chat_service.db_session is None, (
+            "_stream_variant_phase must run after prepare detached the request "
+            "session; chat_service.db_session is still set"
+        )
+
+        stream_phase_start = datetime.now(UTC)
+        logger.info(
+            "Variant stream phase start",
+            extra={
+                "phase": "stream_start",
+                "conversation_id": conversation_id,
+                "variant_index": variant_index,
+            },
+        )
+
         service = self.chat_service
         conversation_owner_id = inputs.conversation_owner_id  # SHU-759 prepare snapshot
         kb_ids = inputs.knowledge_base_ids or getattr(inputs.model_configuration, "knowledge_base_ids", None) or None
@@ -467,6 +484,16 @@ class EnsembleStreamingHelper:
             )
             usage_from_event = metadata.get("usage") or {}
 
+            logger.info(
+                "Variant stream phase complete",
+                extra={
+                    "phase": "stream_complete",
+                    "conversation_id": conversation_id,
+                    "variant_index": variant_index,
+                    "success": True,
+                    "elapsed_ms": (datetime.now(UTC) - stream_phase_start).total_seconds() * 1000,
+                },
+            )
             return _VariantStreamResult(
                 success=True,
                 full_content=full_content,
@@ -484,6 +511,17 @@ class EnsembleStreamingHelper:
                 type(exc).__name__,
                 getattr(exc, "details", None),
                 exc_info=True,
+            )
+            logger.info(
+                "Variant stream phase complete",
+                extra={
+                    "phase": "stream_complete",
+                    "conversation_id": conversation_id,
+                    "variant_index": variant_index,
+                    "success": False,
+                    "error_type": type(exc).__name__,
+                    "elapsed_ms": (datetime.now(UTC) - stream_phase_start).total_seconds() * 1000,
+                },
             )
             return _VariantStreamResult(
                 success=False,
@@ -504,6 +542,17 @@ class EnsembleStreamingHelper:
                 error_content = f"An unexpected error occurred: {type(exc).__name__}: {exc}"
             else:
                 error_content = "An unexpected error occurred. Please contact the admin for assistance."
+            logger.info(
+                "Variant stream phase complete",
+                extra={
+                    "phase": "stream_complete",
+                    "conversation_id": conversation_id,
+                    "variant_index": variant_index,
+                    "success": False,
+                    "error_type": type(exc).__name__,
+                    "elapsed_ms": (datetime.now(UTC) - stream_phase_start).total_seconds() * 1000,
+                },
+            )
             return _VariantStreamResult(
                 success=False,
                 error_message=error_content,
@@ -543,6 +592,16 @@ class EnsembleStreamingHelper:
         - stamps `regenerated=True` and `regenerated_from_message_id` onto
           the new assistant message's metadata.
         """
+        # SHU-759 drift guard: see matching assert in _stream_variant_phase.
+        # This runs on every call (not just type-checking) and trips at the
+        # exact line that breaks the contract if a future change reintroduces
+        # a mid-stream request-session dependency.
+        assert self.chat_service.db_session is None, (
+            "_finalize_variant_phase must run after prepare detached the request "
+            "session; chat_service.db_session is still set"
+        )
+
+        finalize_phase_start = datetime.now(UTC)
         service = self.chat_service
         config_metadata = service._build_model_configuration_metadata(inputs.model_configuration, inputs.model)
         model_snapshot = dict(config_metadata.get("model_configuration") or {})
@@ -718,6 +777,17 @@ class EnsembleStreamingHelper:
             await queue.put(
                 self._create_error_event(error_text, variant_index, inputs, model_snapshot, model_display_name)
             )
+
+        logger.info(
+            "Variant finalize phase complete",
+            extra={
+                "phase": "finalize_complete",
+                "conversation_id": conversation_id,
+                "variant_index": variant_index,
+                "success": result.success,
+                "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+            },
+        )
 
     # TODO: Refactor this function. It's too complex (number of branches and statements).
     async def stream_ensemble_responses(
