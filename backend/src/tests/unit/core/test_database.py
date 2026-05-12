@@ -77,38 +77,30 @@ def _patch_engine_with_query_result(monkeypatch, *, query_result):
     return conn
 
 
+class TestResolveAlembicHead:
+    """Smoke test against the real bundled migrations directory."""
+
+    def test_returns_single_head_from_real_migrations(self) -> None:
+        head = database._resolve_alembic_head()
+        assert head, "expected a non-empty head revision"
+
+
 class TestVerifySchemaVersion:
-    """SHU-763: shu-api refuses to start unless alembic_version matches expected head.
+    """shu-api refuses to start unless alembic_version matches the bundled head."""
 
-    All cases stub the alembic ScriptDirectory + the model registry so we exercise
-    the verification path itself rather than alembic resolution or import side
-    effects.
-    """
-
-    def _patch_alembic_head(self, monkeypatch, head: str | None = "abc123") -> None:
-        from pathlib import Path
-
-        monkeypatch.setattr(
-            Path,
-            "exists",
-            lambda self: True,
-        )
-        script_dir = MagicMock()
-        script_dir.get_current_head.return_value = head
-        monkeypatch.setattr("alembic.script.ScriptDirectory.from_config", lambda _cfg: script_dir)
-        monkeypatch.setattr("alembic.config.Config", lambda _path: MagicMock())
-        monkeypatch.setattr("shu.models.registry.register_all_models", lambda: None)
+    def _stub_head(self, monkeypatch, value: str = "abc123") -> None:
+        monkeypatch.setattr(database, "_resolve_alembic_head", lambda: value)
 
     @pytest.mark.asyncio
     async def test_returns_cleanly_when_versions_match(self, monkeypatch) -> None:
-        self._patch_alembic_head(monkeypatch, head="abc123")
+        self._stub_head(monkeypatch, "abc123")
         _patch_engine_with_query_result(monkeypatch, query_result=("abc123",))
 
         await database.verify_schema_version()  # no exception = pass
 
     @pytest.mark.asyncio
     async def test_raises_on_version_mismatch(self, monkeypatch) -> None:
-        self._patch_alembic_head(monkeypatch, head="abc123")
+        self._stub_head(monkeypatch, "abc123")
         _patch_engine_with_query_result(monkeypatch, query_result=("def456",))
 
         with pytest.raises(DatabaseSessionError, match="schema at revision 'def456'"):
@@ -116,7 +108,7 @@ class TestVerifySchemaVersion:
 
     @pytest.mark.asyncio
     async def test_raises_when_alembic_version_table_missing(self, monkeypatch) -> None:
-        self._patch_alembic_head(monkeypatch, head="abc123")
+        self._stub_head(monkeypatch, "abc123")
         _patch_engine_with_query_result(
             monkeypatch,
             query_result=ProgrammingError("SELECT", {}, Exception("relation does not exist")),
@@ -127,7 +119,7 @@ class TestVerifySchemaVersion:
 
     @pytest.mark.asyncio
     async def test_raises_when_version_row_absent(self, monkeypatch) -> None:
-        self._patch_alembic_head(monkeypatch, head="abc123")
+        self._stub_head(monkeypatch, "abc123")
         _patch_engine_with_query_result(monkeypatch, query_result=None)
 
         with pytest.raises(DatabaseSessionError, match="alembic_version row missing"):
@@ -135,7 +127,7 @@ class TestVerifySchemaVersion:
 
     @pytest.mark.asyncio
     async def test_raises_when_version_value_is_null(self, monkeypatch) -> None:
-        self._patch_alembic_head(monkeypatch, head="abc123")
+        self._stub_head(monkeypatch, "abc123")
         _patch_engine_with_query_result(monkeypatch, query_result=(None,))
 
         with pytest.raises(DatabaseSessionError, match="alembic_version row missing"):

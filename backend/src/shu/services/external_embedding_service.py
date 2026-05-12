@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from ..billing.enforcement import assert_subscription_active
 from ..core.exceptions import EmbeddingProviderError
 from ..core.external_model_resolver import ensure_provider_and_model_active
 from ..core.logging import get_logger
@@ -80,6 +81,8 @@ class ExternalEmbeddingService:
     async def _embed_batch(
         self, texts: list[str], prefix: str = "", *, user_id: str | None = None
     ) -> list[list[float]]:
+        await assert_subscription_active()
+
         if not texts:
             return []
         await ensure_provider_and_model_active(self._provider_id, self._model_id, call_type="embedding")

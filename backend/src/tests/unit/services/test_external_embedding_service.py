@@ -11,14 +11,17 @@ Tests cover:
 """
 
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from shu.billing.enforcement import SubscriptionInactiveError
 from shu.core.embedding_protocol import EmbeddingService
 from shu.core.exceptions import InactiveProviderError
 from shu.services.external_embedding_service import ExternalEmbeddingService
+from tests.unit.conftest import disabled_billing_state
 
 API_BASE = "https://openrouter.ai/api/v1"
 API_KEY = "test-key"
@@ -420,3 +423,38 @@ class TestInactiveProviderGuard:
         mock_guard.assert_awaited_with(PROVIDER_ID, MODEL_ID, call_type="embedding")
         mock_http_cls.assert_not_called()
         mock_record.assert_not_called()
+
+
+class TestSubscriptionGate:
+    """The subscription gate must fire before any billable embedding work.
+
+    Pinned at `_embed_batch` — the single chokepoint behind `embed_texts`,
+    `embed_query`, and `embed_queries`. When the OpenRouter key disable is
+    bypassed (e.g. operator configures a direct provider like Voyage or
+    OpenAI), this is the only line preventing embedding cost on a paused
+    tenant, so all three public entrypoints must raise before httpx.
+    """
+
+    @pytest.mark.parametrize(
+        "method_name,inputs",
+        [
+            ("embed_texts", [["doc"]]),
+            ("embed_query", ["q"]),
+            ("embed_queries", [["q1", "q2"]]),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_inactive_subscription_raises_before_any_work(
+        self, install_stub_cache, method_name: str, inputs: list
+    ):
+        """Disabled cache → all three public methods raise before any httpx call.
+
+        No httpx patching: a regression that lets the gate fall through would
+        attempt a real network call, which surfaces as a louder failure
+        (connection error) than a subtle missed assertion.
+        """
+        install_stub_cache(disabled_billing_state())
+        svc = _make_service()
+
+        with pytest.raises(SubscriptionInactiveError):
+            await getattr(svc, method_name)(*inputs)

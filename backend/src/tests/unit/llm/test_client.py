@@ -12,11 +12,15 @@ Tests the enhanced error handling functionality including:
 """
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 
+from shu.billing.enforcement import SubscriptionInactiveError
+from shu.llm.client import UnifiedLLMClient
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
+from tests.unit.conftest import disabled_billing_state
 
 
 class TestExtractHttpErrorDetails:
@@ -596,3 +600,36 @@ class TestCapabilityMismatchDetection:
         # Should detect mismatch from message even with None in other fields
         result = UnifiedLLMClient._is_capability_mismatch_error(None, details)
         assert result
+
+
+# =============================================================================
+# SHU-703 chat-completion subscription gate
+#
+# Chokepoint for every paid chat path that doesn't go through the route-level
+# gate: side-call summary/auto-rename, experience execution, profiling.
+#
+# Tests bypass __init__ via object.__new__ — the constructor pulls in adapter
+# resolution, header building, httpx client construction, and a settings
+# instance, none of which the gate needs to fire.
+# =============================================================================
+
+
+class TestChatCompletionSubscriptionGate:
+    """`chat_completion` must short-circuit before the adapter is touched."""
+
+    @pytest.mark.asyncio
+    async def test_paused_tenant_raises_before_adapter_invocation(self, install_stub_cache):
+        install_stub_cache(disabled_billing_state())
+
+        client = object.__new__(UnifiedLLMClient)
+        client.provider = MagicMock(provider_type="openai")
+        # Adapter is touched only after the gate; AsyncMock makes any
+        # post-gate await return cleanly so a regression that lets the
+        # gate fall through surfaces as "no raise" rather than an
+        # AttributeError that could be mistaken for the gate firing.
+        client.provider_adapter = AsyncMock()
+
+        with pytest.raises(SubscriptionInactiveError):
+            await client.chat_completion(messages=MagicMock(), model="gpt-4o")
+
+        client.provider_adapter.inject_model_parameter.assert_not_called()

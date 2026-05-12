@@ -4,6 +4,7 @@ This module provides database connection management, session handling,
 and utilities for database operations.
 """
 
+import ast
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -159,31 +160,86 @@ async def get_db_session() -> AsyncSession:
     return session_local()
 
 
-async def verify_schema_version() -> None:
-    """Raise DatabaseSessionError unless alembic_version matches the bundled head."""
+def _read_revision_identifiers(source: str) -> tuple[str | None, tuple[str, ...]]:
+    """Return (revision, parents) parsed from module-level assignments.
+
+    `revision` is a single string. `down_revision` is normalised to a tuple of
+    parent ids — empty for the base, single-element for a normal migration,
+    multi-element for an alembic merge migration.
+    """
+    tree = ast.parse(source)
+    revision: str | None = None
+    parents: tuple[str, ...] = ()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+            value_expr: ast.expr = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            value_expr = node.value
+        else:
+            continue
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        try:
+            value = ast.literal_eval(value_expr)
+        except (ValueError, SyntaxError):
+            continue
+        if "revision" in names and isinstance(value, str):
+            revision = value
+        if "down_revision" in names:
+            if value is None:
+                parents = ()
+            elif isinstance(value, str):
+                parents = (value,)
+            elif isinstance(value, (tuple, list)) and all(isinstance(v, str) for v in value):
+                parents = tuple(value)
+    return revision, parents
+
+
+def _resolve_alembic_head() -> str:
+    """Find the head revision in the bundled migrations/versions/ tree.
+
+    Reads each file with `ast.parse` + `ast.literal_eval` rather than importing
+    it. Migration modules can have side-effecting imports (e.g.
+    `from migrations.seed_data...`) that only resolve under alembic's runtime
+    sys.path setup; importing them at app startup would couple shu-api to
+    alembic's CLI conventions. AST parsing also correctly handles merge
+    migrations where `down_revision` is a tuple of parents.
+    """
     from pathlib import Path
 
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    from ..models.registry import register_all_models
-
-    register_all_models()
-
     candidates = [
-        Path("/app/alembic.ini"),
-        Path(__file__).resolve().parents[3] / "alembic.ini",
+        Path("/app/migrations/versions"),
+        Path(__file__).resolve().parents[3] / "migrations" / "versions",
     ]
-    alembic_ini = next((p for p in candidates if p.exists()), None)
-    if alembic_ini is None:
-        raise DatabaseSessionError(
-            "alembic.ini not found in any expected location; cannot verify schema version. "
-            f"Looked in: {[str(p) for p in candidates]}"
-        )
+    versions_dir = next((p for p in candidates if p.is_dir()), None)
+    if versions_dir is None:
+        raise DatabaseSessionError(f"migrations/versions/ not found; looked in {[str(p) for p in candidates]}")
 
-    expected = ScriptDirectory.from_config(Config(str(alembic_ini))).get_current_head()
-    if expected is None:
-        raise DatabaseSessionError("alembic migrations directory has no head revision")
+    revisions: dict[str, tuple[str, ...]] = {}
+    for path in versions_dir.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        revision, parents = _read_revision_identifiers(path.read_text(encoding="utf-8"))
+        if revision is None:
+            continue
+        revisions[revision] = parents
+
+    if not revisions:
+        raise DatabaseSessionError(f"no migration files found under {versions_dir}")
+
+    pointed_to = {parent for parents in revisions.values() for parent in parents}
+    heads = [r for r in revisions if r not in pointed_to]
+    if len(heads) != 1:
+        raise DatabaseSessionError(
+            f"expected exactly one alembic head; found {heads}. " "Migrations have branched and need to be reconciled."
+        )
+    return heads[0]
+
+
+async def verify_schema_version() -> None:
+    """Raise DatabaseSessionError unless alembic_version matches the bundled head."""
+    expected = _resolve_alembic_head()
 
     engine = get_async_engine()
     async with engine.begin() as conn:
