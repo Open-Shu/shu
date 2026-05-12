@@ -485,8 +485,12 @@ class ChatService:
         await self._ensure_provider_active(model_config.llm_provider_id)
         return model_config
 
-    async def _resolve_conversation_model(self, conversation: Conversation) -> tuple[str, LLMModel]:
-        """Resolve the active provider and model to use for a conversation.
+    async def _resolve_conversation_model(self, conversation: Conversation) -> tuple[str, LLMModel, LLMProvider]:
+        """Resolve the active provider, model, and provider row for a conversation.
+
+        Returns ``(provider_id, model, provider)``. The provider row is
+        returned alongside so callers (e.g. regen prepare) can populate the
+        ModelExecutionInputs snapshot without re-fetching the same row.
 
         Requires the conversation to be linked to a model configuration.
         """
@@ -494,7 +498,7 @@ class ChatService:
         if not model_config:
             raise LLMProviderError("Conversation is missing a model configuration")
 
-        await self._ensure_provider_active(model_config.llm_provider_id)
+        provider = await self._ensure_provider_active(model_config.llm_provider_id)
 
         model_name = model_config.model_name
         if not model_name:
@@ -510,7 +514,7 @@ class ChatService:
                 f"Model '{model_name}' is inactive or unavailable for provider '{model_config.llm_provider_id}'"
             )
 
-        return model_config.llm_provider_id, model_record
+        return model_config.llm_provider_id, model_record, provider
 
     async def create_conversation(
         self,
@@ -1358,8 +1362,10 @@ class ChatService:
         history_messages = all_msgs[:history_end]
         preceding_user_message = all_msgs[preceding_user_idx] if preceding_user_idx is not None else None
         preceding_user_content = preceding_user_message.content if preceding_user_message else ""
-        # Resolve provider/model via model configuration or cached model reference
-        provider_id, model = await self._resolve_conversation_model(conversation)
+        # Resolve provider/model via model configuration or cached model reference.
+        # _resolve_conversation_model now also returns the provider row so we don't
+        # have to re-fetch it for the snapshot below.
+        provider_id, model, provider = await self._resolve_conversation_model(conversation)
 
         chat_context, source_metadata = await self.message_context_builder.build_message_context(
             conversation=conversation,
@@ -1374,19 +1380,7 @@ class ChatService:
 
         # Use the explicit parent_message_id from the frontend, or fall back to target.id
         root_id = parent_message_id or target.id
-        logger.info(
-            f"REGENERATE DEBUG: message_id={message_id}, parent_message_id={parent_message_id}, target.id={target.id}, root_id={root_id}"
-        )
 
-        # SHU-759: the regen path also has to populate the prepare snapshot
-        # fields on ModelExecutionInputs — the stream phase reads them
-        # directly (provider, tools_enabled, kb_include_references_map,
-        # conversation_owner_id) and has no DB session to fall back on after
-        # the endpoint closes it. Mirrors the snapshot population in
-        # _build_model_execution_inputs for the send_message path.
-        provider = await self.llm_service.get_provider_by_id(provider_id)
-        if not provider:
-            raise LLMProviderError(f"Provider '{provider_id}' not found")
         tools_enabled = self._compute_tools_enabled(provider, conversation.model_configuration)
         kb_include_references_map = await self._compute_kb_include_references_map(
             explicit_knowledge_base_ids=knowledge_base_ids,
@@ -1514,7 +1508,7 @@ class ChatService:
                 conversation.model_configuration_id = None
                 conversation.model_configuration = None
 
-            provider_id, model_record = await self._resolve_conversation_model(conversation)
+            provider_id, model_record, _ = await self._resolve_conversation_model(conversation)
             conversation.updated_at = datetime.now(UTC)
 
             await self.db_session.commit()

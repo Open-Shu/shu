@@ -343,13 +343,15 @@ class EnsembleStreamingHelper:
 
         # SHU-759 drift guard: the prepare phase must have detached the
         # request session and nulled chat_service.db_session before this
-        # method runs. If this fires, someone re-introduced a mid-stream
+        # method runs. Raised (not asserted) so `python -O` can't strip the
+        # invariant. If this fires, someone re-introduced a mid-stream
         # access path that bypasses the prepared snapshot — fix that, don't
-        # remove the assert.
-        assert self.chat_service.db_session is None, (
-            "_stream_variant_phase must run after prepare detached the request "
-            "session; chat_service.db_session is still set"
-        )
+        # remove the check.
+        if self.chat_service.db_session is not None:
+            raise RuntimeError(
+                "_stream_variant_phase must run after prepare detached the request "
+                "session; chat_service.db_session is still set"
+            )
 
         stream_phase_start = datetime.now(UTC)
         logger.info(
@@ -592,14 +594,13 @@ class EnsembleStreamingHelper:
         - stamps `regenerated=True` and `regenerated_from_message_id` onto
           the new assistant message's metadata.
         """
-        # SHU-759 drift guard: see matching assert in _stream_variant_phase.
-        # This runs on every call (not just type-checking) and trips at the
-        # exact line that breaks the contract if a future change reintroduces
-        # a mid-stream request-session dependency.
-        assert self.chat_service.db_session is None, (
-            "_finalize_variant_phase must run after prepare detached the request "
-            "session; chat_service.db_session is still set"
-        )
+        # SHU-759 drift guard: see matching check in _stream_variant_phase.
+        # Raised (not asserted) so `python -O` can't strip the invariant.
+        if self.chat_service.db_session is not None:
+            raise RuntimeError(
+                "_finalize_variant_phase must run after prepare detached the request "
+                "session; chat_service.db_session is still set"
+            )
 
         finalize_phase_start = datetime.now(UTC)
         service = self.chat_service

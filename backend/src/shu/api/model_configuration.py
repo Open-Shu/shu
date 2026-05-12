@@ -544,7 +544,12 @@ async def test_model_configuration(
                 if event.type == "error":
                     error = event.content
         finally:
-            await chat_service.delete_conversation(conversation.id)
+            # SHU-759: the prepare phase of `send_message` detaches and nulls
+            # `chat_service.db_session`, so the original instance can't be
+            # reused for cleanup. Construct a fresh ChatService bound to the
+            # still-open request session for the test conversation teardown.
+            cleanup_service = ChatService(db, config_manager)
+            await cleanup_service.delete_conversation(conversation.id)
 
         # Extract usage and timing from message_metadata
         usage = message_metadata.get("usage", {}) or {}

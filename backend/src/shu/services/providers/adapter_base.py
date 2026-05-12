@@ -18,6 +18,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.config import get_settings_instance
+from shu.core.database import get_async_session_local
 from shu.core.exceptions import LLMConfigurationError
 from shu.core.logging import get_logger
 from shu.models.attachment import Attachment
@@ -64,7 +65,7 @@ class ProviderAdapterContext:
 
     """
 
-    db_session: AsyncSession
+    db_session: AsyncSession | None = None
     provider: LLMProvider | None = None
     conversation_owner_id: str | None = None
     knowledge_base_ids: list[str] | None = None
@@ -193,8 +194,6 @@ class BaseProviderAdapter:
         # recording usage. See UsageDict for the full shape.
         self.usage: UsageDict = {}
 
-        self.db_session = context.db_session
-
         if self.provider and self.encryption_key:
             self.api_key = (
                 self.__decrypt_api_key(self.provider.api_key_encrypted) if self.provider.api_key_encrypted else None
@@ -236,9 +235,16 @@ class BaseProviderAdapter:
 
         logger.info("Calling plugin | %s - %s - %s", plugin_name, operation, args_dict)
 
-        return json.dumps(
-            await execute_plugin(self.db_session, plugin_name, operation, args_dict, self.conversation_owner_id)
-        )
+        # SHU-759: open a short-lived session at the point of use. By the time
+        # this method runs the request session set up by the chat endpoint has
+        # been released, so relying on a long-lived self.db_session would crash
+        # with AttributeError on the first mid-stream tool call. Mirrors the
+        # session-acquisition pattern in UnifiedLLMClient._build_tool_context.
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            return json.dumps(
+                await execute_plugin(session, plugin_name, operation, args_dict, self.conversation_owner_id)
+            )
 
     def _get_usage(
         self,
@@ -535,7 +541,7 @@ def get_adapter(name: str, context: ProviderAdapterContext) -> BaseProviderAdapt
 
 
 def get_adapter_from_provider(
-    db_session: AsyncSession,
+    db_session: AsyncSession | None,
     provider: LLMProvider,
     conversation_owner_id: str | None = None,
     knowledge_base_ids: list[str] | None = None,
@@ -543,7 +549,11 @@ def get_adapter_from_provider(
     """Instantiate the correct provider adapter for *provider*.
 
     Args:
-        db_session: Active async database session.
+        db_session: Async database session, or None. Post SHU-759 the adapter
+            no longer stores or uses this session — `_call_plugin` opens its
+            own short-lived session at the point of use. The parameter is
+            kept for callers that still pass a session (e.g. prepare-phase
+            capability checks where a live session is incidentally available).
         provider: LLMProvider ORM row identifying the target provider.
         conversation_owner_id: Optional user ID of the conversation owner,
             used for per-user plugin authorisation.

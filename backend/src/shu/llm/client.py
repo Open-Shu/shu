@@ -178,7 +178,7 @@ class UnifiedLLMClient:
 
     def __init__(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession | None,
         provider: LLMProvider,
         conversation_owner_id: str | None = None,
         settings: Any | None = None,
