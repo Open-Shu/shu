@@ -91,6 +91,16 @@ class ProviderResponseEvent:
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
             "event": self.type,
+            # SHU-759 (code review): the shared SSE sanitizer in
+            # core/streaming.py keys off `type` to find error events to
+            # sanitize. Pre-fix this dict emitted only `event`, so chat
+            # error events bypassed sanitization and raw exception text
+            # (IntegrityError SQL detail, savepoint failures, raw
+            # provider errors) leaked to clients. Experience SSE was
+            # unaffected because experience_executor.to_dict emits
+            # `type` already. We emit both keys so the frontend keeps
+            # reading `event` while the sanitizer sees `type`.
+            "type": self.type,
             "variant_index": self.variant_index,
             "model_configuration_id": self.model_configuration_id,
             "model_configuration": self.model_configuration,
@@ -720,8 +730,9 @@ class EnsembleStreamingHelper:
                     # same variant_index. The UNIQUE constraint rejects the second
                     # writer; we re-read siblings and try again. Non-regen path
                     # should never hit this — the variant_index is fixed by the
-                    # ensemble loop — so a non-regen IntegrityError is unexpected
-                    # and is re-raised after exhausting retries.
+                    # ensemble loop — so a non-regen IntegrityError is unexpected.
+                    # Either way, after exhausting retries we surface a terminal
+                    # error event so `stream_ensemble_responses` can complete.
                     if not regen_lineage or attempt >= REGEN_MAX_ATTEMPTS:
                         logger.error(
                             "Finalize integrity error after %d attempts (regen=%s): %s",
@@ -729,7 +740,33 @@ class EnsembleStreamingHelper:
                             regen_lineage is not None,
                             ie,
                         )
-                        raise
+                        # SHU-759: Must enqueue a terminal error event before
+                        # returning. `stream_ensemble_responses`' `queue.get()`
+                        # loop only increments its completed-counter on
+                        # `final_message` or `error` events; a bare `raise`
+                        # here would leave the task dead with the exception
+                        # stored, but the parent loop has no signal — it sits
+                        # on `queue.get()` forever (it never reaches the
+                        # `finally: asyncio.gather(...)` that would have reaped
+                        # the dead task). Concrete hang scenario: 4+ concurrent
+                        # regenerates of the same target, the last exhausts
+                        # REGEN_MAX_ATTEMPTS, SSE consumer waits until client
+                        # timeout. The catch-all `except Exception` below
+                        # uses the same pattern for the same reason.
+                        # User-facing copy is generic — IntegrityError reprs
+                        # leak SQL statement / params / constraint names.
+                        # Full detail is already logged with `exc_info=True`
+                        # above for server-side debugging.
+                        await queue.put(
+                            self._create_error_event(
+                                "Could not save the response after multiple " "attempts. Please try again.",
+                                variant_index,
+                                inputs,
+                                model_snapshot,
+                                model_display_name,
+                            )
+                        )
+                        return
                     logger.info("Regen variant_index conflict on attempt %d; retrying", attempt)
                 except Exception as exc:
                     # SHU-759 AC#3: any in-transaction failure (UsageRecorder
@@ -753,9 +790,14 @@ class EnsembleStreamingHelper:
                         },
                         exc_info=True,
                     )
+                    # User-facing copy is generic — raw exception reprs can
+                    # leak DB / internal detail (savepoint flush errors,
+                    # cost-resolver state, etc.). Full detail is already
+                    # logged with `exc_info=True` above for server-side
+                    # debugging.
                     await queue.put(
                         self._create_error_event(
-                            f"Failed to persist response: {exc}",
+                            "An internal error prevented saving your response. " "Please try again.",
                             variant_index,
                             inputs,
                             model_snapshot,
@@ -777,31 +819,47 @@ class EnsembleStreamingHelper:
                 )
             )
         else:
-            # Failure path — record an error Message + failed LLMUsage in one transaction.
-            async with session_factory() as session:
-                error_text = result.error_message or "An unexpected error occurred"
-                error_msg = Message(
-                    id=str(uuid.uuid4()),
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=f"I apologize, but I encountered an error: {error_text}",
-                    model_id=inputs.model.id,
-                    message_metadata={"error": result.error_details if result.error_details else error_text},
-                )
-                session.add(error_msg)
-                await session.flush()
+            # Failure path — record an error Message + failed LLMUsage in one
+            # transaction. Hoisted out of the try so the outer catch-all can
+            # still surface the original LLM error to the SSE consumer even
+            # if the persistence transaction itself rolls back.
+            error_text = result.error_message or "An unexpected error occurred"
+            try:
+                async with session_factory() as session:
+                    error_msg = Message(
+                        id=str(uuid.uuid4()),
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=f"I apologize, but I encountered an error: {error_text}",
+                        model_id=inputs.model.id,
+                        message_metadata={"error": result.error_details if result.error_details else error_text},
+                    )
+                    session.add(error_msg)
+                    await session.flush()
 
-                # Match the success branch's conversation timestamp bump so a
-                # failed chat still sorts to the top of "recently updated" in
-                # the conversation list. Pre-refactor `_handle_exception` got
-                # this implicitly because `add_message` updated `updated_at`;
-                # the inline-Message-construction approach has to do it
-                # explicitly.
-                await session.execute(
-                    update(Conversation).where(Conversation.id == conversation_id).values(updated_at=datetime.now(UTC))
-                )
+                    # Match the success branch's conversation timestamp bump so a
+                    # failed chat still sorts to the top of "recently updated" in
+                    # the conversation list. Pre-refactor `_handle_exception` got
+                    # this implicitly because `add_message` updated `updated_at`;
+                    # the inline-Message-construction approach has to do it
+                    # explicitly.
+                    await session.execute(
+                        update(Conversation)
+                        .where(Conversation.id == conversation_id)
+                        .values(updated_at=datetime.now(UTC))
+                    )
 
-                try:
+                    # AC#N7 atomicity: the failed-LLMUsage write composes into
+                    # the same transaction as the error Message. The SHU-759
+                    # UsageRecorder contract change made record(session=...)
+                    # propagate failures; we let them propagate out of this
+                    # `async with` block so session.__aexit__ rolls the error
+                    # Message back too — Message and LLMUsage land together or
+                    # neither lands. (The pre-SHU-759 wrapper that caught and
+                    # swallowed `record()` failures here actively defeated
+                    # that atomicity once the contract change landed: it would
+                    # commit the error Message while the savepoint had already
+                    # rolled back the usage row.)
                     await get_usage_recorder().record(
                         provider_id=inputs.model.provider_id,
                         model_id=inputs.model.id,
@@ -814,10 +872,28 @@ class EnsembleStreamingHelper:
                         error_message=error_text,
                         session=session,
                     )
-                except Exception as usage_error:
-                    logger.warning("Failed to record failed-LLM usage: %s", usage_error)
 
-                await session.commit()
+                    await session.commit()
+            except Exception as exc:
+                # Failure-path rollback: neither the error Message nor the
+                # failed-LLMUsage row landed. We still need to signal the SSE
+                # consumer or `stream_ensemble_responses` will block on its
+                # `queue.get()` loop forever — same hang pattern the success
+                # branch and IntegrityError handler protect against. The
+                # original LLM `error_text` is the most useful payload to
+                # surface; the persistence failure is an internal concern.
+                logger.error(
+                    "Variant finalize failure-path rolled back",
+                    extra={
+                        "phase": "finalize_rollback",
+                        "conversation_id": conversation_id,
+                        "variant_index": variant_index,
+                        "branch": "failure",
+                        "error_type": type(exc).__name__,
+                        "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+                    },
+                    exc_info=True,
+                )
 
             await queue.put(
                 self._create_error_event(error_text, variant_index, inputs, model_snapshot, model_display_name)

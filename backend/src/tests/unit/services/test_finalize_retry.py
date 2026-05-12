@@ -214,12 +214,24 @@ async def test_finalize_regen_succeeds_after_two_conflicts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finalize_regen_raises_after_max_attempts() -> None:
-    """3 IntegrityErrors → IntegrityError propagates after REGEN_MAX_ATTEMPTS.
+async def test_finalize_regen_emits_terminal_error_after_max_attempts() -> None:
+    """REGEN_MAX_ATTEMPTS IntegrityErrors → terminal error event, no raise.
 
-    The retry loop must not silently swallow an unresolvable conflict
-    (e.g., a real bug in variant_index computation that would loop
-    forever). After ``REGEN_MAX_ATTEMPTS`` attempts the error escapes.
+    Concrete hang scenario this guards: 4+ concurrent regenerates of the
+    same target. Each one races to claim the next variant_index; the
+    UNIQUE constraint rejects all but one per attempt. After
+    REGEN_MAX_ATTEMPTS, the loser bails out — but it MUST enqueue a
+    terminal error event before exiting. ``stream_ensemble_responses``'
+    ``queue.get()`` loop only increments completed on ``final_message``
+    or ``error`` events; a bare ``raise`` here would leave the task
+    dead with the exception stored, the parent loop blocked on
+    ``queue.get()`` forever (never reaching the ``finally``-block
+    ``asyncio.gather()`` that would have reaped the dead task), and
+    the SSE consumer hung until client timeout.
+
+    Pre-fix this method raised IntegrityError; pre-fix that bug existed
+    silently because no integration test exercised 4+ concurrent
+    regenerates. Codex review surfaced it.
     """
     integrity_err = IntegrityError(statement="INSERT", params={}, orig=Exception("persistent UNIQUE violation"))
     session = _build_mock_session([integrity_err, integrity_err, integrity_err, None])
@@ -244,34 +256,48 @@ async def test_finalize_regen_raises_after_max_attempts() -> None:
         patch("shu.services.chat_streaming.get_async_session_local", return_value=factory),
         patch("shu.services.chat_streaming.get_usage_recorder", return_value=fake_recorder),
     ):
-        with pytest.raises(IntegrityError):
-            await helper._finalize_variant_phase(
-                variant_index=1,
-                inputs=inputs,
-                result=result,
-                queue=queue,
-                conversation_id="conv-id",
-                parent_message_id="root-id",
-                use_parent_as_message_id=False,
-                regen_lineage=RegenLineageInfo(target_message_id="target-id", root_id="root-id"),
-            )
+        # No exception propagates — the IntegrityError handler converts to a
+        # terminal error event so the parent SSE loop can complete.
+        await helper._finalize_variant_phase(
+            variant_index=1,
+            inputs=inputs,
+            result=result,
+            queue=queue,
+            conversation_id="conv-id",
+            parent_message_id="root-id",
+            use_parent_as_message_id=False,
+            regen_lineage=RegenLineageInfo(target_message_id="target-id", root_id="root-id"),
+        )
 
-    # Three attempts consumed, then the error propagated. The fourth commit
-    # side-effect (None / success) is never reached.
+    # All three attempts consumed; the fourth commit side-effect (None /
+    # success) is never reached.
     assert factory.entered_count == REGEN_MAX_ATTEMPTS
     assert session.commit.await_count == REGEN_MAX_ATTEMPTS
-    queue.put.assert_not_called()  # no final event enqueued on terminal failure
+
+    # Terminal error event was enqueued so the SSE consumer doesn't hang.
+    queue.put.assert_awaited_once()
+    enqueued_event = queue.put.call_args[0][0]
+    assert enqueued_event.type == "error", (
+        f"expected terminal error event after exhausted retries, got {enqueued_event.type!r}"
+    )
+    # User-facing message must be generic. IntegrityError reprs leak SQL
+    # statement, params, and constraint names; the underlying exception is
+    # logged server-side with exc_info=True but must not reach the client.
+    assert "Could not save the response" in enqueued_event.content
+    assert "persistent UNIQUE violation" not in enqueued_event.content, (
+        f"raw IntegrityError detail leaked to client: {enqueued_event.content!r}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_finalize_non_regen_re_raises_integrity_error_immediately() -> None:
-    """Non-regen IntegrityError is unexpected — no retry, propagates on first hit.
-
-    Non-regen variants assign ``variant_index`` from the ensemble loop
-    counter (a fixed value per variant), so the UNIQUE constraint should
-    never trip. If it does, something is structurally wrong and the
-    retry would loop forever — so we re-raise immediately rather than
-    burning ``REGEN_MAX_ATTEMPTS`` attempts on a non-recoverable error.
+async def test_finalize_non_regen_emits_terminal_error_on_integrity_failure() -> None:
+    """Non-regen IntegrityError is unexpected (variant_index is fixed by
+    the ensemble loop counter, so the UNIQUE constraint should never
+    trip), but if it does we still need a terminal error event rather
+    than a bare raise — same SSE-hang reasoning as the regen-exhausted
+    case. Non-regen does NOT retry because retrying with the same fixed
+    variant_index would just loop forever; one attempt then a terminal
+    error.
     """
     integrity_err = IntegrityError(statement="INSERT", params={}, orig=Exception("unexpected"))
     session = _build_mock_session([integrity_err])
@@ -296,21 +322,32 @@ async def test_finalize_non_regen_re_raises_integrity_error_immediately() -> Non
         patch("shu.services.chat_streaming.get_async_session_local", return_value=factory),
         patch("shu.services.chat_streaming.get_usage_recorder", return_value=fake_recorder),
     ):
-        with pytest.raises(IntegrityError):
-            await helper._finalize_variant_phase(
-                variant_index=1,
-                inputs=inputs,
-                result=result,
-                queue=queue,
-                conversation_id="conv-id",
-                parent_message_id="root-id",
-                use_parent_as_message_id=False,
-                regen_lineage=None,  # non-regen path
-            )
+        # No exception propagates — the IntegrityError handler converts to a
+        # terminal error event so the parent SSE loop can complete.
+        await helper._finalize_variant_phase(
+            variant_index=1,
+            inputs=inputs,
+            result=result,
+            queue=queue,
+            conversation_id="conv-id",
+            parent_message_id="root-id",
+            use_parent_as_message_id=False,
+            regen_lineage=None,  # non-regen path
+        )
 
     # Only one attempt; non-regen does not retry.
     assert factory.entered_count == 1
     assert session.commit.await_count == 1
+
+    # Terminal error event enqueued, with generic user-facing copy (no
+    # raw exception content — IntegrityError reprs leak SQL detail).
+    queue.put.assert_awaited_once()
+    enqueued_event = queue.put.call_args[0][0]
+    assert enqueued_event.type == "error"
+    assert "Could not save the response" in enqueued_event.content
+    assert "unexpected" not in enqueued_event.content, (
+        f"raw IntegrityError detail leaked to client: {enqueued_event.content!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -390,11 +427,91 @@ async def test_finalize_rolls_back_atomically_on_usage_recorder_failure() -> Non
     fake_recorder.record.assert_awaited_once()
 
     # An error event must be enqueued so the SSE consumer doesn't hang.
+    # User-facing copy is generic — raw exception text can leak DB /
+    # savepoint / cost-resolver internals. The exception is logged
+    # server-side with exc_info=True instead.
     queue.put.assert_awaited_once()
     enqueued_event = queue.put.call_args[0][0]
     assert enqueued_event.type == "error", (
         f"expected error event for rolled-back finalize, got {enqueued_event.type!r}"
     )
-    assert "Failed to persist response" in enqueued_event.content, (
-        f"expected user-facing rollback message, got {enqueued_event.content!r}"
+    assert "internal error prevented saving" in enqueued_event.content
+    assert "simulated savepoint failure" not in enqueued_event.content, (
+        f"raw exception text leaked to client: {enqueued_event.content!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_failure_path_rolls_back_atomically_on_usage_recorder_failure() -> None:
+    """SHU-759 AC#N7: the failure-path Message + failed-LLMUsage write
+    is also atomic — symmetric with the success-path test above.
+
+    Pre-fix, the failure path wrapped ``record(session=...)`` in a
+    ``try/except Exception`` that logged at WARNING and continued. The
+    sibling ``session.commit()`` would then commit the error Message
+    *without* a matching LLMUsage row — the same "Message exists,
+    LLMUsage absent" state AC#N7 was supposed to prevent, just on the
+    other branch. The wrapper was correct under the SHU-715 unified-
+    swallow contract, but stopped being correct once SHU-759 changed
+    ``record(session=...)`` to propagate.
+
+    Post-fix, dropping the wrapper lets ``record()`` failures propagate
+    out of the ``async with session_factory()`` block; ``__aexit__``
+    rolls back the whole transaction (no error Message, no failed
+    LLMUsage row), and the outer catch-all logs at
+    ``phase=finalize_rollback`` and enqueues the error event so the
+    SSE consumer still completes.
+
+    The user-visible SSE event uses the original LLM ``error_text`` —
+    the persistence failure is an internal concern.
+    """
+    recorder_error = RuntimeError("simulated savepoint failure in failure branch")
+
+    session = _build_mock_session([None])  # commit never reached
+    factory = _FakeSessionFactory(session)
+
+    helper = _build_helper()
+    inputs = _build_inputs()
+    result = VariantStreamResult(
+        success=False,
+        error_message="upstream LLM blew up: connection refused",
+        error_type="LLMProviderError",
+        error_details={"status_code": 503},
+    )
+    queue = MagicMock()
+    queue.put = AsyncMock(return_value=None)
+
+    fake_recorder = MagicMock()
+    fake_recorder.record = AsyncMock(side_effect=recorder_error)
+
+    with (
+        patch("shu.services.chat_streaming.get_async_session_local", return_value=factory),
+        patch("shu.services.chat_streaming.get_usage_recorder", return_value=fake_recorder),
+    ):
+        # No exception escapes — the catch-all converts to an error event.
+        await helper._finalize_variant_phase(
+            variant_index=0,
+            inputs=inputs,
+            result=result,
+            queue=queue,
+            conversation_id="conv-id",
+            parent_message_id="root-id",
+            use_parent_as_message_id=False,
+        )
+
+    # Atomicity: session.commit() never ran. The error Message + Conversation
+    # update pending in the session at the point of failure are rolled back
+    # by session.__aexit__. Neither row lands in the database.
+    session.commit.assert_not_called()
+
+    fake_recorder.record.assert_awaited_once()
+
+    # Error event MUST be enqueued — same SSE-hang reasoning as the success
+    # branch's rollback path. The event carries the original LLM error_text,
+    # not the persistence failure (the latter is an internal concern).
+    queue.put.assert_awaited_once()
+    enqueued_event = queue.put.call_args[0][0]
+    assert enqueued_event.type == "error"
+    assert "upstream LLM blew up" in enqueued_event.content, (
+        f"expected the original LLM error_text in the SSE event, got {enqueued_event.content!r}"
     )
