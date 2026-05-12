@@ -613,7 +613,6 @@ class EnsembleStreamingHelper:
 
         if result.success:
             assert result.full_content is not None, "VariantStreamResult.success requires full_content"
-            now = datetime.now(UTC)
 
             # Retry loop only matters for the regen path; for the non-regen
             # path the variant_index is fixed by the ensemble loop counter
@@ -623,6 +622,9 @@ class EnsembleStreamingHelper:
             assistant_msg_loaded: Message | None = None
             while True:
                 attempt += 1
+                # Refreshed per-attempt so a retry stamps conversation.updated_at
+                # with the actual commit time, not the time of the first attempt.
+                now = datetime.now(UTC)
                 try:
                     async with session_factory() as session:
                         # Regen-only: legacy backfill of the original target's lineage
@@ -788,6 +790,16 @@ class EnsembleStreamingHelper:
                 )
                 session.add(error_msg)
                 await session.flush()
+
+                # Match the success branch's conversation timestamp bump so a
+                # failed chat still sorts to the top of "recently updated" in
+                # the conversation list. Pre-refactor `_handle_exception` got
+                # this implicitly because `add_message` updated `updated_at`;
+                # the inline-Message-construction approach has to do it
+                # explicitly.
+                await session.execute(
+                    update(Conversation).where(Conversation.id == conversation_id).values(updated_at=datetime.now(UTC))
+                )
 
                 try:
                     await get_usage_recorder().record(

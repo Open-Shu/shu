@@ -145,6 +145,8 @@ class ChatFinalizeErrorIntegrationTest(BaseIntegrationTestSuite):
 
             # llm_usage.created_at is `timestamp without time zone` — pass naive.
             start_at = datetime.now(UTC).replace(tzinfo=None)
+            # conversations.updated_at is `timestamp with time zone` — keep aware.
+            conv_bump_start = datetime.now(UTC)
 
             send_response = await client.post(
                 f"/api/v1/chat/conversations/{conv_id}/send",
@@ -221,6 +223,27 @@ class ChatFinalizeErrorIntegrationTest(BaseIntegrationTestSuite):
             assert usage_user_id == conversation_owner_id, (
                 f"LLMUsage.user_id={usage_user_id!r} should match conversation owner "
                 f"{conversation_owner_id!r} — failure path lost user attribution"
+            )
+
+            # Conversation.updated_at must advance on a failed chat so the
+            # conversation still sorts to the top of "recently updated" in
+            # the list view. Pre-refactor `_handle_exception` got this for
+            # free via `add_message`; the inline-Message-construction path
+            # has to do it explicitly. Regression check: a code-review
+            # finding flagged that the failure branch dropped this bump.
+            conv_updated_row = (
+                await db.execute(
+                    text("SELECT updated_at FROM conversations WHERE id = :id"),
+                    {"id": conv_id},
+                )
+            ).first()
+            assert conv_updated_row is not None
+            conv_updated_at = conv_updated_row[0]
+            assert conv_updated_at >= conv_bump_start, (
+                f"Conversation.updated_at={conv_updated_at!r} did not advance past "
+                f"the failure-path start time {conv_bump_start!r} — the failure branch "
+                f"is no longer bumping the conversation timestamp and the chat will "
+                f"sink to the bottom of 'recently updated' in the conversation list."
             )
 
             logger.info(

@@ -903,7 +903,6 @@ class ChatService:
         variant_index: int | None = None,
         message_id: str | None = None,
         attachment_ids: list[str] | None = None,
-        commit: bool = True,
     ) -> Message:
         """Add a message to a conversation.
 
@@ -913,15 +912,6 @@ class ChatService:
             content: Message content
             model_id: Optional model ID for assistant messages
             metadata: Optional message metadata
-            commit: When True (default) this method commits the session
-                after inserting. Pass False to defer the commit to the
-                caller — used by SHU-759's `_finalize_variant_phase` so
-                the assistant Message, LLMUsage row, and optional regen
-                lineage update all land in a single transaction. The
-                flush, attachment linking, conversation timestamp bump,
-                and eager-relationship reload still run unconditionally
-                so the returned message is usable for SSE serialization
-                regardless of who commits.
 
         Returns:
             Created message
@@ -1000,14 +990,8 @@ class ChatService:
         # Update conversation timestamp
         conversation.updated_at = datetime.now(UTC)
 
-        if commit:
-            await self.db_session.commit()
-            await self.db_session.refresh(message)
-        # When commit=False the caller is responsible for committing the
-        # surrounding transaction. Skipping refresh is fine — the row is
-        # already in the session's identity map from the flush above, and
-        # the eager-relationship reload below sees the just-inserted row
-        # via the same uncommitted transaction.
+        await self.db_session.commit()
+        await self.db_session.refresh(message)
 
         # Eagerly load relationships to avoid MissingGreenlet errors
         stmt = (
