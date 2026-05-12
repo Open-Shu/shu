@@ -311,3 +311,90 @@ async def test_finalize_non_regen_re_raises_integrity_error_immediately() -> Non
     # Only one attempt; non-regen does not retry.
     assert factory.entered_count == 1
     assert session.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_finalize_rolls_back_atomically_on_usage_recorder_failure() -> None:
+    """SHU-759 AC#3: a recorder failure mid-transaction rolls back the
+    whole unit of work and emits an error event.
+
+    Pre-fix, ``UsageRecorder.record(session=...)`` wrapped its body in a
+    blanket ``try/except`` that logged and swallowed. So when ``_insert``
+    tripped its nested savepoint (cost resolver, degenerate provider row,
+    flush failure, etc.), the savepoint rolled back the LLMUsage portion
+    but the exception was discarded; finalize then ran the outer
+    ``session.commit()`` and persisted the assistant Message *without* a
+    matching LLMUsage row — the exact "Message exists, LLMUsage absent"
+    state AC#3 forbids.
+
+    Post-fix, ``record(session=...)`` propagates the failure. The outer
+    ``async with session_factory()`` context manager rolls back the
+    entire transaction via ``__aexit__`` (no Message, no LLMUsage, in
+    line with AC#3). The catch-all in ``_finalize_variant_phase``
+    converts the rollback into an error SSE event so
+    ``stream_ensemble_responses`` doesn't block forever on a
+    ``queue.get()`` waiting for a ``final_message`` that will never
+    arrive.
+
+    Locks both invariants in place so the failure-path coverage gap
+    flagged in code review can't silently reopen.
+    """
+    # Simulate any in-transaction recorder failure. Pre-fix this was
+    # swallowed inside record(); session.commit() then committed the
+    # Message anyway. The assertion on commit.assert_not_called() below
+    # is what pins the atomicity invariant.
+    recorder_error = RuntimeError("simulated savepoint failure")
+
+    session = _build_mock_session([None])  # commit never reached
+    factory = _FakeSessionFactory(session)
+
+    helper = _build_helper()
+    inputs = _build_inputs()
+    result = VariantStreamResult(
+        success=True,
+        full_content="hello",
+        final_source_metadata=[],
+        metadata={"response_time_ms": 1.0},
+        usage={"input_tokens": 1, "output_tokens": 1, "cost": "0"},
+        model_name_for_event="test-model",
+        final_event_type="final_message",
+    )
+    queue = MagicMock()
+    queue.put = AsyncMock(return_value=None)
+
+    fake_recorder = MagicMock()
+    fake_recorder.record = AsyncMock(side_effect=recorder_error)
+
+    with (
+        patch("shu.services.chat_streaming.get_async_session_local", return_value=factory),
+        patch("shu.services.chat_streaming.get_usage_recorder", return_value=fake_recorder),
+    ):
+        # No exception escapes — the catch-all converts to an error event
+        # so the SSE consumer (stream_ensemble_responses) can complete.
+        await helper._finalize_variant_phase(
+            variant_index=1,
+            inputs=inputs,
+            result=result,
+            queue=queue,
+            conversation_id="conv-id",
+            parent_message_id="root-id",
+            use_parent_as_message_id=False,
+        )
+
+    # Atomicity: session.commit() never ran. Message + Conversation
+    # updates pending in the session at the point of failure are rolled
+    # back by session.__aexit__. Neither row lands in the database.
+    session.commit.assert_not_called()
+
+    # The recorder failed on its single call — no retry on non-IntegrityError.
+    fake_recorder.record.assert_awaited_once()
+
+    # An error event must be enqueued so the SSE consumer doesn't hang.
+    queue.put.assert_awaited_once()
+    enqueued_event = queue.put.call_args[0][0]
+    assert enqueued_event.type == "error", (
+        f"expected error event for rolled-back finalize, got {enqueued_event.type!r}"
+    )
+    assert "Failed to persist response" in enqueued_event.content, (
+        f"expected user-facing rollback message, got {enqueued_event.content!r}"
+    )

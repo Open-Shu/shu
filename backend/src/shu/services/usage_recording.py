@@ -102,8 +102,10 @@ class CostResolver:
 class UsageRecorder:
     """Records LLM/API usage in llm_usage. Composes a ``CostResolver``.
 
-    Best-effort: failures are logged, never raised, so callers don't break
-    when the DB is temporarily unreachable.
+    Failure semantics depend on the caller's transaction shape (see
+    ``record``): fire-and-forget when no session is passed, propagate when
+    one is — so callers composing our write into a unit of work can roll
+    back atomically.
     """
 
     def __init__(self, cost_resolver: CostResolver | None = None) -> None:
@@ -128,25 +130,69 @@ class UsageRecorder:
         request_metadata: dict[str, Any] | None = None,
         session: AsyncSession | None = None,
     ) -> None:
-        """Insert a single LLMUsage row. Swallows all exceptions.
+        """Insert a single LLMUsage row.
 
         Applies the two-tier cost contract via ``CostResolver`` and
         snapshots provider.name / model.model_name onto the row.
 
-        Pass an existing ``session`` to reuse a connection already checked
-        out (e.g. when the caller ran a query in the same unit of work).
-        When omitted, a fresh session is created and committed automatically.
+        Failure semantics:
+        - ``session=None`` (fire-and-forget): a fresh session is opened
+          and committed; any failure is logged but **not raised**, so
+          legacy callers (external embedding, side-call service, etc.)
+          stay decoupled from billing-record reliability.
+        - ``session=<AsyncSession>`` (caller-owned transaction): the
+          insert is flushed inside a nested savepoint on the caller's
+          session and any failure is **propagated**, so the caller can
+          roll back atomically. SHU-759 chat finalize and OCR finalize
+          rely on this to keep Message + LLMUsage co-atomic; silently
+          swallowing here would commit the caller's other writes while
+          rolling back ours.
 
         ``user_id`` should be populated wherever the originating user is
         identifiable (chat conversation owner, ingestion job user, etc.) so
         billing can attribute usage per user. It is nullable only for
         genuinely user-less surfaces (none exist today).
         """
+        if session is not None:
+            # Caller-owned transaction path (SHU-759 chat finalize, OCR
+            # finalize, etc.). The caller composed our write into a unit of
+            # work and will commit it as part of that unit. Failures here
+            # MUST propagate — silently swallowing would commit the
+            # caller's other writes while rolling back ours via the nested
+            # savepoint, violating the atomicity contract those call sites
+            # depend on (AC#3 in SHU-759). Callers that want fire-and-forget
+            # semantics should omit `session=` and use the fresh-session
+            # branch below.
+            await self._insert(
+                session,
+                commit=False,
+                provider_id=provider_id,
+                model_id=model_id,
+                user_id=user_id,
+                request_type=request_type,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                input_cost=input_cost,
+                output_cost=output_cost,
+                total_cost=total_cost,
+                response_time_ms=response_time_ms,
+                success=success,
+                error_message=error_message,
+                request_metadata=request_metadata,
+            )
+            return
+
+        # Fresh-session path: legacy fire-and-forget contract used by
+        # external embeddings, side-call service, etc. Billing failures
+        # here must never crash the caller; log the full payload so the
+        # row can be reconstructed from logs.
         try:
-            if session is not None:
+            session_factory = get_async_session_local()
+            async with session_factory() as new_session:
                 await self._insert(
-                    session,
-                    commit=False,
+                    new_session,
+                    commit=True,
                     provider_id=provider_id,
                     model_id=model_id,
                     user_id=user_id,
@@ -162,27 +208,6 @@ class UsageRecorder:
                     error_message=error_message,
                     request_metadata=request_metadata,
                 )
-            else:
-                session_factory = get_async_session_local()
-                async with session_factory() as new_session:
-                    await self._insert(
-                        new_session,
-                        commit=True,
-                        provider_id=provider_id,
-                        model_id=model_id,
-                        user_id=user_id,
-                        request_type=request_type,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                        input_cost=input_cost,
-                        output_cost=output_cost,
-                        total_cost=total_cost,
-                        response_time_ms=response_time_ms,
-                        success=success,
-                        error_message=error_message,
-                        request_metadata=request_metadata,
-                    )
         except Exception as e:
             # If we hit this we are in trouble — caller loses a billing row.
             # Log the raw payload plus traceback so the failure can be

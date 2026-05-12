@@ -729,6 +729,38 @@ class EnsembleStreamingHelper:
                         )
                         raise
                     logger.info("Regen variant_index conflict on attempt %d; retrying", attempt)
+                except Exception as exc:
+                    # SHU-759 AC#3: any in-transaction failure (UsageRecorder
+                    # save-point flush, conversation update, Message insert)
+                    # caused session.__aexit__ to roll back. Atomicity holds
+                    # — neither the Message nor the LLMUsage row was
+                    # committed. But `stream_ensemble_responses` is still
+                    # awaiting `queue.get()` for our final event, so we must
+                    # emit one before returning or the SSE consumer hangs
+                    # until client timeout. Tagged with a distinct phase
+                    # (`finalize_rollback`) so ops can grep this case.
+                    logger.error(
+                        "Variant finalize phase rolled back",
+                        extra={
+                            "phase": "finalize_rollback",
+                            "conversation_id": conversation_id,
+                            "variant_index": variant_index,
+                            "attempt": attempt,
+                            "error_type": type(exc).__name__,
+                            "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+                        },
+                        exc_info=True,
+                    )
+                    await queue.put(
+                        self._create_error_event(
+                            f"Failed to persist response: {exc}",
+                            variant_index,
+                            inputs,
+                            model_snapshot,
+                            model_display_name,
+                        )
+                    )
+                    return
 
             assert assistant_msg_loaded is not None
             await queue.put(
