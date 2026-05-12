@@ -9,7 +9,6 @@ specific error conditions appropriately.
 from __future__ import annotations
 
 import importlib
-import logging
 import sys
 from datetime import UTC, datetime
 from importlib.abc import MetaPathFinder
@@ -17,6 +16,8 @@ from typing import Any, ClassVar, Self
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from .host.exceptions import HttpRequestFailed
 from .host.host_builder import make_host
@@ -32,7 +33,7 @@ from ..services.policy_engine import POLICY_CACHE
 from .base import ExecuteContext, Plugin, PluginResult
 from .schema import resolve_op_schema
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Trusted module prefixes that are allowed to import shu.* even during plugin execution.

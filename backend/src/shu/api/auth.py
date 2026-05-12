@@ -1,6 +1,5 @@
 """Authentication API endpoints for Shu."""
 
-import logging
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -9,6 +8,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
+
+from shu.core.logging import get_logger
 
 from ..api.dependencies import get_db
 from ..auth import User, UserRole
@@ -33,7 +34,7 @@ from ..services.email_verification_service import (
 )
 from ..services.user_service import UserService, create_token_response, get_user_service
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 

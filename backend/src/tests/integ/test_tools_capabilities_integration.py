@@ -5,14 +5,14 @@ Implementation aligns with docs/policies/TESTING.md and uses the custom integrat
 """
 
 import json
-import logging
+from shu.core.logging import get_logger
 import uuid
 from typing import Any
 from unittest.mock import patch
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # --- Test functions ---

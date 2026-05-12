@@ -48,7 +48,6 @@ redis==6.2.0  # For caching and task queuing
 asyncpg==0.30.0
 
 # Logging and monitoring
-structlog==25.4.0
 prometheus-client==0.22.1
 psutil==7.0.0  # For system monitoring
 

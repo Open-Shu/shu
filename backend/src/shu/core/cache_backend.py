@@ -37,16 +37,17 @@ Example usage:
     await backend.set_bytes("binary_key", b"raw bytes", ttl_seconds=300)
 """
 
-import logging
 import threading
 import time
 from typing import Any, Optional, Protocol, runtime_checkable
 
 import redis.asyncio as redis
 
+from shu.core.logging import get_logger
+
 from .tenant import warn_tenant_without_redis
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Global cache backend instance (singleton)
 _cache_backend: Optional["CacheBackend"] = None

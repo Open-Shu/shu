@@ -4,15 +4,16 @@ Combines similarity and keyword search with configurable weights.
 """
 
 import hashlib
-import logging
 from datetime import UTC, datetime
 from typing import Any
+
+from shu.core.logging import get_logger
 
 from ...core.exceptions import ShuException
 from ...schemas.query import SimilaritySearchRequest
 from .base import measure_execution_time
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _redact(text: str) -> str:

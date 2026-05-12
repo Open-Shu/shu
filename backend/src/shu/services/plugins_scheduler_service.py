@@ -15,12 +15,13 @@ PluginFeedSource and by API manual-trigger endpoints.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..core.config import get_settings_instance
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
@@ -29,7 +30,7 @@ from ..plugins.registry import REGISTRY
 from .plugin_execution_runner import ONE_SHOT_FEED_PARAMS  # noqa: F401
 from .scheduler_service import TICK_HISTORY  # noqa: F401
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PluginsSchedulerService:

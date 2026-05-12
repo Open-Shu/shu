@@ -4,10 +4,10 @@ This module provides REST API endpoints for managing user groups,
 including CRUD operations and membership management.
 """
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..auth.rbac import require_admin
@@ -24,7 +24,7 @@ from ..schemas.rbac import (
 from ..services.rbac_service import RBACService, RBACServiceError
 from .dependencies import get_db
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/groups", tags=["groups"])
 
 

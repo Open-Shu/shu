@@ -14,11 +14,12 @@ Supported Decision Types:
 - spa_service_decision: Decide whether to offer spa services based on guest preferences
 """
 
-import logging
 import uuid
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 # Decision thresholds and constants

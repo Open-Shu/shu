@@ -26,7 +26,6 @@ Usage:
 """
 
 import hashlib
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -35,11 +34,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ..auth import JWTManager, User, UserRole
 from ..core.config import get_settings_instance
 from ..models.provider_identity import ProviderIdentity
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _redact_email(email: str) -> str:

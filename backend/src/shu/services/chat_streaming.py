@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.config import ConfigurationManager, get_settings_instance
 from shu.core.exceptions import LLMError, LLMProviderError, LLMRateLimitError
+from shu.core.logging import get_logger
 from shu.core.rate_limiting import get_rate_limit_service
 from shu.core.safe_decimal import safe_decimal
 from shu.llm.client import UnifiedLLMClient
@@ -37,7 +37,7 @@ else:
     ChatService = Any
     ModelExecutionInputs = Any
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

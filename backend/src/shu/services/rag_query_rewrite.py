@@ -1,10 +1,11 @@
 """Shared helpers for RAG query rewrite side-calls."""
 
-import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..core.config import ConfigurationManager
@@ -14,7 +15,7 @@ from .knowledge_base_service import KnowledgeBaseService
 from .query_service import COMPREHENSIVE_STOP_WORDS, QueryService
 from .side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 QueryRequestBuilder = Callable[[str, dict[str, Any], str], QueryRequest]
 

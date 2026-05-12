@@ -8,14 +8,14 @@ These tests verify end-to-end authentication workflows:
 - User session management
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.decorators import replace_auth_headers_for_user
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Test Data

@@ -30,17 +30,18 @@ Example usage:
 """
 
 import asyncio
-import logging
 import signal
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from shu.core.logging import get_logger
+
 from .queue_backend import Job, QueueBackend
 from .workload_routing import WorkloadType
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

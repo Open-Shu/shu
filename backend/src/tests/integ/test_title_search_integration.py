@@ -12,7 +12,7 @@ This test suite validates:
 - Real document creation and search workflows
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 import uuid
 from collections.abc import Callable
@@ -22,7 +22,7 @@ from sqlalchemy import text
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Test Data - Sample documents with various title patterns

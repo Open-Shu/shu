@@ -10,13 +10,14 @@ plugins from mutating _plugin_name or _user_id to spoof log entries.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+from shu.core.logging import get_logger
 
 from .base import ImmutableCapabilityMixin
 
 # Use a dedicated logger for plugin logs
-plugin_logger = logging.getLogger("shu.plugins.runtime")
+plugin_logger = get_logger("shu.plugins.runtime")
 
 
 class LogCapability(ImmutableCapabilityMixin):

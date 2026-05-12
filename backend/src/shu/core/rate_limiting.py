@@ -14,14 +14,15 @@ Design follows SOLID principles:
 
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from shu.core.logging import get_logger
+
 from .cache_backend import CacheBackend, get_cache_backend
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_client_ip(headers: dict[str, str], client_host: str | None = None) -> str:

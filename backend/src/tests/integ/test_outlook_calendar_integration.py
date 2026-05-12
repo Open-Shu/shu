@@ -7,7 +7,7 @@ These tests verify the Outlook Calendar plugin operations:
 - Error handling: Auth failures, missing parameters, API errors
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 import uuid
 from collections.abc import Callable
@@ -17,7 +17,7 @@ from typing import Any
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.mock_host import MockHost, create_mock_graph_response
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ============================================================================

@@ -7,17 +7,18 @@ from __future__ import annotations
 
 import ast
 import importlib
-import logging
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_settings_instance
 from .base import Plugin
 from .schema import validate_legacy_schema, validate_per_op_schemas
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

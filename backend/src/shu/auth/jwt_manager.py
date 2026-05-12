@@ -1,14 +1,15 @@
 """JWT token management for Shu authentication."""
 
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from jose import JWTError, jwt
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_settings_instance
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def is_token_revoked_by_password_change(

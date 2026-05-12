@@ -28,10 +28,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
+from shu.core.logging import get_logger
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DATASETS_DIR = Path(__file__).parent / ".datasets"
 

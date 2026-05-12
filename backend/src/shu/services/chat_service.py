@@ -3,7 +3,6 @@
 Handles conversation management, message processing, and LLM integration.
 """
 
-import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -14,6 +13,8 @@ from typing import Any
 from sqlalchemy import asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..core.config import ConfigurationManager, get_settings_instance
@@ -43,7 +44,7 @@ from ..services.usage_recording import get_usage_recorder
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 from .knowledge_base_service import KnowledgeBaseService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 settings = get_settings_instance()
 
 

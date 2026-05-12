@@ -1,16 +1,17 @@
 """Scheduled cleanup for chat attachments."""
 
-import logging
 import os
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_settings_instance
 from ..models.attachment import Attachment
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AttachmentCleanupService:

@@ -32,12 +32,12 @@ from integ.test_data_cleanup import TestDataCleaner
 from shu.auth.jwt_manager import JWTManager
 from shu.auth.models import User, UserRole
 from shu.core.database import get_db_session
-from shu.core.logging import setup_logging
+from shu.core.logging import get_logger, setup_logging
 from shu.main import app
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TestResult:

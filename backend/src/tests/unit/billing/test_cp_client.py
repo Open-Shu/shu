@@ -15,6 +15,8 @@ import hmac
 import json
 import logging
 from datetime import datetime, timezone
+
+from shu.core.logging import get_logger
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -75,7 +77,7 @@ def _make_client(http_client: MagicMock) -> CpClient:
         tenant_id=TENANT_ID,
         shared_secret=SHARED_SECRET,
         http_client=http_client,
-        logger=logging.getLogger("test_cp_client"),
+        logger=get_logger("test_cp_client"),
     )
 
 

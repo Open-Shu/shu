@@ -1,5 +1,5 @@
 import asyncio
-import logging
+from shu.core.logging import get_logger
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -19,7 +19,7 @@ from integ.base_integration_test import (
 )
 from shu.models.plugin_execution import PluginExecution, PluginExecutionStatus
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _ensure_tool_enabled(client, auth_headers, name: str = "test_schema"):

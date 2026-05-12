@@ -1,15 +1,16 @@
 """Google Single Sign-On authentication for Shu."""
 
-import logging
 from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_settings_instance
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class GoogleSSOAuth:

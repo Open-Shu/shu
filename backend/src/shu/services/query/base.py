@@ -5,12 +5,13 @@ all query types (similarity, keyword, hybrid, multi-surface).
 """
 
 import functools
-import logging
 import re
 import time
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, select
+
+from shu.core.logging import get_logger
 
 from ...core.config import ConfigurationManager
 from ...models.document import Document
@@ -21,7 +22,7 @@ from .constants import COMPREHENSIVE_STOP_WORDS
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def measure_execution_time(func):

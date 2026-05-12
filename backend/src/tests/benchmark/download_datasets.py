@@ -9,13 +9,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import logging
+from shu.core.logging import get_logger
 import sys
 import urllib.request
 import zipfile
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DATASETS_DIR = Path(__file__).parent / ".datasets"
 

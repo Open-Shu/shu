@@ -7,7 +7,6 @@ LLM providers using OpenAI-compatible APIs.
 import asyncio
 import hashlib
 import json
-import logging
 import random
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -20,6 +19,7 @@ import jmespath
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.enforcement import assert_subscription_active
+from shu.core.logging import get_logger
 from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 from shu.services.plugin_execution import build_agent_tools
@@ -47,7 +47,7 @@ from ..services.chat_types import ChatContext, ChatMessage
 from ..utils.path_access import DotPath
 from .param_mapping import build_provider_params
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

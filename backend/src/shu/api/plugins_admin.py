@@ -4,13 +4,14 @@ Preserves original paths under /plugins/admin and /plugins/upload.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..api.dependencies import get_db
 from ..auth.models import User
@@ -22,7 +23,7 @@ from ..plugins.installer import InstallError, install_plugin, validate_and_extra
 from ..plugins.registry import REGISTRY
 from ..schemas.envelope import SuccessResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 
