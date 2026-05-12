@@ -24,6 +24,8 @@ from shu.billing.adapters import (
 )
 from shu.billing.billing_state_cache import get_billing_state_cache
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
+from shu.billing.entitlements import EntitlementDeniedError
+from shu.billing.markup import resolve_markup
 from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient
 from shu.core.database import get_async_session_local
@@ -152,7 +154,12 @@ async def assert_subscription_active() -> None:
             billing_row.current_period_start,
             datetime.now(UTC),
         )
-        if summary.total_cost_usd >= state.total_grant_amount:
+        # `total_cost_usd` is raw provider cost; `total_grant_amount` is
+        # customer-billed (from CP/Stripe credit grant). Apply the markup
+        # before comparing so the trial-cap triggers on the billed dollar
+        # the customer would have been charged, not the raw provider dollar.
+        billed_cost = summary.total_cost_usd * resolve_markup(state)
+        if billed_cost >= state.total_grant_amount:
             raise TrialCapExhaustedError(
                 trial_deadline=state.trial_deadline,
                 total_grant_amount=state.total_grant_amount,
@@ -256,3 +263,35 @@ async def check_user_limit(
         extra={"enforcement": enforcement, "at_limit": at_limit, "count": current_count, "limit": user_limit},
     )
     return result
+
+
+async def assert_entitlement(key: str) -> None:
+    """Raise `EntitlementDeniedError` if the cached entitlement is not True.
+
+    Self-hosted / dev (cache singleton missing) bypasses enforcement —
+    matches `assert_subscription_active`'s bypass so dev environments
+    aren't gated on a CP that isn't configured. Unknown keys also fail
+    the check: `getattr(state.entitlements, "<typo>", False)` returns
+    False, defending against route declarations that reference a key
+    not on the `EntitlementSet`.
+    """
+    cache = get_billing_state_cache()
+    if cache is None:
+        return
+    state = await cache.get()
+    if getattr(state.entitlements, key, False) is not True:
+        raise EntitlementDeniedError(key)
+
+
+def require_entitlement(key: str):
+    """FastAPI dependency factory matching the `require_admin` pattern.
+
+    Usage: `Depends(require_entitlement("plugins"))` on a route declaration.
+    The returned dependency runs `assert_entitlement(key)` before the route
+    handler executes; entitlement denial raises before the route body runs.
+    """
+
+    async def dep() -> None:
+        await assert_entitlement(key)
+
+    return dep

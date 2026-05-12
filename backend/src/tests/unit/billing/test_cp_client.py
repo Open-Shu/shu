@@ -397,3 +397,126 @@ async def test_unknown_extra_field_is_ignored_for_forward_compat() -> None:
 
     assert state.openrouter_key_disabled is False
     assert not hasattr(state, "future_field_we_dont_know_about")
+
+
+# Trial-action POST endpoints — `post_upgrade_now` and `post_cancel_subscription`
+# share `_send_signed` + `_classify_trial_action_response`. Both currently
+# require a trialing subscription on CP side and emit 409 otherwise, so
+# the 409 → `CpNoActiveTrial` branch is exercised against both.
+
+
+_UPGRADE_NOW_PATH = f"/api/v1/tenants/{TENANT_ID}/upgrade-now"
+_CANCEL_SUBSCRIPTION_PATH = f"/api/v1/tenants/{TENANT_ID}/cancel-subscription"
+
+
+def _http_post_client_returning(response: MagicMock) -> MagicMock:
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.post = AsyncMock(return_value=response)
+    return client
+
+
+def _http_post_client_raising(exc: Exception) -> MagicMock:
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.post = AsyncMock(side_effect=exc)
+    return client
+
+
+def _expected_post_signature(secret: str, timestamp: int, path: str) -> str:
+    """HMAC over the POST canonical string for a given path + empty body."""
+    canonical = f"{timestamp}.POST.{path}.".encode()
+    digest = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+    return f"v1={digest}"
+
+
+_POST_METHODS = [
+    ("post_upgrade_now", _UPGRADE_NOW_PATH),
+    ("post_cancel_subscription", _CANCEL_SUBSCRIPTION_PATH),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name, expected_path", _POST_METHODS)
+async def test_signed_post_uses_byte_correct_hmac_and_target_url(
+    method_name: str, expected_path: str
+) -> None:
+    """Signature is over the canonical POST string for the right path
+    with an empty body. Pins the wire format so a regression in
+    `sign_envelope` or a typo in the constructed path surfaces here.
+    """
+    http_client = _http_post_client_returning(_error_response(200, ""))
+    client = _make_client(http_client)
+
+    await getattr(client, method_name)()
+
+    http_client.post.assert_awaited_once()
+    call = http_client.post.await_args
+    assert call.args[0] == f"{BASE_URL}{expected_path}"
+    headers = call.kwargs["headers"]
+    timestamp = int(headers["X-Shu-Router-Timestamp"])
+    assert headers["X-Shu-Router-Signature"] == _expected_post_signature(
+        SHARED_SECRET, timestamp, expected_path
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name, _path", _POST_METHODS)
+async def test_post_2xx_returns_none(method_name: str, _path: str) -> None:
+    """A 2xx response means CP accepted the action. Methods return None —
+    the next billing-state poll surfaces the new state to the tenant.
+    """
+    http_client = _http_post_client_returning(_error_response(200, ""))
+    client = _make_client(http_client)
+
+    result = await getattr(client, method_name)()
+    assert result is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name, _path", _POST_METHODS)
+async def test_post_401_raises_cp_auth_failed(method_name: str, _path: str) -> None:
+    http_client = _http_post_client_returning(_error_response(401, "signature_invalid"))
+    client = _make_client(http_client)
+
+    with pytest.raises(CpAuthFailed):
+        await getattr(client, method_name)()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name, _path", _POST_METHODS)
+async def test_post_5xx_raises_cp_unexpected_status(method_name: str, _path: str) -> None:
+    http_client = _http_post_client_returning(_error_response(500, "internal boom"))
+    client = _make_client(http_client)
+
+    with pytest.raises(CpUnexpectedStatus) as exc_info:
+        await getattr(client, method_name)()
+
+    assert exc_info.value.status == 500
+    assert exc_info.value.body == "internal boom"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name, _path", _POST_METHODS)
+async def test_post_network_error_raises_cp_unreachable(method_name: str, _path: str) -> None:
+    http_client = _http_post_client_raising(httpx.ConnectError("refused"))
+    client = _make_client(http_client)
+
+    with pytest.raises(CpUnreachable):
+        await getattr(client, method_name)()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name, _path", _POST_METHODS)
+async def test_post_409_raises_cp_no_active_trial(method_name: str, _path: str) -> None:
+    """Both CP trial-action endpoints require a trialing subscription and
+    emit 409 otherwise. Typed as `CpNoActiveTrial` so the admin router can
+    re-emit 409 with a clear message instead of collapsing to 502.
+    """
+    from shu.billing.cp_client import CpNoActiveTrial
+
+    http_client = _http_post_client_returning(_error_response(409, "no active trial"))
+    client = _make_client(http_client)
+
+    with pytest.raises(CpNoActiveTrial) as exc_info:
+        await getattr(client, method_name)()
+
+    assert exc_info.value.status_code == 409

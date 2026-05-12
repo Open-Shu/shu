@@ -7,14 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementDeniedError, EntitlementSet
 from shu.billing.enforcement import (
     SubscriptionInactiveError,
     TrialCapExhaustedError,
     UserLimitStatus,
+    assert_entitlement,
     assert_subscription_active,
     check_user_limit,
     get_current_billing_state,
+    require_entitlement,
 )
 
 _P_BILLING_CONFIG = "shu.billing.enforcement.get_billing_config"
@@ -298,7 +300,14 @@ _P_BILLING_STATE_GET = "shu.billing.enforcement.BillingStateService.get"
 _P_USAGE_PROVIDER = "shu.billing.enforcement.UsageProviderImpl"
 
 
-def _trialing_state(*, total_grant: Decimal = Decimal("50.00")) -> BillingState:
+def _trialing_state(
+    *,
+    total_grant: Decimal = Decimal("50.00"),
+    usage_markup_multiplier: Decimal | None = Decimal("1.0"),
+) -> BillingState:
+    # Default markup=1.0 keeps existing assertions in raw-dollar terms.
+    # The markup-aware test class below passes an explicit multiplier
+    # (or None to verify the configured-default fallback path).
     return BillingState(
         openrouter_key_disabled=False,
         payment_failed_at=None,
@@ -309,6 +318,7 @@ def _trialing_state(*, total_grant: Decimal = Decimal("50.00")) -> BillingState:
         total_grant_amount=total_grant,
         remaining_grant_amount=total_grant,
         seat_price_usd=Decimal("20.00"),
+        usage_markup_multiplier=usage_markup_multiplier,
     )
 
 
@@ -478,3 +488,170 @@ class TestAssertSubscriptionActiveTrialCap:
         with patch(_P_SESSION_LOCAL) as session_local:
             await assert_subscription_active()
             session_local.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_markup_pushes_below_cap_usage_over_threshold(self, install_stub_cache):
+        """Raw cost $40 on a $50 grant would pass without markup. With
+        markup=1.3 the billed cost is $52 — over cap, must raise.
+        """
+        install_stub_cache(
+            _trialing_state(
+                total_grant=Decimal("50.00"),
+                usage_markup_multiplier=Decimal("1.3"),
+            )
+        )
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
+            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
+        ):
+            with pytest.raises(TrialCapExhaustedError):
+                await assert_subscription_active()
+
+    @pytest.mark.asyncio
+    async def test_markup_keeps_low_usage_under_threshold(self, install_stub_cache):
+        """Raw cost $10 with markup=1.3 → billed $13, well under $50 grant.
+        Mirror of the above so the threshold isn't accidentally one-sided.
+        """
+        install_stub_cache(
+            _trialing_state(
+                total_grant=Decimal("50.00"),
+                usage_markup_multiplier=Decimal("1.3"),
+            )
+        )
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
+            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("10.00"))),
+        ):
+            await assert_subscription_active()
+
+    @pytest.mark.asyncio
+    async def test_unset_markup_falls_back_to_configured_default(
+        self, install_stub_cache, monkeypatch
+    ):
+        """Stripe blip during the last refresh → markup field left as None.
+        The trial-cap math must still apply *a* multiplier (the configured
+        default) so the cap isn't silently disabled mid-outage.
+        """
+        from shu.billing import markup as markup_mod
+
+        # Pin the default to a known value; raw cost $30 * 1.5 = $45 < $50,
+        # but $40 * 1.5 = $60 > $50 — the threshold case below would have
+        # passed without the default applied.
+        settings = markup_mod.get_billing_settings()
+        monkeypatch.setattr(settings, "usage_markup_multiplier_default", Decimal("1.5"))
+
+        install_stub_cache(
+            _trialing_state(
+                total_grant=Decimal("50.00"),
+                usage_markup_multiplier=None,
+            )
+        )
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
+            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
+        ):
+            with pytest.raises(TrialCapExhaustedError):
+                await assert_subscription_active()
+
+
+# Entitlement enforcement — `assert_entitlement(key)` reads the cached
+# state and raises `EntitlementDeniedError` if the key is not True.
+# `require_entitlement(key)` wraps it in a FastAPI dep factory.
+
+
+def _state_with_entitlements(**overrides) -> BillingState:
+    """Healthy non-trial state with custom entitlements."""
+    return BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(**overrides),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
+    )
+
+
+class TestAssertEntitlement:
+    """Behavior of `assert_entitlement(key)`."""
+
+    @pytest.mark.asyncio
+    async def test_self_hosted_bypass_is_no_op(self, install_stub_cache):
+        """Cache singleton missing (self-hosted/dev) → no enforcement.
+        Without this bypass, every entitlement-gated route would 403 in
+        dev environments where CP isn't configured.
+        """
+        # Fixture resets the singleton; not installing leaves _cache=None.
+        await assert_entitlement("plugins")
+
+    @pytest.mark.asyncio
+    async def test_entitlement_true_does_not_raise(self, install_stub_cache):
+        install_stub_cache(_state_with_entitlements(plugins=True))
+        await assert_entitlement("plugins")
+
+    @pytest.mark.asyncio
+    async def test_entitlement_false_raises_with_typed_details(self, install_stub_cache):
+        install_stub_cache(_state_with_entitlements(plugins=False))
+
+        with pytest.raises(EntitlementDeniedError) as exc_info:
+            await assert_entitlement("plugins")
+
+        err = exc_info.value
+        assert err.error_code == "entitlement_denied"
+        assert err.status_code == 403
+        assert err.details == {"entitlement": "plugins"}
+        assert err.key == "plugins"
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_raises(self, install_stub_cache):
+        """Defensive: a route declaration that passes a key not on the
+        `EntitlementSet` (typo, removed feature) should fail closed.
+        `getattr(state.entitlements, "<typo>", False)` returns False.
+        """
+        install_stub_cache(_state_with_entitlements(plugins=True))
+
+        with pytest.raises(EntitlementDeniedError) as exc_info:
+            await assert_entitlement("not_a_real_entitlement")
+
+        assert exc_info.value.key == "not_a_real_entitlement"
+
+    @pytest.mark.asyncio
+    async def test_healthy_default_routes_to_chat_only(self, install_stub_cache):
+        """Cold-start outage with cache configured: HEALTHY_DEFAULT has
+        chat=True, everything else False. `chat` passes, others 403.
+        Pins the fail-closed posture from Task 10.1 against the gating layer.
+        """
+        install_stub_cache(HEALTHY_DEFAULT)
+
+        await assert_entitlement("chat")  # baseline open
+
+        with pytest.raises(EntitlementDeniedError):
+            await assert_entitlement("plugins")
+
+
+class TestRequireEntitlement:
+    """Behavior of the `require_entitlement(key)` FastAPI dep factory."""
+
+    @pytest.mark.asyncio
+    async def test_dep_callable_delegates_to_assert_entitlement(self, install_stub_cache):
+        """The returned dep is a thin wrapper — verify it raises when the
+        underlying `assert_entitlement` would, and no-ops when it wouldn't.
+        Two cases covers the wrapper; deeper behavior is pinned by the
+        `TestAssertEntitlement` cases above.
+        """
+        install_stub_cache(_state_with_entitlements(plugins=False))
+        dep = require_entitlement("plugins")
+        with pytest.raises(EntitlementDeniedError):
+            await dep()
+
+        install_stub_cache(_state_with_entitlements(plugins=True))
+        dep = require_entitlement("plugins")
+        await dep()  # no raise

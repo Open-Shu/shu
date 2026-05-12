@@ -16,13 +16,31 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
-from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
+from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState, CpAuthFailed, CpNoActiveTrial
 from shu.billing.entitlements import EntitlementSet
-from shu.billing.router import get_subscription_status
+from shu.billing.router import cancel_trial, get_subscription_status, upgrade_now
 
 _P_BILLING_CONFIG = "shu.billing.router.get_billing_config"
 _P_USER_COUNT = "shu.billing.router.get_active_user_count"
+_P_BILLING_STATE_GET = "shu.billing.router.BillingStateService.get"
+
+
+@pytest.fixture(autouse=True)
+def _stub_billing_state_service():
+    """Patch BillingStateService.get to a no-op by default.
+
+    The local-fallback path in `_resolve_remaining_grant_amount` calls it
+    when the cached state has `remaining_grant_amount=None` (CP returns
+    None during trial). Tests that pass an `AsyncMock` session can't
+    naturally satisfy the staticmethod's `await db.execute(...)` chain;
+    patching here keeps existing tests focused on whichever payload field
+    they actually assert. Tests that exercise the local-fallback math
+    directly override this patch.
+    """
+    with patch(_P_BILLING_STATE_GET, AsyncMock(return_value=None)):
+        yield
 
 
 def _mock_user(*, is_admin: bool):
@@ -319,3 +337,292 @@ class TestSubscriptionTrialAndEntitlements:
             "model_config_management",
             "mcp_servers",
         }
+
+
+# Trial-action endpoints — upgrade-now and cancel-trial share the same
+# error-handling and cache-invalidation shape, so all cases parametrize
+# over both. Admin gating (`Depends(require_admin)`) is framework-enforced
+# and tested at the dep's definition site; intentionally not re-asserted
+# here per "test our code, not the framework." Cancel-trial relies on
+# the frontend's typed-confirmation prompt for accidental-click protection;
+# the backend has no server-side token check (admin role is the binding gate).
+
+
+def _mock_admin_user() -> MagicMock:
+    user = MagicMock()
+    user.id = "admin-user-1"
+    user.can_manage_users.return_value = True
+    return user
+
+
+def _stub_cp_cache(*, cp_call_outcome: Exception | None = None) -> MagicMock:
+    """Build a stub cache exposing `cp_client` and `invalidate`.
+
+    `cp_call_outcome` is either None (CP call succeeds) or an exception
+    instance the CP method should raise. Both methods share the same
+    outcome — tests target one method at a time.
+    """
+    cache = MagicMock()
+    cp_client = MagicMock()
+    if cp_call_outcome is None:
+        cp_client.post_upgrade_now = AsyncMock(return_value=None)
+        cp_client.post_cancel_subscription = AsyncMock(return_value=None)
+    else:
+        cp_client.post_upgrade_now = AsyncMock(side_effect=cp_call_outcome)
+        cp_client.post_cancel_subscription = AsyncMock(side_effect=cp_call_outcome)
+    cache.cp_client = cp_client
+    cache.invalidate = AsyncMock()
+    return cache
+
+
+async def _call_endpoint(endpoint_name: str):
+    """Invoke the upgrade-now or cancel-trial endpoint directly."""
+    if endpoint_name == "upgrade_now":
+        return await upgrade_now(user=_mock_admin_user())
+    return await cancel_trial(user=_mock_admin_user())
+
+
+_ENDPOINTS = ["upgrade_now", "cancel_trial"]
+
+
+class TestTrialActionEndpoints:
+    """Shared behaviors of `/upgrade-now` and `/cancel-trial`."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", _ENDPOINTS)
+    async def test_happy_path_returns_200_and_invalidates_cache(self, endpoint: str):
+        cache = _stub_cp_cache()
+        with patch("shu.billing.router.get_billing_state_cache", return_value=cache):
+            response = await _call_endpoint(endpoint)
+
+        assert response.status_code == 200
+        assert _decode(response) == {"ok": True}
+        cache.invalidate.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", _ENDPOINTS)
+    async def test_no_cache_returns_503(self, endpoint: str):
+        """Self-hosted / dev — no CP cache means no trial to act on."""
+        with patch("shu.billing.router.get_billing_state_cache", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                await _call_endpoint(endpoint)
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", _ENDPOINTS)
+    async def test_cp_no_active_trial_returns_409(self, endpoint: str):
+        cache = _stub_cp_cache(cp_call_outcome=CpNoActiveTrial(status_code=409))
+        with patch("shu.billing.router.get_billing_state_cache", return_value=cache):
+            with pytest.raises(HTTPException) as exc_info:
+                await _call_endpoint(endpoint)
+        assert exc_info.value.status_code == 409
+        # Cache not invalidated on a failed action — next read should still
+        # serve the existing cached state.
+        cache.invalidate.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", _ENDPOINTS)
+    async def test_cp_auth_failure_returns_502(self, endpoint: str):
+        """Generic CpClientError (including `CpAuthFailed`) collapses to
+        502 — the tenant treats it as upstream dependency failure.
+        """
+        cache = _stub_cp_cache(cp_call_outcome=CpAuthFailed("bad sig"))
+        with patch("shu.billing.router.get_billing_state_cache", return_value=cache):
+            with pytest.raises(HTTPException) as exc_info:
+                await _call_endpoint(endpoint)
+        assert exc_info.value.status_code == 502
+        cache.invalidate.assert_not_called()
+
+
+# `_resolve_remaining_grant_amount` — local fallback when CP returns
+# `remaining_grant_amount=None` during trial (Task 26 / design 3a).
+# Direct unit tests against the helper, not through the route handler,
+# to keep the branching surface compact.
+
+
+_P_USAGE_PROVIDER = "shu.billing.router.UsageProviderImpl"
+
+
+def _trial_state(
+    *,
+    total_grant: Decimal = Decimal("5.00"),
+    usage_markup_multiplier: Decimal | None = Decimal("1.0"),
+) -> BillingState:
+    # Default markup=1.0 so callers that don't care about the upcharge can
+    # write tests in raw-dollar terms. Tests covering the markup path pass
+    # an explicit multiplier (or None to verify the configured-default
+    # fallback path).
+    return BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=True,
+        trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
+        total_grant_amount=total_grant,
+        remaining_grant_amount=None,
+        seat_price_usd=Decimal("20"),
+        usage_markup_multiplier=usage_markup_multiplier,
+    )
+
+
+def _non_trial_state(*, remaining: Decimal = Decimal("12.34")) -> BillingState:
+    return BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal("50"),
+        remaining_grant_amount=remaining,
+        seat_price_usd=Decimal("20"),
+    )
+
+
+def _stub_usage_provider(*, total_cost_usd: Decimal) -> MagicMock:
+    summary = MagicMock()
+    summary.total_cost_usd = total_cost_usd
+    instance = MagicMock()
+    instance.get_usage_summary = AsyncMock(return_value=summary)
+    return MagicMock(return_value=instance)
+
+
+def _stub_billing_row(
+    *, period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC),
+) -> MagicMock:
+    row = MagicMock()
+    row.current_period_start = period_start
+    return row
+
+
+class TestResolveRemainingGrantAmount:
+    """Direct tests for `_resolve_remaining_grant_amount`."""
+
+    @pytest.mark.asyncio
+    async def test_non_trial_passes_through_cp_value_unchanged(self):
+        """When CP returns a numeric value, the helper does no local math —
+        Stripe's grant debiting is accurate for non-trial subscriptions.
+        """
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        result = await _resolve_remaining_grant_amount(
+            db=AsyncMock(),
+            state=_non_trial_state(remaining=Decimal("12.34")),
+        )
+        assert result == Decimal("12.34")
+
+    @pytest.mark.asyncio
+    async def test_trial_with_usage_below_grant(self):
+        """Trial: total=$5, usage=$2 → remaining=$3."""
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        with (
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
+            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))),
+        ):
+            result = await _resolve_remaining_grant_amount(
+                db=AsyncMock(),
+                state=_trial_state(total_grant=Decimal("5.00")),
+            )
+        assert result == Decimal("3.00")
+
+    @pytest.mark.asyncio
+    async def test_trial_with_usage_exceeding_grant_clamps_to_zero(self):
+        """Defensive — trial-cap should have blocked already, but a state
+        desync shouldn't render a negative dollar amount on the banner.
+        """
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        with (
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
+            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("999"))),
+        ):
+            result = await _resolve_remaining_grant_amount(
+                db=AsyncMock(),
+                state=_trial_state(total_grant=Decimal("5.00")),
+            )
+        assert result == Decimal(0)
+
+    @pytest.mark.asyncio
+    async def test_trial_with_no_billing_state_row_falls_back_to_total(self):
+        """No period anchor → can't attribute usage to "this period."
+        Returning total keeps the banner sensible (full budget showing)
+        until the period is established.
+        """
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        with patch(_P_BILLING_STATE_GET, AsyncMock(return_value=None)):
+            result = await _resolve_remaining_grant_amount(
+                db=AsyncMock(),
+                state=_trial_state(total_grant=Decimal("5.00")),
+            )
+        assert result == Decimal("5.00")
+
+    @pytest.mark.asyncio
+    async def test_trial_with_null_period_start_falls_back_to_total(self):
+        """Billing row exists but `current_period_start` is null — same
+        recovery as no-row, return the full grant.
+        """
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        with patch(
+            _P_BILLING_STATE_GET,
+            AsyncMock(return_value=_stub_billing_row(period_start=None)),
+        ):
+            result = await _resolve_remaining_grant_amount(
+                db=AsyncMock(),
+                state=_trial_state(total_grant=Decimal("5.00")),
+            )
+        assert result == Decimal("5.00")
+
+    @pytest.mark.asyncio
+    async def test_trial_applies_markup_when_attached(self):
+        """`total_grant_amount` is customer-billed dollars and `total_cost_usd`
+        is raw provider cost — without the markup the banner under-counts
+        spend. With markup=1.3 and $2 of raw usage on a $5 grant, the banner
+        shows $5 - $2*1.3 = $2.40 remaining.
+        """
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        with (
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
+            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))),
+        ):
+            result = await _resolve_remaining_grant_amount(
+                db=AsyncMock(),
+                state=_trial_state(
+                    total_grant=Decimal("5.00"),
+                    usage_markup_multiplier=Decimal("1.3"),
+                ),
+            )
+        assert result == Decimal("2.40")
+
+    @pytest.mark.asyncio
+    async def test_trial_falls_back_to_configured_default_when_markup_unset(
+        self, monkeypatch
+    ):
+        """HEALTHY_DEFAULT and no-metered-item paths leave the field None.
+        Helper resolves to the configured default rather than zero/error.
+        """
+        from shu.billing import markup as markup_mod
+        from shu.billing.router import _resolve_remaining_grant_amount
+
+        # Pin the configured default so the assertion doesn't drift with
+        # any future change to the env-default constant.
+        settings = markup_mod.get_billing_settings()
+        monkeypatch.setattr(settings, "usage_markup_multiplier_default", Decimal("1.5"))
+
+        with (
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
+            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))),
+        ):
+            result = await _resolve_remaining_grant_amount(
+                db=AsyncMock(),
+                state=_trial_state(
+                    total_grant=Decimal("5.00"),
+                    usage_markup_multiplier=None,
+                ),
+            )
+        # $5 - $2 * 1.5 = $2.00
+        assert result == Decimal("2.00")
