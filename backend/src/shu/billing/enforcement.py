@@ -23,6 +23,7 @@ from shu.billing.adapters import (
     get_billing_config,
 )
 from shu.billing.billing_state_cache import get_billing_state_cache
+from shu.billing.config import get_billing_settings
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
 from shu.billing.entitlements import EntitlementDeniedError
 from shu.billing.markup import resolve_markup
@@ -133,16 +134,36 @@ async def assert_subscription_active() -> None:
             grace_deadline=state.grace_deadline,
         )
 
-    if not state.is_trial:
-        return
-
-    # Trial-cap path: precise per-period DB query rather than reading
-    # `state.remaining_grant_amount` from the cache. Cache is up to one
-    # TTL stale (default 500s) — too loose for trial-spend enforcement
-    # where minutes of overage are real cost the company eats.
+    # Open the session once and reuse for both the cancel-status check and
+    # (if applicable) the trial-cap DB query. The cancel-status read is
+    # unconditional because the cache alone can't tell us a cancel just
+    # happened: Stripe flips sub status to `canceled` synchronously on our
+    # cancel call → cache `is_trial=False` → enforcement would fall through
+    # to `return` before CP's webhook lands and disables the OR key. Local
+    # `subscription_status` is written inline by the cancel router and by
+    # the forwarded webhook, so it leads `openrouter_key_disabled` by one
+    # CP round-trip.
+    # TODO: lift `is_cancelled` (or full status) onto `BillingStateResponse`
+    # so this DB read can move back behind the `is_trial` guard. In fact, we should
+    # move all the fields that need to be loaded from the billing_row. That way
+    # they are cached and we reduce DB load.
     session_local = get_async_session_local()
     async with session_local() as db:
         billing_row = await BillingStateService.get(db)
+
+        if billing_row is not None and billing_row.subscription_status == "canceled":
+            raise SubscriptionInactiveError(
+                payment_failed_at=state.payment_failed_at,
+                grace_deadline=state.grace_deadline,
+            )
+
+        if not state.is_trial:
+            return
+
+        # Trial-cap path: precise per-period DB query rather than reading
+        # `state.remaining_grant_amount` from the cache. Cache is up to one
+        # TTL stale (default 500s) — too loose for trial-spend enforcement
+        # where minutes of overage are real cost the company eats.
         if billing_row is None or billing_row.current_period_start is None:
             # Fail-closed on missing period info: silent bypass would
             # let unbounded trial spend through on a data anomaly.
@@ -220,8 +241,6 @@ async def check_user_limit(
         return _NO_LIMIT
 
     if stripe_client is None:
-        from shu.billing.config import get_billing_settings
-
         settings = get_billing_settings()
         if not settings.is_configured:
             return _NO_LIMIT
@@ -245,8 +264,6 @@ async def check_user_limit(
         # Acquiring billing_state FOR UPDATE means the second request blocks
         # here until the first has committed its INSERT, so both cannot pass
         # the limit check simultaneously with the same user count.
-        from shu.billing.state_service import BillingStateService
-
         await BillingStateService.get_for_update(db)
 
     current_count = await get_active_user_count(db)

@@ -10,7 +10,9 @@ The router is designed to be mounted at /api/v1/billing.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated
@@ -32,9 +34,9 @@ from shu.billing.adapters import (
     get_active_user_count,
     get_billing_config,
 )
-from shu.billing.billing_state_cache import get_billing_state_cache
+from shu.billing.billing_state_cache import get_billing_state_cache, get_cp_client
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
-from shu.billing.cp_client import CpClientError, CpNoActiveTrial
+from shu.billing.cp_client import BillingState, CpClientError, CpNoActiveTrial
 from shu.billing.enforcement import get_current_billing_state
 from shu.billing.markup import resolve_markup
 from shu.billing.router_envelope import verify_router_envelope_dep
@@ -123,7 +125,46 @@ async def get_portal_session(
 # =============================================================================
 
 
-async def _resolve_remaining_grant_amount(db: AsyncSession, state) -> Decimal:
+async def _safe_fetch_included_usd(stripe_client: StripeClient | None, customer_id: str | None) -> float | None:
+    """Active credit-grant total for the admin dashboard's "Included Allowance"
+    tile. Display-only — failing falls the frontend back to a client-side
+    seats x $50 estimate, so don't 502 the whole subscription endpoint over a
+    non-critical field. Returns None when Stripe isn't configured, no customer
+    is set, or the call fails.
+    """
+    if customer_id is None or stripe_client is None:
+        return None
+    try:
+        return float(await stripe_client.get_active_credit_grant_total_usd(customer_id))
+    except StripeClientError as e:
+        logger.warning(
+            "Failed to fetch credit grants; allowance falls back to client-side estimate",
+            extra={"customer_id": customer_id, "error": str(e)},
+        )
+        return None
+
+
+async def _safe_fetch_markup_multiplier(
+    stripe_client: StripeClient | None, subscription_id: str | None
+) -> float | None:
+    """Customer-billed markup ratio derived from the metered Price's
+    unit_amount_decimal. Same display-only contract as included_usd:
+    log + null on failure, frontend falls back to a constant.
+    """
+    if subscription_id is None or stripe_client is None:
+        return None
+    try:
+        markup = await stripe_client.get_subscription_markup_multiplier(subscription_id)
+        return float(markup) if markup is not None else None
+    except StripeClientError as e:
+        logger.warning(
+            "Failed to fetch usage markup; falls back to client-side constant",
+            extra={"subscription_id": subscription_id, "error": str(e)},
+        )
+        return None
+
+
+async def _resolve_remaining_grant_amount(db: AsyncSession, state: BillingState) -> Decimal:
     """Resolve the displayed `remaining_grant_amount` for the response.
 
     CP returns `None` for this field during trial as the wire signal
@@ -228,35 +269,15 @@ async def get_subscription_status(
     }
 
     if user.can_manage_users():
-        # Pull the active credit-grant total from Stripe for the Cost & Usage
-        # dashboard's "Included Allowance" tile. Display-only — failing here
-        # falls back to a client-side seats x $50 estimate, so don't 502 the
-        # whole subscription endpoint over a non-critical field.
-        included_usd_per_period: float | None = None
+        # Two display-only Stripe lookups run concurrently — neither depends on
+        # the other and each can return None on failure (callers degrade to
+        # client-side fallbacks). Sequential awaits doubled admin-dashboard
+        # load latency for no reason.
         customer_id = billing_config.get("stripe_customer_id")
-        if customer_id and stripe_client is not None:
-            try:
-                included_usd_per_period = float(await stripe_client.get_active_credit_grant_total_usd(customer_id))
-            except StripeClientError as e:
-                logger.warning(
-                    "Failed to fetch credit grants; allowance falls back to client-side estimate",
-                    extra={"customer_id": customer_id, "error": str(e)},
-                )
-
-        # Pull the customer-billed markup ratio from the metered Price's
-        # unit_amount_decimal. Same display-only contract as included_usd:
-        # log + null on failure, frontend falls back to a constant.
-        usage_markup_multiplier: float | None = None
-        if subscription_id and stripe_client is not None:
-            try:
-                markup = await stripe_client.get_subscription_markup_multiplier(subscription_id)
-                if markup is not None:
-                    usage_markup_multiplier = float(markup)
-            except StripeClientError as e:
-                logger.warning(
-                    "Failed to fetch usage markup; falls back to client-side constant",
-                    extra={"subscription_id": subscription_id, "error": str(e)},
-                )
+        included_usd_per_period, usage_markup_multiplier = await asyncio.gather(
+            _safe_fetch_included_usd(stripe_client, customer_id),
+            _safe_fetch_markup_multiplier(stripe_client, subscription_id),
+        )
 
         payload.update(
             {
@@ -284,6 +305,7 @@ async def _post_trial_action(
     action: str,
     user: User,
     cp_call,
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> JSONResponse:
     """Run a trial-action POST to CP and invalidate the billing cache.
 
@@ -293,6 +315,12 @@ async def _post_trial_action(
     success so the next billing-state poll reflects the new state.
     Every exit path emits a structured `billing.tier_change` audit log
     so destructive billing actions leave a trail per R12.AC3.
+
+    `on_success` runs BEFORE cache invalidation so any authoritative
+    local write (e.g., cancel-trial's `subscription_status="canceled"`)
+    is durable by the time the next billing-state read can hit. Reversed
+    ordering would let a concurrent get() repopulate the cache with the
+    pre-action CP value before the DB row catches up.
     """
     # Tenant doesn't have the Stripe subscription id at this layer — CP
     # holds it. Kept on the audit shape with None so future enrichment
@@ -303,8 +331,14 @@ async def _post_trial_action(
         "action": action,
         "stripe_subscription_id": None,
     }
+    # The CP client and the billing-state cache are sibling singletons —
+    # both populated together at startup. Reading both here means a partial
+    # initialization (only one populated) still raises 503, which is the
+    # correct posture: we can't safely invalidate without the cache, and
+    # we can't make the call without the client.
     cache = get_billing_state_cache()
-    if cache is None:
+    cp_client = get_cp_client()
+    if cache is None or cp_client is None:
         logger.info(
             "billing.tier_change",
             extra={**audit_extra, "outcome": "error", "error_class": "billing_not_configured"},
@@ -314,7 +348,7 @@ async def _post_trial_action(
             detail="Billing is not configured",
         )
     try:
-        await cp_call(cache.cp_client)
+        await cp_call(cp_client)
     except CpNoActiveTrial as exc:
         logger.info(
             "billing.tier_change",
@@ -333,6 +367,30 @@ async def _post_trial_action(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Billing provider unavailable",
         )
+    except Exception as exc:
+        # Catch-all so destructive billing actions never escape without an
+        # audit entry — programmer error, unexpected httpx state, etc. all
+        # need to leave a trail. Re-raise so FastAPI's default handler turns
+        # it into a 500; this is purely about logging completeness.
+        logger.info(
+            "billing.tier_change",
+            extra={**audit_extra, "outcome": "error", "error_class": type(exc).__name__},
+        )
+        raise
+
+    if on_success is not None:
+        # Caller-supplied write runs BEFORE the cache invalidate (see above).
+        # Failures here are best-effort: the CP-driven webhook is the
+        # steady-state catch-up path, so a transient DB blip shouldn't
+        # fail the response or skip the audit log.
+        try:
+            await on_success()
+        except Exception:
+            logger.warning(
+                "trial-action on_success hook failed; webhook will catch up",
+                exc_info=True,
+            )
+
     await cache.invalidate()
     logger.info(
         "billing.tier_change",
@@ -363,11 +421,27 @@ async def upgrade_now(
 )
 async def cancel_trial(
     user: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> JSONResponse:
+    # Authoritative local write for the cancel we just performed: closes the
+    # window between Stripe flipping the sub to `canceled` (which makes the
+    # cached `is_trial` go False on the next poll) and the forwarded
+    # `subscription.deleted` webhook landing here to write the same value.
+    # Routed through `on_success` so the write lands BEFORE the cache invalidate
+    # — otherwise a concurrent get() could repopulate cache from CP with the
+    # pre-cancel state and `assert_subscription_active` would fall through.
+    async def _write_canceled_status() -> None:
+        await BillingStateService.update(
+            db,
+            updates={"subscription_status": "canceled"},
+            source="api:cancel-trial",
+        )
+
     return await _post_trial_action(
         action="cancel-trial",
         user=user,
         cp_call=lambda c: c.post_cancel_subscription(),
+        on_success=_write_canceled_status,
     )
 
 
@@ -392,8 +466,6 @@ async def get_current_usage(
     Otherwise returns total tokens used, breakdown by model, and estimated
     cost for the active subscription period.
     """
-    from datetime import datetime
-
     billing_config = await get_billing_config(db)
     period_start_str = billing_config.get("current_period_start")
     period_end_str = billing_config.get("current_period_end")

@@ -355,14 +355,22 @@ def _mock_admin_user() -> MagicMock:
     return user
 
 
-def _stub_cp_cache(*, cp_call_outcome: Exception | None = None) -> MagicMock:
-    """Build a stub cache exposing `cp_client` and `invalidate`.
+def _stub_cp_cache(*, cp_call_outcome: Exception | None = None) -> tuple[MagicMock, MagicMock]:
+    """Build a stub cache + CpClient pair, mirroring the two singletons
+    populated together by `initialize_billing_state_cache`.
+
+    Returns `(cache, cp_client)`. Tests patch both
+    `shu.billing.router.get_billing_state_cache` and
+    `shu.billing.router.get_cp_client` to return these — splitting the
+    singletons keeps the test setup honest about which one the production
+    path actually reads from.
 
     `cp_call_outcome` is either None (CP call succeeds) or an exception
     instance the CP method should raise. Both methods share the same
     outcome — tests target one method at a time.
     """
     cache = MagicMock()
+    cache.invalidate = AsyncMock()
     cp_client = MagicMock()
     if cp_call_outcome is None:
         cp_client.post_upgrade_now = AsyncMock(return_value=None)
@@ -370,16 +378,20 @@ def _stub_cp_cache(*, cp_call_outcome: Exception | None = None) -> MagicMock:
     else:
         cp_client.post_upgrade_now = AsyncMock(side_effect=cp_call_outcome)
         cp_client.post_cancel_subscription = AsyncMock(side_effect=cp_call_outcome)
-    cache.cp_client = cp_client
-    cache.invalidate = AsyncMock()
-    return cache
+    return cache, cp_client
 
 
 async def _call_endpoint(endpoint_name: str):
-    """Invoke the upgrade-now or cancel-trial endpoint directly."""
+    """Invoke the upgrade-now or cancel-trial endpoint directly.
+
+    `cancel_trial` takes a `db` dependency for the inline
+    `subscription_status="canceled"` write. We pass a MagicMock and patch
+    `BillingStateService.update` at call sites that exercise the happy
+    path so the write becomes a no-op; error paths never reach the write.
+    """
     if endpoint_name == "upgrade_now":
         return await upgrade_now(user=_mock_admin_user())
-    return await cancel_trial(user=_mock_admin_user())
+    return await cancel_trial(user=_mock_admin_user(), db=MagicMock())
 
 
 _ENDPOINTS = ["upgrade_now", "cancel_trial"]
@@ -391,8 +403,14 @@ class TestTrialActionEndpoints:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", _ENDPOINTS)
     async def test_happy_path_returns_200_and_invalidates_cache(self, endpoint: str):
-        cache = _stub_cp_cache()
-        with patch("shu.billing.router.get_billing_state_cache", return_value=cache):
+        cache, cp_client = _stub_cp_cache()
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+            # cancel_trial's inline `subscription_status` write lands here on
+            # success; stub it so the MagicMock db doesn't try to run real SQL.
+            patch("shu.billing.router.BillingStateService.update", AsyncMock()),
+        ):
             response = await _call_endpoint(endpoint)
 
         assert response.status_code == 200
@@ -402,8 +420,13 @@ class TestTrialActionEndpoints:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", _ENDPOINTS)
     async def test_no_cache_returns_503(self, endpoint: str):
-        """Self-hosted / dev — no CP cache means no trial to act on."""
-        with patch("shu.billing.router.get_billing_state_cache", return_value=None):
+        """Self-hosted / dev — no CP cache (and no CP client) means no trial
+        to act on. Either singleton missing trips the 503 guard.
+        """
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=None),
+            patch("shu.billing.router.get_cp_client", return_value=None),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await _call_endpoint(endpoint)
         assert exc_info.value.status_code == 503
@@ -411,8 +434,11 @@ class TestTrialActionEndpoints:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", _ENDPOINTS)
     async def test_cp_no_active_trial_returns_409(self, endpoint: str):
-        cache = _stub_cp_cache(cp_call_outcome=CpNoActiveTrial(status_code=409))
-        with patch("shu.billing.router.get_billing_state_cache", return_value=cache):
+        cache, cp_client = _stub_cp_cache(cp_call_outcome=CpNoActiveTrial(status_code=409))
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await _call_endpoint(endpoint)
         assert exc_info.value.status_code == 409
@@ -426,11 +452,119 @@ class TestTrialActionEndpoints:
         """Generic CpClientError (including `CpAuthFailed`) collapses to
         502 — the tenant treats it as upstream dependency failure.
         """
-        cache = _stub_cp_cache(cp_call_outcome=CpAuthFailed("bad sig"))
-        with patch("shu.billing.router.get_billing_state_cache", return_value=cache):
+        cache, cp_client = _stub_cp_cache(cp_call_outcome=CpAuthFailed("bad sig"))
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await _call_endpoint(endpoint)
         assert exc_info.value.status_code == 502
+        cache.invalidate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancel_trial_writes_subscription_status_canceled_inline(self):
+        """The cancel-trial endpoint must write `subscription_status="canceled"`
+        to local billing_state on success. Without this, `assert_subscription_active`
+        falls through the cancel gate during the window between Stripe flipping
+        the sub to `canceled` and CP's webhook landing.
+        """
+        cache, cp_client = _stub_cp_cache()
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+            patch("shu.billing.router.BillingStateService.update", AsyncMock()) as mock_update,
+        ):
+            response = await cancel_trial(user=_mock_admin_user(), db=MagicMock())
+
+        assert response.status_code == 200
+        mock_update.assert_awaited_once()
+        kwargs = mock_update.await_args.kwargs
+        assert kwargs["updates"] == {"subscription_status": "canceled"}
+        assert kwargs["source"] == "api:cancel-trial"
+
+    @pytest.mark.asyncio
+    async def test_cancel_trial_local_write_failure_does_not_fail_request(self):
+        """If the local `subscription_status` write throws, the user still gets
+        a 200. The forwarded webhook will catch up and write the same value;
+        failing the response would leave the customer thinking the cancel didn't
+        take when in fact Stripe has already canceled.
+        """
+        cache, cp_client = _stub_cp_cache()
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+            patch(
+                "shu.billing.router.BillingStateService.update",
+                AsyncMock(side_effect=RuntimeError("db went away")),
+            ),
+        ):
+            response = await cancel_trial(user=_mock_admin_user(), db=MagicMock())
+
+        assert response.status_code == 200
+        cache.invalidate.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cancel_trial_writes_db_before_cache_invalidate(self):
+        """Ordering invariant: the local `subscription_status="canceled"` write
+        must land before `cache.invalidate()`. Reverse order lets a concurrent
+        get() repopulate cache from CP with the pre-cancel state before the DB
+        row catches up, defeating the cancel gate in `assert_subscription_active`.
+        """
+        cache, cp_client = _stub_cp_cache()
+        call_order: list[str] = []
+
+        async def record_update(*_args, **_kwargs):
+            call_order.append("db_update")
+
+        async def record_invalidate():
+            call_order.append("invalidate")
+
+        cache.invalidate = AsyncMock(side_effect=record_invalidate)
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+            patch("shu.billing.router.BillingStateService.update", AsyncMock(side_effect=record_update)),
+        ):
+            await cancel_trial(user=_mock_admin_user(), db=MagicMock())
+
+        assert call_order == ["db_update", "invalidate"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", _ENDPOINTS)
+    async def test_unexpected_exception_emits_audit_log_and_propagates(
+        self, endpoint: str, caplog
+    ):
+        """Catch-all audit log: any exception escaping `cp_call` (programmer
+        error, unexpected httpx state, etc.) must still emit a `billing.tier_change`
+        error entry before propagating. Without this, destructive billing
+        actions could fail without a trail per R12.AC3.
+        """
+        import logging as _logging
+
+        cache, cp_client = _stub_cp_cache(cp_call_outcome=RuntimeError("kaboom"))
+        with (
+            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
+            patch("shu.billing.router.get_cp_client", return_value=cp_client),
+        ):
+            with caplog.at_level(_logging.INFO, logger="shu.billing.router"):
+                with pytest.raises(RuntimeError):
+                    await _call_endpoint(endpoint)
+
+        # The audit entry uses the structured key `billing.tier_change` with
+        # the exception class on `error_class`.
+        audit_records = [
+            r
+            for r in caplog.records
+            if r.name == "shu.billing.router"
+            and r.getMessage() == "billing.tier_change"
+            and getattr(r, "error_class", None) == "RuntimeError"
+            and getattr(r, "outcome", None) == "error"
+        ]
+        assert len(audit_records) == 1, (
+            f"Expected one catch-all audit entry; got {[r.getMessage() for r in caplog.records]}"
+        )
+        # Cache was NOT invalidated — the action didn't reach success.
         cache.invalidate.assert_not_called()
 
 

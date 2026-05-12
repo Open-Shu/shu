@@ -243,7 +243,9 @@ class TestAssertSubscriptionActive:
 
         CP only flips `openrouter_key_disabled=True` after grace ends, so
         a populated `payment_failed_at` with the flag still false is the
-        normal in-grace state.
+        normal in-grace state. The local billing row is stubbed with
+        `subscription_status="active"` so the cancel gate doesn't trip
+        on real-DB contents under the test process.
         """
         install_stub_cache(
             BillingState(
@@ -258,7 +260,12 @@ class TestAssertSubscriptionActive:
                 seat_price_usd=Decimal(0),
             )
         )
-        await assert_subscription_active()
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(subscription_status="active"))),
+        ):
+            await assert_subscription_active()
 
     @pytest.mark.asyncio
     async def test_disabled_key_raises_with_computed_deadline(self, install_stub_cache):
@@ -357,9 +364,17 @@ def _usage_provider_returning(total_cost: Decimal) -> MagicMock:
     return cls
 
 
-def _billing_row(*, period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC)):
+def _billing_row(
+    *,
+    period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC),
+    subscription_status: str = "trialing",
+):
+    # `subscription_status` defaults to a non-canceled value so existing tests
+    # exercise the trial-cap branch instead of short-circuiting on the cancel
+    # gate. Tests targeting the cancel gate pass `subscription_status="canceled"`.
     row = MagicMock()
     row.current_period_start = period_start
+    row.subscription_status = subscription_status
     return row
 
 
@@ -367,9 +382,9 @@ class TestAssertSubscriptionActiveTrialCap:
     """Trial-cap branch of the consolidated assertion."""
 
     @pytest.mark.asyncio
-    async def test_is_trial_false_does_not_open_session(self, install_stub_cache):
-        """The DB query is gated on is_trial=True. Non-trial tenants must
-        not pay the session-open cost on every LLM call.
+    async def test_is_trial_false_with_active_status_does_not_raise(self, install_stub_cache):
+        """Non-trial tenant with an active subscription_status passes through
+        the cancel gate and short-circuits before the trial-cap branch.
         """
         install_stub_cache(HEALTHY_DEFAULT.__class__(
             openrouter_key_disabled=False,
@@ -383,9 +398,41 @@ class TestAssertSubscriptionActiveTrialCap:
             seat_price_usd=Decimal(0),
         ))
 
-        with patch(_P_SESSION_LOCAL) as session_local:
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(subscription_status="active"))),
+        ):
             await assert_subscription_active()
-            session_local.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_canceled_subscription_status_raises_subscription_inactive(self, install_stub_cache):
+        """Regression for the cancel-trial race: Stripe flips the sub to
+        `canceled` synchronously on our cancel call, which makes the cached
+        `is_trial` go False on the next CP poll, but CP's webhook to disable
+        the OR key lags by one round-trip. The local `subscription_status`
+        gate must catch this window — written inline by the cancel router
+        and by the forwarded webhook.
+        """
+        install_stub_cache(HEALTHY_DEFAULT.__class__(
+            openrouter_key_disabled=False,
+            payment_failed_at=None,
+            payment_grace_days=0,
+            entitlements=EntitlementSet(),
+            is_trial=False,
+            trial_deadline=None,
+            total_grant_amount=Decimal(0),
+            remaining_grant_amount=Decimal(0),
+            seat_price_usd=Decimal(0),
+        ))
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(subscription_status="canceled"))),
+        ):
+            with pytest.raises(SubscriptionInactiveError) as exc_info:
+                await assert_subscription_active()
+
+        assert exc_info.value.error_code == "subscription_inactive"
 
     @pytest.mark.asyncio
     async def test_below_cap_does_not_raise(self, install_stub_cache):

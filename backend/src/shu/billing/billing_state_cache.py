@@ -84,17 +84,6 @@ class BillingStateCache:
         # waiters from triggering a redundant fetch after the holder succeeds.
         self._lock = asyncio.Lock()
 
-    @property
-    def cp_client(self) -> CpClient:
-        """Expose the embedded `CpClient` for admin endpoints that need to
-        POST trial-action requests (upgrade-now, cancel-subscription).
-
-        Sharing the cache's client keeps configuration (base_url, secret,
-        http_client, logger) in one place rather than re-constructing
-        a separate singleton.
-        """
-        return self._client
-
     async def get(self) -> BillingState:
         async with self._lock:
             if self._is_fresh():
@@ -197,11 +186,18 @@ class BillingStateCache:
         return HEALTHY_DEFAULT
 
 
-# Module-level singleton so both the FastAPI app and the worker process
-# read the same cache. Kept as module state rather than `app.state` because
-# the worker has no FastAPI app — gating OCR jobs at dequeue time
+# Module-level singletons so both the FastAPI app and the worker process
+# read the same instances. Kept as module state rather than `app.state`
+# because the worker has no FastAPI app — gating OCR jobs at dequeue time
 # (SHU-703) needs reachability from a non-FastAPI context.
+#
+# The cache and the CpClient are siblings: the cache owns state + freshness
+# policy; the client owns transport. The router uses the client directly
+# for trial-action POSTs (upgrade-now, cancel-subscription) rather than
+# reaching through the cache, so a future change to the cache's internals
+# can't accidentally break the trial-action wiring.
 _cache: BillingStateCache | None = None
+_cp_client: CpClient | None = None
 
 
 def get_billing_state_cache() -> BillingStateCache | None:
@@ -212,10 +208,20 @@ def get_billing_state_cache() -> BillingStateCache | None:
     return _cache
 
 
+def get_cp_client() -> CpClient | None:
+    """Return the process-wide CpClient singleton, or None if CP is not configured.
+
+    Used by admin trial-action endpoints (upgrade-now, cancel-trial) that
+    POST to CP outside the billing-state poll path.
+    """
+    return _cp_client
+
+
 def reset_billing_state_cache() -> None:
-    """Reset the singleton. Test-only."""
-    global _cache  # noqa: PLW0603
+    """Reset both singletons. Test-only."""
+    global _cache, _cp_client  # noqa: PLW0603
     _cache = None
+    _cp_client = None
 
 
 def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
@@ -249,7 +255,7 @@ async def initialize_billing_state_cache() -> None:
     Idempotent: a second call is a no-op once the singleton is populated,
     so FastAPI startup and worker startup can both invoke this safely.
     """
-    global _cache  # noqa: PLW0603
+    global _cache, _cp_client  # noqa: PLW0603
     if _cache is not None:
         return
 
@@ -264,22 +270,26 @@ async def initialize_billing_state_cache() -> None:
 
     try:
         http_client = await get_http_client()
+        # Build the CpClient once and share it with the cache. Both singletons
+        # publish together so callers that read one expect the other to be ready.
+        cp_client = CpClient(
+            base_url=billing_settings.cp_base_url,
+            tenant_id=UUID(settings.tenant_id),
+            shared_secret=billing_settings.router_shared_secret,
+            http_client=http_client,
+            logger=get_logger("shu.billing.cp_client"),
+        )
         cache = BillingStateCache(
-            client=CpClient(
-                base_url=billing_settings.cp_base_url,
-                tenant_id=UUID(settings.tenant_id),
-                shared_secret=billing_settings.router_shared_secret,
-                http_client=http_client,
-                logger=get_logger("shu.billing.cp_client"),
-            ),
+            client=cp_client,
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
             persister=BillingStatePersister(),
             markup_fetcher=_build_markup_fetcher(billing_settings),
         )
-        # Publish the singleton before the eager fetch so a programmer
-        # error in get() still leaves the cache reachable. CpClientError
-        # is absorbed inside get(); only programmer errors (bad UUID,
-        # broken httpx, etc.) escape here.
+        # Publish the singletons before the eager fetch so a programmer
+        # error in get() still leaves them reachable. CpClientError is
+        # absorbed inside get(); only programmer errors (bad UUID, broken
+        # httpx, etc.) escape here.
+        _cp_client = cp_client
         _cache = cache
         _logger.info("CP billing-state cache initialized: %s", await cache.get())
     except Exception as e:
