@@ -300,6 +300,10 @@ export const billingAPI = {
   getPortalUrl: () => api.get('/billing/portal'),
   releaseSeat: () => api.post('/billing/seats/release'),
   cancelPendingRelease: () => api.post('/billing/seats/cancel-release'),
+  // Trial exit actions. No body — the backend is admin-gated via
+  // require_admin and the typed-CONFIRM check lives in the UI.
+  upgradeNow: () => api.post('/billing/upgrade-now'),
+  cancelTrial: () => api.post('/billing/cancel-trial'),
 };
 
 // Health endpoints

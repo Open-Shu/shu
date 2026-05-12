@@ -51,6 +51,7 @@ import { PLUGINS_ENABLED, MCP_ENABLED, EXPERIENCES_ENABLED } from './config/feat
 import { ThemeProvider as CustomThemeProvider, useTheme } from './contexts/ThemeContext';
 import { BillingStatusProvider } from './contexts/BillingStatusContext';
 import PaymentBanner from './components/PaymentBanner';
+import TrialBanner from './components/TrialBanner';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -146,6 +147,7 @@ const AuthenticatedApp = () => {
     // they fit inside the remaining space.
     <BillingStatusProvider>
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+        <TrialBanner />
         <PaymentBanner />
         <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <ForceChangePasswordGate>
