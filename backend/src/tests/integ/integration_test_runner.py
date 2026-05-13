@@ -98,7 +98,9 @@ class IntegrationTestRunner:
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         self.log_file_handler.setFormatter(formatter)
 
-        # Add handler to root logger to capture all logs
+        # Add handler to root logger to capture all logs. Direct stdlib call:
+        # we're operating on the root logger, not creating a module logger,
+        # so shu.core.logging.get_logger does not apply.
         root_logger = logging.getLogger()
         root_logger.addHandler(self.log_file_handler)
 
@@ -124,9 +126,12 @@ class IntegrationTestRunner:
 
         logger.info("🚀 Setting up integration test environment...")
 
-        # Reduce noise from HTTP logging during tests
+        # Reduce noise from HTTP logging during tests. Direct stdlib calls:
+        # we're setting levels on external/named loggers (not creating module
+        # loggers), parallel to what shu.core.logging.setup_logging does for
+        # the application.
         logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("src.shu.core.middleware").setLevel(logging.WARNING)
+        logging.getLogger("shu.core.middleware").setLevel(logging.WARNING)
 
         try:
             # Run FastAPI lifespan startup to wire DI, schema verification, etc.
