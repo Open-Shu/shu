@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from shu.core.logging import get_logger
+import logging
 from pathlib import Path
+
+from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
 

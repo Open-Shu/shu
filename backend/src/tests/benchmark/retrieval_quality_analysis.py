@@ -18,10 +18,12 @@ Usage:
 from __future__ import annotations
 
 import json
-from shu.core.logging import get_logger
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
 

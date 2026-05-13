@@ -9,9 +9,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from shu.core.logging import get_logger
+import logging
 import sys
 import urllib.request
+
+from shu.core.logging import get_logger
 import zipfile
 from pathlib import Path
 
