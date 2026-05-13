@@ -10,13 +10,14 @@ Feature: queue-backend-interface
 import asyncio
 import logging
 import time
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from shu.billing.enforcement import SubscriptionInactiveError
+from shu.billing.enforcement import SubscriptionInactiveError, TrialCapExhaustedError
 from tests.unit.conftest import disabled_billing_state, healthy_billing_state
 from shu.core.queue_backend import InMemoryQueueBackend, Job
 from shu.core.worker import Worker, WorkerConfig
@@ -812,12 +813,14 @@ class TestWorkloadCapacityLimiter:
 
 
 # =============================================================================
-# Subscription Gate Tests (SHU-703)
+# Billing Gate Tests (SHU-703 / SHU-757)
 #
-# When the service-layer gate inside `ExternalOCRService` /
-# `ExternalEmbeddingService` raises `SubscriptionInactiveError`, the worker
-# handler must drop the job cleanly — propagating would log a stack trace
-# and requeue, neither of which is correct for a known billing state.
+# When the service-layer gate raises `SubscriptionInactiveError` (post-grace
+# OR-key disable) OR `TrialCapExhaustedError` (trial grant pool exhausted),
+# the worker handler must drop the job cleanly — propagating would log a
+# stack trace and requeue, neither of which is correct for a known billing
+# state. Both errors share the same drop path so new billing-gated failure
+# modes added later inherit the behavior.
 # =============================================================================
 
 
@@ -880,15 +883,17 @@ def _make_embed_payload(action: str = "embed_document") -> dict:
     }
 
 
-class TestProcessJobSubscriptionGate:
-    """`SubscriptionInactiveError` raised anywhere in a handler chain must be
+class TestProcessJobBillingGate:
+    """Either billing-gate error raised anywhere in a handler chain must be
     caught at the dispatch level (`process_job`) and turned into a clean drop
     — no stack trace, no retry. Catching here (not in each handler) means new
     workload types inherit the drop behavior automatically.
 
     The `RE_EMBEDDING` case is the load-bearing one: it wasn't covered by the
     earlier per-handler catches and surfaced as 3-attempt retry storms in
-    production logs.
+    production logs. The `TrialCapExhaustedError` matrix is the SHU-757
+    counterpart — without explicit coverage in dispatch, a trial tenant who
+    exhausts their grant mid-ingestion sees the same retry-storm shape.
     """
 
     @pytest.fixture
@@ -911,9 +916,29 @@ class TestProcessJobSubscriptionGate:
             ("RE_EMBEDDING", "shu.worker._handle_re_embedding_job"),
         ],
     )
+    @pytest.mark.parametrize(
+        "error_factory,error_cls_name",
+        [
+            (
+                lambda: SubscriptionInactiveError(payment_failed_at=None, grace_deadline=None),
+                "SubscriptionInactiveError",
+            ),
+            (
+                lambda: TrialCapExhaustedError(trial_deadline=None, total_grant_amount=Decimal("0")),
+                "TrialCapExhaustedError",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_subscription_inactive_drops_without_retry(
-        self, install_stub_cache, caplog, _MockJob, queue_attr, handler_path
+    async def test_billing_gate_drops_without_retry(
+        self,
+        install_stub_cache,
+        caplog,
+        _MockJob,
+        queue_attr,
+        handler_path,
+        error_factory,
+        error_cls_name,
     ):
         install_stub_cache(healthy_billing_state())
 
@@ -921,9 +946,7 @@ class TestProcessJobSubscriptionGate:
         from shu.worker import process_job
 
         job = _MockJob(queue_name=getattr(WorkloadType, queue_attr).queue_name)
-        raising = AsyncMock(
-            side_effect=SubscriptionInactiveError(payment_failed_at=None, grace_deadline=None)
-        )
+        raising = AsyncMock(side_effect=error_factory())
 
         with patch(handler_path, new=raising), caplog.at_level(logging.INFO, logger="shu.worker"):
             # Must NOT raise — the dispatch-level catch handles it.
@@ -932,10 +955,13 @@ class TestProcessJobSubscriptionGate:
         drop_records = [
             r
             for r in caplog.records
-            if r.name == "shu.worker" and "Subscription inactive" in r.getMessage()
+            if r.name == "shu.worker"
+            and "Billing gate active" in r.getMessage()
+            and error_cls_name in r.getMessage()
         ]
         assert len(drop_records) == 1, (
-            f"Expected exactly one drop log; got {[r.getMessage() for r in caplog.records]}"
+            f"Expected exactly one drop log for {error_cls_name}; "
+            f"got {[r.getMessage() for r in caplog.records]}"
         )
         record = drop_records[0]
         assert record.levelno == logging.INFO

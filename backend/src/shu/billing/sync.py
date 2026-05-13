@@ -151,6 +151,23 @@ class UsageReportingSource:
         return "usage_reporting"
 
     async def cleanup_stale(self, db: AsyncSession) -> int:
+        """Report the usage delta to Stripe meters, throttled to the
+        configured interval. Returns 1 if a delta was reported, 0 if
+        skipped (billing not configured, within throttle window, or
+        no delta to report).
+
+        Runs uniformly across tenants — no tier or is_trial gate.
+        Trial tenants are safe to report against because Stripe does
+        not bill metered usage during a subscription's `trialing`
+        period at all; meter events accumulate in the meter event
+        summary for visibility but never invoice. The trial-cap
+        value is sourced from a fixed credit grant provisioned at
+        signup (by the onboarding system, not by CP); the tenant-side
+        trial-cap blocks LLM calls once recorded usage reaches that
+        amount. The admin Cost & Usage dashboard reads from this
+        same path, so a tier-aware skip would leave gaps in the
+        trial view.
+        """
         settings = get_billing_settings()
         if not settings.is_configured:
             return 0
