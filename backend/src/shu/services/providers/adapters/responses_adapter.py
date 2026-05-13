@@ -419,6 +419,19 @@ class ResponsesAdapter(BaseProviderAdapter):
 
             return {"role": role, "content": content_parts if content_parts else content}
 
+        # Assistant text replayed in a follow-up turn is sent as an explicit
+        # output_text content part with annotations=[]. OpenAI's documented schema
+        # (ResponseOutputTextParam) declares `annotations` as Required; the bare
+        # {"role":"assistant","content":"text"} shortcut works against the OpenAI
+        # API because their server normalizes for us, but the explicit form is the
+        # spec-correct wire payload and is accepted by every OpenAI-Responses-API
+        # provider that conforms to the documented schema.
+        if role == "assistant" and isinstance(content, str) and content:
+            return {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content, "annotations": []}],
+            }
+
         # Standard role/content message
         return {"role": role, "content": content}
 
