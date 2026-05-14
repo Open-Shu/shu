@@ -590,3 +590,99 @@ async def test_stream_variant_safety_net_catches_unhandled_exception() -> None:
     # SSE sanitization finding — generic copy in the safety net too).
     assert "drift" not in events[0].content.lower()
     assert "RuntimeError" not in events[0].content
+
+
+@pytest.mark.asyncio
+async def test_finalize_post_commit_reload_failure_does_not_trigger_rollback() -> None:
+    """SHU-759: if the post-commit reload select fails after a successful
+    commit, finalize must NOT route through the rollback / error-event
+    path. Data is already persisted; emitting an error event would
+    prompt the client to retry and produce duplicate Message rows +
+    double LLM billing.
+
+    Pre-fix the reload lived inside the outer rollback try/except, so a
+    failure on the post-commit `session.execute(select(Message)...)`
+    would log `phase=finalize_rollback` (false — nothing rolled back)
+    and emit an error SSE.
+
+    Post-fix the reload has its own inner try/except that falls back to
+    the in-memory `assistant_msg` (the pre-commit object). The
+    final_message event still ships; serialize_message_for_sse is
+    defensive about lazy relationships so the SSE payload is at most
+    degraded, never wrongly typed as an error.
+    """
+    # Build a session where:
+    #   - flush + conversation update + record + commit all succeed (the
+    #     reload runs AFTER commit, so all prior session.execute calls
+    #     need to succeed)
+    #   - the LAST session.execute call (the reload select) raises
+    integrity_err_unused: list = [None]  # commit succeeds
+    session = _build_mock_session(integrity_err_unused)
+
+    # Override execute to succeed on the regen-lineage selects then
+    # raise on the post-commit reload. The non-regen path has fewer
+    # pre-commit execute calls; the regen path has more. We mock the
+    # non-regen path for simplicity.
+    target_row = MagicMock()
+    reload_failure = RuntimeError("connection blip during post-commit reload")
+
+    call_count = {"n": 0}
+
+    async def execute_with_reload_failure(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        # Non-regen path: pre-commit calls are (1) conversation update.
+        # After commit the reload is the next execute. Anything past
+        # the conversation-update is the reload — fail it.
+        if call_count["n"] >= 2:
+            raise reload_failure
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none = MagicMock(return_value=target_row)
+        result_mock.scalar_one = MagicMock(return_value=target_row)
+        result_mock.all = MagicMock(return_value=[])
+        return result_mock
+
+    session.execute = AsyncMock(side_effect=execute_with_reload_failure)
+    factory = _FakeSessionFactory(session)
+
+    helper = _build_helper()
+    inputs = _build_inputs()
+    result = VariantStreamResult(
+        success=True,
+        full_content="hello",
+        metadata={"response_time_ms": 1.0},
+        usage={"input_tokens": 1, "output_tokens": 1, "cost": "0"},
+        model_name_for_event="test-model",
+        final_event_type="final_message",
+    )
+    queue = MagicMock()
+    queue.put = AsyncMock(return_value=None)
+    fake_recorder = MagicMock()
+    fake_recorder.record = AsyncMock(return_value=None)
+
+    with (
+        patch("shu.services.chat_streaming.get_async_session_local", return_value=factory),
+        patch("shu.services.chat_streaming.get_usage_recorder", return_value=fake_recorder),
+    ):
+        await helper._finalize_variant_phase(
+            variant_index=0,
+            inputs=inputs,
+            result=result,
+            queue=queue,
+            conversation_id="conv-id",
+            parent_message_id="root-id",
+            use_parent_as_message_id=False,
+            regen_lineage=None,
+        )
+
+    # Commit was reached — data IS persisted.
+    session.commit.assert_awaited_once()
+
+    # Exactly one event enqueued, and it must be a `final_message` (NOT
+    # an `error`). A reload failure on already-persisted data must not
+    # surface as an error to the client.
+    queue.put.assert_awaited_once()
+    enqueued_event = queue.put.call_args[0][0]
+    assert enqueued_event.type == "final_message", (
+        f"post-commit reload failure must NOT emit an error event "
+        f"(would cause client retry → duplicate rows); got {enqueued_event.type!r}"
+    )

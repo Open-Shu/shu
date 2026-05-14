@@ -711,18 +711,48 @@ class EnsembleStreamingHelper:
 
                         await session.commit()
 
-                        # Re-fetch with relationships eager-loaded so serialize_message_for_sse
-                        # doesn't trip MissingGreenlet on Message.model / .conversation / .attachments.
-                        stmt = (
-                            select(Message)
-                            .where(Message.id == assigned_message_id)
-                            .options(
-                                selectinload(Message.model),
-                                selectinload(Message.conversation),
-                                selectinload(Message.attachments),
+                        # SHU-759 (code review): the post-commit reload is wrapped
+                        # in its own try/except so a reload failure does NOT route
+                        # through the outer `finalize_rollback` handler. After
+                        # `session.commit()` the Message + LLMUsage rows are
+                        # already persisted; treating a reload error as a
+                        # rolled-back finalize would emit a misleading error
+                        # event and prompt the client to retry, producing
+                        # duplicate Message rows + double LLM billing.
+                        #
+                        # Fallback uses the in-memory `assistant_msg` we built
+                        # before the commit. `serialize_message_for_sse` is
+                        # defensive about lazy-loaded relationships (attachments
+                        # has its own try/except internally; the rest of the
+                        # serialized fields are scalar `getattr` accesses), so
+                        # the SSE event lands with at most degraded attachment
+                        # metadata — never a false rollback.
+                        try:
+                            stmt = (
+                                select(Message)
+                                .where(Message.id == assigned_message_id)
+                                .options(
+                                    selectinload(Message.model),
+                                    selectinload(Message.conversation),
+                                    selectinload(Message.attachments),
+                                )
                             )
-                        )
-                        assistant_msg_loaded = (await session.execute(stmt)).scalar_one()
+                            assistant_msg_loaded = (await session.execute(stmt)).scalar_one()
+                        except Exception as reload_exc:
+                            logger.warning(
+                                "Post-commit reload failed; emitting final_message "
+                                "with the flushed in-memory Message. Data was "
+                                "persisted successfully — only relationship "
+                                "metadata may be degraded in the SSE event.",
+                                extra={
+                                    "phase": "finalize_post_commit_reload_failed",
+                                    "conversation_id": conversation_id,
+                                    "variant_index": variant_index,
+                                    "error_type": type(reload_exc).__name__,
+                                },
+                                exc_info=True,
+                            )
+                            assistant_msg_loaded = assistant_msg
                     # exit retry loop on success
                     break
                 except IntegrityError as ie:
