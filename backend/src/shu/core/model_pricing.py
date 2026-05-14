@@ -61,11 +61,9 @@ _PRICING_PER_MTOK: dict[str, tuple[str, str]] = {
     "models/gemini-3-flash-preview":     ("0.50",  "3"),
     "models/gemini-3-pro-preview":       ("2",     "12"),
     "models/gemini-3-pro-image-preview": ("2",     "12"),
-    # --- Local / self-hosted ---
-    "gemma3:12b":                        ("0",     "0"),
-    "openai/gpt-oss-20b":               ("0",     "0"),
-    "openai/gpt-oss-120b":              ("0",     "0"),
-    "qwen/qwen3-vl-8b":                 ("0",     "0"),
+    "gemma-4-31B-it":                    ("0.18",   "0.50"),
+    # --- Open Source ---
+    "qwen3.5-397b-a17b":                 ("0.55",   "3.50"),
 }
 
 # Absolute per-unit pricing (e.g. per-page for OCR): (input, output)
