@@ -134,57 +134,45 @@ async def assert_subscription_active() -> None:
             grace_deadline=state.grace_deadline,
         )
 
-    # Open the session once and reuse for both the cancel-status check and
-    # (if applicable) the trial-cap DB query. The cancel-status read is
-    # unconditional because the cache alone can't tell us a cancel just
-    # happened: Stripe flips sub status to `canceled` synchronously on our
-    # cancel call → cache `is_trial=False` → enforcement would fall through
-    # to `return` before CP's webhook lands and disables the OR key. Local
-    # `subscription_status` is written inline by the cancel router and by
-    # the forwarded webhook, so it leads `openrouter_key_disabled` by one
-    # CP round-trip.
-    # TODO: lift `is_cancelled` (or full status) onto `BillingStateResponse`
-    # so this DB read can move back behind the `is_trial` guard. In fact, we should
-    # move all the fields that need to be loaded from the billing_row. That way
-    # they are cached and we reduce DB load.
+    if state.subscription_status == "canceled":
+        raise SubscriptionInactiveError(
+            payment_failed_at=state.payment_failed_at,
+            grace_deadline=state.grace_deadline,
+        )
+
+    if not state.is_trial:
+        return
+
+    # Trial-cap path: precise per-period DB query rather than reading
+    # `state.remaining_grant_amount` from the cache. The cache value is
+    # the snapshot CP held at last poll — too loose for trial-spend
+    # enforcement where minutes of overage are real cost the company eats.
+    # The period anchor (`current_period_start`) comes from the wire too,
+    # with the cache's period_end freshness guard ensuring the anchor is
+    # current right after Stripe rolls (trial conversion / cycle rollover).
+    if state.current_period_start is None:
+        # Fail-closed on missing period info: silent bypass would
+        # let unbounded trial spend through on a data anomaly.
+        raise TrialCapExhaustedError(
+            trial_deadline=state.trial_deadline,
+            total_grant_amount=state.total_grant_amount,
+        )
     session_local = get_async_session_local()
     async with session_local() as db:
-        billing_row = await BillingStateService.get(db)
-
-        if billing_row is not None and billing_row.subscription_status == "canceled":
-            raise SubscriptionInactiveError(
-                payment_failed_at=state.payment_failed_at,
-                grace_deadline=state.grace_deadline,
-            )
-
-        if not state.is_trial:
-            return
-
-        # Trial-cap path: precise per-period DB query rather than reading
-        # `state.remaining_grant_amount` from the cache. Cache is up to one
-        # TTL stale (default 500s) — too loose for trial-spend enforcement
-        # where minutes of overage are real cost the company eats.
-        if billing_row is None or billing_row.current_period_start is None:
-            # Fail-closed on missing period info: silent bypass would
-            # let unbounded trial spend through on a data anomaly.
-            raise TrialCapExhaustedError(
-                trial_deadline=state.trial_deadline,
-                total_grant_amount=state.total_grant_amount,
-            )
         summary = await UsageProviderImpl(db).get_usage_summary(
-            billing_row.current_period_start,
+            state.current_period_start,
             datetime.now(UTC),
         )
-        # `total_cost_usd` is raw provider cost; `total_grant_amount` is
-        # customer-billed (from CP/Stripe credit grant). Apply the markup
-        # before comparing so the trial-cap triggers on the billed dollar
-        # the customer would have been charged, not the raw provider dollar.
-        billed_cost = summary.total_cost_usd * resolve_markup(state)
-        if billed_cost >= state.total_grant_amount:
-            raise TrialCapExhaustedError(
-                trial_deadline=state.trial_deadline,
-                total_grant_amount=state.total_grant_amount,
-            )
+    # `total_cost_usd` is raw provider cost; `total_grant_amount` is
+    # customer-billed (from CP/Stripe credit grant). Apply the markup
+    # before comparing so the trial-cap triggers on the billed dollar
+    # the customer would have been charged, not the raw provider dollar.
+    billed_cost = summary.total_cost_usd * resolve_markup(state)
+    if billed_cost >= state.total_grant_amount:
+        raise TrialCapExhaustedError(
+            trial_deadline=state.trial_deadline,
+            total_grant_amount=state.total_grant_amount,
+        )
 
 
 @dataclass(frozen=True)
