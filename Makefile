@@ -137,13 +137,15 @@ compose-build-dev:
 
 # Docker Compose targets
 # - make up:           API + Postgres + Redis (backend only, inline workers)
-# - make up-full:      Full stack including frontend
-# - make up-dev:       Backend with hot-reload
-# - make up-full-dev:  Full stack with hot-reload backend
-# - make up-worker:    Dedicated worker (production)
-# - make up-worker-dev: Dedicated worker with hot-reload
+# - make up-full:           Full stack including frontend
+# - make up-dev:            Backend with hot-reload
+# - make up-full-dev:       Full stack with hot-reload backend
+# - make up-dev-slim:       Backend with hot-reload, slim image (external embedding only)
+# - make up-full-dev-slim:  Full stack with hot-reload backend, slim image
+# - make up-worker:         Dedicated worker (production)
+# - make up-worker-dev:     Dedicated worker with hot-reload
 
-.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps enable-bm25
+.PHONY: up up-full up-dev up-full-dev up-dev-slim up-full-dev-slim up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps enable-bm25
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -156,6 +158,16 @@ up-dev:
 
 up-full-dev:
 	docker compose -f $(COMPOSE_FILE) --profile dev up -d shu-api-dev shu-postgres shu-db-migrate redis shu-frontend-dev
+
+# Slim API image (no torch / sentence-transformers / pytesseract). Requires an
+# external embedding model registered in llm_models — slim bakes
+# SHU_LOCAL_EMBEDDING_ENABLED=false. Mutually exclusive with up-dev / up-full-dev
+# (port 8000 + shu-api-dev network alias). Run `make down` between switches.
+up-dev-slim:
+	docker compose -f $(COMPOSE_FILE) --profile dev-slim up -d shu-api-dev-slim shu-postgres shu-db-migrate redis
+
+up-full-dev-slim:
+	docker compose -f $(COMPOSE_FILE) --profile dev-slim --profile dev up -d shu-api-dev-slim shu-postgres shu-db-migrate redis shu-frontend-dev
 
 # Start dedicated worker (requires redis and db-migrate to be running)
 up-worker:
@@ -179,8 +191,8 @@ up-dev-split:
 	SHU_WORKERS_ENABLED=false docker compose -f $(COMPOSE_FILE) --profile dev --profile workers up -d shu-api-dev shu-postgres shu-db-migrate redis shu-worker-ingestion shu-worker-llm shu-worker-maintenance
 
 down:
-	docker compose -f $(COMPOSE_FILE) --profile dev --profile frontend --profile worker --profile worker-dev --profile workers down --remove-orphans || true
-	-docker rm -f shu-frontend shu-frontend-dev shu-api-dev shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
+	docker compose -f $(COMPOSE_FILE) --profile dev --profile dev-slim --profile frontend --profile worker --profile worker-dev --profile workers down --remove-orphans || true
+	-docker rm -f shu-frontend shu-frontend-dev shu-api-dev shu-api-dev-slim shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
 
 logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
