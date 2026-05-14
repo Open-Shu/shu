@@ -98,7 +98,7 @@ PyYAML==6.0.3  # YAML processing for experience import/export
 # to skip them. Pillow and OpenCV stay here because they preprocess images
 # before sending to the recognition engine regardless of where that engine
 # runs.
-Pillow==12.1.1  # Image preprocessing
+Pillow==12.2.0  # Image preprocessing (12.2.0 includes security fixes vs 12.1.1)
 opencv-python-headless==4.12.0.88  # Advanced image preprocessing (headless for server/Docker)
 
 # Primary OCR engine - PaddleOCR (best for legal documents and tables)

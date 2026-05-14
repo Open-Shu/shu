@@ -6,11 +6,12 @@ This guide covers deployment patterns, worker modes, scaling strategies, and pro
 
 1. [Deployment Modes Overview](#deployment-modes-overview)
 2. [Worker Architecture](#worker-architecture)
-3. [Docker Compose Deployment](#docker-compose-deployment)
-4. [Kubernetes Deployment](#kubernetes-deployment)
-5. [Environment Variables Reference](#environment-variables-reference)
-6. [Scaling Patterns](#scaling-patterns)
-7. [Troubleshooting](#troubleshooting)
+3. [Container Images](#container-images)
+4. [Docker Compose Deployment](#docker-compose-deployment)
+5. [Kubernetes Deployment](#kubernetes-deployment)
+6. [Environment Variables Reference](#environment-variables-reference)
+7. [Scaling Patterns](#scaling-patterns)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 

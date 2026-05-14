@@ -124,7 +124,7 @@ publish-runner: _require-registry build-runner
 	docker push $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA)
 	docker push $(REGISTRY)/shu-runner:latest
 
-publish-all: publish-api publish-fe publish-runner
+publish-all: publish-api publish-api-slim publish-fe publish-runner
 
 # Docker Compose build targets
 # Note: Docker Compose v2 uses buildx by default, no explicit builder management needed
