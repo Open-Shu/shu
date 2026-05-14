@@ -33,7 +33,7 @@ from pydantic import (
 )
 from pydantic.dataclasses import dataclass
 
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementSet, LimitSet
 from shu.billing.router_envelope import (
     SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
@@ -71,15 +71,32 @@ class BillingState:
     # Design Component 3a; pairs with the router fallback path.
     remaining_grant_amount: Annotated[Decimal | None, Field(ge=0)]
     seat_price_usd: Annotated[Decimal, Field(ge=0)]
-    # Customer-billed markup applied to raw provider cost. Today CP does not
-    # send this — the tenant attaches it post-fetch inside `BillingStateCache`
-    # from the metered Price's `unit_amount_decimal`. Wire-shaped this way
-    # (Decimal | None, default None) so when CP starts shipping it the tenant
-    # picks it up automatically — `extra="ignore"` covers the rollout window.
-    # `None` is the "compute / default locally" signal; see `resolve_markup`.
+    # Per-tier integer caps with optional per-tenant overrides, resolved CP-side.
+    # Zero default (LimitSet()) covers older CP releases that don't ship the
+    # field yet — fail-closed quota until CP starts emitting it.
+    limits: LimitSet = LimitSet()
+    # Stripe subscription status / period, lifted from tenant-side direct
+    # Stripe reads (SHU-774). None when CP has no Shu-managed billable
+    # subscription — the conservative fallback in CP's EntitlementsService.
+    subscription_status: str | None = None
+    current_period_start: AwareDatetime | None = None
+    current_period_end: AwareDatetime | None = None
+    cancel_at_period_end: StrictBool = False
+    canceled_at: AwareDatetime | None = None
+    # Customer-billed markup applied to raw provider cost. CP computes this
+    # from the metered Price's unit_amount_decimal. `None` is the "no metered
+    # item / tiered pricing" signal; consumers fall back to the configured
+    # default via `resolve_markup`.
     usage_markup_multiplier: Annotated[Decimal | None, Field(gt=0)] = None
 
-    @field_validator("payment_failed_at", "trial_deadline", mode="before")
+    @field_validator(
+        "payment_failed_at",
+        "trial_deadline",
+        "current_period_start",
+        "current_period_end",
+        "canceled_at",
+        mode="before",
+    )
     @classmethod
     def _reject_unix_timestamp(cls, v: object) -> object:
         # AwareDatetime in lax mode coerces Unix timestamps (int/float) to
@@ -88,8 +105,6 @@ class BillingState:
         # through. bool is a subclass of int, but AwareDatetime rejects it
         # downstream so no special-casing here.
         if isinstance(v, (int, float)) and not isinstance(v, bool):
-            # Generic message because this validator now applies to both
-            # payment_failed_at and trial_deadline.
             raise TypeError(f"datetime field must be ISO string or datetime, not {type(v).__name__}")
         return v
 
@@ -130,6 +145,14 @@ HEALTHY_DEFAULT = BillingState(
     # computation returns 0 — consistent with the fail-closed posture.
     remaining_grant_amount=None,
     seat_price_usd=Decimal(0),
+    limits=LimitSet(),
+    # No subscription known at cold-start — leaves the cancel check
+    # (`subscription_status == "canceled"`) inert until a real poll lands.
+    subscription_status=None,
+    current_period_start=None,
+    current_period_end=None,
+    cancel_at_period_end=False,
+    canceled_at=None,
     # Cold-start carries no Stripe-derived markup; consumers fall back to
     # `BillingSettings.usage_markup_multiplier_default` via `resolve_markup`.
     usage_markup_multiplier=None,

@@ -101,14 +101,12 @@ def _make_cache(
     ttl: int = _TTL,
     clock: Callable[[], datetime] | None = None,
     persister: MagicMock | None = None,
-    markup_fetcher: Callable[[], object] | None = None,
 ) -> BillingStateCache:
     return BillingStateCache(
         client=client,
         ttl_seconds=ttl,
         clock=clock if clock is not None else lambda: _T0,
         persister=persister,
-        markup_fetcher=markup_fetcher,
     )
 
 
@@ -549,112 +547,85 @@ async def test_invalidate_serializes_with_in_flight_fetch() -> None:
     assert fetch_count == 2
 
 
-# Markup attachment — CP doesn't ship `usage_markup_multiplier` yet, so the
-# cache fetches it from Stripe on each refresh and stitches it onto the
-# returned BillingState. The CP-shipped-value branch is forward-compat for
-# the eventual migration: if CP starts sending a value, the cache leaves
-# it alone.
+# Period-end freshness guard (SHU-774): the cache forces a refetch once the
+# wire's stated current_period_end has elapsed, even if the TTL clock says we
+# are still within the success window. Closes the false-block race at trial
+# auto-conversion / cycle rollover where Stripe has rolled but the cache
+# hasn't refreshed yet.
 
 
-@pytest.mark.asyncio
-async def test_markup_fetcher_value_is_attached_to_state() -> None:
-    raw = _state()  # usage_markup_multiplier defaults to None
-    client = _stub_client(return_values=[raw])
-    fetcher = AsyncMock(return_value=Decimal("1.5"))
-
-    result = await _make_cache(client, markup_fetcher=fetcher).get()
-
-    assert result.usage_markup_multiplier == Decimal("1.5")
-    fetcher.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_markup_fetcher_none_falls_back_to_configured_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No metered item / tiered pricing → fetcher returns None. The cache
-    resolves to the configured default so consumers reading off cached
-    state never see None; the consumer-side helper is reserved for the
-    HEALTHY_DEFAULT paths the cache doesn't touch.
-    """
-    from shu.billing.config import get_billing_settings
-
-    monkeypatch.setattr(
-        get_billing_settings(), "usage_markup_multiplier_default", Decimal("1.4")
-    )
-    raw = _state()
-    client = _stub_client(return_values=[raw])
-    fetcher = AsyncMock(return_value=None)
-
-    result = await _make_cache(client, markup_fetcher=fetcher).get()
-
-    assert result.usage_markup_multiplier == Decimal("1.4")
-
-
-@pytest.mark.asyncio
-async def test_markup_fetcher_stripe_error_falls_back_to_configured_default(
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A Stripe blip shouldn't take down the whole billing-state refresh —
-    the CP payload is still authoritative for everything else, and the
-    markup field is filled with the configured default.
-    """
-    from shu.billing.config import get_billing_settings
-    from shu.billing.stripe_client import StripeClientError
-
-    monkeypatch.setattr(
-        get_billing_settings(), "usage_markup_multiplier_default", Decimal("1.4")
-    )
-    raw = _state(disabled=True)
-    client = _stub_client(return_values=[raw])
-    fetcher = AsyncMock(side_effect=StripeClientError("stripe down"))
-
-    with caplog.at_level(logging.WARNING, logger=_CACHE_LOGGER):
-        result = await _make_cache(client, markup_fetcher=fetcher).get()
-
-    assert result.openrouter_key_disabled is True
-    assert result.usage_markup_multiplier == Decimal("1.4")
-    assert any("markup fetch failed" in record.getMessage() for record in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_no_markup_fetcher_preserves_state_unchanged() -> None:
-    """Self-hosted / dev path: no Stripe configured → no fetcher passed in.
-    State flows through untouched (no default substituted) — preserving the
-    cold-start wire shape so the consumer-side helper can apply the default
-    consistently across both no-cache and no-fetcher paths.
-    """
-    raw = _state()
-    client = _stub_client(return_values=[raw])
-
-    result = await _make_cache(client, markup_fetcher=None).get()
-
-    assert result == raw
-
-
-@pytest.mark.asyncio
-async def test_cp_supplied_markup_is_not_overwritten_by_fetcher() -> None:
-    """Forward-compat with the eventual CP migration: once CP sends the
-    markup on the wire, the fetcher path should become a no-op rather
-    than clobbering the CP value.
-    """
-    cp_value = BillingState(
+def _state_with_period_end(period_end: datetime, *, is_trial: bool = True) -> BillingState:
+    return BillingState(
         openrouter_key_disabled=False,
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
+        is_trial=is_trial,
         trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
-        usage_markup_multiplier=Decimal("1.7"),
+        current_period_start=_T0,
+        current_period_end=period_end,
     )
-    client = _stub_client(return_values=[cp_value])
-    fetcher = AsyncMock(return_value=Decimal("1.5"))
 
-    result = await _make_cache(client, markup_fetcher=fetcher).get()
 
-    assert result.usage_markup_multiplier == Decimal("1.7")
-    fetcher.assert_not_called()
+@pytest.mark.asyncio
+async def test_crossing_current_period_end_forces_refetch_within_ttl() -> None:
+    """Within TTL but past `current_period_end` → refetch even though
+    `_last_success_at + TTL` hasn't elapsed yet.
+    """
+    period_end = _T0 + timedelta(seconds=30)
+    pre = _state_with_period_end(period_end=period_end)
+    # Post-rollover wire — Stripe has rolled, CP has the new period_end.
+    post = _state_with_period_end(period_end=period_end + timedelta(days=30), is_trial=False)
+    client = _stub_client(return_values=[pre, post])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == pre  # cold-start fetch @ T0
+    # T+40s: TTL=60 hasn't elapsed yet, but period_end was 30s in.
+    clock.advance(timedelta(seconds=40))
+    assert await cache.get() == post
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_period_end_guard_does_not_trigger_tight_loop_when_cp_lags() -> None:
+    """If CP itself hasn't processed Stripe's rollover yet, the refetch
+    returns the SAME (still-old) period_end. The cache must not keep
+    refetching every call — TTL takes over as the floor.
+    """
+    period_end = _T0 + timedelta(seconds=30)
+    stale = _state_with_period_end(period_end=period_end)
+    # CP returns the same stale state on the second fetch.
+    client = _stub_client(return_values=[stale, stale])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == stale  # @ T0
+    clock.advance(timedelta(seconds=40))  # past period_end, within TTL
+    assert await cache.get() == stale  # forced refetch returns same data
+    # The forced refetch updated last_success_at; the next call is within
+    # the (newly-anchored) TTL window AND `last_success_at > period_end`
+    # so the period-end guard does NOT fire — no third fetch.
+    clock.advance(timedelta(seconds=5))
+    assert await cache.get() == stale
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_period_end_guard_inert_when_period_end_is_none() -> None:
+    """Cold-start / no-subscription paths leave current_period_end at None.
+    The freshness check must skip the guard rather than divide-by-None.
+    """
+    raw = _state()  # current_period_end defaults to None
+    client = _stub_client(return_values=[raw])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    assert await cache.get() == raw
+    clock.advance(timedelta(seconds=_TTL // 2))  # within TTL
+    # Same state, served from cache — no second fetch.
+    assert await cache.get() == raw
+    assert client.fetch_billing_state.await_count == 1

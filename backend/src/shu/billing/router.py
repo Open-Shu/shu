@@ -10,9 +10,7 @@ The router is designed to be mounted at /api/v1/billing.
 
 from __future__ import annotations
 
-import asyncio
 import json
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated
@@ -28,9 +26,6 @@ from shu.auth.rbac import get_current_user, require_admin
 from shu.billing.adapters import (
     UsageProviderImpl,
     create_cycle_rollover_callback,
-    create_payment_failed_callback,
-    create_payment_recovered_callback,
-    create_subscription_persistence_callback,
     get_active_user_count,
     get_billing_config,
 )
@@ -48,7 +43,6 @@ from shu.billing.seat_service import (
     get_seat_service,
 )
 from shu.billing.service import BillingService, CustomerMismatchError
-from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient, StripeClientError
 from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
@@ -125,45 +119,6 @@ async def get_portal_session(
 # =============================================================================
 
 
-async def _safe_fetch_included_usd(stripe_client: StripeClient | None, customer_id: str | None) -> float | None:
-    """Active credit-grant total for the admin dashboard's "Included Allowance"
-    tile. Display-only — failing falls the frontend back to a client-side
-    seats x $50 estimate, so don't 502 the whole subscription endpoint over a
-    non-critical field. Returns None when Stripe isn't configured, no customer
-    is set, or the call fails.
-    """
-    if customer_id is None or stripe_client is None:
-        return None
-    try:
-        return float(await stripe_client.get_active_credit_grant_total_usd(customer_id))
-    except StripeClientError as e:
-        logger.warning(
-            "Failed to fetch credit grants; allowance falls back to client-side estimate",
-            extra={"customer_id": customer_id, "error": str(e)},
-        )
-        return None
-
-
-async def _safe_fetch_markup_multiplier(
-    stripe_client: StripeClient | None, subscription_id: str | None
-) -> float | None:
-    """Customer-billed markup ratio derived from the metered Price's
-    unit_amount_decimal. Same display-only contract as included_usd:
-    log + null on failure, frontend falls back to a constant.
-    """
-    if subscription_id is None or stripe_client is None:
-        return None
-    try:
-        markup = await stripe_client.get_subscription_markup_multiplier(subscription_id)
-        return float(markup) if markup is not None else None
-    except StripeClientError as e:
-        logger.warning(
-            "Failed to fetch usage markup; falls back to client-side constant",
-            extra={"subscription_id": subscription_id, "error": str(e)},
-        )
-        return None
-
-
 async def _resolve_remaining_grant_amount(db: AsyncSession, state: BillingState) -> Decimal:
     """Resolve the displayed `remaining_grant_amount` for the response.
 
@@ -188,8 +143,7 @@ async def _resolve_remaining_grant_amount(db: AsyncSession, state: BillingState)
     if not state.is_trial:
         return Decimal(0)
 
-    billing_row = await BillingStateService.get(db)
-    if billing_row is None or billing_row.current_period_start is None:
+    if state.current_period_start is None:
         # No period anchor → can't attribute usage to "this period."
         # Fall back to the full grant: the banner shows the budget as
         # untouched, which is the right starting state before the first
@@ -197,7 +151,7 @@ async def _resolve_remaining_grant_amount(db: AsyncSession, state: BillingState)
         return state.total_grant_amount
 
     summary = await UsageProviderImpl(db).get_usage_summary(
-        billing_row.current_period_start,
+        state.current_period_start,
         datetime.now(UTC),
     )
     billed_cost = summary.total_cost_usd * resolve_markup(state)
@@ -227,7 +181,6 @@ async def get_subscription_status(
 
     user_limit = 0
     target_quantity = 0
-    stripe_client: StripeClient | None = None
     if subscription_id and settings.is_configured:
         try:
             stripe_client = StripeClient(settings)
@@ -245,10 +198,17 @@ async def get_subscription_status(
     state = await get_current_billing_state()
 
     # CP returns `remaining_grant_amount=None` during trial — Stripe's
-    # grant balance is useless because Stripe
-    # doesn't bill metered usage during `trialing`. Fill in the displayed
-    # remaining from local usage so the frontend always receives a number.
+    # grant balance is useless because Stripe doesn't bill metered usage
+    # during `trialing`. Fill in the displayed remaining from local usage
+    # so the frontend always receives a number.
     remaining_grant_amount = await _resolve_remaining_grant_amount(db, state)
+
+    # Markup is shipped on the wire by CP (SHU-774). When it's None (no
+    # metered item, or tiered price without unit_amount_decimal), the
+    # frontend falls back to the configured constant.
+    usage_markup_multiplier = (
+        float(state.usage_markup_multiplier) if state.usage_markup_multiplier is not None else None
+    )
 
     payload: dict = {
         "user_count": user_count,
@@ -266,28 +226,19 @@ async def get_subscription_status(
         "remaining_grant_amount": str(remaining_grant_amount),
         "seat_price_usd": str(state.seat_price_usd),
         "entitlements": state.entitlements.model_dump(),
+        "limits": state.limits.model_dump(),
     }
 
     if user.can_manage_users():
-        # Two display-only Stripe lookups run concurrently — neither depends on
-        # the other and each can return None on failure (callers degrade to
-        # client-side fallbacks). Sequential awaits doubled admin-dashboard
-        # load latency for no reason.
-        customer_id = billing_config.get("stripe_customer_id")
-        included_usd_per_period, usage_markup_multiplier = await asyncio.gather(
-            _safe_fetch_included_usd(stripe_client, customer_id),
-            _safe_fetch_markup_multiplier(stripe_client, subscription_id),
-        )
-
         payload.update(
             {
                 "stripe_customer_id": billing_config.get("stripe_customer_id"),
                 "stripe_subscription_id": billing_config.get("stripe_subscription_id"),
-                "subscription_status": billing_config.get("subscription_status", "pending"),
-                "current_period_start": billing_config.get("current_period_start"),
-                "current_period_end": billing_config.get("current_period_end"),
-                "cancel_at_period_end": billing_config.get("cancel_at_period_end", False),
-                "included_usd_per_period": included_usd_per_period,
+                "subscription_status": state.subscription_status,
+                "current_period_start": state.current_period_start.isoformat() if state.current_period_start else None,
+                "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
+                "cancel_at_period_end": state.cancel_at_period_end,
+                "canceled_at": state.canceled_at.isoformat() if state.canceled_at else None,
                 "usage_markup_multiplier": usage_markup_multiplier,
             }
         )
@@ -305,7 +256,6 @@ async def _post_trial_action(
     action: str,
     user: User,
     cp_call,
-    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> JSONResponse:
     """Run a trial-action POST to CP and invalidate the billing cache.
 
@@ -315,12 +265,6 @@ async def _post_trial_action(
     success so the next billing-state poll reflects the new state.
     Every exit path emits a structured `billing.tier_change` audit log
     so destructive billing actions leave a trail per R12.AC3.
-
-    `on_success` runs BEFORE cache invalidation so any authoritative
-    local write (e.g., cancel-trial's `subscription_status="canceled"`)
-    is durable by the time the next billing-state read can hit. Reversed
-    ordering would let a concurrent get() repopulate the cache with the
-    pre-action CP value before the DB row catches up.
     """
     # Tenant doesn't have the Stripe subscription id at this layer — CP
     # holds it. Kept on the audit shape with None so future enrichment
@@ -378,19 +322,6 @@ async def _post_trial_action(
         )
         raise
 
-    if on_success is not None:
-        # Caller-supplied write runs BEFORE the cache invalidate (see above).
-        # Failures here are best-effort: the CP-driven webhook is the
-        # steady-state catch-up path, so a transient DB blip shouldn't
-        # fail the response or skip the audit log.
-        try:
-            await on_success()
-        except Exception:
-            logger.warning(
-                "trial-action on_success hook failed; webhook will catch up",
-                exc_info=True,
-            )
-
     await cache.invalidate()
     logger.info(
         "billing.tier_change",
@@ -421,27 +352,15 @@ async def upgrade_now(
 )
 async def cancel_trial(
     user: Annotated[User, Depends(require_admin)],
-    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> JSONResponse:
-    # Authoritative local write for the cancel we just performed: closes the
-    # window between Stripe flipping the sub to `canceled` (which makes the
-    # cached `is_trial` go False on the next poll) and the forwarded
-    # `subscription.deleted` webhook landing here to write the same value.
-    # Routed through `on_success` so the write lands BEFORE the cache invalidate
-    # — otherwise a concurrent get() could repopulate cache from CP with the
-    # pre-cancel state and `assert_subscription_active` would fall through.
-    async def _write_canceled_status() -> None:
-        await BillingStateService.update(
-            db,
-            updates={"subscription_status": "canceled"},
-            source="api:cancel-trial",
-        )
-
+    # CP is now the single source of truth for `subscription_status`
+    # (SHU-774). The cache invalidate inside `_post_trial_action` forces
+    # the next read to refetch from CP, which by then has the canceled
+    # state — no local DB write needed.
     return await _post_trial_action(
         action="cancel-trial",
         user=user,
         cp_call=lambda c: c.post_cancel_subscription(),
-        on_success=_write_canceled_status,
     )
 
 
@@ -658,9 +577,6 @@ async def handle_webhook(
     event = stripe.Event.construct_from(event_payload, stripe.api_key)
 
     try:
-        persist_subscription = await create_subscription_persistence_callback(db)
-        on_payment_failed = await create_payment_failed_callback(db)
-        on_payment_recovered = await create_payment_recovered_callback(db)
         # seat_service is only None when billing isn't configured. Webhooks
         # shouldn't reach an unconfigured tenant in practice, but guard so
         # the type matches reality and we don't NPE if the router is
@@ -671,9 +587,6 @@ async def handle_webhook(
 
         _handled, event_type, event_id = await service.handle_webhook(
             event=event,
-            persist_subscription=persist_subscription,
-            on_payment_failed=on_payment_failed,
-            on_payment_recovered=on_payment_recovered,
             on_cycle_rollover=on_cycle_rollover,
             expected_customer_id=expected_customer_id,
         )

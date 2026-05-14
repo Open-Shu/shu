@@ -218,10 +218,9 @@ class TestAssertSubscriptionActive:
     @pytest.mark.asyncio
     async def test_healthy_default_in_cache_fails_closed_via_trial_cap(self, install_stub_cache):
         """Cold-start CP outage on a configured tenant: cache hands out
-        `HEALTHY_DEFAULT`, which has `is_trial=True` and
-        `total_grant_amount=0` (Task 10.1 fail-closed posture). The
-        trial-cap branch must trip the moment we enter it, even with
-        zero recorded usage, because `0 >= 0` is true.
+        `HEALTHY_DEFAULT`, which has `is_trial=True` and no period anchor
+        (Task 10.1 fail-closed posture). The trial-cap branch trips on the
+        missing-period-start guard before any usage query runs.
 
         Distinct from `test_no_cache_does_not_raise` — that's the
         self-hosted bypass (cache singleton missing). This one is the
@@ -229,13 +228,8 @@ class TestAssertSubscriptionActive:
         """
         install_stub_cache(HEALTHY_DEFAULT)
 
-        with (
-            patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
-            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("0"))),
-        ):
-            with pytest.raises(TrialCapExhaustedError):
-                await assert_subscription_active()
+        with pytest.raises(TrialCapExhaustedError):
+            await assert_subscription_active()
 
     @pytest.mark.asyncio
     async def test_within_grace_does_not_raise(self, install_stub_cache):
@@ -243,9 +237,8 @@ class TestAssertSubscriptionActive:
 
         CP only flips `openrouter_key_disabled=True` after grace ends, so
         a populated `payment_failed_at` with the flag still false is the
-        normal in-grace state. The local billing row is stubbed with
-        `subscription_status="active"` so the cancel gate doesn't trip
-        on real-DB contents under the test process.
+        normal in-grace state. `subscription_status="active"` ensures the
+        cancel gate doesn't trip.
         """
         install_stub_cache(
             BillingState(
@@ -258,14 +251,11 @@ class TestAssertSubscriptionActive:
                 total_grant_amount=Decimal(0),
                 remaining_grant_amount=Decimal(0),
                 seat_price_usd=Decimal(0),
+                subscription_status="active",
             )
         )
 
-        with (
-            patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(subscription_status="active"))),
-        ):
-            await assert_subscription_active()
+        await assert_subscription_active()
 
     @pytest.mark.asyncio
     async def test_disabled_key_raises_with_computed_deadline(self, install_stub_cache):
@@ -298,12 +288,11 @@ class TestAssertSubscriptionActive:
 
 # Trial-cap branch — `assert_subscription_active` opens a short-lived
 # session via `get_async_session_local()` only when `state.is_trial=True`,
-# queries `BillingStateService.get` for the period start, then aggregates
-# `LLMUsage` totals via `UsageProviderImpl.get_usage_summary`. Patches
-# below mock those three touchpoints so the tests don't need a real DB.
+# then aggregates `LLMUsage` totals via `UsageProviderImpl.get_usage_summary`
+# anchored on the wire's `current_period_start`. Patches below mock those two
+# touchpoints (DB session + usage provider) so the tests don't need a real DB.
 
 _P_SESSION_LOCAL = "shu.billing.enforcement.get_async_session_local"
-_P_BILLING_STATE_GET = "shu.billing.enforcement.BillingStateService.get"
 _P_USAGE_PROVIDER = "shu.billing.enforcement.UsageProviderImpl"
 
 
@@ -311,6 +300,8 @@ def _trialing_state(
     *,
     total_grant: Decimal = Decimal("50.00"),
     usage_markup_multiplier: Decimal | None = Decimal("1.0"),
+    current_period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC),
+    subscription_status: str | None = "trialing",
 ) -> BillingState:
     # Default markup=1.0 keeps existing assertions in raw-dollar terms.
     # The markup-aware test class below passes an explicit multiplier
@@ -326,6 +317,8 @@ def _trialing_state(
         remaining_grant_amount=total_grant,
         seat_price_usd=Decimal("20.00"),
         usage_markup_multiplier=usage_markup_multiplier,
+        current_period_start=current_period_start,
+        subscription_status=subscription_status,
     )
 
 
@@ -364,20 +357,6 @@ def _usage_provider_returning(total_cost: Decimal) -> MagicMock:
     return cls
 
 
-def _billing_row(
-    *,
-    period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC),
-    subscription_status: str = "trialing",
-):
-    # `subscription_status` defaults to a non-canceled value so existing tests
-    # exercise the trial-cap branch instead of short-circuiting on the cancel
-    # gate. Tests targeting the cancel gate pass `subscription_status="canceled"`.
-    row = MagicMock()
-    row.current_period_start = period_start
-    row.subscription_status = subscription_status
-    return row
-
-
 class TestAssertSubscriptionActiveTrialCap:
     """Trial-cap branch of the consolidated assertion."""
 
@@ -396,22 +375,19 @@ class TestAssertSubscriptionActiveTrialCap:
             total_grant_amount=Decimal(0),
             remaining_grant_amount=Decimal(0),
             seat_price_usd=Decimal(0),
+            subscription_status="active",
         ))
 
-        with (
-            patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(subscription_status="active"))),
-        ):
+        # No session needed — non-trial short-circuits before the usage query.
+        with patch(_P_SESSION_LOCAL) as session_local:
             await assert_subscription_active()
+            session_local.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_canceled_subscription_status_raises_subscription_inactive(self, install_stub_cache):
-        """Regression for the cancel-trial race: Stripe flips the sub to
-        `canceled` synchronously on our cancel call, which makes the cached
-        `is_trial` go False on the next CP poll, but CP's webhook to disable
-        the OR key lags by one round-trip. The local `subscription_status`
-        gate must catch this window — written inline by the cancel router
-        and by the forwarded webhook.
+        """Wire-side `subscription_status == "canceled"` must raise even when
+        `openrouter_key_disabled` hasn't flipped yet (CP webhook lag). Source
+        of truth lifted to CP in SHU-774.
         """
         install_stub_cache(HEALTHY_DEFAULT.__class__(
             openrouter_key_disabled=False,
@@ -423,14 +399,11 @@ class TestAssertSubscriptionActiveTrialCap:
             total_grant_amount=Decimal(0),
             remaining_grant_amount=Decimal(0),
             seat_price_usd=Decimal(0),
+            subscription_status="canceled",
         ))
 
-        with (
-            patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(subscription_status="canceled"))),
-        ):
-            with pytest.raises(SubscriptionInactiveError) as exc_info:
-                await assert_subscription_active()
+        with pytest.raises(SubscriptionInactiveError) as exc_info:
+            await assert_subscription_active()
 
         assert exc_info.value.error_code == "subscription_inactive"
 
@@ -440,7 +413,6 @@ class TestAssertSubscriptionActiveTrialCap:
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("12.34"))),
         ):
             await assert_subscription_active()
@@ -455,7 +427,6 @@ class TestAssertSubscriptionActiveTrialCap:
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("50.00"))),
         ):
             with pytest.raises(TrialCapExhaustedError) as exc_info:
@@ -468,35 +439,15 @@ class TestAssertSubscriptionActiveTrialCap:
         assert err.details["total_grant_amount"] == "50.00"
 
     @pytest.mark.asyncio
-    async def test_missing_billing_row_fails_closed(self, install_stub_cache):
-        """Data anomaly: trialing state but no `billing_state` row. Silent
-        bypass would let unbounded trial spend through, so we treat this
-        as exhausted.
-        """
-        install_stub_cache(_trialing_state())
-
-        with (
-            patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=None)),
-            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("0"))),
-        ):
-            with pytest.raises(TrialCapExhaustedError):
-                await assert_subscription_active()
-
-    @pytest.mark.asyncio
     async def test_missing_period_start_fails_closed(self, install_stub_cache):
-        """Same fail-closed logic when the row exists but `current_period_start`
-        is None — usage summary needs a period boundary, can't compute.
+        """Wire-side `current_period_start` is None — usage summary needs a
+        period boundary, can't compute. Silent bypass would let unbounded
+        trial spend through, so we treat this as exhausted.
         """
-        install_stub_cache(_trialing_state())
+        install_stub_cache(_trialing_state(current_period_start=None))
 
-        with (
-            patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row(period_start=None))),
-            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("0"))),
-        ):
-            with pytest.raises(TrialCapExhaustedError):
-                await assert_subscription_active()
+        with pytest.raises(TrialCapExhaustedError):
+            await assert_subscription_active()
 
     @pytest.mark.asyncio
     async def test_payment_failure_takes_precedence_over_trial_cap(self, install_stub_cache):
@@ -550,7 +501,6 @@ class TestAssertSubscriptionActiveTrialCap:
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
         ):
             with pytest.raises(TrialCapExhaustedError):
@@ -570,7 +520,6 @@ class TestAssertSubscriptionActiveTrialCap:
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("10.00"))),
         ):
             await assert_subscription_active()
@@ -600,7 +549,6 @@ class TestAssertSubscriptionActiveTrialCap:
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_billing_row())),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
         ):
             with pytest.raises(TrialCapExhaustedError):

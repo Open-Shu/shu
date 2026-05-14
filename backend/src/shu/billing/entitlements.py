@@ -40,6 +40,20 @@ class EntitlementSet(BaseModel):
     mcp_servers: bool = False
 
 
+class LimitSet(BaseModel):
+    """Per-tier integer caps, resolved CP-side from tier baseline + per-tenant overrides.
+
+    Mirrors `shu-control-plane/.../billing/entitlements.py:LimitSet`. Defaults
+    are 0 so a cold-start / fallback wire shape fails closed — a tenant whose
+    state we don't yet know shouldn't get unbounded quota.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    document_count_limit: int = 0
+    kb_count_limit: int = 0
+
+
 class EntitlementDeniedError(ShuException):
     """Raised when a tenant's effective entitlement set does not include
     the key required by a backend route.

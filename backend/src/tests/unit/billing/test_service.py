@@ -140,7 +140,13 @@ class TestWebhookCustomerScoping:
 
     @pytest.mark.asyncio
     async def test_accepts_event_for_matching_customer(self):
-        """Webhook for the correct customer should be processed."""
+        """Webhook for the correct customer should be processed.
+
+        Post-SHU-774 the only remaining callback is `on_cycle_rollover`
+        (seat-rollover side-effect). Subscription/payment status
+        persistence was lifted to CP; this test confirms the customer
+        scoping still admits matching events into dispatch.
+        """
         client = _make_client()
         event = MagicMock()
         event.type = "customer.subscription.updated"
@@ -155,17 +161,14 @@ class TestWebhookCustomerScoping:
             current_period_end=MagicMock(),
         )
 
-        persist_sub = AsyncMock()
         service = BillingService(_make_settings(), stripe_client=client)
 
-        handled, event_type, event_id = await service.handle_webhook(
+        handled, _event_type, _event_id = await service.handle_webhook(
             event=event,
-            persist_subscription=persist_sub,
             expected_customer_id="cus_mine",
         )
 
         assert handled is True
-        persist_sub.assert_awaited_once()
 
 class TestReportUsageToStripe:
     """Tests for cost delta reporting contract."""
@@ -651,15 +654,15 @@ class TestWebhookGuard:
         event.type = "customer.subscription.updated"
         event.id = "evt_123"
 
-        persist_sub = AsyncMock()
+        rollover_cb = AsyncMock()
         service = BillingService(_make_settings(), stripe_client=client)
 
         handled, event_type, _ = await service.handle_webhook(
             event=event,
-            persist_subscription=persist_sub,
+            on_cycle_rollover=rollover_cb,
             expected_customer_id=None,  # misconfigured — SHU_STRIPE_CUSTOMER_ID not set
         )
 
         assert handled is False
         assert event_type == "customer.subscription.updated"
-        persist_sub.assert_not_awaited()
+        rollover_cb.assert_not_awaited()

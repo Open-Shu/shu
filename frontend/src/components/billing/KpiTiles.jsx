@@ -103,12 +103,14 @@ function KpiTiles({ usageQuery, subscriptionQuery }) {
   const markupPercent = Math.round((markup - 1) * 100);
   const billedCost = usageCost !== null ? usageCost * markup : null;
 
-  // Prefer the live Stripe credit-grant total when the API exposes it;
-  // fall back to the seats × $50 estimate when the API doesn't supply a
-  // positive value (no grants issued yet, Stripe error, missing field —
-  // any reason the allowance can't be determined from Stripe).
-  const apiAllowance = isPeriodUnknown ? null : subscriptionData.included_usd_per_period;
-  const allowanceFromApi = typeof apiAllowance === 'number' && apiAllowance > 0;
+  // CP ships the active credit-grant total on `total_grant_amount` (SHU-774;
+  // previously the tenant fetched it from Stripe as `included_usd_per_period`).
+  // String on the wire — parse to number; fall back to the seats × $50
+  // estimate when CP hasn't shipped a positive value (no grants issued yet,
+  // cold-start default, etc.).
+  const apiAllowanceRaw = isPeriodUnknown ? null : subscriptionData.total_grant_amount;
+  const apiAllowance = apiAllowanceRaw !== null ? Number(apiAllowanceRaw) : null;
+  const allowanceFromApi = Number.isFinite(apiAllowance) && apiAllowance > 0;
   const allowance = allowanceFromApi ? apiAllowance : seats !== null ? seats * INCLUDED_USAGE_PER_SEAT_USD : null;
 
   const haveBudgetMath = billedCost !== null && allowance !== null && allowance > 0;

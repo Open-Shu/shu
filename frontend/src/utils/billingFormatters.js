@@ -16,14 +16,14 @@ const PLACEHOLDER = '—';
 /**
  * USD per seat included in the monthly subscription, per the SHU-663 epic.
  *
- * This is now the **fallback** path — the dashboard prefers the live
- * `included_usd_per_period` field on `/billing/subscription` (which sums
- * active Stripe Credit Grants for the customer). The constant is used
- * only when no grants exist yet (e.g., dev environments before the
- * control plane has issued them) or when the Stripe call fails.
+ * This is the **fallback** path — the dashboard prefers the live
+ * `total_grant_amount` field on `/billing/subscription`, which CP computes
+ * from active Stripe Credit Grants for the customer (SHU-774). The
+ * constant is used only when no grants exist yet (dev environments before
+ * the control plane has issued them) or when the CP poll hasn't returned
+ * a positive value.
  *
- * Issuance lives in shu-control-plane/billing/credit_service.py (SHU-704);
- * the read path lives in StripeClient.get_active_credit_grant_total_usd.
+ * Issuance lives in shu-control-plane/billing/credit_service.py (SHU-704).
  */
 export const INCLUDED_USAGE_PER_SEAT_USD = 50;
 
@@ -35,10 +35,10 @@ export const INCLUDED_USAGE_PER_SEAT_USD = 50;
  * portion above the included allowance.
  *
  * This is the **fallback** path. The dashboard prefers the live
- * `usage_markup_multiplier` field on `/billing/subscription`, which is
- * computed from the metered Price's unit_amount_decimal at request
- * time. The constant is used only when the Stripe call fails or when
- * the subscription has no metered item (dev / pre-Stripe environments).
+ * `usage_markup_multiplier` field on `/billing/subscription`, which CP
+ * computes from the metered Price's unit_amount_decimal (SHU-774). The
+ * constant is used only when the subscription has no metered item or
+ * the price lacks `unit_amount_decimal` (e.g., tiered pricing).
  */
 export const USAGE_MARKUP_MULTIPLIER = 1.3;
 

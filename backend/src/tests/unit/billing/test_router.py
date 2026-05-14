@@ -19,28 +19,11 @@ import pytest
 from fastapi import HTTPException
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState, CpAuthFailed, CpNoActiveTrial
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementSet, LimitSet
 from shu.billing.router import cancel_trial, get_subscription_status, upgrade_now
 
 _P_BILLING_CONFIG = "shu.billing.router.get_billing_config"
 _P_USER_COUNT = "shu.billing.router.get_active_user_count"
-_P_BILLING_STATE_GET = "shu.billing.router.BillingStateService.get"
-
-
-@pytest.fixture(autouse=True)
-def _stub_billing_state_service():
-    """Patch BillingStateService.get to a no-op by default.
-
-    The local-fallback path in `_resolve_remaining_grant_amount` calls it
-    when the cached state has `remaining_grant_amount=None` (CP returns
-    None during trial). Tests that pass an `AsyncMock` session can't
-    naturally satisfy the staticmethod's `await db.execute(...)` chain;
-    patching here keeps existing tests focused on whichever payload field
-    they actually assert. Tests that exercise the local-fallback math
-    directly override this patch.
-    """
-    with patch(_P_BILLING_STATE_GET, AsyncMock(return_value=None)):
-        yield
 
 
 def _mock_user(*, is_admin: bool):
@@ -142,8 +125,9 @@ class TestSubscriptionPaymentStatus:
 #
 # The endpoint's docstring claims "Non-admin users receive quota fields only.
 # Admin users additionally receive sensitive Stripe identifiers and billing
-# period details." That contract was previously asserted only by inspection;
-# these tests pin the fields that may NOT leak to non-admins.
+# period details." After SHU-774 the billing-period fields are sourced from
+# the CP wire instead of local billing_config / Stripe, but they remain
+# admin-gated in the response shape.
 _ADMIN_ONLY_KEYS = (
     "stripe_customer_id",
     "stripe_subscription_id",
@@ -151,18 +135,37 @@ _ADMIN_ONLY_KEYS = (
     "current_period_start",
     "current_period_end",
     "cancel_at_period_end",
+    "canceled_at",
+    "usage_markup_multiplier",
 )
 
 _FULL_BILLING_CONFIG = {
     "stripe_customer_id": "cus_admin_only",
     "stripe_subscription_id": "sub_admin_only",
-    "subscription_status": "active",
-    "current_period_start": "2026-01-01T00:00:00+00:00",
-    "current_period_end": "2026-02-01T00:00:00+00:00",
-    "cancel_at_period_end": False,
     "quantity": 5,
     "user_limit_enforcement": "soft",
 }
+
+
+def _admin_visible_state() -> BillingState:
+    """BillingState that populates every admin-gated CP-sourced field."""
+    return BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal("50.00"),
+        remaining_grant_amount=Decimal("50.00"),
+        seat_price_usd=Decimal("20.00"),
+        subscription_status="active",
+        current_period_start=datetime(2026, 1, 1, tzinfo=UTC),
+        current_period_end=datetime(2026, 2, 1, tzinfo=UTC),
+        cancel_at_period_end=False,
+        canceled_at=None,
+        usage_markup_multiplier=Decimal("1.3"),
+    )
 
 
 class TestSubscriptionAdminBlock:
@@ -176,10 +179,10 @@ class TestSubscriptionAdminBlock:
     ):
         mock_config.return_value = _FULL_BILLING_CONFIG
         mock_count.return_value = 2
-        install_stub_cache(HEALTHY_DEFAULT)
+        install_stub_cache(_admin_visible_state())
 
         # is_configured=False skips the live Stripe seat-state branch — these
-        # tests pin admin-block visibility from billing_config, not Stripe.
+        # tests pin admin-block visibility, not Stripe.
         response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=True), settings=_mock_settings(is_configured=False))
         body = _decode(response)
 
@@ -188,6 +191,10 @@ class TestSubscriptionAdminBlock:
         assert body["stripe_customer_id"] == "cus_admin_only"
         assert body["stripe_subscription_id"] == "sub_admin_only"
         assert body["subscription_status"] == "active"
+        assert body["current_period_start"] == "2026-01-01T00:00:00+00:00"
+        assert body["current_period_end"] == "2026-02-01T00:00:00+00:00"
+        assert body["cancel_at_period_end"] is False
+        assert body["usage_markup_multiplier"] == 1.3
 
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
@@ -195,11 +202,11 @@ class TestSubscriptionAdminBlock:
     async def test_non_admin_user_does_not_receive_stripe_block(
         self, mock_config, mock_count, install_stub_cache
     ):
-        # Same backing config as the admin test — only the user-role
+        # Same backing state as the admin test — only the user-role
         # branch should change what comes out the other end.
         mock_config.return_value = _FULL_BILLING_CONFIG
         mock_count.return_value = 2
-        install_stub_cache(HEALTHY_DEFAULT)
+        install_stub_cache(_admin_visible_state())
 
         response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings(is_configured=False))
         body = _decode(response)
@@ -218,6 +225,7 @@ _TRIAL_PAYLOAD_KEYS = (
     "remaining_grant_amount",
     "seat_price_usd",
     "entitlements",
+    "limits",
 )
 
 
@@ -243,6 +251,7 @@ class TestSubscriptionTrialAndEntitlements:
                 total_grant_amount=Decimal("50.00"),
                 remaining_grant_amount=Decimal("12.34"),
                 seat_price_usd=Decimal("20.00"),
+                limits=LimitSet(document_count_limit=100, kb_count_limit=5),
             )
         )
 
@@ -267,6 +276,7 @@ class TestSubscriptionTrialAndEntitlements:
             "model_config_management": False,
             "mcp_servers": False,
         }
+        assert body["limits"] == {"document_count_limit": 100, "kb_count_limit": 5}
 
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
@@ -343,9 +353,7 @@ class TestSubscriptionTrialAndEntitlements:
 # error-handling and cache-invalidation shape, so all cases parametrize
 # over both. Admin gating (`Depends(require_admin)`) is framework-enforced
 # and tested at the dep's definition site; intentionally not re-asserted
-# here per "test our code, not the framework." Cancel-trial relies on
-# the frontend's typed-confirmation prompt for accidental-click protection;
-# the backend has no server-side token check (admin role is the binding gate).
+# here per "test our code, not the framework."
 
 
 def _mock_admin_user() -> MagicMock:
@@ -358,16 +366,6 @@ def _mock_admin_user() -> MagicMock:
 def _stub_cp_cache(*, cp_call_outcome: Exception | None = None) -> tuple[MagicMock, MagicMock]:
     """Build a stub cache + CpClient pair, mirroring the two singletons
     populated together by `initialize_billing_state_cache`.
-
-    Returns `(cache, cp_client)`. Tests patch both
-    `shu.billing.router.get_billing_state_cache` and
-    `shu.billing.router.get_cp_client` to return these — splitting the
-    singletons keeps the test setup honest about which one the production
-    path actually reads from.
-
-    `cp_call_outcome` is either None (CP call succeeds) or an exception
-    instance the CP method should raise. Both methods share the same
-    outcome — tests target one method at a time.
     """
     cache = MagicMock()
     cache.invalidate = AsyncMock()
@@ -384,14 +382,14 @@ def _stub_cp_cache(*, cp_call_outcome: Exception | None = None) -> tuple[MagicMo
 async def _call_endpoint(endpoint_name: str):
     """Invoke the upgrade-now or cancel-trial endpoint directly.
 
-    `cancel_trial` takes a `db` dependency for the inline
-    `subscription_status="canceled"` write. We pass a MagicMock and patch
-    `BillingStateService.update` at call sites that exercise the happy
-    path so the write becomes a no-op; error paths never reach the write.
+    Both endpoints now have the same signature (just `user`) — the
+    cancel-trial inline DB write was dropped in SHU-774 since CP owns
+    `subscription_status` on the wire and the cache invalidate forces a
+    fresh poll on the next read.
     """
     if endpoint_name == "upgrade_now":
         return await upgrade_now(user=_mock_admin_user())
-    return await cancel_trial(user=_mock_admin_user(), db=MagicMock())
+    return await cancel_trial(user=_mock_admin_user())
 
 
 _ENDPOINTS = ["upgrade_now", "cancel_trial"]
@@ -407,9 +405,6 @@ class TestTrialActionEndpoints:
         with (
             patch("shu.billing.router.get_billing_state_cache", return_value=cache),
             patch("shu.billing.router.get_cp_client", return_value=cp_client),
-            # cancel_trial's inline `subscription_status` write lands here on
-            # success; stub it so the MagicMock db doesn't try to run real SQL.
-            patch("shu.billing.router.BillingStateService.update", AsyncMock()),
         ):
             response = await _call_endpoint(endpoint)
 
@@ -463,74 +458,6 @@ class TestTrialActionEndpoints:
         cache.invalidate.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cancel_trial_writes_subscription_status_canceled_inline(self):
-        """The cancel-trial endpoint must write `subscription_status="canceled"`
-        to local billing_state on success. Without this, `assert_subscription_active`
-        falls through the cancel gate during the window between Stripe flipping
-        the sub to `canceled` and CP's webhook landing.
-        """
-        cache, cp_client = _stub_cp_cache()
-        with (
-            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
-            patch("shu.billing.router.get_cp_client", return_value=cp_client),
-            patch("shu.billing.router.BillingStateService.update", AsyncMock()) as mock_update,
-        ):
-            response = await cancel_trial(user=_mock_admin_user(), db=MagicMock())
-
-        assert response.status_code == 200
-        mock_update.assert_awaited_once()
-        kwargs = mock_update.await_args.kwargs
-        assert kwargs["updates"] == {"subscription_status": "canceled"}
-        assert kwargs["source"] == "api:cancel-trial"
-
-    @pytest.mark.asyncio
-    async def test_cancel_trial_local_write_failure_does_not_fail_request(self):
-        """If the local `subscription_status` write throws, the user still gets
-        a 200. The forwarded webhook will catch up and write the same value;
-        failing the response would leave the customer thinking the cancel didn't
-        take when in fact Stripe has already canceled.
-        """
-        cache, cp_client = _stub_cp_cache()
-        with (
-            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
-            patch("shu.billing.router.get_cp_client", return_value=cp_client),
-            patch(
-                "shu.billing.router.BillingStateService.update",
-                AsyncMock(side_effect=RuntimeError("db went away")),
-            ),
-        ):
-            response = await cancel_trial(user=_mock_admin_user(), db=MagicMock())
-
-        assert response.status_code == 200
-        cache.invalidate.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_cancel_trial_writes_db_before_cache_invalidate(self):
-        """Ordering invariant: the local `subscription_status="canceled"` write
-        must land before `cache.invalidate()`. Reverse order lets a concurrent
-        get() repopulate cache from CP with the pre-cancel state before the DB
-        row catches up, defeating the cancel gate in `assert_subscription_active`.
-        """
-        cache, cp_client = _stub_cp_cache()
-        call_order: list[str] = []
-
-        async def record_update(*_args, **_kwargs):
-            call_order.append("db_update")
-
-        async def record_invalidate():
-            call_order.append("invalidate")
-
-        cache.invalidate = AsyncMock(side_effect=record_invalidate)
-        with (
-            patch("shu.billing.router.get_billing_state_cache", return_value=cache),
-            patch("shu.billing.router.get_cp_client", return_value=cp_client),
-            patch("shu.billing.router.BillingStateService.update", AsyncMock(side_effect=record_update)),
-        ):
-            await cancel_trial(user=_mock_admin_user(), db=MagicMock())
-
-        assert call_order == ["db_update", "invalidate"]
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", _ENDPOINTS)
     async def test_unexpected_exception_emits_audit_log_and_propagates(
         self, endpoint: str, caplog
@@ -571,7 +498,8 @@ class TestTrialActionEndpoints:
 # `_resolve_remaining_grant_amount` — local fallback when CP returns
 # `remaining_grant_amount=None` during trial (Task 26 / design 3a).
 # Direct unit tests against the helper, not through the route handler,
-# to keep the branching surface compact.
+# to keep the branching surface compact. After SHU-774 the period anchor
+# comes from the wire (`state.current_period_start`), not the local DB.
 
 
 _P_USAGE_PROVIDER = "shu.billing.router.UsageProviderImpl"
@@ -581,6 +509,7 @@ def _trial_state(
     *,
     total_grant: Decimal = Decimal("5.00"),
     usage_markup_multiplier: Decimal | None = Decimal("1.0"),
+    current_period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC),
 ) -> BillingState:
     # Default markup=1.0 so callers that don't care about the upcharge can
     # write tests in raw-dollar terms. Tests covering the markup path pass
@@ -596,6 +525,7 @@ def _trial_state(
         total_grant_amount=total_grant,
         remaining_grant_amount=None,
         seat_price_usd=Decimal("20"),
+        current_period_start=current_period_start,
         usage_markup_multiplier=usage_markup_multiplier,
     )
 
@@ -622,14 +552,6 @@ def _stub_usage_provider(*, total_cost_usd: Decimal) -> MagicMock:
     return MagicMock(return_value=instance)
 
 
-def _stub_billing_row(
-    *, period_start: datetime | None = datetime(2026, 5, 1, tzinfo=UTC),
-) -> MagicMock:
-    row = MagicMock()
-    row.current_period_start = period_start
-    return row
-
-
 class TestResolveRemainingGrantAmount:
     """Direct tests for `_resolve_remaining_grant_amount`."""
 
@@ -651,10 +573,7 @@ class TestResolveRemainingGrantAmount:
         """Trial: total=$5, usage=$2 → remaining=$3."""
         from shu.billing.router import _resolve_remaining_grant_amount
 
-        with (
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
-            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))),
-        ):
+        with patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))):
             result = await _resolve_remaining_grant_amount(
                 db=AsyncMock(),
                 state=_trial_state(total_grant=Decimal("5.00")),
@@ -668,10 +587,7 @@ class TestResolveRemainingGrantAmount:
         """
         from shu.billing.router import _resolve_remaining_grant_amount
 
-        with (
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
-            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("999"))),
-        ):
+        with patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("999"))):
             result = await _resolve_remaining_grant_amount(
                 db=AsyncMock(),
                 state=_trial_state(total_grant=Decimal("5.00")),
@@ -679,35 +595,17 @@ class TestResolveRemainingGrantAmount:
         assert result == Decimal(0)
 
     @pytest.mark.asyncio
-    async def test_trial_with_no_billing_state_row_falls_back_to_total(self):
-        """No period anchor → can't attribute usage to "this period."
-        Returning total keeps the banner sensible (full budget showing)
-        until the period is established.
-        """
-        from shu.billing.router import _resolve_remaining_grant_amount
-
-        with patch(_P_BILLING_STATE_GET, AsyncMock(return_value=None)):
-            result = await _resolve_remaining_grant_amount(
-                db=AsyncMock(),
-                state=_trial_state(total_grant=Decimal("5.00")),
-            )
-        assert result == Decimal("5.00")
-
-    @pytest.mark.asyncio
     async def test_trial_with_null_period_start_falls_back_to_total(self):
-        """Billing row exists but `current_period_start` is null — same
-        recovery as no-row, return the full grant.
+        """Wire-side `current_period_start` is None — can't attribute usage
+        to "this period." Return the full grant so the banner shows the
+        budget as untouched until the period is established.
         """
         from shu.billing.router import _resolve_remaining_grant_amount
 
-        with patch(
-            _P_BILLING_STATE_GET,
-            AsyncMock(return_value=_stub_billing_row(period_start=None)),
-        ):
-            result = await _resolve_remaining_grant_amount(
-                db=AsyncMock(),
-                state=_trial_state(total_grant=Decimal("5.00")),
-            )
+        result = await _resolve_remaining_grant_amount(
+            db=AsyncMock(),
+            state=_trial_state(total_grant=Decimal("5.00"), current_period_start=None),
+        )
         assert result == Decimal("5.00")
 
     @pytest.mark.asyncio
@@ -719,10 +617,7 @@ class TestResolveRemainingGrantAmount:
         """
         from shu.billing.router import _resolve_remaining_grant_amount
 
-        with (
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
-            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))),
-        ):
+        with patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))):
             result = await _resolve_remaining_grant_amount(
                 db=AsyncMock(),
                 state=_trial_state(
@@ -747,10 +642,7 @@ class TestResolveRemainingGrantAmount:
         settings = markup_mod.get_billing_settings()
         monkeypatch.setattr(settings, "usage_markup_multiplier_default", Decimal("1.5"))
 
-        with (
-            patch(_P_BILLING_STATE_GET, AsyncMock(return_value=_stub_billing_row())),
-            patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))),
-        ):
+        with patch(_P_USAGE_PROVIDER, _stub_usage_provider(total_cost_usd=Decimal("2.00"))):
             result = await _resolve_remaining_grant_amount(
                 db=AsyncMock(),
                 state=_trial_state(
