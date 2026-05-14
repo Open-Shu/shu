@@ -19,8 +19,8 @@ import jmespath
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.enforcement import assert_subscription_active
-from shu.core.logging import get_logger
 from shu.core.database import get_async_session_local
+from shu.core.logging import get_logger
 from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 from shu.services.plugin_execution import build_agent_tools
