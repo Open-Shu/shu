@@ -952,25 +952,60 @@ class EnsembleStreamingHelper:
             Finalize phase opens its own short-lived session, atomically
             writes the assistant Message + LLMUsage, and enqueues the
             final / error SSE event.
+
+            Both phase methods catch their own failures internally and
+            enqueue an error event before returning. The outer try/except
+            here is defense-in-depth: ``stream_ensemble_responses`` below
+            only increments its ``completed`` counter on ``final_message``
+            or ``error`` events, so any exception that escapes the inner
+            handlers (drift-guard ``RuntimeError``, future code added
+            between the two awaits, a regression in an inner catch-all)
+            would leave this task dead with its exception stored and the
+            parent ``queue.get()`` blocked until the SSE client times
+            out. Catching at the outer level guarantees the consumer
+            always sees a terminal event for every variant, regardless
+            of where in the pipeline the failure occurred.
             """
-            result = await self._stream_variant_phase(
-                variant_index=variant_index,
-                inputs=inputs,
-                queue=queue,
-                conversation_id=conversation_id,
-                force_no_streaming=force_no_streaming,
-                start_time=start_time,
-            )
-            await self._finalize_variant_phase(
-                variant_index=variant_index,
-                inputs=inputs,
-                result=result,
-                queue=queue,
-                conversation_id=conversation_id,
-                parent_message_id=parent_message_id,
-                use_parent_as_message_id=use_parent_as_message_id,
-                regen_lineage=regen_lineage,
-            )
+            try:
+                result = await self._stream_variant_phase(
+                    variant_index=variant_index,
+                    inputs=inputs,
+                    queue=queue,
+                    conversation_id=conversation_id,
+                    force_no_streaming=force_no_streaming,
+                    start_time=start_time,
+                )
+                await self._finalize_variant_phase(
+                    variant_index=variant_index,
+                    inputs=inputs,
+                    result=result,
+                    queue=queue,
+                    conversation_id=conversation_id,
+                    parent_message_id=parent_message_id,
+                    use_parent_as_message_id=use_parent_as_message_id,
+                    regen_lineage=regen_lineage,
+                )
+            except Exception as exc:
+                logger.error(
+                    "stream_variant safety-net caught unhandled exception",
+                    extra={
+                        "phase": "stream_variant_safety_net",
+                        "conversation_id": conversation_id,
+                        "variant_index": variant_index,
+                        "error_type": type(exc).__name__,
+                    },
+                    exc_info=True,
+                )
+                model_display_name = getattr(inputs.model_configuration, "name", None) or "unknown"
+                await queue.put(
+                    self._create_error_event(
+                        "An internal error occurred. Please try again.",
+                        variant_index,
+                        inputs,
+                        None,
+                        model_display_name,
+                    )
+                )
 
         tasks = [loop.create_task(stream_variant(idx, inputs)) for idx, inputs in enumerate(ensemble_inputs)]
         completed = 0

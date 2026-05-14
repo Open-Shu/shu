@@ -515,3 +515,78 @@ async def test_finalize_failure_path_rolls_back_atomically_on_usage_recorder_fai
     assert "upstream LLM blew up" in enqueued_event.content, (
         f"expected the original LLM error_text in the SSE event, got {enqueued_event.content!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_variant_safety_net_catches_unhandled_exception() -> None:
+    """SHU-759: the defense-in-depth try/except in ``stream_variant``
+    catches any exception that escapes the phase methods' internal
+    handlers, so ``stream_ensemble_responses``' ``queue.get()`` loop
+    never blocks forever.
+
+    Concrete trigger this guards: the drift-guard ``RuntimeError`` at
+    the top of ``_stream_variant_phase`` / ``_finalize_variant_phase``
+    — the one explicit raise that bypasses both phases' own try blocks.
+    Without the safety net at the ``stream_variant`` closure level, a
+    misconfigured prepare phase (``chat_service.db_session`` not nulled)
+    would propagate through the task, leave it dead with the exception
+    stored, and hang the SSE consumer until client timeout.
+
+    Beyond the drift guard, this is forward-protection against the
+    SSE-hang bug class itself — every prior fix in this code-review
+    cycle patched one inner escape path (IntegrityError raise, success-
+    branch unhandled exception, failure-branch atomicity wrapper, etc.).
+    The outer safety net closes the bug class at the choke point so
+    future regressions in any inner handler can't reintroduce hangs.
+    """
+    helper = _build_helper()
+    inputs = _build_inputs()
+
+    # Simulate an exception that the inner handlers in
+    # _stream_variant_phase wouldn't catch (e.g., the drift-guard
+    # RuntimeError fires before the method's try block, or a future
+    # bug raises before the handler-protected work).
+    unhandled_error = RuntimeError(
+        "_stream_variant_phase must run after prepare detached the request session"
+    )
+
+    mock_finalize = AsyncMock(return_value=None)
+    with (
+        patch.object(
+            helper,
+            "_stream_variant_phase",
+            new=AsyncMock(side_effect=unhandled_error),
+        ),
+        patch.object(helper, "_finalize_variant_phase", new=mock_finalize),
+    ):
+        # Consume the full SSE stream — must complete cleanly, must not hang.
+        events = []
+        async for event in helper.stream_ensemble_responses(
+            ensemble_inputs=[inputs],
+            conversation_id="conv-id",
+            parent_message_id_override="root-id",
+            force_no_streaming=False,
+        ):
+            events.append(event)
+
+        # _finalize_variant_phase must NOT have been called —
+        # _stream_variant_phase raised before returning a
+        # VariantStreamResult, so the second await is never reached.
+        # Assert inside the `with` block so the mock is still bound.
+        mock_finalize.assert_not_called()
+
+    # Exactly one error event reached the consumer; the parent loop
+    # incremented `completed` and exited normally.
+    assert len(events) == 1, (
+        f"expected exactly one terminal error event, got {len(events)}: {events!r}"
+    )
+    assert events[0].type == "error", (
+        f"expected error event, got {events[0].type!r}"
+    )
+    assert "internal error" in events[0].content.lower(), (
+        f"expected generic safety-net message, got {events[0].content!r}"
+    )
+    # User-facing copy must not carry raw exception text (lessons from the
+    # SSE sanitization finding — generic copy in the safety net too).
+    assert "drift" not in events[0].content.lower()
+    assert "RuntimeError" not in events[0].content
