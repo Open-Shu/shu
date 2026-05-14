@@ -8,9 +8,24 @@ VERSION        := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v
 BUILD_TIMESTAMP:= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 DB_RELEASE     := $(shell ls -1 backend/alembic/versions 2>/dev/null | grep -E '^[0-9]{3}_.+\.py$$' | cut -d _ -f1 | sort | tail -n1)
 
-.PHONY: build-api build-fe build-runner build-all
+.PHONY: build-api build-api-slim build-fe build-runner build-all \
+        publish-api publish-api-slim publish-fe publish-runner publish-all \
+        _require-registry
 
-# Build local Docker images
+# ----------------------------------------------------------------------------
+# Local image builds (no push).
+#
+# `build-api` is the standard image. It includes local text-embedding and
+# OCR inference engines (sentence-transformers, torch, transformers, easyocr,
+# pytesseract) so the app can run those workloads without external API
+# dependencies.
+#
+# `build-api-slim` excludes those packages. Use it for deployments that
+# route embedding and OCR through external APIs (e.g. SHU_LOCAL_EMBEDDING_ENABLED=false
+# plus an external OCR engine), where the local libraries are dead weight.
+# Tag suffix `-slim` keeps the two variants distinct in the local image cache.
+# ----------------------------------------------------------------------------
+
 build-api:
 	docker build \
 	  --build-arg SHU_APP_VERSION=$(VERSION) \
@@ -20,6 +35,17 @@ build-api:
 	  -f deployment/docker/api/Dockerfile \
 	  -t shu-api:latest \
 	  -t shu-api:$(VERSION) .
+
+build-api-slim:
+	docker build \
+	  --build-arg INCLUDE_LOCAL_INFERENCE=0 \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  --build-arg SHU_DB_RELEASE=$(DB_RELEASE) \
+	  -f deployment/docker/api/Dockerfile \
+	  -t shu-api:$(VERSION)-slim \
+	  -t shu-api:latest-slim .
 
 build-fe:
 	docker build \
@@ -40,6 +66,65 @@ build-runner:
 	  -t shu-runner:$(VERSION) .
 
 build-all: build-api build-fe build-runner
+
+# ----------------------------------------------------------------------------
+# Manual build + tag + push to a container registry.
+#
+# Usage:
+#   make publish-api      REGISTRY=<your-registry-prefix>
+#   make publish-api-slim REGISTRY=<your-registry-prefix>
+#   make publish-fe       REGISTRY=<your-registry-prefix>
+#   make publish-runner   REGISTRY=<your-registry-prefix>
+#   make publish-all      REGISTRY=<your-registry-prefix>
+#
+# Each image gets three tags pushed:
+#   :$(VERSION)              — e.g. 1.2.3 (mutable; latest build for that version wins)
+#   :$(VERSION)-$(GIT_SHA)   — e.g. 1.2.3-abc1234 (immutable; bisect-friendly)
+#   :latest                  — convenience; do not pin downstream consumers to this
+#
+# Authenticate to the registry (`docker login <registry>`) out-of-band before
+# invoking these targets.
+# ----------------------------------------------------------------------------
+
+_require-registry:
+	@if [ -z "$(REGISTRY)" ]; then \
+	  echo "ERROR: REGISTRY is required, e.g. make publish-api REGISTRY=ghcr.io/my-org" ; \
+	  exit 1 ; \
+	fi
+
+publish-api: _require-registry build-api
+	docker tag shu-api:$(VERSION) $(REGISTRY)/shu-api:$(VERSION)
+	docker tag shu-api:$(VERSION) $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)
+	docker tag shu-api:$(VERSION) $(REGISTRY)/shu-api:latest
+	docker push $(REGISTRY)/shu-api:$(VERSION)
+	docker push $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)
+	docker push $(REGISTRY)/shu-api:latest
+
+publish-api-slim: _require-registry build-api-slim
+	docker tag shu-api:$(VERSION)-slim $(REGISTRY)/shu-api:$(VERSION)-slim
+	docker tag shu-api:$(VERSION)-slim $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)-slim
+	docker tag shu-api:$(VERSION)-slim $(REGISTRY)/shu-api:latest-slim
+	docker push $(REGISTRY)/shu-api:$(VERSION)-slim
+	docker push $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)-slim
+	docker push $(REGISTRY)/shu-api:latest-slim
+
+publish-fe: _require-registry build-fe
+	docker tag shu-frontend:$(VERSION) $(REGISTRY)/shu-frontend:$(VERSION)
+	docker tag shu-frontend:$(VERSION) $(REGISTRY)/shu-frontend:$(VERSION)-$(GIT_SHA)
+	docker tag shu-frontend:$(VERSION) $(REGISTRY)/shu-frontend:latest
+	docker push $(REGISTRY)/shu-frontend:$(VERSION)
+	docker push $(REGISTRY)/shu-frontend:$(VERSION)-$(GIT_SHA)
+	docker push $(REGISTRY)/shu-frontend:latest
+
+publish-runner: _require-registry build-runner
+	docker tag shu-runner:$(VERSION) $(REGISTRY)/shu-runner:$(VERSION)
+	docker tag shu-runner:$(VERSION) $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA)
+	docker tag shu-runner:$(VERSION) $(REGISTRY)/shu-runner:latest
+	docker push $(REGISTRY)/shu-runner:$(VERSION)
+	docker push $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA)
+	docker push $(REGISTRY)/shu-runner:latest
+
+publish-all: publish-api publish-fe publish-runner
 
 # Docker Compose build targets
 # Note: Docker Compose v2 uses buildx by default, no explicit builder management needed
