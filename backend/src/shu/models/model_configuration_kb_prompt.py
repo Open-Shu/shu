@@ -14,10 +14,10 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Uni
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class ModelConfigurationKBPrompt(BaseModel):
+class ModelConfigurationKBPrompt(TenantScopedMixin, BaseModel):
     """Association between model configurations and KB-specific prompts.
 
     This table enables model configurations to have different prompts

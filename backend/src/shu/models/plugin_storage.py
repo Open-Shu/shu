@@ -10,10 +10,10 @@ supports both per-user and system-wide entries via the ``scope`` column.
 from sqlalchemy import JSON, Column, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class PluginStorage(BaseModel):
+class PluginStorage(TenantScopedMixin, BaseModel):
     """Key/value storage scoped to (scope, user_id, plugin_name, namespace, key).
 
     scope: Logical scope for the entry. Currently ``"user"`` (per-user) or

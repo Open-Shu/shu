@@ -16,10 +16,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class AccessPolicy(BaseModel):
+class AccessPolicy(TenantScopedMixin, BaseModel):
     """Access control policy with allow/deny effect.
 
     Policies define named, reusable access rules that bind actors (users/groups)
@@ -49,7 +49,7 @@ class AccessPolicy(BaseModel):
         return f"<AccessPolicy(id='{self.id}', name='{self.name}', effect='{self.effect}', active={self.is_active})>"
 
 
-class AccessPolicyBinding(BaseModel):
+class AccessPolicyBinding(TenantScopedMixin, BaseModel):
     """Binding that associates an actor (user or group) with a policy.
 
     Each binding links a policy to a specific actor by type and ID.
@@ -84,7 +84,7 @@ class AccessPolicyBinding(BaseModel):
         )
 
 
-class AccessPolicyStatement(BaseModel):
+class AccessPolicyStatement(TenantScopedMixin, BaseModel):
     """Statement defining actions and resources for a policy.
 
     Each statement contains a list of actions (e.g., 'experience.read',

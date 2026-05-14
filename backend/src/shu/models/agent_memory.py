@@ -6,10 +6,10 @@ Minimal per-user, per-agent scoped key/value store.
 from sqlalchemy import JSON, Column, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class AgentMemory(BaseModel):
+class AgentMemory(TenantScopedMixin, BaseModel):
     """Key/value memory scoped to (user_id, agent_key, key).
 
     - user_id: FK to users.id

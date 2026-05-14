@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 
 from shu.plugins.base import Plugin
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
 class PluginExecutionStatus:
@@ -25,7 +25,7 @@ class PluginExecutionStatus:
     FAILED = "failed"
 
 
-class PluginExecution(BaseModel):
+class PluginExecution(TenantScopedMixin, BaseModel):
     __tablename__ = "plugin_executions"
 
     # Link to schedule if this was enqueued by a schedule

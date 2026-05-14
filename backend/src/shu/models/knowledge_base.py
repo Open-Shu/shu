@@ -13,10 +13,10 @@ from sqlalchemy.orm import relationship
 
 from shu.core.config import get_settings_instance
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class KnowledgeBase(BaseModel):
+class KnowledgeBase(TenantScopedMixin, BaseModel):
     """Knowledge Base configuration and metadata.
 
     Each knowledge base represents a separate collection of documents

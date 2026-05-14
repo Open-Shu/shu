@@ -15,6 +15,17 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
 os.environ.setdefault("SHU_LLM_ENCRYPTION_KEY", "5n7s4FR2ctJo5EBLUIgx_cKuX-ydpE5jg-xSMlKz5zQ=")
 os.environ.setdefault("SHU_OAUTH_ENCRYPTION_KEY", "Ngyzgo3L2B3D_b6MXEffwnS68hPMGS_4YwWRrtNSwQs=")
 
+# Default deployment mode for tests. Developer .env files commonly set
+# SHU_TENANT_ID (a UUID), which would clash with the default self_hosted
+# mode under the tenant-isolation cross-field model validator. Forcing
+# `silo` here keeps the env+.env combo valid at import time (when
+# modules like http_client.py instantiate Settings). SHU_DEPLOYMENT_MODE
+# is not present in .env, so this os.environ assignment survives any
+# later `load_dotenv(override=True)` calls inside shu.core.config.
+# Tests that need a different mode override via monkeypatch.
+os.environ["SHU_DEPLOYMENT_MODE"] = "silo"
+os.environ.setdefault("SHU_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+
 # Add backend/src to sys.path so shu.* imports work when running pytest from repo root.
 PROJECT_SRC = Path(__file__).resolve().parents[2]
 if str(PROJECT_SRC) not in sys.path:

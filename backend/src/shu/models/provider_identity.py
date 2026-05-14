@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from sqlalchemy import JSON, Column, ForeignKey, Index, String
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class ProviderIdentity(BaseModel):
+class ProviderIdentity(TenantScopedMixin, BaseModel):
     __tablename__ = "provider_identities"
 
     # Owning user

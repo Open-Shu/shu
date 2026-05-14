@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
+from .config import DeploymentMode
 from .exceptions import (
     DatabaseConnectionError,
     DatabaseSessionError,
@@ -69,6 +70,10 @@ def get_settings():
             database_pool_recycle = 3600
             debug = False
             use_pgbouncer = False
+            # Defaulting to self_hosted keeps the fallback path safe: callers that
+            # branch on deployment_mode get the most permissive non-tenant mode
+            # rather than crashing on a missing attribute.
+            deployment_mode = DeploymentMode.SELF_HOSTED
 
         return MinimalSettings()
 

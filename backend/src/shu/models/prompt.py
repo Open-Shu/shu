@@ -16,10 +16,10 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from ..core.database import Base
-from .base import BaseModel, UUIDMixin
+from .base import BaseModel, TenantScopedMixin, UUIDMixin
 
 
-class Prompt(BaseModel):
+class Prompt(TenantScopedMixin, BaseModel):
     """Generalized prompt model supporting multiple entity types.
 
     This model replaces the previous KnowledgeBasePrompt model and provides
@@ -75,7 +75,7 @@ class Prompt(BaseModel):
         return [assignment.entity_id for assignment in self.assignments]
 
 
-class PromptAssignment(Base, UUIDMixin):
+class PromptAssignment(TenantScopedMixin, Base, UUIDMixin):
     """Many-to-many relationship table linking prompts to entities.
 
     This table enables prompt reusability across multiple entities

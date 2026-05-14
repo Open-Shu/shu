@@ -22,8 +22,10 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 
 from shu.core.database import Base
 
+from .base import TenantScopedMixin
 
-class EmailSendLog(Base):
+
+class EmailSendLog(TenantScopedMixin, Base):
     """Audit row for one outbound email send."""
 
     __tablename__ = "email_send_log"

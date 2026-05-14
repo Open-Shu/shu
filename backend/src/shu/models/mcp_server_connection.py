@@ -5,10 +5,10 @@ from __future__ import annotations
 from sqlalchemy import JSON, Boolean, Column, Integer, String
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class McpServerConnection(BaseModel):
+class McpServerConnection(TenantScopedMixin, BaseModel):
     __tablename__ = "mcp_server_connections"
 
     name = Column(String(96), nullable=False, unique=True)

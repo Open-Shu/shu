@@ -7,10 +7,10 @@ from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text, U
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class Attachment(BaseModel):
+class Attachment(TenantScopedMixin, BaseModel):
     """Attachment uploaded to a conversation for context injection."""
 
     __tablename__ = "attachments"
@@ -44,7 +44,7 @@ class Attachment(BaseModel):
     conversation = relationship("Conversation", back_populates="attachments", lazy="selectin")
 
 
-class MessageAttachment(BaseModel):
+class MessageAttachment(TenantScopedMixin, BaseModel):
     """Link table between messages and attachments."""
 
     __tablename__ = "message_attachments"

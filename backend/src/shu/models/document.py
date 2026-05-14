@@ -24,7 +24,7 @@ except ImportError:
         return Text
 
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
 # Type definitions for capability manifest structure (SHU-342)
@@ -99,7 +99,7 @@ class DocumentStatus(str, Enum):
         )
 
 
-class Document(BaseModel):
+class Document(TenantScopedMixin, BaseModel):
     """Document metadata and content.
 
     Represents a single document that has been processed and stored
@@ -458,7 +458,7 @@ class Document(BaseModel):
         self.profiling_error = error_message
 
 
-class DocumentChunk(BaseModel):
+class DocumentChunk(TenantScopedMixin, BaseModel):
     """Document chunk with vector embedding.
 
     Represents a processed chunk of a document with its vector embedding
@@ -643,7 +643,7 @@ class DocumentChunk(BaseModel):
         )
 
 
-class DocumentQuery(BaseModel):
+class DocumentQuery(TenantScopedMixin, BaseModel):
     """Synthesized query for a document (Shu RAG).
 
     Stores hypothetical queries that a document can answer. These are generated
@@ -799,7 +799,7 @@ ROLE_DECISION_MAKER = ParticipantRole.DECISION_MAKER.value
 ROLE_SUBJECT = ParticipantRole.SUBJECT.value
 
 
-class DocumentParticipant(BaseModel):
+class DocumentParticipant(TenantScopedMixin, BaseModel):
     """Document participant entity (Shu RAG Relational Context).
 
     Tracks people, organizations, and email addresses mentioned in or
@@ -883,7 +883,7 @@ class DocumentParticipant(BaseModel):
         )
 
 
-class DocumentProject(BaseModel):
+class DocumentProject(TenantScopedMixin, BaseModel):
     """Document project association (Shu RAG Relational Context).
 
     Tracks projects, initiatives, or topics associated with a document.

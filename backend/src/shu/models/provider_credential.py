@@ -11,10 +11,10 @@ from datetime import UTC, datetime
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, String, Text
 
 from ..core.oauth_encryption import get_oauth_encryption_service
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class ProviderCredential(BaseModel):
+class ProviderCredential(TenantScopedMixin, BaseModel):
     __tablename__ = "provider_credentials"
 
     # Owning user

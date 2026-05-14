@@ -30,8 +30,10 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 
 from shu.core.database import Base
 
+from .base import TenantScopedMixin
 
-class PasswordResetToken(Base):
+
+class PasswordResetToken(TenantScopedMixin, Base):
     """One issued password reset token."""
 
     __tablename__ = "password_reset_token"

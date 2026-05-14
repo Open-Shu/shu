@@ -9,10 +9,10 @@ from typing import Any
 from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class UserPreferences(BaseModel):
+class UserPreferences(TenantScopedMixin, BaseModel):
     """User preferences for chat settings and behavior.
 
     This stores user-specific configuration for:
