@@ -20,6 +20,7 @@ import jmespath
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.billing.enforcement import assert_subscription_active
+from shu.core.database import get_async_session_local
 from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
 from shu.services.plugin_execution import build_agent_tools
@@ -178,7 +179,7 @@ class UnifiedLLMClient:
 
     def __init__(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession | None,
         provider: LLMProvider,
         conversation_owner_id: str | None = None,
         settings: Any | None = None,
@@ -230,7 +231,14 @@ class UnifiedLLMClient:
     async def _build_tool_context(self, payload: dict[str, Any], tools_enabled: bool) -> dict[str, Any]:
         if not tools_enabled or not self.conversation_owner_id:
             return payload
-        tools: list[CallableTool] = await build_agent_tools(self.db_session, user_id=self.conversation_owner_id)
+        # SHU-759: build_agent_tools needs a session, but by the time this
+        # method runs (mid-stream) the request session may already be closed
+        # (the chat endpoint releases it before yielding the StreamingResponse).
+        # Open a short-lived session at the point of use instead of relying on
+        # self.db_session being live.
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            tools: list[CallableTool] = await build_agent_tools(session, user_id=self.conversation_owner_id)
         return await self.provider_adapter.inject_tool_payload(tools, payload)
 
     def _build_client_headers(self):
@@ -994,6 +1002,12 @@ class UnifiedLLMClient:
     def _local_stream(
         self, payload: dict[str, Any], model: str, start_time: datetime
     ) -> AsyncGenerator[ProviderEventResult, None]:
+        # SHU-759: optional test-only per-chunk delay to simulate slow LLM
+        # streams for baseline + concurrency tests. Defaults to 0 in
+        # production (Pydantic model_validator enforces this in
+        # core/config.py).
+        chunk_delay_seconds = max(0, getattr(self.settings, "local_stream_test_chunk_delay_ms", 0)) / 1000.0
+
         async def gen():
             input_path = self._apply_override("get_message_input_path", "messages")
             messages = DotPath.get(payload, input_path, default=payload.get("messages", []))
@@ -1005,7 +1019,10 @@ class UnifiedLLMClient:
             for i in range(0, len(content), max(1, len(content) // 3)):
                 chunk = content[i : i + max(1, len(content) // 3)]
                 yield ProviderContentDeltaEventResult(content=chunk)
-                await asyncio.sleep(0)  # yield control
+                if chunk_delay_seconds > 0:
+                    await asyncio.sleep(chunk_delay_seconds)
+                else:
+                    await asyncio.sleep(0)  # yield control
             yield ProviderFinalEventResult(content=content)
 
         return gen()

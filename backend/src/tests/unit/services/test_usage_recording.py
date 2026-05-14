@@ -430,23 +430,69 @@ class TestUsageRecorderTotalTokens:
         assert record.total_tokens == 1234
 
 
-class TestUsageRecorderFailureSwallowing:
-    """Best-effort contract: any DB failure logs and returns — callers are
-    never broken by a missing billing row."""
+class TestUsageRecorderFailureContract:
+    """Failure semantics depend on transaction ownership (SHU-759).
+
+    Before SHU-759 these branches shared a single fire-and-forget
+    contract (introduced in SHU-715): every failure was logged and
+    swallowed. That worked because no caller composed our write into a
+    larger transaction. SHU-759's chat finalize started passing
+    ``session=`` to achieve Message + LLMUsage atomicity (AC#3), and
+    the unified swallow silently violated that — the surrounding
+    transaction would commit the Message while our LLMUsage row had
+    been rolled back via the nested savepoint. The contract now
+    bifurcates:
+
+    - ``session=None`` (fire-and-forget) — legacy callers stay
+      decoupled from billing reliability. Failures logged, swallowed.
+    - ``session=<AsyncSession>`` (caller-owned transaction) — failures
+      propagate so the caller can roll back atomically.
+    """
 
     @pytest.mark.asyncio
-    async def test_exception_does_not_propagate(self):
-        """A failing session.get still lets the caller continue."""
+    async def test_session_path_propagates_failures(self):
+        """When the caller passes ``session=``, ``_insert`` failures must
+        propagate so the caller's outer transaction can roll back. This
+        is the SHU-759 behavior; pre-fix the exception was swallowed and
+        the caller would commit half a unit of work."""
         session = MagicMock()
-        session.get = AsyncMock(side_effect=RuntimeError("DB down"))
+        # Simulates any in-transaction failure: degenerate provider row,
+        # cost-resolver math error, nested-savepoint flush failure, etc.
+        session.get = AsyncMock(side_effect=RuntimeError("simulated savepoint failure"))
         recorder = UsageRecorder(cost_resolver=CostResolver())
 
-        # If this raised, the caller would lose whatever work follows.
+        with pytest.raises(RuntimeError, match="simulated savepoint failure"):
+            await recorder.record(
+                provider_id="prov-1",
+                model_id="model-1",
+                request_type="chat",
+                session=session,
+            )
+
+    @pytest.mark.asyncio
+    async def test_fresh_session_path_still_swallows_failures(self, monkeypatch):
+        """When the caller omits ``session=``, the legacy fire-and-forget
+        semantic is preserved: billing failures must not crash callers
+        like external embedding or the side-call service."""
+        new_session = MagicMock()
+        new_session.get = AsyncMock(side_effect=RuntimeError("DB down"))
+
+        session_cm = MagicMock()
+        session_cm.__aenter__ = AsyncMock(return_value=new_session)
+        session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        monkeypatch.setattr(
+            "shu.services.usage_recording.get_async_session_local",
+            lambda: lambda: session_cm,
+        )
+
+        recorder = UsageRecorder(cost_resolver=CostResolver())
+
+        # Must not raise — fire-and-forget callers depend on this.
         await recorder.record(
             provider_id="prov-1",
             model_id="model-1",
-            request_type="chat",
-            session=session,
+            request_type="embedding",
         )
 
 
