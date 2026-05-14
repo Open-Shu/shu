@@ -64,6 +64,19 @@ def patch_plugin_calls(monkeypatch):
         "execute_plugin",
         AsyncMock(return_value=FAKE_PLUGIN_RESULT),
     )
+    # SHU-759: _call_plugin now acquires its own session via
+    # get_async_session_local() at the point of use. Patch the factory
+    # to a do-nothing async context manager so this unit test doesn't
+    # try to construct a real async engine — that fails in environments
+    # where SHU_DATABASE_URL is configured for sync psycopg2 (CI).
+    fake_session_cm = AsyncMock()
+    fake_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    fake_session_cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        adapter_base,
+        "get_async_session_local",
+        lambda: lambda: fake_session_cm,
+    )
 
 
 def _evaluate_tool_call_events(tool_event):
@@ -249,3 +262,31 @@ async def test_inject_functions(responses_adapter):
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_assistant_string_content_is_wrapped_with_annotations(responses_adapter):
+    """Prior-turn assistant text replays as an explicit output_text content part with
+    annotations=[]. OpenAI's documented ResponseOutputTextParam declares annotations
+    as required; the bare-string shortcut is accepted by OpenAI's server-side
+    normalization but is not the spec-correct wire form.
+    """
+    messages = ChatContext.from_dicts(
+        [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "follow up"},
+        ],
+        system_prompt=None,
+    )
+
+    payload = await responses_adapter.set_messages_in_payload(messages, {})
+
+    assert payload["input"] == [
+        {"role": "user", "content": "first question"},
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "first answer", "annotations": []}],
+        },
+        {"role": "user", "content": "follow up"},
+    ]

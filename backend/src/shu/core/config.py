@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..ingestion.filetypes import DEFAULT_KB_FILE_TYPES
@@ -524,6 +524,14 @@ class Settings(BaseSettings):
     llm_max_tokens_default: int = Field(50_000, alias="SHU_LLM_MAX_TOKENS_DEFAULT")
     llm_temperature_default: float = Field(0.7, alias="SHU_LLM_TEMPERATURE_DEFAULT")
 
+    # TEST-ONLY: artificial per-chunk delay in the `local` provider's stream
+    # path ([client.py:_local_stream](../llm/client.py)). Used by SHU-759
+    # baseline + concurrency tests to simulate slow LLM streams; defaults to 0
+    # so production behavior is unchanged. **Must be 0 in production** —
+    # validated below; setting non-zero in `environment=production` raises at
+    # startup. A startup WARNING is logged in any environment when non-zero.
+    local_stream_test_chunk_delay_ms: int = Field(0, alias="SHU_LOCAL_STREAM_TEST_CHUNK_DELAY_MS")
+
     # RAG Configuration Defaults (global fallbacks)
     rag_search_threshold_default: float = Field(0.3, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
     rag_max_chunks_default: int = Field(10, alias="SHU_RAG_MAX_CHUNKS_DEFAULT")
@@ -716,6 +724,23 @@ class Settings(BaseSettings):
         if v.lower() not in valid_environments:
             raise ValueError(f"Environment must be one of: {valid_environments}")
         return v.lower()
+
+    @model_validator(mode="after")
+    def validate_local_stream_test_chunk_delay_ms_is_zero_in_prod(self) -> "Settings":
+        """Refuse to start with the test-only delay knob set in production.
+
+        SHU_LOCAL_STREAM_TEST_CHUNK_DELAY_MS exists solely to simulate slow
+        LLM streams in the SHU-759 baseline + concurrency tests. Letting it
+        bleed into production would inject artificial latency into every
+        local-provider chat. Fail fast at config load so the misconfiguration
+        is impossible to miss.
+        """
+        if self.environment == "production" and self.local_stream_test_chunk_delay_ms != 0:
+            raise ValueError(
+                "SHU_LOCAL_STREAM_TEST_CHUNK_DELAY_MS must be 0 in production "
+                f"(got {self.local_stream_test_chunk_delay_ms}). This setting is test-only."
+            )
+        return self
 
     @field_validator("password_policy")
     @classmethod

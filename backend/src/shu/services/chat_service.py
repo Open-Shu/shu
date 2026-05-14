@@ -5,9 +5,8 @@ Handles conversation management, message processing, and LLM integration.
 
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import asc, desc, func, select
@@ -40,9 +39,9 @@ from ..services.message_utils import serialize_message_for_sse
 from ..services.prompt_service import PromptService
 from ..services.query_service import QueryService
 from ..services.side_call_service import SideCallService
-from ..services.usage_recording import get_usage_recorder
 from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
 from .knowledge_base_service import KnowledgeBaseService
+from .providers.adapter_base import get_adapter_from_provider
 
 logger = get_logger(__name__)
 settings = get_settings_instance()
@@ -50,7 +49,15 @@ settings = get_settings_instance()
 
 @dataclass
 class PreparedTurnContext:
-    """Data container for a prepared user turn and its LLM context."""
+    """Data container for a prepared user turn and its LLM context.
+
+    Snapshot contract (SHU-759): instances may carry ORM-attached objects
+    (Conversation, Message). Consumers MUST treat them as read-only and MUST
+    NOT traverse relationships beyond those eager-loaded in prepare. The
+    request session is closed before stream/finalize phases run, so a lazy
+    load would raise DetachedInstanceError. expunge_all() is called at the
+    end of prepare to make any contract violation fail fast.
+    """
 
     conversation: Conversation
     user_message: Message
@@ -60,7 +67,14 @@ class PreparedTurnContext:
 
 @dataclass
 class ModelExecutionInputs:
-    """Resolved inputs for executing a single model configuration."""
+    """Resolved inputs for executing a single model configuration.
+
+    Snapshot contract (SHU-759): the ORM fields (model_configuration,
+    model) are read-only snapshots; do not traverse relationships beyond
+    those eager-loaded in prepare. The new boolean / dict / id fields
+    precompute everything previously fetched mid-stream so the stream
+    phase needs no DB session.
+    """
 
     model_configuration: ModelConfiguration
     provider_id: str
@@ -71,6 +85,72 @@ class ModelExecutionInputs:
     # Per-provider rate limits
     rate_limit_rpm: int = 60
     rate_limit_tpm: int = 60000
+
+    # SHU-759 snapshot fields — precomputed during prepare so the stream
+    # phase never reaches for the request session.
+    #
+    # tools_enabled: result of the provider adapter's capability check AND
+    #   the model config's functionalities AND chat_plugins_enabled.
+    #   Snapshotted once via _compute_tools_enabled.
+    # kb_include_references_map: per-KB-id `include_references` setting,
+    #   precomputed for [_post_process_references] so it doesn't hit the
+    #   KnowledgeBaseService mid-stream.
+    # conversation_owner_id: the conversation owner's user_id, eliminating
+    #   the mid-stream conversation-owner re-query.
+    # provider: the LLMProvider ORM object with provider_definition eagerly
+    #   loaded. Snapshotted so _stream_variant_phase can construct the
+    #   UnifiedLLMClient without a fresh get_provider_by_id DB query.
+    tools_enabled: bool = False
+    kb_include_references_map: dict[str, bool] = field(default_factory=dict)
+    conversation_owner_id: str | None = None
+    provider: LLMProvider | None = None
+
+
+@dataclass
+class VariantStreamResult:
+    """Outcome of `_stream_variant_phase` — handed to `_finalize_variant_phase` (SHU-759).
+
+    Discriminated by `success`. Fields are primitive types only (str, int,
+    dict, list of primitives); no ORM-attached objects. Finalize opens a
+    fresh session and writes the assistant Message + LLMUsage row using
+    these primitives only, avoiding any cross-session ORM identity issues.
+    """
+
+    success: bool
+
+    # Success-path fields (populated when success is True)
+    full_content: str | None = None
+    final_source_metadata: list[dict] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
+    model_name_for_event: str | None = None
+    final_event_type: str | None = None  # e.g. "final_message" or "error" from provider
+
+    # Failure-path fields (populated when success is False)
+    error_message: str | None = None
+    error_type: str | None = None
+    error_details: dict[str, Any] | None = None
+
+
+@dataclass
+class RegenLineageInfo:
+    """Optional regen-specific lineage data threaded into finalize (SHU-759).
+
+    When present, finalize:
+    - Computes `next_variant_index` from sibling rows of `root_id` (with
+      retry-on-conflict against the UNIQUE constraint added in N10).
+    - Updates the original target message's `parent_message_id` /
+      `variant_index` if they are currently NULL (legacy backfill).
+    - Stamps `regenerated=True` and `regenerated_from_message_id=target_id`
+      onto the new assistant message's metadata.
+
+    All three operations live in the same fresh-session transaction as the
+    Message + LLMUsage write, so the regen path commits once instead of the
+    two-commit pattern in [chat_service.py:1229-1264].
+    """
+
+    target_message_id: str
+    root_id: str
 
 
 class ChatService:
@@ -106,7 +186,6 @@ class ChatService:
         self.streaming_helper = EnsembleStreamingHelper(
             self,
             self.message_context_builder,
-            db_session=self.db_session,
             config_manager=config_manager,
         )
 
@@ -243,6 +322,14 @@ class ChatService:
             kb_access_verified=bool(turn_context.knowledge_base_ids),
         )
 
+        # SHU-759: precompute everything the stream phase used to fetch
+        # mid-stream so it can run with no DB session at all.
+        tools_enabled = self._compute_tools_enabled(provider, model_configuration)
+        kb_include_references_map = await self._compute_kb_include_references_map(
+            explicit_knowledge_base_ids=turn_context.knowledge_base_ids,
+            source_metadata=source_metadata,
+        )
+
         return ModelExecutionInputs(
             model_configuration=model_configuration,
             provider_id=provider_id,
@@ -252,7 +339,69 @@ class ChatService:
             knowledge_base_ids=turn_context.knowledge_base_ids,
             rate_limit_rpm=provider.rate_limit_rpm or 60,
             rate_limit_tpm=provider.rate_limit_tpm or 60000,
+            tools_enabled=tools_enabled,
+            kb_include_references_map=kb_include_references_map,
+            conversation_owner_id=getattr(base_conversation, "user_id", None),
+            provider=provider,
         )
+
+    def _compute_tools_enabled(self, provider: LLMProvider, model_configuration: ModelConfiguration) -> bool:
+        """Snapshot whether tools are enabled for this variant (SHU-759).
+
+        Combines the provider adapter's `tools` capability flag, the model
+        configuration's `supports_functions` / `supports_tools` flags, and
+        the global `chat_plugins_enabled` setting. Evaluated during prepare
+        while a DB session is still available, then stored on
+        ModelExecutionInputs.tools_enabled so the stream phase needs zero
+        DB access for this decision.
+        """
+        model_functionalities = model_configuration.functionalities or {}
+        capabilities = get_adapter_from_provider(self.db_session, provider).get_field_with_override("get_capabilities")
+        provider_and_model_support_tools = capabilities.get("tools", {}).get("value", False) and (
+            model_functionalities.get("supports_functions", False) or model_functionalities.get("supports_tools", False)
+        )
+        chat_plugins_enabled = getattr(self.config_manager.settings, "chat_plugins_enabled", False)
+        return bool(provider_and_model_support_tools and chat_plugins_enabled)
+
+    async def _compute_kb_include_references_map(
+        self,
+        *,
+        explicit_knowledge_base_ids: list[str] | None,
+        source_metadata: list[dict],
+    ) -> dict[str, bool]:
+        """Snapshot per-KB `include_references` settings for _post_process_references.
+
+        Walks the union of explicit `knowledge_base_ids` (when the caller
+        attached KBs directly) and the KB IDs that actually appear in
+        `source_metadata` (when RAG already ran against the model config's
+        KBs). Looks up each KB's `include_references` setting once during
+        prepare so MessageContextBuilder._post_process_references can read
+        it from the snapshot instead of opening a session mid-stream.
+
+        Failures on individual KBs are logged and treated as `True` (the
+        existing _post_process_references default).
+        """
+        candidate_kb_ids: set[str] = set()
+        if explicit_knowledge_base_ids:
+            candidate_kb_ids.update(explicit_knowledge_base_ids)
+        for meta in source_metadata or []:
+            kb_id = meta.get("knowledge_base_id")
+            if kb_id:
+                candidate_kb_ids.add(kb_id)
+
+        if not candidate_kb_ids:
+            return {}
+
+        kb_service = KnowledgeBaseService(self.db_session)
+        kb_include_references_map: dict[str, bool] = {}
+        for kb_id in candidate_kb_ids:
+            try:
+                rag_config = await kb_service.get_rag_config(kb_id)
+                kb_include_references_map[kb_id] = bool(getattr(rag_config, "include_references", True))
+            except Exception as e:
+                logger.warning("Failed to snapshot KB include_references for %s: %s", kb_id, e)
+                kb_include_references_map[kb_id] = True
+        return kb_include_references_map
 
     @staticmethod
     def _build_model_configuration_metadata(
@@ -337,8 +486,12 @@ class ChatService:
         await self._ensure_provider_active(model_config.llm_provider_id)
         return model_config
 
-    async def _resolve_conversation_model(self, conversation: Conversation) -> tuple[str, LLMModel]:
-        """Resolve the active provider and model to use for a conversation.
+    async def _resolve_conversation_model(self, conversation: Conversation) -> tuple[str, LLMModel, LLMProvider]:
+        """Resolve the active provider, model, and provider row for a conversation.
+
+        Returns ``(provider_id, model, provider)``. The provider row is
+        returned alongside so callers (e.g. regen prepare) can populate the
+        ModelExecutionInputs snapshot without re-fetching the same row.
 
         Requires the conversation to be linked to a model configuration.
         """
@@ -346,7 +499,7 @@ class ChatService:
         if not model_config:
             raise LLMProviderError("Conversation is missing a model configuration")
 
-        await self._ensure_provider_active(model_config.llm_provider_id)
+        provider = await self._ensure_provider_active(model_config.llm_provider_id)
 
         model_name = model_config.model_name
         if not model_name:
@@ -362,7 +515,7 @@ class ChatService:
                 f"Model '{model_name}' is inactive or unavailable for provider '{model_config.llm_provider_id}'"
             )
 
-        return model_config.llm_provider_id, model_record
+        return model_config.llm_provider_id, model_record, provider
 
     async def create_conversation(
         self,
@@ -983,9 +1136,27 @@ class ChatService:
         # )
         # try:
 
+        # SHU-759: prepare-phase validation moved out of the API router so the
+        # endpoint stays a thin HTTP shim. Order: cheap input check first, then
+        # existence, then ownership.
+        prepare_phase_start = datetime.now(UTC)
+        if not user_message or not user_message.strip():
+            raise ShuException(
+                message="The user message can not be empty.",
+                error_code="INVALID_REQUEST",
+                status_code=400,
+            )
+
         conversation = await self.get_conversation_by_id(conversation_id)
         if not conversation:
-            raise ConversationNotFoundError(f"Conversation with ID '{conversation_id}' not found")
+            raise ConversationNotFoundError(conversation_id)
+
+        if hasattr(current_user, "id") and conversation.user_id != current_user.id:
+            raise ShuException(
+                message="You don't have access to this conversation",
+                error_code="UNAUTHORIZED",
+                status_code=403,
+            )
 
         model_config_provider_stmt = (
             selectinload(Conversation.model_configuration)
@@ -1050,12 +1221,35 @@ class ChatService:
             for model_config in model_configurations
         ]
 
+        # Serialize the user message for the SSE prologue BEFORE expunging the
+        # session — turn_context.user_message is an ORM instance and serialization
+        # touches its relationships.
+        serialized_user_message = serialize_message_for_sse(turn_context.user_message)
+
+        # SHU-759: detach all ORM instances and null the service's session ref.
+        # Eager-loaded attributes on the snapshot ORM objects remain readable in
+        # the stream phase; any lazy load (i.e. a contract violation) raises
+        # DetachedInstanceError at the access site, not the much-nastier
+        # MissingGreenlet from a closed-async-session lazy load.
+        self.db_session.expunge_all()
+        self.db_session = None
+
+        logger.info(
+            "Chat prepare complete",
+            extra={
+                "phase": "prepare_complete",
+                "conversation_id": conversation_id,
+                "variant_count": len(execution_inputs),
+                "elapsed_ms": (datetime.now(UTC) - prepare_phase_start).total_seconds() * 1000,
+            },
+        )
+
         async def _gen():
             # Emit persisted user message early so client can replace placeholder deterministically
             try:
                 yield ProviderResponseEvent(
                     type="user_message",
-                    content=serialize_message_for_sse(turn_context.user_message),
+                    content=serialized_user_message,
                     client_temp_id=client_temp_id,
                 )
             except Exception as ser_e:
@@ -1072,45 +1266,8 @@ class ChatService:
         # finally:
         #     await release_conversation_lock(self.db_session, conversation_id, lock_id)
 
-    async def _handle_exception(
-        self,
-        conversation_id: str,
-        model: LLMModel,
-        e: Exception | ShuException,
-        user_id: str | None = None,
-    ) -> Message:
-        logger.error("LLM completion failed: %s", e)
-
-        # Record failed usage. Tokens and cost stay at 0 — the request never
-        # produced output, so there's nothing to bill. user_id is still
-        # populated so failed attempts appear under the originating user in
-        # any per-user usage dashboard.
-        try:
-            await get_usage_recorder().record(
-                provider_id=model.provider_id,
-                model_id=model.id,
-                request_type="chat",
-                input_tokens=0,
-                output_tokens=0,
-                total_cost=Decimal("0"),
-                user_id=user_id,
-                success=False,
-                error_message=str(e),
-            )
-        except Exception as usage_error:
-            logger.warning("Failed to record LLM usage: %s", usage_error)
-
-        # Create error message
-        return await self.add_message(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=f"I apologize, but I encountered an error: {e!s}",
-            model_id=model.id,
-            metadata={"error": e.details if isinstance(e, ShuException) else str(e)},
-        )
-
     # TODO: Refactor this function. It's too complex (number of branches and statements).
-    async def regenerate_message(  # noqa: PLR0915
+    async def regenerate_message(
         self,
         message_id: str,
         current_user,
@@ -1119,6 +1276,7 @@ class ChatService:
         knowledge_base_ids: list[str] | None = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """Regenerate an assistant message by rebuilding context up to the preceding user turn."""
+        prepare_phase_start = datetime.now(UTC)
         if knowledge_base_ids:
             await self._verify_knowledge_base_access(knowledge_base_ids, str(current_user.id))
 
@@ -1189,8 +1347,10 @@ class ChatService:
         history_messages = all_msgs[:history_end]
         preceding_user_message = all_msgs[preceding_user_idx] if preceding_user_idx is not None else None
         preceding_user_content = preceding_user_message.content if preceding_user_message else ""
-        # Resolve provider/model via model configuration or cached model reference
-        provider_id, model = await self._resolve_conversation_model(conversation)
+        # Resolve provider/model via model configuration or cached model reference.
+        # _resolve_conversation_model now also returns the provider row so we don't
+        # have to re-fetch it for the snapshot below.
+        provider_id, model, provider = await self._resolve_conversation_model(conversation)
 
         chat_context, source_metadata = await self.message_context_builder.build_message_context(
             conversation=conversation,
@@ -1205,8 +1365,11 @@ class ChatService:
 
         # Use the explicit parent_message_id from the frontend, or fall back to target.id
         root_id = parent_message_id or target.id
-        logger.info(
-            f"REGENERATE DEBUG: message_id={message_id}, parent_message_id={parent_message_id}, target.id={target.id}, root_id={root_id}"
+
+        tools_enabled = self._compute_tools_enabled(provider, conversation.model_configuration)
+        kb_include_references_map = await self._compute_kb_include_references_map(
+            explicit_knowledge_base_ids=knowledge_base_ids,
+            source_metadata=source_metadata,
         )
 
         execution_inputs = [
@@ -1217,54 +1380,43 @@ class ChatService:
                 context_messages=chat_context,
                 source_metadata=source_metadata,
                 knowledge_base_ids=knowledge_base_ids,
+                tools_enabled=tools_enabled,
+                kb_include_references_map=kb_include_references_map,
+                conversation_owner_id=getattr(conversation, "user_id", None),
+                provider=provider,
             )
         ]
 
-        # Determine per-model parameter overrides from configuration (regenerate path)
-        base_stream = self.streaming_helper.stream_ensemble_responses(
+        # SHU-759: detach all ORM instances and null the service's session ref
+        # before returning the event generator. See send_message for rationale.
+        self.db_session.expunge_all()
+        self.db_session = None
+
+        logger.info(
+            "Chat regenerate prepare complete",
+            extra={
+                "phase": "prepare_complete",
+                "conversation_id": conversation.id,
+                "target_message_id": target.id,
+                "root_id": root_id,
+                "elapsed_ms": (datetime.now(UTC) - prepare_phase_start).total_seconds() * 1000,
+            },
+        )
+
+        # SHU-759: the regen-specific lineage logic (legacy backfill of
+        # target.parent_message_id / variant_index, next sibling
+        # variant_index computation, regen-metadata stamp) is folded into
+        # _finalize_variant_phase via RegenLineageInfo. All of it now lands
+        # in the same fresh-session transaction as the Message + LLMUsage
+        # write, replacing the two-commit pattern of the old regen_stream
+        # wrapper and gaining UNIQUE-constraint retry on variant_index
+        # collisions (r009_0001).
+        return self.streaming_helper.stream_ensemble_responses(
             ensemble_inputs=execution_inputs,
             conversation_id=conversation.id,
             parent_message_id_override=root_id,
+            regen_lineage=RegenLineageInfo(target_message_id=target.id, root_id=root_id),
         )
-
-        async def regen_stream() -> AsyncGenerator[dict[str, Any], None]:
-            async for event in base_stream:
-                if event.type == "final_message":
-                    if target.parent_message_id is None:
-                        target.parent_message_id = root_id
-                        if target.id == root_id:
-                            target.variant_index = 0
-
-                    msg_payload = event.content or {}
-                    msg_id = msg_payload.get("id")
-                    new_assistant: Message | None = None
-                    if msg_id:
-                        new_assistant = await self.get_message_by_id(msg_id)
-
-                    if new_assistant:
-                        stmt = select(Message.variant_index).where(Message.parent_message_id == root_id)
-                        res = await self.db_session.execute(stmt)
-                        existing = [vi for (vi,) in res.all() if vi is not None]
-                        next_idx = (max(existing) + 1) if existing else 1
-
-                        new_assistant.parent_message_id = root_id
-                        new_assistant.variant_index = next_idx
-                        meta = dict(getattr(new_assistant, "message_metadata", {}) or {})
-                        meta["regenerated"] = True
-                        meta["regenerated_from_message_id"] = target.id
-                        new_assistant.message_metadata = meta
-
-                        await self.db_session.commit()
-                        await self.db_session.refresh(new_assistant)
-
-                        event.variant_index = next_idx
-                        event.content = serialize_message_for_sse(new_assistant)
-                    else:
-                        await self.db_session.commit()
-
-                yield event
-
-        return regen_stream()
 
     def _locate_regeneration_indices(
         self,
@@ -1341,7 +1493,7 @@ class ChatService:
                 conversation.model_configuration_id = None
                 conversation.model_configuration = None
 
-            provider_id, model_record = await self._resolve_conversation_model(conversation)
+            provider_id, model_record, _ = await self._resolve_conversation_model(conversation)
             conversation.updated_at = datetime.now(UTC)
 
             await self.db_session.commit()
