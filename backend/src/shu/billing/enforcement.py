@@ -63,7 +63,7 @@ async def get_current_billing_state() -> BillingState:
       transient outage. The OpenRouter side gates chat/embed cost
       independently, so the leak surface is bounded.
     """
-    cache = get_billing_state_cache()
+    cache = await get_billing_state_cache()
     if cache is None:
         return HEALTHY_DEFAULT
     return await cache.get()

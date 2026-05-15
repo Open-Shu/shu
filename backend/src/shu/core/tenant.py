@@ -250,6 +250,37 @@ def tenant_context_for_stripe_customer(customer_id: str):
     return _tenant_context_for_credential(stripe_customer_id=customer_id)
 
 
+def resolve_tenant_for_infra() -> str:
+    """Return the tenant_id for non-DB infra consumers (Redis keys, CP traffic, etc.).
+
+    Used by Redis cache / queue / CP-billing / anything outside the DB session
+    pipeline that needs a tenant_id but doesn't get one through a credential
+    or a job payload. The hot question is multi-tenant: a naive ``or``-chain
+    would silently fall through to the self-hosted constant if context isn't
+    set, which would dump every multi-tenant worker's writes into the same
+    Redis namespace. We raise instead, so the misconfiguration is loud.
+    """
+    # Lazy import to avoid duplicating the constant — config.py is the source of truth.
+    from .config import SELF_HOSTED_TENANT_UUID
+
+    settings = get_settings_instance()
+    if settings.deployment_mode == DeploymentMode.SELF_HOSTED:
+        return SELF_HOSTED_TENANT_UUID
+    if settings.deployment_mode == DeploymentMode.SILO:
+        return settings.tenant_id  # validator guarantees this is a UUID string
+    # MULTI_TENANT — the only place tenant_context might be unset, in which case
+    # we have a real misconfiguration: some code path is touching infra without
+    # having gone through the request resolver or the worker dispatch wrapper.
+    tid = tenant_context.get(None)
+    if tid is None:
+        raise MissingTenantContextError(
+            "resolve_tenant_for_infra() called in multi-tenant mode without tenant_context set. "
+            "This usually means an infra call (Redis key, CP request) is happening outside a "
+            "request handler and outside the worker dispatch wrapper."
+        )
+    return tid
+
+
 def tenant_context_for_tenant_id(tenant_id: str | None):
     """Tenant context for callers that already have a verified tenant_id.
 
@@ -262,6 +293,12 @@ def tenant_context_for_tenant_id(tenant_id: str | None):
 
 
 def warn_tenant_without_redis(logger: Logger, backend_kind: str, tenant_id: str) -> None:
+    # Multi-tenant deployments have many tenants; warning per-tenant about a
+    # missing Redis URL would either spam logs or only fire for one tenant's
+    # request. The misconfiguration there is structural (operator shipped
+    # multi-tenant without Redis) and surfaces other ways — skip the noise.
+    if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
+        return
     logger.warning(
         "SHU_TENANT_ID is set (tenant=%s) but SHU_REDIS_URL is not — " "falling back to in-memory %s backend.",
         tenant_id,

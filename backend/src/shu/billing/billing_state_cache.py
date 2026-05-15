@@ -30,7 +30,6 @@ from shu.billing.cp_client import (
     CpClient,
     CpClientError,
 )
-from shu.core.config import get_settings_instance
 from shu.core.http_client import get_http_client
 from shu.core.logging import get_logger
 
@@ -111,68 +110,86 @@ class BillingStateCache:
         return HEALTHY_DEFAULT
 
 
-# Module-level singleton so both the FastAPI app and the worker process
-# read the same cache. Kept as module state rather than `app.state` because
-# the worker has no FastAPI app — gating OCR jobs at dequeue time
-# (SHU-703) needs reachability from a non-FastAPI context.
-_cache: BillingStateCache | None = None
+# Per-tenant cache map. Each tenant_id gets its own BillingStateCache (and
+# therefore its own CpClient with its own tenant_id baked in). Lazy-populated
+# on the first request that lands for a tenant we haven't seen before; new
+# tenants provisioned after process start are picked up automatically.
+#
+# ``None`` is a valid value meaning "we determined CP isn't configured /
+# build failed for this tenant — don't keep retrying every request".
+#
+# Kept as module state rather than `app.state` because the worker has no
+# FastAPI app — gating OCR jobs at dequeue time (SHU-703) needs reachability
+# from a non-FastAPI context.
+_cache_by_tenant: dict[str, BillingStateCache | None] = {}
 
 
-def get_billing_state_cache() -> BillingStateCache | None:
-    """Return the process-wide cache singleton, or None if CP is not configured.
+async def get_billing_state_cache() -> BillingStateCache | None:
+    """Return the cache for the current tenant_context, building lazily on first hit.
 
-    Callers must treat None as "self-hosted / dev — enforcement disabled."
+    Returns ``None`` when:
+    - ``tenant_context`` is not set (caller is outside a request handler and
+      outside the worker dispatch wrapper). Treat as "enforcement disabled".
+    - CP isn't configured for this deployment (``router_shared_secret`` or
+      ``cp_base_url`` missing). Also enforcement-disabled.
+
+    The shared envelope secret is intentional: all tenants on a deployment
+    sign with the same ``router_shared_secret``. See design note on
+    per-tenant secrets — a future change would add a per-tenant secret table
+    and an ``X-Shu-Tenant-Id`` envelope header for upfront verification.
     """
-    return _cache
+    from ..core.tenant import tenant_context
 
+    tid = tenant_context.get(None)
+    if tid is None:
+        return None
+    if tid in _cache_by_tenant:
+        return _cache_by_tenant[tid]
 
-def reset_billing_state_cache() -> None:
-    """Reset the singleton. Test-only."""
-    global _cache  # noqa: PLW0603
-    _cache = None
-
-
-async def initialize_billing_state_cache() -> None:
-    """Eager-load the cache so SHU-703 enforcement sees a fresh value on the
-    first request rather than the cold-start fallback.
-
-    Skipped on self-hosted / dev deployments where CP isn't configured —
-    presence of all three of `tenant_id`, `router_shared_secret`, and
-    `cp_base_url` is the signal that the tenant is meant to talk to CP.
-
-    Idempotent: a second call is a no-op once the singleton is populated,
-    so FastAPI startup and worker startup can both invoke this safely.
-    """
-    global _cache  # noqa: PLW0603
-    if _cache is not None:
-        return
-
-    settings = get_settings_instance()
     billing_settings = get_billing_settings()
-    if not (settings.tenant_id and billing_settings.router_shared_secret and billing_settings.cp_base_url):
-        _logger.info(
-            "CP billing-state cache disabled — tenant_id, router secret, or "
-            "CP base URL not configured (self-hosted / dev)"
-        )
-        return
+    if not (billing_settings.router_shared_secret and billing_settings.cp_base_url):
+        # Remember "no CP configured" so future requests skip the recheck.
+        _cache_by_tenant[tid] = None
+        return None
 
+    # No lock: two concurrent first-requests for the same tenant might both
+    # build a cache, but they're equivalent — the second writer wins on the
+    # dict slot and the first cache is GC'd. Single wasted CP call in a rare
+    # case, vs. the loop-binding hazards of a module-level asyncio.Lock.
     try:
         http_client = await get_http_client()
         cache = BillingStateCache(
             client=CpClient(
                 base_url=billing_settings.cp_base_url,
-                tenant_id=UUID(settings.tenant_id),
+                tenant_id=UUID(tid),
                 shared_secret=billing_settings.router_shared_secret,
                 http_client=http_client,
                 logger=get_logger("shu.billing.cp_client"),
             ),
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
         )
-        # Publish the singleton before the eager fetch so a programmer
-        # error in get() still leaves the cache reachable. CpClientError
-        # is absorbed inside get(); only programmer errors (bad UUID,
-        # broken httpx, etc.) escape here.
-        _cache = cache
-        _logger.info("CP billing-state cache initialized: %s", await cache.get())
+        _cache_by_tenant[tid] = cache
+        return cache
     except Exception as e:
-        _logger.warning(f"CP billing-state cache initialization failed: {e}")
+        # Programmer errors (bad UUID, broken httpx, etc.) shouldn't take
+        # the request down. Cache the None so we don't retry every request.
+        _logger.warning("CP billing-state cache build failed for tenant %s: %s", tid, e)
+        _cache_by_tenant[tid] = None
+        return None
+
+
+def reset_billing_state_cache() -> None:
+    """Reset all per-tenant caches. Test-only."""
+    global _cache_by_tenant  # noqa: PLW0603
+    _cache_by_tenant = {}
+
+
+async def initialize_billing_state_cache() -> None:
+    """No-op kept for backward compatibility with lifespan callers.
+
+    Caches are built lazily per-tenant on the first request that resolves to
+    each tenant; there's nothing useful to eager-warm at process startup
+    because (a) we don't know which tenants will be active yet, and (b) new
+    tenants may be provisioned after start. The first request from each
+    tenant pays one CP-call latency; subsequent requests hit the cache.
+    """
