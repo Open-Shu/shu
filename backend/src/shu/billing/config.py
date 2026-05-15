@@ -7,6 +7,7 @@ integrate with the main Shu Settings class.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -56,6 +57,13 @@ class BillingSettings(BaseSettings):
     # outage windows are absorbed by serving the previous value.
     billing_state_cache_ttl_seconds: int = Field(500, alias="SHU_BILLING_STATE_CACHE_TTL_SECONDS")
 
+    # The customer-billed markup applied to raw provider cost. Mirrors the
+    # frontend constant in `billingFormatters.js` (USAGE_MARKUP_MULTIPLIER).
+    # Used as the fallback when the live value isn't attached to BillingState
+    # (Stripe error during cache refresh, no metered item on the subscription,
+    # tiered pricing without a flat unit_amount_decimal, etc.).
+    usage_markup_multiplier_default: Decimal = Field(Decimal("1.3"), alias="SHU_USAGE_MARKUP_MULTIPLIER_DEFAULT")
+
     # Tenant identifiers — set by the operator at deploy time.
     # These seed billing_state on first boot so webhook handlers and
     # scheduler jobs have a customer/subscription to work with immediately.
@@ -102,6 +110,15 @@ class BillingSettings(BaseSettings):
                 f"SHU_BILLING_STATE_CACHE_TTL_SECONDS must be >= "
                 f"{_MIN_BILLING_STATE_CACHE_TTL_SECONDS} (got {value})"
             )
+        return value
+
+    @field_validator("usage_markup_multiplier_default", mode="after")
+    @classmethod
+    def _enforce_positive_markup_default(cls, value: Decimal) -> Decimal:
+        # A non-positive multiplier would let trial usage accrue against the
+        # grant at zero or negative rate, effectively disabling the trial cap.
+        if value <= 0:
+            raise ValueError(f"SHU_USAGE_MARKUP_MULTIPLIER_DEFAULT must be > 0 (got {value})")
         return value
 
     @property

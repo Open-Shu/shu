@@ -19,10 +19,13 @@ is gated at OpenRouter, so the leak window is OCR-only.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import dataclasses
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID
 
+from shu.billing.billing_state_persister import BillingStatePersister
 from shu.billing.config import get_billing_settings
 from shu.billing.cp_client import (
     HEALTHY_DEFAULT,
@@ -30,6 +33,7 @@ from shu.billing.cp_client import (
     CpClient,
     CpClientError,
 )
+from shu.billing.stripe_client import StripeClient, StripeClientError
 from shu.core.http_client import get_http_client
 from shu.core.logging import get_logger
 
@@ -40,16 +44,32 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+MarkupFetcher = Callable[[], Awaitable[Decimal | None]]
+
+
 class BillingStateCache:
     def __init__(
         self,
         client: CpClient,
         ttl_seconds: int,
         clock: Callable[[], datetime] = _utc_now,
+        persister: BillingStatePersister | None = None,
+        markup_fetcher: MarkupFetcher | None = None,
     ) -> None:
         self._client = client
         self._ttl_seconds = ttl_seconds
         self._clock = clock
+        # Optional disk-backed fallback. When set, successful polls are
+        # mirrored to system_settings and a cold-start CP failure attempts
+        # to restore from there before falling back to HEALTHY_DEFAULT.
+        # Tests pass None to stay DB-free.
+        self._persister = persister
+        # Markup is not on the CP wire yet — the tenant attaches it here from
+        # Stripe so consumers (trial-cap enforcement, remaining-grant display)
+        # see a single BillingState object with everything pre-resolved. When
+        # CP starts shipping `usage_markup_multiplier`, drop this fetcher and
+        # let the CP value flow through unmodified. See `resolve_markup`.
+        self._markup_fetcher = markup_fetcher
         self._value: BillingState | None = None
         self._last_success_at: datetime | None = None
         # Set on every failed fetch attempt to `now + ttl`. While the clock
@@ -76,11 +96,49 @@ class BillingStateCache:
                 value = await self._client.fetch_billing_state()
             except CpClientError as exc:
                 self._next_retry_after = self._clock() + timedelta(seconds=self._ttl_seconds)
-                return self._serve_stale_or_default(exc)
+                return await self._serve_stale_or_default(exc)
 
+            # TODO: Change this logic to have CP return the tenant markup.
+            value = await self._attach_markup(value)
             self._value = value
             self._last_success_at = self._clock()
+            if self._persister is not None:
+                await self._persister.save(value)
             return value
+
+    async def _attach_markup(self, value: BillingState) -> BillingState:
+        # CP doesn't ship the markup multiplier today, so any value already on
+        # the wire is preserved. Skipping the fetch on that branch lets the CP
+        # migration land without a coordinated tenant deploy.
+        if value.usage_markup_multiplier is not None or self._markup_fetcher is None:
+            return value
+        try:
+            markup = await self._markup_fetcher()
+        except StripeClientError as exc:
+            # A Stripe blip shouldn't fail the whole refresh — the rest of
+            # BillingState is still authoritative. Fall through to the
+            # configured default so consumers never see None on a path that
+            # otherwise produced a valid CP poll.
+            _logger.warning(
+                "Stripe markup fetch failed during billing-state refresh; applying configured default",
+                extra={"exc_type": type(exc).__name__},
+            )
+            markup = None
+        if markup is None:
+            markup = get_billing_settings().usage_markup_multiplier_default
+        return dataclasses.replace(value, usage_markup_multiplier=markup)
+
+    async def invalidate(self) -> None:
+        # Acquired under the same lock as get() so an in-flight fetch can't
+        # write its result back AFTER we've cleared state — that would
+        # silently restore the stale value the admin action just superseded.
+        # Clearing the failure-backoff window too: an admin upgrade right
+        # after a CP blip should re-poll on the next read, not wait out
+        # the backoff timer.
+        async with self._lock:
+            self._value = None
+            self._last_success_at = None
+            self._next_retry_after = None
 
     def _is_fresh(self) -> bool:
         if self._value is None or self._last_success_at is None:
@@ -91,7 +149,7 @@ class BillingStateCache:
     def _is_in_failure_backoff(self) -> bool:
         return self._next_retry_after is not None and self._clock() < self._next_retry_after
 
-    def _serve_stale_or_default(self, exc: CpClientError) -> BillingState:
+    async def _serve_stale_or_default(self, exc: CpClientError) -> BillingState:
         # _last_success_at is deliberately NOT advanced on failure; the retry
         # cadence is bounded by _next_retry_after instead.
         if self._value is not None:
@@ -103,6 +161,23 @@ class BillingStateCache:
                 },
             )
             return self._value
+        # Cold start with no in-memory value: try the persisted last-known
+        # state before falling back to HEALTHY_DEFAULT. A restart that
+        # coincides with a CP outage shouldn't drop a paying tenant to the
+        # trial-cap-blocked default if we have their prior state.
+        if self._persister is not None:
+            persisted = await self._persister.load()
+            if persisted is not None:
+                _logger.warning(
+                    "CP unreachable on cold start, restored billing state from disk",
+                    extra={"exc_type": type(exc).__name__},
+                )
+                # Populate as if it were a fresh fetch — _last_success_at
+                # left unset so the next call past the failure backoff
+                # retries CP rather than treating disk-restored data as
+                # eternally fresh.
+                self._value = persisted
+                return persisted
         _logger.warning(
             "CP unreachable on cold start, serving healthy default",
             extra={"exc_type": type(exc).__name__},
@@ -110,18 +185,28 @@ class BillingStateCache:
         return HEALTHY_DEFAULT
 
 
-# Per-tenant cache map. Each tenant_id gets its own BillingStateCache (and
-# therefore its own CpClient with its own tenant_id baked in). Lazy-populated
-# on the first request that lands for a tenant we haven't seen before; new
-# tenants provisioned after process start are picked up automatically.
+# Per-tenant cache + CpClient maps. Each tenant_id gets its own
+# BillingStateCache (with its own CpClient, persister, and markup_fetcher),
+# lazy-populated on the first request that lands for a tenant we haven't
+# seen before; new tenants provisioned after process start are picked up
+# automatically.
 #
-# ``None`` is a valid value meaning "we determined CP isn't configured /
-# build failed for this tenant — don't keep retrying every request".
+# ``None`` is a valid value in ``_cache_by_tenant`` meaning "we determined
+# CP isn't configured / build failed for this tenant — don't keep retrying
+# every request".
+#
+# The cache and the CpClient are siblings: the cache owns state + freshness
+# policy; the client owns transport. The router uses the client directly
+# for trial-action POSTs (upgrade-now, cancel-subscription) rather than
+# reaching through the cache, so a future change to the cache's internals
+# can't accidentally break the trial-action wiring. Both maps are kept in
+# lock-step — when one tenant's cache lands, its CpClient lands too.
 #
 # Kept as module state rather than `app.state` because the worker has no
 # FastAPI app — gating OCR jobs at dequeue time (SHU-703) needs reachability
 # from a non-FastAPI context.
 _cache_by_tenant: dict[str, BillingStateCache | None] = {}
+_cp_client_by_tenant: dict[str, CpClient] = {}
 
 
 async def get_billing_state_cache() -> BillingStateCache | None:
@@ -158,16 +243,23 @@ async def get_billing_state_cache() -> BillingStateCache | None:
     # case, vs. the loop-binding hazards of a module-level asyncio.Lock.
     try:
         http_client = await get_http_client()
-        cache = BillingStateCache(
-            client=CpClient(
-                base_url=billing_settings.cp_base_url,
-                tenant_id=UUID(tid),
-                shared_secret=billing_settings.router_shared_secret,
-                http_client=http_client,
-                logger=get_logger("shu.billing.cp_client"),
-            ),
-            ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
+        # Build the CpClient and the cache together; both maps publish in
+        # lock-step so trial-action callers reading get_cp_client() expect
+        # the matching cache to be ready too.
+        cp_client = CpClient(
+            base_url=billing_settings.cp_base_url,
+            tenant_id=UUID(tid),
+            shared_secret=billing_settings.router_shared_secret,
+            http_client=http_client,
+            logger=get_logger("shu.billing.cp_client"),
         )
+        cache = BillingStateCache(
+            client=cp_client,
+            ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
+            persister=BillingStatePersister(tenant_id=tid),
+            markup_fetcher=_build_markup_fetcher(billing_settings),
+        )
+        _cp_client_by_tenant[tid] = cp_client
         _cache_by_tenant[tid] = cache
         return cache
     except Exception as e:
@@ -178,10 +270,51 @@ async def get_billing_state_cache() -> BillingStateCache | None:
         return None
 
 
+async def get_cp_client() -> CpClient | None:
+    """Return the CpClient for the current tenant, building lazily.
+
+    Used by admin trial-action endpoints (upgrade-now, cancel-trial) that
+    POST to CP outside the billing-state poll path. Routes through
+    ``get_billing_state_cache`` so the cache and the client land together
+    in their respective per-tenant maps.
+    """
+    from ..core.tenant import tenant_context
+
+    tid = tenant_context.get(None)
+    if tid is None:
+        return None
+    if tid in _cp_client_by_tenant:
+        return _cp_client_by_tenant[tid]
+    # Building the cache builds the client too.
+    await get_billing_state_cache()
+    return _cp_client_by_tenant.get(tid)
+
+
 def reset_billing_state_cache() -> None:
-    """Reset all per-tenant caches. Test-only."""
-    global _cache_by_tenant  # noqa: PLW0603
+    """Reset all per-tenant caches + CpClient maps. Test-only."""
+    global _cache_by_tenant, _cp_client_by_tenant  # noqa: PLW0603
     _cache_by_tenant = {}
+    _cp_client_by_tenant = {}
+
+
+def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
+    """Build the closure BillingStateCache uses to enrich each refresh.
+
+    Returns None when Stripe isn't fully configured — the cache then leaves
+    `usage_markup_multiplier` as whatever CP sent (today: nothing), and
+    consumers fall back to the configured default. Constructing the
+    StripeClient once at init time avoids per-refresh setup cost and keeps
+    `stripe.api_key` stable across the process.
+    """
+    if not (billing_settings.secret_key and billing_settings.subscription_id):
+        return None
+    stripe_client = StripeClient(billing_settings)
+    subscription_id = billing_settings.subscription_id
+
+    async def fetch() -> Decimal | None:
+        return await stripe_client.get_subscription_markup_multiplier(subscription_id)
+
+    return fetch
 
 
 async def initialize_billing_state_cache() -> None:
