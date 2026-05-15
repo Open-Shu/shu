@@ -101,7 +101,7 @@ class IntegrationTestRunner:
         # Add handler to root logger to capture all logs. Direct stdlib call:
         # we're operating on the root logger, not creating a module logger,
         # so shu.core.logging.get_logger does not apply.
-        root_logger = logging.getLogger()
+        root_logger = logging.getLogger()  # noqa: TID251
         root_logger.addHandler(self.log_file_handler)
 
         if wipe_file:
@@ -112,7 +112,7 @@ class IntegrationTestRunner:
     def cleanup_file_logging(self):
         """Clean up file logging handler."""
         if self.log_file_handler:
-            root_logger = logging.getLogger()
+            root_logger = logging.getLogger()  # noqa: TID251
             root_logger.removeHandler(self.log_file_handler)
             self.log_file_handler.close()
             self.log_file_handler = None
@@ -130,8 +130,8 @@ class IntegrationTestRunner:
         # we're setting levels on external/named loggers (not creating module
         # loggers), parallel to what shu.core.logging.setup_logging does for
         # the application.
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("shu.core.middleware").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.WARNING)  # noqa: TID251
+        logging.getLogger("shu.core.middleware").setLevel(logging.WARNING)  # noqa: TID251
 
         try:
             # Run FastAPI lifespan startup to wire DI, schema verification, etc.

@@ -15,7 +15,6 @@ next request, defeating the test's whole point.
 """
 
 import asyncio
-import logging
 import uuid
 
 from integ.base_integration_test import BaseIntegrationTestSuite
@@ -24,8 +23,9 @@ from integ.helpers.auth import cleanup_framework_test_admin, cleanup_test_user, 
 from integ.response_utils import extract_data
 from shu.core.config import get_settings_instance
 from shu.core.database import get_async_engine
+from shu.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Drive enough concurrent requests to make pre-refactor code clearly fail
 # while staying achievable on the test env's actual capacity. The default

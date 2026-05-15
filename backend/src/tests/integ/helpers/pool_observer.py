@@ -38,17 +38,18 @@ For SSE-bracketed measurement, the caller opens the window when the first
 
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event
 
+from shu.core.logging import get_logger
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
