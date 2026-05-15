@@ -46,6 +46,27 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _default_tenant_context():
+    """Set a fixed tenant_context for every unit test.
+
+    The SHU-761 before_flush listener refuses to flush tenant-scoped objects
+    without a context — that's correct in production, but unit tests rarely
+    construct a tenant context explicitly. A fixed UUID matching the silo
+    SHU_TENANT_ID above keeps existing tests passing while preserving the
+    listener's protection: anything that tries to insert a *different* tenant
+    still raises CrossTenantInsertError.
+
+    Tests that need to exercise the missing-context path should pop the
+    context with ``tenant_context.reset(token)``.
+    """
+    from shu.core.tenant import tenant_context
+
+    token = tenant_context.set("00000000-0000-0000-0000-000000000001")
+    yield
+    tenant_context.reset(token)
+
+
+@pytest.fixture(autouse=True)
 def _clear_active_check_cache_between_tests():
     """Drop the resolver's positive-result active-check cache between tests.
 

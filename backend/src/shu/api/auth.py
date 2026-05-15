@@ -25,6 +25,11 @@ from ..billing.seat_service import (
 from ..billing.stripe_client import StripeClientError
 from ..core.rate_limiting import get_rate_limit_service
 from ..core.response import ShuResponse
+from ..core.tenant import (
+    tenant_context_for_email,
+    tenant_context_for_reset_token,
+    tenant_context_for_verification_token,
+)
 from ..schemas.envelope import SuccessResponse
 from ..services.email_verification_service import (
     TokenExpiredError,
@@ -229,8 +234,10 @@ async def login(
         # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(id_token=request.google_token, db=db)
 
-        # Authenticate or create user using unified SSO method
-        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        # Pre-auth tenant resolution from the verified email so the users
+        # read inside authenticate_or_create_sso_user happens under RLS.
+        async with tenant_context_for_email(provider_info["email"]):
+            user = await user_service.authenticate_or_create_sso_user(provider_info, db)
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -267,6 +274,17 @@ async def register_user(
         HTTPException: with status 400 when input validation or business rules fail, or 500 for unexpected server errors.
 
     """
+    # Multi-tenant deployments do not allow open self-registration. New users
+    # arrive via invitation tokens (sibling spec); CP creates the first admin
+    # for a new tenant out-of-band. Silo/self-hosted retain the original flow.
+    from ..core.config import DeploymentMode, get_settings_instance
+
+    if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is invitation-only in multi-tenant mode",
+        )
+
     try:
         is_first_user = await user_service.is_first_user(db)
 
@@ -399,9 +417,15 @@ async def verify_email(
     would strand them. The 503 gate lives only on issue/resend endpoints
     that actually attempt outbound delivery.
     """
+    import hashlib
+
     service = get_email_verification_service_dependency()
+    # Pre-auth tenant context — the service hashes the token and reads/writes
+    # users.email_verified, both under RLS.
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
     try:
-        user = await service.verify_token(request.token, db)
+        async with tenant_context_for_verification_token(token_hash):
+            user = await service.verify_token(request.token, db)
     except TokenExpiredError as e:
         # Expired branch: the hash matched a real row, so we know which
         # account this token belongs to. We do NOT need to send the email
@@ -570,8 +594,11 @@ async def request_password_reset(
     )
 
     service = get_password_reset_service_dependency()
-    await service.request_reset(request.email, client_ip, db)
-    await db.commit()
+    # Pre-auth tenant context — request_reset reads users by email and writes
+    # a password_reset_token row, both of which need to happen under RLS.
+    async with tenant_context_for_email(request.email):
+        await service.request_reset(request.email, client_ip, db)
+        await db.commit()
 
     return SuccessResponse(data=_RESET_NEUTRAL_RESPONSE)
 
@@ -602,6 +629,8 @@ async def reset_password(
     independent of whether the backend can currently send NEW emails.
     The 503 gate lives only on issue/resend endpoints.
     """
+    import hashlib
+
     from ..services.password_reset_service import (
         PasswordPolicyError,
         RateLimitedError,
@@ -611,8 +640,12 @@ async def reset_password(
     )
 
     service = get_password_reset_service_dependency()
+    # Pre-auth tenant context — the service hashes the token and reads the
+    # password_reset_token row + updates the users password, all under RLS.
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
     try:
-        await service.complete_reset(request.token, request.new_password, db)
+        async with tenant_context_for_reset_token(token_hash):
+            await service.complete_reset(request.token, request.new_password, db)
     except RateLimitedError:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -706,24 +739,27 @@ async def login_with_password(
 
     """
     try:
-        auth_method = await user_service.get_user_auth_method(db, request.email)
-        if auth_method is not None and auth_method != "password":
-            if auth_method == "google":
+        # Pre-auth tenant context — every users read in this handler (auth-method
+        # lookup + password verification) needs to happen under RLS.
+        async with tenant_context_for_email(request.email):
+            auth_method = await user_service.get_user_auth_method(db, request.email)
+            if auth_method is not None and auth_method != "password":
+                if auth_method == "google":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="This account uses Google authentication. Please use the Google login flow.",
+                    )
+                if auth_method == "microsoft":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="This account uses Microsoft authentication. Please use the Microsoft login flow.",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Google authentication. Please use the Google login flow.",
+                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow.",
                 )
-            if auth_method == "microsoft":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow.",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow.",
-            )
 
-        user = await password_auth_service.authenticate_user(request.email, request.password, db)
+            user = await password_auth_service.authenticate_user(request.email, request.password, db)
 
         # Create JWT token response using shared helper
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -967,8 +1003,10 @@ async def google_exchange_login(
         # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(id_token=id_token, db=db)
 
-        # Authenticate or create user using unified SSO method
-        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        # Pre-auth tenant resolution from the verified email so the users
+        # read inside authenticate_or_create_sso_user happens under RLS.
+        async with tenant_context_for_email(provider_info["email"]):
+            user = await user_service.authenticate_or_create_sso_user(provider_info, db)
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -1044,8 +1082,10 @@ async def microsoft_exchange_login(
         # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(access_token=access_token)
 
-        # Authenticate or create user using unified SSO method
-        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        # Pre-auth tenant resolution from the verified email so the users
+        # read inside authenticate_or_create_sso_user happens under RLS.
+        async with tenant_context_for_email(provider_info["email"]):
+            user = await user_service.authenticate_or_create_sso_user(provider_info, db)
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))

@@ -44,6 +44,7 @@ from shu.billing.service import BillingService, CustomerMismatchError
 from shu.billing.stripe_client import StripeClient, StripeClientError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
+from shu.core.tenant import tenant_context_for_stripe_customer
 
 logger = get_logger(__name__)
 
@@ -429,26 +430,35 @@ async def handle_webhook(
     # for any follow-up API calls made from the event context.
     event = stripe.Event.construct_from(event_payload, stripe.api_key)
 
-    try:
-        persist_subscription = await create_subscription_persistence_callback(db)
-        on_payment_failed = await create_payment_failed_callback(db)
-        on_payment_recovered = await create_payment_recovered_callback(db)
-        # seat_service is only None when billing isn't configured. Webhooks
-        # shouldn't reach an unconfigured tenant in practice, but guard so
-        # the type matches reality and we don't NPE if the router is
-        # ever wired to a half-provisioned instance.
-        on_cycle_rollover = create_cycle_rollover_callback(db, seat_service) if seat_service is not None else None
-        billing_config = await get_billing_config(db)
-        expected_customer_id = billing_config.get("stripe_customer_id")
+    # The event's data.object always carries a `customer` field for the events
+    # we handle (subscription.*, invoice.*, etc.); extract it so the pre-auth
+    # tenant resolver can map it to the right tenant before any billing_state
+    # read/write. Falls through to empty string if absent — silo/self-hosted
+    # short-circuit on deployment_mode anyway, and multi-tenant will fail loud.
+    event_data_object = event_payload.get("data", {}).get("object", {})
+    customer_id = event_data_object.get("customer", "") if isinstance(event_data_object, dict) else ""
 
-        _handled, event_type, event_id = await service.handle_webhook(
-            event=event,
-            persist_subscription=persist_subscription,
-            on_payment_failed=on_payment_failed,
-            on_payment_recovered=on_payment_recovered,
-            on_cycle_rollover=on_cycle_rollover,
-            expected_customer_id=expected_customer_id,
-        )
+    try:
+        async with tenant_context_for_stripe_customer(customer_id):
+            persist_subscription = await create_subscription_persistence_callback(db)
+            on_payment_failed = await create_payment_failed_callback(db)
+            on_payment_recovered = await create_payment_recovered_callback(db)
+            # seat_service is only None when billing isn't configured. Webhooks
+            # shouldn't reach an unconfigured tenant in practice, but guard so
+            # the type matches reality and we don't NPE if the router is
+            # ever wired to a half-provisioned instance.
+            on_cycle_rollover = create_cycle_rollover_callback(db, seat_service) if seat_service is not None else None
+            billing_config = await get_billing_config(db)
+            expected_customer_id = billing_config.get("stripe_customer_id")
+
+            _handled, event_type, event_id = await service.handle_webhook(
+                event=event,
+                persist_subscription=persist_subscription,
+                on_payment_failed=on_payment_failed,
+                on_payment_recovered=on_payment_recovered,
+                on_cycle_rollover=on_cycle_rollover,
+                expected_customer_id=expected_customer_id,
+            )
 
         return ShuResponse.success(
             WebhookEventResponse(

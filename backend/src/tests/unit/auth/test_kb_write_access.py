@@ -53,7 +53,12 @@ def _mock_db_returning(kb):
 
 
 class TestRequireKbWriteAccess:
-    """Tests for the require_kb_write_access dependency."""
+    """Tests for the require_kb_write_access dependency.
+
+    After SHU-761 the dependency takes the resolved User directly (via
+    Depends(fetch_user) in production) rather than a Request. Tests pass the
+    mock user as the second arg, no need to patch the underlying auth lookup.
+    """
 
     @pytest.mark.asyncio
     async def test_power_user_granted_on_any_kb(self):
@@ -61,10 +66,8 @@ class TestRequireKbWriteAccess:
         user = _mock_user("power-1", UserRole.POWER_USER)
         kb = _mock_kb(owner_id="someone-else")
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)):
-            result = await require_kb_write_access("kb-1", request, db)
+        result = await require_kb_write_access("kb-1", user, db)
 
         assert result is user
 
@@ -74,10 +77,8 @@ class TestRequireKbWriteAccess:
         user = _mock_user("admin-1", UserRole.ADMIN)
         kb = _mock_kb(owner_id="someone-else")
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)):
-            result = await require_kb_write_access("kb-1", request, db)
+        result = await require_kb_write_access("kb-1", user, db)
 
         assert result is user
 
@@ -87,10 +88,8 @@ class TestRequireKbWriteAccess:
         user = _mock_user("regular-1", UserRole.REGULAR_USER)
         kb = _mock_kb(owner_id="regular-1")
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)):
-            result = await require_kb_write_access("kb-1", request, db)
+        result = await require_kb_write_access("kb-1", user, db)
 
         assert result is user
 
@@ -100,14 +99,10 @@ class TestRequireKbWriteAccess:
         user = _mock_user("regular-1", UserRole.REGULAR_USER)
         kb = _mock_kb(owner_id="someone-else")
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with (
-            patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)),
-            patch("shu.services.policy_engine.POLICY_CACHE.check", AsyncMock(return_value=False)),
-        ):
+        with patch("shu.services.policy_engine.POLICY_CACHE.check", AsyncMock(return_value=False)):
             with pytest.raises(HTTPException) as exc_info:
-                await require_kb_write_access("kb-1", request, db)
+                await require_kb_write_access("kb-1", user, db)
 
         # 404 (not 403) to avoid leaking KB existence — matches enforce_pbac convention.
         assert exc_info.value.status_code == 404
@@ -118,13 +113,9 @@ class TestRequireKbWriteAccess:
         user = _mock_user("regular-1", UserRole.REGULAR_USER)
         kb = _mock_kb(owner_id="someone-else")
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with (
-            patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)),
-            patch("shu.services.policy_engine.POLICY_CACHE.check", AsyncMock(return_value=True)),
-        ):
-            result = await require_kb_write_access("kb-1", request, db)
+        with patch("shu.services.policy_engine.POLICY_CACHE.check", AsyncMock(return_value=True)):
+            result = await require_kb_write_access("kb-1", user, db)
 
         assert result is user
 
@@ -133,11 +124,9 @@ class TestRequireKbWriteAccess:
         """Nonexistent KB IDs raise 404 before any role/ownership/PBAC checks run."""
         user = _mock_user("regular-1", UserRole.REGULAR_USER)
         db = _mock_db_returning(None)
-        request = MagicMock()
 
-        with patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)):
-            with pytest.raises(HTTPException) as exc_info:
-                await require_kb_write_access("nonexistent-kb", request, db)
+        with pytest.raises(HTTPException) as exc_info:
+            await require_kb_write_access("nonexistent-kb", user, db)
 
         assert exc_info.value.status_code == 404
 
@@ -147,14 +136,10 @@ class TestRequireKbWriteAccess:
         user = _mock_user("regular-1", UserRole.REGULAR_USER)
         kb = _mock_kb(owner_id=None)
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with (
-            patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)),
-            patch("shu.services.policy_engine.POLICY_CACHE.check", AsyncMock(return_value=False)),
-        ):
+        with patch("shu.services.policy_engine.POLICY_CACHE.check", AsyncMock(return_value=False)):
             with pytest.raises(HTTPException) as exc_info:
-                await require_kb_write_access("kb-1", request, db)
+                await require_kb_write_access("kb-1", user, db)
 
         assert exc_info.value.status_code == 404
 
@@ -164,9 +149,7 @@ class TestRequireKbWriteAccess:
         user = _mock_user("power-1", UserRole.POWER_USER)
         kb = _mock_kb(owner_id=None)
         db = _mock_db_returning(kb)
-        request = MagicMock()
 
-        with patch("shu.auth.rbac.get_current_user", AsyncMock(return_value=user)):
-            result = await require_kb_write_access("kb-1", request, db)
+        result = await require_kb_write_access("kb-1", user, db)
 
         assert result is user

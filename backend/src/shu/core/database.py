@@ -6,13 +6,15 @@ and utilities for database operations.
 
 import ast
 import os
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import Session, declarative_base
 
 from .config import DeploymentMode
 from .exceptions import (
@@ -20,6 +22,7 @@ from .exceptions import (
     DatabaseSessionError,
 )
 from .logging import get_logger
+from .tenant import CrossTenantInsertError, MissingTenantContextError, tenant_context
 
 logger = get_logger(__name__)
 
@@ -157,6 +160,148 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise DatabaseSessionError(f"session operation: {e!s}")
         finally:
             await session.close()
+
+
+# =============================================================================
+# Tenant-isolation event hooks (SHU-761 Stage D)
+#
+# Three listeners wire `tenant_context` into the SQLAlchemy machinery:
+#   - Engine "begin": stamps app.tenant_id on every new transaction via
+#     set_config(..., true). Bind-parameter-safe; PgBouncer-transaction-mode-safe.
+#   - Session "before_flush": auto-stamps tenant_id on new tenant-scoped
+#     objects from the session's context; raises on mismatch.
+#   - Engine "before_cursor_execute" (debug only): rejects raw SET on
+#     app.tenant_id — the only legitimate path is through set_config in the
+#     begin hook.
+# =============================================================================
+
+
+@event.listens_for(Engine, "begin")
+def _set_tenant_on_begin(conn) -> None:
+    # set_config is Postgres-specific. SQLite-backed unit-test sessions hit
+    # this hook too and would fail with "no such function: set_config" —
+    # gate the whole hook on the dialect, not just the missing-context log.
+    if conn.dialect.name != "postgresql":
+        return
+    tid = tenant_context.get(None)
+    if tid is None:
+        # Default-deny will kick in once RLS is active and the role lacks
+        # BYPASSRLS; log once at DEBUG so the missing-context site is greppable
+        # without spamming production logs.
+        logger.debug("transaction begun without tenant context")
+        return
+    conn.execute(
+        text("SELECT set_config('app.tenant_id', :tid, true)"),
+        {"tid": str(tid)},
+    )
+
+
+@event.listens_for(Session, "before_flush")
+def _stamp_tenant_id(session, flush_context, instances) -> None:
+    tid = tenant_context.get(None)
+    for obj in session.new:
+        cls = type(obj)
+        # Duck-typing rather than `isinstance(TenantScopedMixin, ...)` keeps
+        # core/database.py from importing models.base, which would close a
+        # circular import (models.base imports Base from this module).
+        table = getattr(cls, "__table__", None)
+        if table is None or "tenant_id" not in table.columns:
+            continue
+        current = getattr(obj, "tenant_id", None)
+        if current is None:
+            if tid is None:
+                raise MissingTenantContextError(
+                    f"Cannot flush {cls.__name__}: tenant_id not set and tenant_context is empty. "
+                    "Ensure the route has a tenant-resolution dependency or the worker handler "
+                    "is wrapped to set tenant_context for the job."
+                )
+            obj.tenant_id = tid
+        elif tid is not None and current != tid:
+            raise CrossTenantInsertError(
+                f"{cls.__name__}.tenant_id = {current!r} does not match session context {tid!r}"
+            )
+
+
+# Compiled once at import — cheap to match against every statement and the
+# guard is the only intended interceptor of `app.tenant_id` SETs anyway.
+_SET_TENANT_RE = re.compile(
+    r"^\s*SET\s+(?:SESSION\s+|LOCAL\s+)?app\.tenant_id\b",
+    re.IGNORECASE,
+)
+_DEBUG_MODE: bool | None = None
+
+
+def _is_debug_mode() -> bool:
+    # Cached after first call: Settings is fully built by then, and re-reading
+    # on every cursor exec would add a noticeable overhead in tight loops.
+    global _DEBUG_MODE  # noqa: PLW0603
+    if _DEBUG_MODE is None:
+        _DEBUG_MODE = bool(get_settings().debug)
+    return _DEBUG_MODE
+
+
+@event.listens_for(Engine, "before_cursor_execute")
+def _reject_unsafe_set(conn, cursor, statement, parameters, context, executemany) -> None:
+    # The check is dev/test/CI only — production runs with debug=False, so the
+    # function returns immediately. There is no legitimate use of raw SET on
+    # app.tenant_id; the begin hook is the single point of enforcement.
+    if not _is_debug_mode():
+        return
+    if _SET_TENANT_RE.match(statement):
+        raise RuntimeError(
+            f"Direct SET on app.tenant_id is forbidden — use set_config(..., true) via "
+            f"the engine begin hook. Got: {statement!r}"
+        )
+
+
+# =============================================================================
+# Admin engine + session factory (SHU-761 Stage D, task 8.5)
+#
+# Parallel to the app's lazy engine but bound to SHU_DB_ADMIN_URL (the
+# shu_admin role). Used only by TenantAdminService and (eventually) the
+# Alembic env.py rotation. shu_admin has BYPASSRLS, so this engine intentionally
+# does not participate in the per-request tenant context dance.
+# =============================================================================
+
+_admin_engine = None
+_AdminSessionLocal = None
+
+
+def get_admin_engine():
+    global _admin_engine  # noqa: PLW0603
+    if _admin_engine is None:
+        settings = get_settings()
+        admin_url = getattr(settings, "db_admin_url", None)
+        if not admin_url:
+            raise DatabaseConnectionError(
+                "SHU_DB_ADMIN_URL is not configured. The admin engine is only valid "
+                "after Stage C roles land and the operator populates the env var."
+            )
+        connect_args = {"statement_cache_size": 0} if settings.use_pgbouncer else {}
+        _admin_engine = create_async_engine(
+            admin_url,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            pool_timeout=settings.database_pool_timeout,
+            pool_recycle=settings.database_pool_recycle,
+            pool_pre_ping=True,
+            echo=False,
+            connect_args=connect_args,
+        )
+    return _admin_engine
+
+
+def get_admin_session_local():
+    global _AdminSessionLocal  # noqa: PLW0603
+    if _AdminSessionLocal is None:
+        _AdminSessionLocal = async_sessionmaker(
+            bind=get_admin_engine(),
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+            class_=AsyncSession,
+        )
+    return _AdminSessionLocal
 
 
 async def get_db_session() -> AsyncSession:

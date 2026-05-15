@@ -329,7 +329,7 @@ def upgrade() -> None:
         )
 
     for child, child_col, parent, parent_col in inventory:
-        constraint_name = f"{child}_{child_col}_tenant_fk"
+        constraint_name = f"{child}_{child_col}_tfk"
         op.execute(
             f"ALTER TABLE {child} ADD CONSTRAINT {constraint_name} "
             f"FOREIGN KEY (tenant_id, {child_col}) REFERENCES {parent}(tenant_id, {parent_col}) NOT VALID"
@@ -384,7 +384,7 @@ def downgrade() -> None:
 
     # Reverse section D (composite FKs first, then parent uniques)
     for child, child_col, _parent, _parent_col in inventory:
-        op.execute(f"ALTER TABLE {child} DROP CONSTRAINT IF EXISTS {child}_{child_col}_tenant_fk")
+        op.execute(f"ALTER TABLE {child} DROP CONSTRAINT IF EXISTS {child}_{child_col}_tfk")
 
     parent_uniques = sorted({(parent, parent_col) for _, _, parent, parent_col in inventory})
     for parent, parent_col in parent_uniques:

@@ -37,8 +37,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy import text
+
+from .database import get_async_session_local
 from .queue_backend import Job, QueueBackend
-from .workload_routing import WorkloadType
+from .tenant import tenant_context_for_tenant_id
+from .workload_routing import WorkloadType, enqueue_job
 
 logger = logging.getLogger(__name__)
 
@@ -589,8 +593,12 @@ class Worker:
         start_time = time.time()
 
         try:
-            # Process the job using the provided handler
-            await self._handler(job)
+            # Set tenant_context from the job's tenant_id so the handler's DB
+            # queries run under the right RLS scope. Legacy jobs without a
+            # tenant_id pass None and fall back to default-deny under RLS —
+            # surfaces as missing rows, not a leak.
+            async with tenant_context_for_tenant_id(job.tenant_id):
+                await self._handler(job)
 
             # Acknowledge successful processing
             await self._backend.acknowledge(job)
@@ -656,3 +664,57 @@ class Worker:
             if self._acquired_capacity is not None:
                 self._release_capacity(self._acquired_capacity)
                 self._acquired_capacity = None
+
+
+# =============================================================================
+# Per-tenant fan-out for scheduled / periodic work (SHU-761 task 11.3)
+# =============================================================================
+
+
+async def _list_all_tenant_ids() -> list[str]:
+    """Return every tenant_id from the global tenants catalog.
+
+    Used by the fan-out and recovery patterns to drive per-tenant scoped
+    work. ``tenants`` is global (no RLS), so a regular shu_app session
+    sees every row — no admin engine needed. Iteration order matches
+    catalog insertion order, which is stable enough for the fan-out use
+    case (we don't depend on any particular ordering).
+    """
+    session_factory = get_async_session_local()
+    async with session_factory() as session:
+        result = await session.execute(text("SELECT id FROM tenants"))
+        return [row[0] for row in result.all()]
+
+
+async def fan_out_per_tenant(
+    backend: QueueBackend,
+    workload_type: WorkloadType,
+    payload_builder: Callable[[str], dict[str, Any]],
+    **job_kwargs: Any,
+) -> list[str]:
+    """Enqueue one job per tenant for a scheduled / periodic workload.
+
+    The caller supplies a ``payload_builder`` that takes the tenant_id and
+    returns the per-tenant job payload. The helper enqueues one job per
+    tenant, each carrying that tenant's id so the worker dispatch wrapper
+    can set tenant_context before the handler runs.
+
+    In silo / self-hosted, the tenants catalog has exactly one row, so the
+    fan-out collapses to a single enqueue with the deployment tenant — same
+    effective behavior as the pre-SHU-761 single-tenant scheduling, just
+    routed through the unified pattern.
+
+    Returns the list of job ids enqueued, one per tenant.
+    """
+    tenant_ids = await _list_all_tenant_ids()
+    job_ids: list[str] = []
+    for tid in tenant_ids:
+        job = await enqueue_job(
+            backend,
+            workload_type,
+            payload=payload_builder(tid),
+            tenant_id=tid,
+            **job_kwargs,
+        )
+        job_ids.append(job.id)
+    return job_ids
