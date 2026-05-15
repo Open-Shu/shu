@@ -68,7 +68,24 @@ build-runner:
 build-all: build-api build-fe build-runner
 
 # ----------------------------------------------------------------------------
-# Manual build + tag + push to a container registry.
+# Build + push to a container registry (multi-platform-aware).
+#
+# Architecture policy (SHU-779):
+#   * `build-*` targets above produce HOST-ARCH images for local `docker run`.
+#     On Apple Silicon Macs that's `linux/arm64`. Fast iteration, no QEMU.
+#   * `publish-*` targets below produce `linux/amd64` images via `docker buildx
+#     build --platform linux/amd64 --push`. This matches the production
+#     consumer (DOKS amd64 nodes). Builds on Apple Silicon use QEMU
+#     emulation for the amd64 step, which is slow but correct.
+#   * When an arm64-consuming cluster materializes (sovereignty-tier ARM
+#     DOKS, customer on-prem ARM), bump the specific publish target to
+#     `--platform linux/amd64,linux/arm64`. Don't pre-emptively multi-arch
+#     everything — the second arch doubles build time and registry storage
+#     for no benefit when the consumer base is amd64-only.
+#
+# Buildx uses --push to upload directly to the registry without loading
+# the image into the local docker daemon. No separate `docker tag` /
+# `docker push` steps; the -t flags become tags in the registry.
 #
 # Usage:
 #   make publish-api      REGISTRY=<your-registry-prefix>
@@ -82,9 +99,12 @@ build-all: build-api build-fe build-runner
 #   :$(VERSION)-$(GIT_SHA)   — e.g. 1.2.3-abc1234 (immutable; bisect-friendly)
 #   :latest                  — convenience; do not pin downstream consumers to this
 #
-# Authenticate to the registry (`docker login <registry>`) out-of-band before
-# invoking these targets.
+# Authenticate to the registry (`docker login <registry>` or `doctl registry
+# login` for DOCR) out-of-band before invoking these targets. buildx uses
+# the local docker config's registry credentials.
 # ----------------------------------------------------------------------------
+
+PUBLISH_PLATFORMS ?= linux/amd64
 
 _require-registry:
 	@if [ -z "$(REGISTRY)" ]; then \
@@ -92,37 +112,48 @@ _require-registry:
 	  exit 1 ; \
 	fi
 
-publish-api: _require-registry build-api
-	docker tag shu-api:$(VERSION) $(REGISTRY)/shu-api:$(VERSION)
-	docker tag shu-api:$(VERSION) $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)
-	docker tag shu-api:$(VERSION) $(REGISTRY)/shu-api:latest
-	docker push $(REGISTRY)/shu-api:$(VERSION)
-	docker push $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)
-	docker push $(REGISTRY)/shu-api:latest
+publish-api: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  --build-arg SHU_DB_RELEASE=$(DB_RELEASE) \
+	  -f deployment/docker/api/Dockerfile \
+	  -t $(REGISTRY)/shu-api:$(VERSION) \
+	  -t $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA) \
+	  -t $(REGISTRY)/shu-api:latest .
 
-publish-api-slim: _require-registry build-api-slim
-	docker tag shu-api:$(VERSION)-slim $(REGISTRY)/shu-api:$(VERSION)-slim
-	docker tag shu-api:$(VERSION)-slim $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)-slim
-	docker tag shu-api:$(VERSION)-slim $(REGISTRY)/shu-api:latest-slim
-	docker push $(REGISTRY)/shu-api:$(VERSION)-slim
-	docker push $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)-slim
-	docker push $(REGISTRY)/shu-api:latest-slim
+publish-api-slim: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg INCLUDE_LOCAL_INFERENCE=0 \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  --build-arg SHU_DB_RELEASE=$(DB_RELEASE) \
+	  -f deployment/docker/api/Dockerfile \
+	  -t $(REGISTRY)/shu-api:$(VERSION)-slim \
+	  -t $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)-slim \
+	  -t $(REGISTRY)/shu-api:latest-slim .
 
-publish-fe: _require-registry build-fe
-	docker tag shu-frontend:$(VERSION) $(REGISTRY)/shu-frontend:$(VERSION)
-	docker tag shu-frontend:$(VERSION) $(REGISTRY)/shu-frontend:$(VERSION)-$(GIT_SHA)
-	docker tag shu-frontend:$(VERSION) $(REGISTRY)/shu-frontend:latest
-	docker push $(REGISTRY)/shu-frontend:$(VERSION)
-	docker push $(REGISTRY)/shu-frontend:$(VERSION)-$(GIT_SHA)
-	docker push $(REGISTRY)/shu-frontend:latest
+publish-fe: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  -f deployment/docker/frontend/Dockerfile \
+	  -t $(REGISTRY)/shu-frontend:$(VERSION) \
+	  -t $(REGISTRY)/shu-frontend:$(VERSION)-$(GIT_SHA) \
+	  -t $(REGISTRY)/shu-frontend:latest .
 
-publish-runner: _require-registry build-runner
-	docker tag shu-runner:$(VERSION) $(REGISTRY)/shu-runner:$(VERSION)
-	docker tag shu-runner:$(VERSION) $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA)
-	docker tag shu-runner:$(VERSION) $(REGISTRY)/shu-runner:latest
-	docker push $(REGISTRY)/shu-runner:$(VERSION)
-	docker push $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA)
-	docker push $(REGISTRY)/shu-runner:latest
+publish-runner: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  -f deployment/docker/runner/Dockerfile \
+	  -t $(REGISTRY)/shu-runner:$(VERSION) \
+	  -t $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA) \
+	  -t $(REGISTRY)/shu-runner:latest .
 
 publish-all: publish-api publish-api-slim publish-fe publish-runner
 
