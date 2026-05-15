@@ -14,10 +14,11 @@ job handler after profiling completes. See SHU-637.
 
 import time
 
-import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..core.config import Settings
 from ..core.embedding_service import get_embedding_service
@@ -32,7 +33,7 @@ from ..schemas.profiling import (
 from .profiling_service import ProfilingService
 from .side_call_service import SideCallService
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ProfilingOrchestrator:
@@ -74,7 +75,7 @@ class ProfilingOrchestrator:
         # Load document
         document = await self.db.get(Document, document_id)
         if not document:
-            logger.warning("document_not_found_for_profiling", document_id=document_id)
+            logger.warning("document_not_found_for_profiling", extra={"document_id": document_id})
             return ProfilingResult(
                 document_id=document_id,
                 document_profile=None,
@@ -101,8 +102,7 @@ class ProfilingOrchestrator:
 
             logger.info(
                 "starting_document_profiling",
-                document_id=document_id,
-                chunk_count=len(chunks),
+                extra={"document_id": document_id, "chunk_count": len(chunks)},
             )
 
             # Extract the only chunk data we need past Phase 1 — (index → id)
@@ -152,12 +152,14 @@ class ProfilingOrchestrator:
 
             logger.info(
                 "chunk_profiling_coverage",
-                document_id=document_id,
-                total_chunks=chunk_count,
-                successful_chunks=successful_count,
-                chunks_skipped=chunks_skipped,
-                chunks_profiled=chunks_profiled,
-                coverage_percent=round(coverage_percent, 1),
+                extra={
+                    "document_id": document_id,
+                    "total_chunks": chunk_count,
+                    "successful_chunks": successful_count,
+                    "chunks_skipped": chunks_skipped,
+                    "chunks_profiled": chunks_profiled,
+                    "coverage_percent": round(coverage_percent, 1),
+                },
             )
 
             doc_profile, synthesized_queries, metadata_tokens = await self.profiling_service.generate_document_metadata(
@@ -169,10 +171,12 @@ class ProfilingOrchestrator:
             if not doc_profile:
                 logger.warning(
                     "document_metadata_generation_returned_none",
-                    document_id=document_id,
-                    summary_count=len(accumulated_summaries),
-                    metadata_tokens=metadata_tokens,
-                    total_chunks=chunk_count,
+                    extra={
+                        "document_id": document_id,
+                        "summary_count": len(accumulated_summaries),
+                        "metadata_tokens": metadata_tokens,
+                        "total_chunks": chunk_count,
+                    },
                 )
 
             # Persist document-level profile
@@ -186,17 +190,19 @@ class ProfilingOrchestrator:
                     queries_created = await self._persist_queries(document, synthesized_queries, chunk_index_to_id)
                 except Exception as e:
                     await self.db.rollback()
-                    logger.warning("query_persistence_failed", document_id=document_id, error=str(e))
+                    logger.warning("query_persistence_failed", extra={"document_id": document_id, "error": str(e)})
 
             duration_ms = int((time.time() - start_time) * 1000)
 
             logger.info(
                 "profiling_complete",
-                document_id=document_id,
-                tokens_used=total_tokens,
-                queries_created=queries_created,
-                coverage_percent=round(coverage_percent, 1),
-                duration_ms=duration_ms,
+                extra={
+                    "document_id": document_id,
+                    "tokens_used": total_tokens,
+                    "queries_created": queries_created,
+                    "coverage_percent": round(coverage_percent, 1),
+                    "duration_ms": duration_ms,
+                },
             )
 
             return ProfilingResult(
@@ -215,7 +221,7 @@ class ProfilingOrchestrator:
             )
 
         except Exception as e:
-            logger.exception("profiling_failed", document_id=document_id, error=str(e))
+            logger.exception("profiling_failed", extra={"document_id": document_id, "error": str(e)})
             document.mark_profiling_failed(str(e))
             await self.db.commit()
 
@@ -299,10 +305,12 @@ class ProfilingOrchestrator:
 
             logger.debug(
                 "chunk_batch_committed",
-                document_id=document_id,
-                batch_start=i,
-                batch_size=len(batch_chunks),
-                tokens=tokens,
+                extra={
+                    "document_id": document_id,
+                    "batch_start": i,
+                    "batch_size": len(batch_chunks),
+                    "tokens": tokens,
+                },
             )
 
         return total_tokens, chunks_skipped, chunks_profiled
@@ -379,9 +387,11 @@ class ProfilingOrchestrator:
 
         logger.info(
             "document_profile_persisted",
-            document_id=document.id,
-            doc_profile_success=doc_profile is not None,
-            coverage_percent=round(coverage_percent, 1),
+            extra={
+                "document_id": document.id,
+                "doc_profile_success": doc_profile is not None,
+                "coverage_percent": round(coverage_percent, 1),
+            },
         )
 
     async def _persist_queries(
@@ -439,8 +449,7 @@ class ProfilingOrchestrator:
         if queries_created > 0:
             logger.info(
                 "queries_persisted",
-                document_id=document.id,
-                queries_created=queries_created,
+                extra={"document_id": document.id, "queries_created": queries_created},
             )
 
         return queries_created
@@ -495,7 +504,7 @@ async def embed_profile_artifacts(
     if document.synopsis and document.synopsis.strip():
         embeddings = await embedding_service.embed_texts([str(document.synopsis)], user_id=user_id)
         if not embeddings:
-            logger.warning("synopsis_embedding_empty", document_id=document.id)
+            logger.warning("synopsis_embedding_empty", extra={"document_id": document.id})
         else:
             await vector_store.store_embeddings(
                 "synopses",
@@ -525,7 +534,7 @@ async def embed_profile_artifacts(
             await vector_store.store_embeddings("chunk_summaries", entries, db=db)
             chunk_summaries_embedded = len(entries)
         except Exception:
-            logger.warning("chunk_summary_embedding_failed", document_id=document.id, exc_info=True)
+            logger.warning("chunk_summary_embedding_failed", extra={"document_id": document.id}, exc_info=True)
             raise
 
     if chunk_summaries_embedded:
@@ -548,7 +557,7 @@ async def embed_profile_artifacts(
             await vector_store.store_embeddings("queries", entries, db=db)
             queries_embedded = len(queries)
         except Exception:
-            logger.warning("query_embedding_failed", document_id=document.id, exc_info=True)
+            logger.warning("query_embedding_failed", extra={"document_id": document.id}, exc_info=True)
             raise
 
     await db.commit()
@@ -556,10 +565,12 @@ async def embed_profile_artifacts(
     if synopsis_embedded or chunk_summaries_embedded or queries_embedded:
         logger.info(
             "profile_artifacts_embedded",
-            document_id=document.id,
-            synopsis_embedded=synopsis_embedded,
-            chunk_summaries_embedded=chunk_summaries_embedded,
-            queries_embedded=queries_embedded,
+            extra={
+                "document_id": document.id,
+                "synopsis_embedded": synopsis_embedded,
+                "chunk_summaries_embedded": chunk_summaries_embedded,
+                "queries_embedded": queries_embedded,
+            },
         )
 
     return synopsis_embedded, chunk_summaries_embedded, queries_embedded

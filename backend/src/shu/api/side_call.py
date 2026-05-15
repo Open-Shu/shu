@@ -1,9 +1,9 @@
 """API endpoints for LLM Side-Call configuration and operations."""
 
-import logging
-
 from fastapi import APIRouter, Body, Depends, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
@@ -25,7 +25,7 @@ from ..services.chat_service import ChatService
 from ..services.conversation_automation_service import ConversationAutomationService
 from ..services.side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/side-calls", tags=["side-calls"])
 

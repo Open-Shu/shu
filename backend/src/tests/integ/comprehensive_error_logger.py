@@ -7,7 +7,7 @@ wrapping test execution with appropriate error context based on test patterns.
 
 import asyncio
 import contextlib
-import logging
+from shu.core.logging import get_logger
 import re
 from collections.abc import Callable
 from functools import wraps
@@ -25,7 +25,7 @@ from integ.expected_error_context import (
     expect_validation_pydantic_errors,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ComprehensiveErrorLogger:

@@ -9,13 +9,14 @@ and error handling.
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
@@ -30,7 +31,7 @@ from ..services.plugin_identity import (
     resolve_auth_requirements,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Feed params that should be automatically cleared after successful execution.
 ONE_SHOT_FEED_PARAMS = ("reset_cursor",)

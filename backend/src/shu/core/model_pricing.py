@@ -33,13 +33,14 @@ Usage:
     # -> {"input": Decimal("0.000001"), "output": Decimal("0.000005")}
 """
 
-import logging
 from decimal import Decimal
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 _MTOK = Decimal("1000000")
 

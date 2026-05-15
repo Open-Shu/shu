@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+from shu.core.logging import get_logger
 
 from ...core.oauth_encryption import get_oauth_encryption_service
 from ._storage_ops import (
@@ -12,7 +13,7 @@ from ._storage_ops import (
 )
 from .base import ImmutableCapabilityMixin
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SecretsCapability(ImmutableCapabilityMixin):

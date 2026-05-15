@@ -30,7 +30,6 @@ import asyncio
 import ctypes
 import ctypes.util
 import gc
-import logging
 import resource
 import sys
 import threading
@@ -40,7 +39,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

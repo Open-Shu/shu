@@ -6,11 +6,11 @@ Covers:
 - Interval schedule creation, enqueue of due schedules, and running pending executions
 """
 
-import logging
+from shu.core.logging import get_logger
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # --- Helpers ---

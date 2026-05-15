@@ -30,7 +30,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 DATASETS_DIR = Path(__file__).parent / ".datasets"
 CASE_STUDY_DIR = Path(__file__).parent / ".case-study"

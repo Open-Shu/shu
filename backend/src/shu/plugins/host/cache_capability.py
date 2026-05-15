@@ -11,13 +11,14 @@ plugins from mutating _plugin_name or _user_id to access other plugins' cache.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
+
+from shu.core.logging import get_logger
 
 from ...core.cache_backend import CacheBackend, get_cache_backend
 from .base import ImmutableCapabilityMixin
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CacheCapability(ImmutableCapabilityMixin):

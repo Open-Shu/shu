@@ -8,13 +8,13 @@ These tests verify the complete Role-Based Access Control system:
 - Permission level hierarchy
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_user_groups_full_crud(client, db, auth_headers):

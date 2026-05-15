@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 import time
+
+from shu.core.logging import get_logger
 
 from ..core.cache_backend import CacheBackend, get_cache_backend
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TokenBucketLimiter:

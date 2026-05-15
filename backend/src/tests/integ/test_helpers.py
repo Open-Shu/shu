@@ -5,7 +5,7 @@ This module provides test client, database validation, and utility classes
 for comprehensive testing of the Shu RAG system.
 """
 
-import logging
+from shu.core.logging import get_logger
 import os
 import tempfile
 import time
@@ -19,7 +19,7 @@ from requests.exceptions import RequestException
 
 from shu.auth.jwt_manager import JWTManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

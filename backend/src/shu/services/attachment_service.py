@@ -1,7 +1,6 @@
 """AttachmentService handles chat attachments: saving files, extracting text, and persistence."""
 
 import datetime as dt
-import logging
 import mimetypes
 import uuid
 from pathlib import Path
@@ -10,11 +9,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_config_manager, get_settings_instance
 from ..models.attachment import Attachment, MessageAttachment
 from ..processors.text_extractor import TextExtractor, UnsupportedFileFormatError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from fastapi import UploadFile

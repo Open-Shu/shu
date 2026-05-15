@@ -5,13 +5,13 @@ Simple validation tests to ensure the RBAC system is working correctly.
 These tests verify basic functionality without complex integration test setup.
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_rbac_service_imports(client, db, auth_headers):

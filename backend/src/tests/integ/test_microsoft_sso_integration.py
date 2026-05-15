@@ -9,7 +9,7 @@ These tests verify Microsoft SSO authentication workflows:
 - Inactive account handling
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 import uuid
 from collections.abc import Callable
@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _mock_microsoft_adapter():

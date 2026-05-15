@@ -4,7 +4,6 @@ This module provides password-based authentication alongside Google OAuth,
 enabling creation of investor accounts and improving testing capabilities.
 """
 
-import logging
 import secrets
 import string
 from datetime import UTC, datetime
@@ -14,10 +13,12 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_settings_instance
 from .models import User, UserRole
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PasswordAuthService:

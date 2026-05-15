@@ -17,9 +17,9 @@ tokenizers or the provider's token counting API.
 
 from functools import lru_cache
 
-import structlog
+from shu.core.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 # Default encoding for modern LLMs (GPT-4 tokenizer)
 DEFAULT_ENCODING = "cl100k_base"

@@ -5,12 +5,12 @@ Tests hash-based document deduplication in the ingestion service.
 Verifies that unchanged documents are skipped and force_reingest works.
 """
 
-import logging
+from shu.core.logging import get_logger
 import uuid
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_ingest_text_skips_unchanged_document(client, db, auth_headers):

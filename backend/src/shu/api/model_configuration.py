@@ -5,12 +5,13 @@ the foundational abstraction that combines base models + prompts + optional
 knowledge bases into user-facing configurations.
 """
 
-import logging
 from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..api.dependencies import get_db
 from ..auth.models import User, UserRole
@@ -36,7 +37,7 @@ from ..services.error_sanitization import ErrorSanitizer
 from ..services.model_configuration_service import ModelConfigurationService
 from ..services.side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
 

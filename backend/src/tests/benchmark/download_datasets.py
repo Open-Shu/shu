@@ -12,10 +12,12 @@ import argparse
 import logging
 import sys
 import urllib.request
+
+from shu.core.logging import get_logger
 import zipfile
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DATASETS_DIR = Path(__file__).parent / ".datasets"
 

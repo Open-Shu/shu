@@ -79,7 +79,7 @@ def retry_client() -> McpClient:
 
 @pytest.fixture
 def _mock_logger() -> MagicMock:
-    """Patch the module-level logger so structlog-style kwargs don't raise."""
+    """Patch the module-level logger to suppress test output."""
     with patch("shu.plugins.mcp_client.logger") as mock:
         yield mock
 

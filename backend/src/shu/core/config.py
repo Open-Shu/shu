@@ -843,9 +843,11 @@ class Settings(BaseSettings):
             The effective redirect URI to use
 
         """
-        import logging
+        # core/logging.py imports core/config.py at module load, so we cannot
+        # import shu.core.logging at module top level — use a deferred import.
+        from shu.core.logging import get_logger
 
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
 
         # Check for legacy Google-specific setting
         if provider == "google" and self.google_redirect_uri:

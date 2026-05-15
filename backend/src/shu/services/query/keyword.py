@@ -4,18 +4,19 @@ Provides term-based matching with title weighting and document-level scoring.
 """
 
 import hashlib
-import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
 
+from shu.core.logging import get_logger
+
 from ...core.exceptions import ShuException
 from .base import measure_execution_time
 from .constants import TITLE_MATCH_STOP_WORDS
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _redact(text_val: str) -> str:

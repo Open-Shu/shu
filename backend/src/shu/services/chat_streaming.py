@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -14,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from shu.core.config import ConfigurationManager, get_settings_instance
 from shu.core.database import get_async_session_local
 from shu.core.exceptions import LLMError, LLMProviderError, LLMRateLimitError
+from shu.core.logging import get_logger
 from shu.core.rate_limiting import get_rate_limit_service
 from shu.core.safe_decimal import safe_decimal
 from shu.llm.client import UnifiedLLMClient
@@ -50,7 +50,7 @@ else:
 # resolves quickly.
 REGEN_MAX_ATTEMPTS = 3
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

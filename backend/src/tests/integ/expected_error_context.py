@@ -6,10 +6,10 @@ in test logs to prevent confusion during code review.
 """
 
 import contextlib
-import logging
+from shu.core.logging import get_logger
 from functools import wraps
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ExpectedErrorContext:
