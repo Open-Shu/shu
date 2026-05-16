@@ -137,6 +137,7 @@ class PasswordAuthService:
         admin_created: bool = False,
         flush_only: bool = False,
         requires_email_verification: bool = False,
+        force_inactive: bool = False,
     ) -> User:
         """Create a new user with password authentication.
 
@@ -151,6 +152,14 @@ class PasswordAuthService:
         user clicks the verification link. Only meaningful for self-
         registration; admin-created accounts are vouched-for and skip
         verification entirely.
+
+        ``force_inactive=True`` (SHU-784) overrides the auto-activate
+        branch in the verification path to land `is_active=False`. Used
+        by the soft user-limit enforcement at_limit branch — over-limit
+        registrations must require admin approval even when the operator
+        has set ``SHU_AUTO_ACTIVATE_USERS=true``, otherwise soft
+        enforcement is indistinguishable from `none`. No effect on the
+        admin-created or legacy (no-email-backend) paths.
         """
         # Check if user already exists
         stmt = select(User).where(User.email == email)
@@ -179,7 +188,12 @@ class PasswordAuthService:
             # When True, the operator has explicitly trusted email
             # verification as sufficient activation signal, and verifying
             # flips the only remaining gate.
-            is_active = bool(self.settings.auto_activate_users)
+            #
+            # SHU-784: `force_inactive` overrides the auto-activate
+            # decision when the caller knows this signup violates a
+            # billing constraint (soft enforcement + at_limit). Below
+            # the limit, operator policy still wins.
+            is_active = False if force_inactive else bool(self.settings.auto_activate_users)
             email_verified = False
         else:
             role = "regular_user"  # Force regular_user role for self-registration

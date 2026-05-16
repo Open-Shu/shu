@@ -149,11 +149,12 @@ async def check_user_limit(
     if user_limit == 0:
         return _NO_LIMIT
 
-    # `soft` is a legal legacy column value with no behavior distinct from
-    # `hard` today; collapse to `none` so callers don't need to special-case.
+    # `soft` is preserved as a distinct mode (SHU-784): registration is
+    # allowed past the seat limit, but the warn-and-proceed path in
+    # `api/auth.py` logs the over-limit event and the new user lands
+    # inactive via the normal `SHU_AUTO_ACTIVATE_USERS=false` path. Admins
+    # decide whether to bring the user on. `hard` still blocks at 403.
     enforcement = billing_config.get("user_limit_enforcement", "soft")
-    if enforcement == "soft":
-        enforcement = "none"
 
     if enforcement == "hard":
         # Serialise concurrent user-creation requests at the DB level.

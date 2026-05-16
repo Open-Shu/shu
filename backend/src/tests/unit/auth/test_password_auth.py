@@ -578,3 +578,30 @@ class TestCreateUserVerificationActivationComposition:
         # gate remains.
         assert user.is_active is True
         assert user.email_verified is False
+
+    @pytest.mark.asyncio
+    async def test_force_inactive_overrides_auto_activate_true(
+        self, mock_settings_moderate, mock_db: AsyncMock
+    ) -> None:
+        """SHU-784: soft enforcement at_limit must override auto_activate=true.
+
+        Without the override, an over-limit signup with auto-activate on would
+        land active after email verification, making soft enforcement
+        indistinguishable from `none`. The caller (api/auth.py register_user)
+        passes ``force_inactive=True`` when ``check_user_limit`` returns
+        ``soft + at_limit``.
+        """
+        service = self._service(mock_settings_moderate, auto_activate=True)
+        user = await service.create_user(
+            email="new@example.com",
+            password="ValidPass1!",
+            name="New User",
+            db=mock_db,
+            requires_email_verification=True,
+            flush_only=True,
+            force_inactive=True,
+        )
+        # Admin must approve the over-limit user even though operator
+        # set SHU_AUTO_ACTIVATE_USERS=true.
+        assert user.is_active is False
+        assert user.email_verified is False

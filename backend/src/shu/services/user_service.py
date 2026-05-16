@@ -305,6 +305,7 @@ class UserService:
 
         # Enforce user limit (skip for the very first user bootstrapping the instance)
         soft_limit_info: dict[str, int] | None = None
+        over_limit_soft = False
         if not is_first_user:
             from shu.billing.enforcement import check_user_limit
 
@@ -316,9 +317,19 @@ class UserService:
                 )
             if limit_status.at_limit and limit_status.enforcement == "soft":
                 soft_limit_info = {"current_users": limit_status.current_count, "limit": limit_status.user_limit}
+                over_limit_soft = True
 
         user_role = self.determine_user_role(email, is_first_user)
-        is_active = self.is_active(user_role, is_first_user)
+        # SHU-784: when soft enforcement reports at_limit, force the
+        # non-admin signup inactive even if `SHU_AUTO_ACTIVATE_USERS=true`,
+        # else soft enforcement degenerates to `none`. Admins still land
+        # active (the email is operator-vouched via `admin_emails`).
+        # `over_limit_soft` is only True when the limit check ran — which
+        # only happens for `not is_first_user` — so no first-user guard.
+        if over_limit_soft and user_role != UserRole.ADMIN:
+            is_active = False
+        else:
+            is_active = self.is_active(user_role, is_first_user)
 
         user = User(
             email=email,

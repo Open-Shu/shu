@@ -11,7 +11,6 @@ from shu.billing.enforcement import (
     UserLimitStatus,
     assert_subscription_active,
     check_user_limit,
-    get_current_billing_state,
 )
 
 _P_BILLING_CONFIG = "shu.billing.enforcement.get_billing_config"
@@ -70,11 +69,13 @@ class TestCheckUserLimit:
     @pytest.mark.asyncio
     @patch(_P_ACTIVE_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
-    async def test_soft_enforcement_is_treated_as_none(self, mock_config, mock_count):
-        """`soft` is a legal legacy value but always normalises to `none`.
+    async def test_soft_enforcement_preserved_with_accurate_at_limit(self, mock_config, mock_count):
+        """`soft` is returned as-is (SHU-784) with `at_limit` reflecting reality.
 
-        B1 disables `soft` until it has a real behavior separate from `hard`
-        — legacy rows with soft-set values must not block or warn.
+        Caller in `api/auth.py` reads `enforcement=soft + at_limit` and logs
+        a warning while letting registration proceed — the new user lands
+        inactive via the SHU_AUTO_ACTIVATE_USERS=false default. Unlike `hard`,
+        no row-level lock is acquired (no enforcement → no serialization need).
         """
         mock_config.return_value = {
             "stripe_subscription_id": "sub_123",
@@ -85,15 +86,20 @@ class TestCheckUserLimit:
 
         result = await check_user_limit(db, _stripe_client_with_seats(5))
 
-        assert result.enforcement == "none"
+        assert result.enforcement == "soft"
         assert result.at_limit is True
         assert result.current_count == 5
+        assert result.user_limit == 5
 
     @pytest.mark.asyncio
     @patch(_P_ACTIVE_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
-    async def test_default_enforcement_is_normalised_to_none(self, mock_config, mock_count):
-        """Missing `user_limit_enforcement` defaults to `soft` → normalised to `none`."""
+    async def test_default_enforcement_is_soft(self, mock_config, mock_count):
+        """Missing `user_limit_enforcement` in billing_config defaults to `soft`.
+
+        Matches the `billing_state.user_limit_enforcement` column default;
+        adapters surface it as-is rather than substituting another value.
+        """
         mock_config.return_value = {
             "stripe_subscription_id": "sub_123",
         }
@@ -102,7 +108,8 @@ class TestCheckUserLimit:
 
         result = await check_user_limit(db, _stripe_client_with_seats(5))
 
-        assert result.enforcement == "none"
+        assert result.enforcement == "soft"
+        assert result.at_limit is False
 
     @pytest.mark.asyncio
     @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
