@@ -1173,6 +1173,14 @@ async def _seat_charge_preview(
       second check would see the just-flushed/updated user and falsely
       conclude an upgrade is needed even when the new user fits an open
       seat.
+
+    Fires under BOTH ``hard`` and ``soft`` enforcement (SHU-784): admin-
+    initiated writes (create user, activate pending user) are always a
+    deliberate "I want to consume a seat" action, so the Stripe upgrade
+    must be an informed admin confirmation regardless of self-registration
+    leniency. The only behavioral difference between hard and soft is
+    self-registration: hard blocks at 403; soft allows but lands inactive.
+    Skipped under ``none`` (no Stripe sub configured).
     """
     if seat_service is None:
         return None, False
@@ -1180,7 +1188,7 @@ async def _seat_charge_preview(
         limit_status = await check_user_limit(db)
     except StripeClientError as e:
         _raise_seat_error_http(e)
-    if not (limit_status.at_limit and limit_status.enforcement == "hard"):
+    if not (limit_status.at_limit and limit_status.enforcement in ("hard", "soft")):
         return None, False
 
     if confirm_header != "true":
