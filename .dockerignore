@@ -14,6 +14,24 @@ frontend/build
 backend/.venv
 backend/.mypy_cache
 
+# Tests — NEVER ship in production image. backend/src/tests/benchmark/
+# alone is ~1 GB of fixtures; tests as a whole have no runtime purpose.
+backend/src/tests
+
+# Python / test tool caches
+.coverage
+.coverage.*
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.hypothesis
+
+# Secrets / local-only configuration
+.env
+.env.*
+.private
+.secrets.baseline
+
 # Local data and logs
 logs
 data

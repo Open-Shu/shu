@@ -26,10 +26,11 @@ google-auth-httplib2==0.2.0
 google-api-python-client==2.176.0
 
 
-# Text processing and embeddings
-sentence-transformers==5.0.0
-torch==2.7.1
-transformers==4.53.2
+# Text processing and embeddings.
+# Local embedding inference deps (sentence-transformers, torch, transformers)
+# live in requirements-local-inference.txt — installed by the standard build,
+# skipped only when `--build-arg INCLUDE_LOCAL_INFERENCE=0` (the slim variant
+# for deployments that use external embedding APIs).
 numpy==2.2.6
 tiktoken==0.9.0  # Token counting for LLM context estimation
 
@@ -90,15 +91,17 @@ jmespath==1.0.1
 croniter>=6.0.0  # Cron expression parsing for schedulers
 PyYAML==6.0.3  # YAML processing for experience import/export
 
-# OCR dependencies for image-based PDF text extraction
-pytesseract==0.3.13  # OCR engine wrapper (fallback)
-Pillow==12.1.1  # Image processing for OCR
-opencv-python-headless==4.12.0.88  # Advanced image preprocessing for OCR (headless for server/Docker)
+# OCR support — image preprocessing only. Local OCR engines (pytesseract,
+# easyocr) live in requirements-local-inference.txt and are installed by
+# default; deployments using an external OCR API can build the slim variant
+# to skip them. Pillow and OpenCV stay here because they preprocess images
+# before sending to the recognition engine regardless of where that engine
+# runs.
+Pillow==12.2.0  # Image preprocessing (12.2.0 includes security fixes vs 12.1.1)
+opencv-python-headless==4.12.0.88  # Advanced image preprocessing (headless for server/Docker)
 
 # Primary OCR engine - PaddleOCR (best for legal documents and tables)
 #paddlepaddle==3.1.0  # PaddleOCR backend
 #paddleocr==3.1.0  # Advanced OCR with layout analysis
 
-# Optional advanced OCR engines (install as needed)
-easyocr==1.7.2  # Deep learning OCR with better accuracy
 # textract>=1.6.5  # Temporarily disabled due to metadata issues
