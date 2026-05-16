@@ -4,6 +4,7 @@ from typing import Any
 
 import jmespath
 
+from shu.core.logging import get_logger
 from shu.core.safe_decimal import safe_decimal
 from shu.models.plugin_execution import CallableTool
 
@@ -22,6 +23,8 @@ from ..adapter_base import (
     ProviderToolCallEventResult,
     ToolCallInstructions,
 )
+
+logger = get_logger(__name__)
 
 
 class ResponsesAdapter(BaseProviderAdapter):
@@ -140,6 +143,40 @@ class ResponsesAdapter(BaseProviderAdapter):
                 content=f"Got incomplete response from provider because '{incomplete_response}'"
             )
 
+        # Mid-stream terminal failure events — OpenAI Responses can emit
+        # `response.failed` (server-side failure with structured error) or a
+        # top-level `error` SSE event (rate limit, transient backend, content
+        # filter, etc.). Without explicit handlers these chunks fall through
+        # to `return None`, the SSE iteration ends with no terminal event,
+        # and the chat-streaming loop surfaces a generic "NoFinalMessage"
+        # error that hides the actual cause.
+        failed_message = jmespath.search(
+            "type=='response.failed' && (response.error.message || response.error.code || response.incomplete_details.reason)",
+            chunk,
+        )
+        if failed_message:
+            response_id = jmespath.search("response.id", chunk)
+            error_code = jmespath.search("response.error.code", chunk)
+            logger.error(
+                "Responses stream returned response.failed | response_id=%s code=%s message=%s",
+                response_id,
+                error_code,
+                failed_message,
+            )
+            return ProviderErrorEventResult(content=f"Provider reported response.failed: {failed_message}")
+
+        top_level_error = jmespath.search("type=='error' && (error.message || message)", chunk)
+        if top_level_error:
+            error_code = jmespath.search("error.code || code", chunk)
+            error_type = jmespath.search("error.type || type", chunk)
+            logger.error(
+                "Responses stream returned top-level error event | type=%s code=%s message=%s",
+                error_type,
+                error_code,
+                top_level_error,
+            )
+            return ProviderErrorEventResult(content=f"Provider stream error: {top_level_error}")
+
         function_call_reasoning_result = jmespath.search(
             "type=='response.output_item.done' && item.type=='reasoning' && item", chunk
         )
@@ -186,6 +223,33 @@ class ResponsesAdapter(BaseProviderAdapter):
 
             if final_text:
                 return ProviderFinalEventResult(content=final_text, metadata={"usage": self.usage})
+
+            # response.completed arrived but we found neither an extractable
+            # text item nor any streamed deltas. Without a final event the
+            # chat-streaming loop falls through to a generic NoFinalMessage;
+            # log the relevant fields and surface a real error instead.
+            # Skip when the stream has function_call follow-up work either
+            # already captured on this adapter or embedded in this chunk's
+            # response.output — those continue through finalize_provider_events.
+            # Reasoning items alone do not count: a response.completed whose
+            # only output is a reasoning item has no path to a final answer
+            # (no text to surface, no function_call to bounce off of), and
+            # silently swallowing it would surface as a generic NoFinalMessage.
+            chunk_output = (chunk.get("response") or {}).get("output") or []
+            has_chunk_function_call = any(
+                isinstance(it, dict) and it.get("type") == "function_call" for it in chunk_output
+            )
+            if not self.function_call_messages and not has_chunk_function_call:
+                response_id = jmespath.search("response.id", chunk)
+                output_item_types = [it.get("type") for it in chunk_output if isinstance(it, dict)]
+                logger.error(
+                    "Responses stream completed with no extractable content | response_id=%s output_item_types=%s",
+                    response_id,
+                    output_item_types,
+                )
+                return ProviderErrorEventResult(
+                    content="Provider returned response.completed with no text content and no tool calls."
+                )
 
         return None
 
@@ -419,20 +483,10 @@ class ResponsesAdapter(BaseProviderAdapter):
 
             return {"role": role, "content": content_parts if content_parts else content}
 
-        # Assistant text replayed in a follow-up turn is sent as an explicit
-        # output_text content part with annotations=[]. OpenAI's documented schema
-        # (ResponseOutputTextParam) declares `annotations` as Required; the bare
-        # {"role":"assistant","content":"text"} shortcut works against the OpenAI
-        # API because their server normalizes for us, but the explicit form is the
-        # spec-correct wire payload and is accepted by every OpenAI-Responses-API
-        # provider that conforms to the documented schema.
-        if role == "assistant" and isinstance(content, str) and content:
-            return {
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": content, "annotations": []}],
-            }
-
-        # Standard role/content message
+        # Standard role/content message — bare string content. Verified
+        # against OpenAI, OpenRouter, and (for non-Gemma models) DigitalOcean
+        # on /v1/responses, single- and multi-turn, with prior-turn context
+        # preserved across the assistant replay.
         return {"role": role, "content": content}
 
     async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:
