@@ -272,6 +272,7 @@ async def register_user(
         is_first_user = await user_service.is_first_user(db)
 
         # Enforce user limit (skip for the very first user bootstrapping the instance)
+        over_limit_soft = False
         if not is_first_user:
             limit_status = await check_user_limit(db)
             if limit_status.at_limit and limit_status.enforcement == "hard":
@@ -284,6 +285,11 @@ async def register_user(
                     "User registered above subscription limit",
                     extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
                 )
+                # SHU-784: force admin approval on the over-limit user even if
+                # SHU_AUTO_ACTIVATE_USERS=true. Without this override, soft
+                # enforcement degenerates to `none` whenever auto-activate is
+                # on. Below the limit, operator policy still applies.
+                over_limit_soft = True
 
         user_role = user_service.determine_user_role(request.email, is_first_user)
         is_admin = user_role == UserRole.ADMIN
@@ -310,6 +316,7 @@ async def register_user(
                 admin_created=False,
                 requires_email_verification=True,
                 flush_only=True,
+                force_inactive=over_limit_soft,
             )
             verification_service = get_email_verification_service_dependency()
             await verification_service.issue_token(user, db)
