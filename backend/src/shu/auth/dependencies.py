@@ -152,3 +152,36 @@ async def fetch_user(
 # Alias kept so existing `from ..auth.rbac import get_current_user` imports
 # continue to work via re-export from rbac.py.
 get_current_user = fetch_user
+
+
+async def require_internal_admin(current_user: User = Depends(fetch_user)) -> User:
+    """Gate cross-tenant admin endpoints on operator allowlist membership.
+
+    Distinct from tenant-level ``require_admin`` (which checks ``UserRole.ADMIN``
+    on the user row): an internal admin is an *operator* of the platform, not
+    a tenant administrator. In multi-tenant deployments these are different
+    people — a customer-tenant admin should not be able to invoke
+    cross-tenant surfaces, and the platform operator may not even have a
+    ``User`` row in the customer tenant they're debugging.
+
+    The allowlist is ``settings.admin_emails`` (the existing ``ADMIN_EMAILS``
+    env var, already used at user provisioning time to promote initial
+    admins). Re-using it avoids inventing a parallel mechanism, keeps the
+    list in deployment config rather than the DB, and means rotation is a
+    config push instead of a schema change. The ``User`` row read by
+    ``fetch_user`` still happens under RLS, so the admin is identified
+    within their own tenant — we just additionally require their email to
+    be in the operator allowlist.
+    """
+    settings = get_settings_instance()
+    allowlist = {e.lower() for e in settings.admin_emails}
+    if not allowlist or current_user.email.lower() not in allowlist:
+        # 404 would be tempting (avoid revealing that the surface exists),
+        # but the admin endpoints are also gated by router-level auth on a
+        # documented ``/admin`` prefix, so 403 here is the right signal for
+        # the rare operator who hit the right URL with the wrong account.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal admin access required",
+        )
+    return current_user

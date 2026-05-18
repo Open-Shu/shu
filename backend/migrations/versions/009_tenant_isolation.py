@@ -24,12 +24,14 @@ Create Date: 2026-05-15
 
 import os
 
-import shu.auth.models  # noqa: F401 - register User on Base.metadata
-import shu.models  # noqa: F401 - register every model on Base.metadata
 import sqlalchemy as sa
 from alembic import op
+
+import shu.auth.models
+import shu.models  # noqa: F401 - register every model on Base.metadata
 from shu.core.config import SELF_HOSTED_TENANT_UUID, DeploymentMode, get_settings_instance
 from shu.core.database import Base
+from shu.models.composite_fk_inventory import compute_composite_fk_inventory
 
 revision = "009_tenant_isolation"
 down_revision = "008"
@@ -46,30 +48,6 @@ def _tenant_scoped_table_names() -> list[str]:
     # Walking metadata rather than maintaining a hand-curated list keeps the
     # migration in sync as new tenant-scoped models arrive.
     return sorted(name for name, table in Base.metadata.tables.items() if "tenant_id" in table.columns)
-
-
-def _composite_fk_inventory() -> list[tuple[str, str, str, str]]:
-    """Return (child_table, child_col, parent_table, parent_col) tuples.
-
-    Only includes FKs where both ends are tenant-scoped; self-referential FKs
-    and FKs to global tables (llm_providers, plugin_definitions, etc.) are
-    excluded since composite tenant matching only makes sense between two
-    tenant-stamped rows.
-    """
-    tenant_scoped = set(_tenant_scoped_table_names())
-    result: list[tuple[str, str, str, str]] = []
-    for child_name, child_table in Base.metadata.tables.items():
-        if child_name not in tenant_scoped:
-            continue
-        for col in child_table.columns:
-            for fk in col.foreign_keys:
-                parent_name = fk.column.table.name
-                if parent_name == child_name:
-                    continue  # self-referential
-                if parent_name not in tenant_scoped:
-                    continue  # FK to global table
-                result.append((child_name, col.name, parent_name, fk.column.name))
-    return sorted(result)
 
 
 def _resolve_default(mode: DeploymentMode, tenant_id: str | None) -> str | None:
@@ -319,7 +297,7 @@ def upgrade() -> None:
     # row to reference a parent in a different tenant — Postgres refuses the
     # insert. The existing single-column FK stays in place alongside.
     # =========================================================================
-    inventory = _composite_fk_inventory()
+    inventory = compute_composite_fk_inventory()
 
     parent_uniques = sorted({(parent, parent_col) for _, _, parent, parent_col in inventory})
     for parent, parent_col in parent_uniques:
@@ -365,7 +343,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     tables = _tenant_scoped_table_names()
-    inventory = _composite_fk_inventory()
+    inventory = compute_composite_fk_inventory()
 
     # Reverse section E (RLS + billing restructure)
     for table_name in tables:

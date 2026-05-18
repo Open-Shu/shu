@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from .api.admin.tenant_admin import router as tenant_admin_router
 from .api.auth import router as auth_router
 from .api.branding import router as branding_router
 from .api.chat import router as chat_router
@@ -871,6 +872,10 @@ def setup_routes(app: FastAPI) -> None:
 
     # Plugins routes
     app.include_router(plugins_router, prefix=settings.api_v1_prefix)
+
+    # Cross-tenant admin (SHU-761). Empty surface today — registered so
+    # operator endpoints can be added under /admin/* without touching main.py.
+    app.include_router(tenant_admin_router, prefix=settings.api_v1_prefix)
 
     # User preferences routes
     # Host auth routes (generic provider connection status)
