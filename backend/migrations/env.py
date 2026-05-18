@@ -124,15 +124,33 @@ def run_migrations_online() -> None:
                 "and migration privileges. Point SHU_DB_ADMIN_URL at the 'shu_admin' role."
             )
 
+        # SQLAlchemy 2.0 autobegin: the role-check ``execute`` above opened
+        # an implicit transaction on this connection. Alembic's
+        # MigrationContext.__init__ inspects ``connection.in_transaction()``;
+        # if True it sets ``_in_external_transaction=True`` and then
+        # ``begin_transaction()`` returns a no-op nullcontext, leaving
+        # ``_transaction`` as None — which makes ``autocommit_block()``
+        # assert. Rolling back the role-check tx (no writes to lose)
+        # leaves alembic to manage transactions itself.
+        connection.rollback()
+
         context.configure(
             connection=connection,
             target_metadata=get_target_metadata(),
-            transactional_ddl=False,
         )
 
-        # Run migrations without an explicit transaction block to avoid
-        # aborting the whole upgrade on benign cleanup differences.
-        context.run_migrations()
+        # Postgres supports transactional DDL, so the standard alembic
+        # pattern is the right one: one outer transaction wraps the run,
+        # and `op.get_context().autocommit_block()` (used by 009's
+        # CREATE INDEX CONCURRENTLY block) can interrupt it — commit
+        # the current tx, run the body in autocommit, open a fresh tx
+        # on exit. Note that `transactional_ddl=False` would defeat
+        # this: with the override, `begin_transaction()` returns a
+        # nullcontext and `_transaction` stays None, then
+        # `autocommit_block()` asserts on entry. The override has been
+        # removed.
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():

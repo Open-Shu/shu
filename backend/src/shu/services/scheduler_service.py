@@ -26,9 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..auth.models import User
-from ..core.config import get_settings_instance
+from ..core.config import DeploymentMode, get_settings_instance
 from ..core.database import get_db_session
 from ..core.queue_backend import QueueBackend
+from ..core.tenant import resolve_tenant_for_infra, tenant_context_for_tenant_id
+from ..core.worker import list_all_tenant_ids
 from ..core.workload_routing import WorkloadType, enqueue_job
 from ..models.experience import Experience, ExperienceRun
 from ..models.user_preferences import UserPreferences
@@ -595,28 +597,40 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
         while True:
             try:
                 queue = await get_queue_backend()
-                db = await get_db_session()
-                async with db as session:
-                    svc = UnifiedSchedulerService(session, queue, sources)
-                    results = await svc.tick(limit=batch_limit)
+                # The scheduler reads/writes tenant-scoped tables (Experience,
+                # ExperienceRun, PluginFeed, ...) so every tick must run under
+                # a tenant_context — otherwise under RLS the SELECTs see zero
+                # rows and the scheduler silently stops firing. For
+                # self-hosted/silo this resolves to one tenant; for
+                # multi-tenant we fan out per-tenant so every tenant's due
+                # work gets picked up. The ``finally``-sleep stays outside
+                # the per-tenant loop so the tick cadence isn't multiplied
+                # by tenant count.
+                for tid in await _tenant_ids_for_tick():
+                    async with tenant_context_for_tenant_id(tid):
+                        db = await get_db_session()
+                        async with db as session:
+                            svc = UnifiedSchedulerService(session, queue, sources)
+                            results = await svc.tick(limit=batch_limit)
 
-                    # Log if any source had activity
-                    has_activity = any(
-                        r.get("enqueued", 0) > 0 or r.get("stale_cleaned", 0) > 0
-                        for r in results.values()
-                        if isinstance(r, dict) and "error" not in r
-                    )
-                    if has_activity:
-                        logger.info("Scheduler tick | %s", results)
-                        try:
-                            TICK_HISTORY.append(
-                                {
-                                    "ts": datetime.now(UTC).isoformat(),
-                                    **results,
-                                }
+                            # Log if any source had activity
+                            has_activity = any(
+                                r.get("enqueued", 0) > 0 or r.get("stale_cleaned", 0) > 0
+                                for r in results.values()
+                                if isinstance(r, dict) and "error" not in r
                             )
-                        except Exception:
-                            pass
+                            if has_activity:
+                                logger.info("Scheduler tick | tenant=%s | %s", tid, results)
+                                try:
+                                    TICK_HISTORY.append(
+                                        {
+                                            "ts": datetime.now(UTC).isoformat(),
+                                            "tenant_id": tid,
+                                            **results,
+                                        }
+                                    )
+                                except Exception:
+                                    pass
             except Exception as ex:
                 logger.warning("Scheduler tick failed: %s", ex)
             finally:
@@ -627,3 +641,19 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
                     break
 
     return asyncio.create_task(_runner(), name="scheduler:unified")
+
+
+async def _tenant_ids_for_tick() -> list[str]:
+    """Return the tenants this tick should iterate over.
+
+    Self-hosted / silo collapse to a single id (deployment constant for
+    self-hosted, ``SHU_TENANT_ID`` for silo). Multi-tenant walks the
+    ``tenants`` catalog so every tenant's due work is picked up.
+
+    The catalog read uses ``shu_app`` because ``tenants`` is global
+    (no RLS); no admin engine needed.
+    """
+    settings = get_settings_instance()
+    if settings.deployment_mode in (DeploymentMode.SELF_HOSTED, DeploymentMode.SILO):
+        return [resolve_tenant_for_infra()]
+    return await list_all_tenant_ids()

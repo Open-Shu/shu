@@ -28,6 +28,7 @@ from logging import Logger
 
 from async_lru import alru_cache
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, NoResultFound
 
 from .config import DeploymentMode, get_settings_instance
 from .logging import get_logger
@@ -52,12 +53,17 @@ class MissingTenantContextError(RuntimeError):
 
 
 class CrossTenantInsertError(RuntimeError):
-    """Object's explicit ``tenant_id`` disagrees with the session's context.
+    """Object's ``tenant_id`` disagrees with the session's context on write.
 
-    Raised by the ``before_flush`` listener when code sets ``tenant_id`` on
-    a new object to a value other than ``tenant_context.get()``. The RLS
-    ``WITH CHECK`` policy would catch this at the DB layer too, but raising
-    in Python gives a cleaner stack trace pointing at the construction site.
+    Raised by the ``before_flush`` listener for both inserts (new object
+    with an explicit ``tenant_id`` that doesn't match ``tenant_context``)
+    and updates (existing row mutated so its ``tenant_id`` no longer
+    matches). The RLS ``WITH CHECK`` policy would also reject these at
+    the DB layer, but raising in Python gives a cleaner stack trace
+    pointing at the mutation site.
+
+    The class name is insert-shaped for historical reasons; kept stable
+    to avoid churning every call site that imports it.
     """
 
 
@@ -107,27 +113,63 @@ async def _lookup_tenant_for_email(email: str) -> str:
         return result.scalar_one()
 
 
-async def _lookup_tenant_for_reset_token(token_hash: str) -> str:
-    # Uncached: each password reset uses a fresh token, so cache lookups would
-    # never hit. The SD function uses INTO STRICT and raises on a miss, which
-    # propagates as a SQLAlchemy error here — the route handler catches that
-    # and surfaces "invalid or expired token" to the user.
+async def _lookup_tenant_for_reset_token(token_hash: str) -> str | None:
+    # Returns None on a miss. The SD function is plain ``LANGUAGE sql`` so
+    # ``scalar_one()`` already returns None on no-row match — the except
+    # branches below never fire under normal operation. They remain as
+    # defense-in-depth: if anyone reverts the function to PL/pgSQL
+    # ``INTO STRICT``, the NO_DATA_FOUND raise stops at this boundary so
+    # the route layer keeps surfacing 400-on-invalid-token instead of 500.
+    #
+    # Only the "no-row" shape is caught — other DBAPI errors propagate so a
+    # genuine outage doesn't masquerade as an invalid token.
     async with _open_app_session() as session:
-        result = await session.execute(
-            text("SELECT tenant_for_reset_token(:h)"),
-            {"h": token_hash},
-        )
-        return result.scalar_one()
+        try:
+            result = await session.execute(
+                text("SELECT tenant_for_reset_token(:h)"),
+                {"h": token_hash},
+            )
+            return result.scalar_one()
+        except NoResultFound:
+            return None
+        except DBAPIError as exc:
+            if _is_no_data_found(exc):
+                return None
+            raise
 
 
-async def _lookup_tenant_for_verification_token(token_hash: str) -> str:
-    # Uncached for the same reason as the reset-token lookup.
+async def _lookup_tenant_for_verification_token(token_hash: str) -> str | None:
+    # Same defense-in-depth shape as ``_lookup_tenant_for_reset_token``.
+    # The SD function returns NULL on miss directly.
     async with _open_app_session() as session:
-        result = await session.execute(
-            text("SELECT tenant_for_verification_token(:h)"),
-            {"h": token_hash},
-        )
-        return result.scalar_one()
+        try:
+            result = await session.execute(
+                text("SELECT tenant_for_verification_token(:h)"),
+                {"h": token_hash},
+            )
+            return result.scalar_one()
+        except NoResultFound:
+            return None
+        except DBAPIError as exc:
+            if _is_no_data_found(exc):
+                return None
+            raise
+
+
+def _is_no_data_found(exc: DBAPIError) -> bool:
+    """Evaluate: True if ``exc`` wraps Postgres SQLSTATE ``P0002`` (NO_DATA_FOUND).
+
+    The PL/pgSQL ``INTO STRICT`` SD functions raise this when no row matches.
+    Asyncpg surfaces it as ``NoDataFoundError`` with ``sqlstate == 'P0002'``;
+    psycopg / others surface the same SQLSTATE on ``exc.orig.pgcode``. Match
+    on the SQLSTATE rather than the driver-specific exception class so this
+    works across DB driver versions and other PEP 249 wrappers.
+    """
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return sqlstate == "P0002"
 
 
 async def _lookup_tenant_for_stripe_customer(customer_id: str) -> str:
@@ -248,6 +290,40 @@ def tenant_context_for_stripe_customer(customer_id: str):
     is the standard pattern for "I have payment data but no Shu user context".
     """
     return _tenant_context_for_credential(stripe_customer_id=customer_id)
+
+
+def resolve_redis_namespace() -> str:
+    """Return the static Redis-key namespace for this deployment.
+
+    Resolved once at engine construction time (not per-call), so it works
+    from the worker poll loop and the fan-out helper — both of which run
+    without tenant_context set. Tenant isolation on the worker side is
+    enforced by ``tenant_context.set(job.tenant_id)`` inside the dispatch
+    wrapper plus RLS at the DB layer; the Redis namespace only exists to
+    prevent collisions between **deployments** sharing one Redis instance,
+    not between tenants within a deployment.
+
+    Defaults per mode:
+      * SELF_HOSTED  → ``SELF_HOSTED_TENANT_UUID`` (matches the deployment's
+        identity in every other code path).
+      * SILO         → ``settings.tenant_id`` (the deployment is the tenant;
+        validator guarantees the field is a UUID).
+      * MULTI_TENANT → literal ``"multitenant"``.
+
+    Operators can override via ``SHU_REDIS_NAMESPACE`` — useful when two
+    MT clusters share managed Redis and would otherwise collide on the
+    default.
+    """
+    from .config import SELF_HOSTED_TENANT_UUID
+
+    settings = get_settings_instance()
+    if settings.redis_namespace:
+        return settings.redis_namespace
+    if settings.deployment_mode == DeploymentMode.SELF_HOSTED:
+        return SELF_HOSTED_TENANT_UUID
+    if settings.deployment_mode == DeploymentMode.SILO:
+        return settings.tenant_id  # validator guarantees this is a UUID string
+    return "multitenant"
 
 
 def resolve_tenant_for_infra() -> str:

@@ -52,7 +52,11 @@ class UserGroup(TenantScopedMixin, BaseModel):
 
     __tablename__ = "user_groups"
 
-    name = Column(String(255), nullable=False, unique=True, index=True)
+    # Per-tenant uniqueness on name. Two tenants can both have an
+    # "Engineering" group without colliding.
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_user_groups_tenant_name"),)
+
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 

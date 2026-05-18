@@ -33,12 +33,11 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional, Protocol, runtime_checkable
 
-from .tenant import warn_tenant_without_redis
+from .tenant import resolve_redis_namespace, warn_tenant_without_redis
 
 logger = logging.getLogger(__name__)
 
@@ -1188,7 +1187,7 @@ class RedisQueueBackend:
         self,
         redis_client: Any,
         *,
-        tenant_id_provider: Callable[[], str] | None = None,
+        namespace: str | None = None,
     ) -> None:
         """Initialize with an existing Redis client.
 
@@ -1197,36 +1196,36 @@ class RedisQueueBackend:
                 created internally by `get_queue_backend()`. External code
                 should use the factory function instead of constructing
                 this class directly.
-            tenant_id_provider: Optional callable returning the current tenant_id.
-                Called per-key so silo / multi-tenant deployments sharing a
-                Redis instance never clash on queue / processing / scheduled
-                / job-data keys. Self-hosted (single tenant, no Redis sharing)
-                passes ``None``, leaving keys unprefixed.
+            namespace: Static prefix applied to every Redis key built by this
+                backend (queue / processing / scheduled / job-data). Resolved
+                once at construction — **not** a per-call lookup, so the
+                worker poll loop (dequeue / ack / reject), which runs without
+                a tenant context, builds the same keys as the request path.
+                Passing ``None`` leaves keys unprefixed; production wires this
+                via ``resolve_redis_namespace()``. The namespace's only job
+                is collision avoidance between **deployments** sharing one
+                Redis; tenant isolation comes from RLS and the dispatch
+                wrapper's per-job ``tenant_context.set``.
 
         """
         self._client = redis_client
-        self._tenant_id_provider = tenant_id_provider
-
-    def _prefix(self) -> str:
-        if self._tenant_id_provider is None:
-            return ""
-        return f"{self._tenant_id_provider()}:"
+        self._prefix = f"{namespace}:" if namespace else ""
 
     def _queue_key(self, queue_name: str) -> str:
         """Get the Redis key for the main queue list."""
-        return f"{self._prefix()}queue:{queue_name}"
+        return f"{self._prefix}queue:{queue_name}"
 
     def _processing_key(self, queue_name: str) -> str:
         """Get the Redis key for the processing sorted set."""
-        return f"{self._prefix()}queue:{queue_name}:processing"
+        return f"{self._prefix}queue:{queue_name}:processing"
 
     def _scheduled_key(self, queue_name: str) -> str:
         """Get the Redis key for the scheduled sorted set."""
-        return f"{self._prefix()}queue:{queue_name}:scheduled"
+        return f"{self._prefix}queue:{queue_name}:scheduled"
 
     def _job_key(self, queue_name: str, job_id: str) -> str:
         """Get the Redis key for storing job data while in processing."""
-        return f"{self._prefix()}queue:{queue_name}:job:{job_id}"
+        return f"{self._prefix}queue:{queue_name}:job:{job_id}"
 
     async def _restore_expired_jobs(self, queue_name: str) -> int:
         """Move expired processing jobs back to the queue.
@@ -1875,26 +1874,34 @@ async def get_queue_backend() -> QueueBackend:
     settings = get_settings_instance()
 
     if not settings.redis_enabled:
-        # Silo means a tenant is configured that expects shared queue state — in-memory
-        # means each pod's queue is invisible to the others, almost certainly a
-        # misconfigured hosted deploy. We warn loudly but continue so local dev still
-        # works; raising here would break that workflow. self_hosted has no shared-state
-        # expectation; multi_tenant skips inside the warn helper.
+        # Multi-tenant without Redis is structurally broken: every pod has its
+        # own InMemoryQueueBackend, so a job enqueued on one pod is invisible
+        # to a worker on another, and tenant isolation is moot because every
+        # tenant shares one process's memory anyway. Refuse to start rather
+        # than silently degrade.
+        if settings.deployment_mode == DeploymentMode.MULTI_TENANT:
+            raise RuntimeError(
+                "SHU_REDIS_URL is required when SHU_DEPLOYMENT_MODE=multi_tenant. "
+                "Without Redis, queues fragment across pods and the worker pipeline "
+                "loses cross-pod job delivery — the deployment cannot function correctly."
+            )
+        # Silo: a tenant is configured but Redis is missing — in-memory queues
+        # mean each pod's queue is invisible to the others, almost certainly a
+        # misconfigured hosted deploy. Warn loudly but continue so local dev
+        # still works; self_hosted has no shared-state expectation.
         if settings.deployment_mode == DeploymentMode.SILO:
             warn_tenant_without_redis(logger, "queue", settings.tenant_id)
         logger.info("SHU_REDIS_URL not configured, using InMemoryQueueBackend")
         _queue_backend = InMemoryQueueBackend()
         return _queue_backend
 
-    # Redis is enabled — connection failure is fatal. Tenant-prefix the
-    # queue / processing / scheduled / job-data keys so multiple silo or
-    # multi-tenant deployments can safely share one Redis instance without
-    # workloads from one tenant clashing with another's. Self-hosted (no
-    # SHU_TENANT_ID) gets an empty prefix and unprefixed keys.
-    from .tenant import resolve_tenant_for_infra
-
+    # Redis is enabled — connection failure is fatal. The namespace is a
+    # deployment-level prefix (NOT per-tenant) so dequeue/ack/reject can run
+    # without a tenant context. Per-tenant isolation comes from RLS at the DB
+    # layer and tenant_context.set(job.tenant_id) at dispatch — the namespace
+    # only prevents collisions between **deployments** sharing one Redis.
     redis_client = await _get_shared_redis_client()
-    _queue_backend = RedisQueueBackend(redis_client, tenant_id_provider=resolve_tenant_for_infra)
+    _queue_backend = RedisQueueBackend(redis_client, namespace=resolve_redis_namespace())
     logger.info("Using RedisQueueBackend")
     return _queue_backend
 

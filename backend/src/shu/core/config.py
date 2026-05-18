@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     # by the model validator at the bottom of this class.
     deployment_mode: DeploymentMode = Field(DeploymentMode.SELF_HOSTED, alias="SHU_DEPLOYMENT_MODE")
 
+    # Redis key namespace for queue / cache / job-data keys. Optional override;
+    # defaults are resolved by ``resolve_redis_namespace()`` below (self-hosted
+    # → SELF_HOSTED_TENANT_UUID; silo → settings.tenant_id; multi-tenant →
+    # literal "multitenant"). Set explicitly only when multiple deployments
+    # share one Redis instance and would otherwise collide on the default —
+    # the most common case is two MT clusters sharing managed Redis.
+    redis_namespace: str | None = Field(None, alias="SHU_REDIS_NAMESPACE")
+
     # Redis configuration
     # Set SHU_REDIS_URL to enable Redis-backed caching/queues; omit for in-memory.
     redis_url: str | None = Field(None, alias="SHU_REDIS_URL")
@@ -716,11 +724,18 @@ class Settings(BaseSettings):
         # values at config load surfaces deployment misconfigurations early and
         # ensures the value is safe to use in SQL and Redis keys without further
         # sanitization.
+        #
+        # Return the canonical hyphenated-lowercase form (``str(UUID)``) rather
+        # than the operator-typed string. The SECURITY DEFINER lookups compare
+        # tenant_id via exact text equality, so an env var of
+        # ``{AAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}`` or uppercase would parse fine
+        # here but mismatch against the lowercase ``str(uuid.uuid4())`` form
+        # used elsewhere. Normalizing closes that gap.
         try:
-            uuid.UUID(stripped)
+            parsed = uuid.UUID(stripped)
         except ValueError as exc:
             raise ValueError("SHU_TENANT_ID must be a valid UUID") from exc
-        return stripped
+        return str(parsed)
 
     @model_validator(mode="after")
     def validate_deployment_mode_tenant_combo(self) -> "Settings":

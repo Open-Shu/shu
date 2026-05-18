@@ -25,33 +25,38 @@ from shu.services.system_settings_service import SystemSettingsService
 
 _logger = get_logger(__name__)
 
-# Stable settings key prefix. The full key is suffixed with the tenant_id so
-# multi-tenant deployments don't trample each other's persisted state in the
-# global ``system_settings`` table. Renaming this prefix strands all prior
-# values across tenants, so don't.
-PERSIST_KEY_PREFIX = "cp_billing_state_cache_last_value"
+# Stable settings key. ``system_settings`` is tenant-scoped (composite PK on
+# ``(tenant_id, key)``) so every tenant gets its own isolated row under this
+# single key — no manual tenant-id suffix needed. Renaming this strands all
+# prior values, so don't.
+#
+# Migration note: deployments that ran against the prior, manually-suffixed
+# key layout (``{PERSIST_KEY}:{tenant_uuid}``) have orphan rows after the
+# rename — loads under the new key miss; saves write a fresh row. The orphan
+# only matters during the first cold-start after deploy that coincides with
+# a CP outage: load returns None, the caller falls through to HEALTHY_DEFAULT,
+# the next successful CP poll re-persists under the new key. Acceptable since
+# persistence is documented best-effort.
+PERSIST_KEY = "cp_billing_state_cache_last_value"
 
 
 SessionFactory = Callable[[], async_sessionmaker[AsyncSession]]
 
 
 class BillingStatePersister:
-    """Save/load the last successful CP poll to `system_settings`, per tenant.
+    """Save/load the last successful CP poll to `system_settings`.
 
-    ``system_settings`` is a global (non-RLS) table — every tenant writes to
-    the same physical rows — so we encode tenant_id into the key. One
-    persister instance is constructed per tenant_id and lives inside that
-    tenant's BillingStateCache.
+    Tenant scoping is handled by the underlying tenant-scoped
+    ``system_settings`` table + RLS: the persister opens a session that
+    inherits the caller's ``tenant_context``, and reads/writes are
+    automatically scoped to that tenant. No tenant_id in the key, no
+    tenant_id field on the persister — the caller's context is the
+    authority.
     """
 
-    def __init__(self, tenant_id: str, session_factory: SessionFactory = get_async_session_local) -> None:
-        self._tenant_id = tenant_id
+    def __init__(self, session_factory: SessionFactory = get_async_session_local) -> None:
         # Indirection for tests — production uses the global session factory.
         self._session_factory = session_factory
-
-    @property
-    def _key(self) -> str:
-        return f"{PERSIST_KEY_PREFIX}:{self._tenant_id}"
 
     async def save(self, state: BillingState) -> None:
         # mode="json" so Decimal/datetime serialize to JSON-friendly forms
@@ -60,7 +65,7 @@ class BillingStatePersister:
         try:
             session_local = self._session_factory()
             async with session_local() as db:
-                await SystemSettingsService(db).upsert(self._key, payload)
+                await SystemSettingsService(db).upsert(PERSIST_KEY, payload)
         except Exception:
             # Persistence is best-effort; the in-memory value is already
             # correct and a write failure shouldn't take down the request.
@@ -70,7 +75,7 @@ class BillingStatePersister:
         try:
             session_local = self._session_factory()
             async with session_local() as db:
-                value = await SystemSettingsService(db).get_value(self._key)
+                value = await SystemSettingsService(db).get_value(PERSIST_KEY)
         except Exception:
             _logger.warning("failed to load persisted billing state from system_settings", exc_info=True)
             return None
@@ -89,4 +94,4 @@ class BillingStatePersister:
             return None
 
 
-__all__ = ["PERSIST_KEY_PREFIX", "BillingStatePersister"]
+__all__ = ["PERSIST_KEY", "BillingStatePersister"]

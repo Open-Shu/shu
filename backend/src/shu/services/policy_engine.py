@@ -1,13 +1,23 @@
-"""Policy-Based Access Control (PBAC) engine — in-memory policy cache.
+"""Policy-Based Access Control (PBAC) engine — per-tenant in-memory policy cache.
 
-Maintains a singleton cache of all active access policies, their bindings,
-and statements.  The cache is bulk-loaded on startup and refreshed either
-when explicitly invalidated (mutations) or when the TTL elapses.
+Maintains a per-tenant cache of all active access policies, their bindings,
+and statements.  Each tenant has its own ``PolicyCache`` instance lazily
+built on first access; the public ``POLICY_CACHE`` proxy routes every call
+to the right per-tenant instance via ``tenant_context``.
 
 Access-check evaluation is performed by ``PolicyCache.check()`` (single
 resource) and ``PolicyCache.get_denied_resources()`` (batch filtering).
 Both methods use inverted indexes for O(1) policy lookups and support
 glob-style wildcard matching via ``fnmatch``.
+
+Per-tenant isolation: the previous module-level singleton held one set of
+policies for the whole process. A refresh triggered under tenant A's
+context populated the singleton with A's data; a subsequent check under
+tenant B would then read A's bindings, granting or denying B users on
+A's policies — a cross-tenant data leak that RLS on the underlying tables
+could not catch (the leak was at the cache layer *above* RLS). The
+per-tenant proxy below closes that hole by keying every state lookup on
+``tenant_context.get()``.
 """
 
 from __future__ import annotations
@@ -361,7 +371,96 @@ class PolicyCache:
         return denied
 
 
-POLICY_CACHE = PolicyCache()
+class _PerTenantPolicyCache:
+    """Per-tenant PolicyCache facade exposing the same surface as PolicyCache.
+
+    Every method routes through ``tenant_context.get()`` to pick the
+    right per-tenant ``PolicyCache``, building one lazily on first access.
+    Modeled on the same per-tenant pattern as ``BillingStateCache`` (see
+    ``billing/billing_state_cache.py``); kept inline rather than factored
+    into a generic abstraction until a third use case shows up.
+    """
+
+    def __init__(self) -> None:
+        # Map is intentionally unbounded. Each entry is small (compressed
+        # representation via CachedStatement frozenset/sorted-list) and the
+        # set of tenants in a process is bounded by deployment shape: 1 for
+        # self-hosted/silo, and on the multi-tenant deployment the worker
+        # restarts catch any unbounded growth. If MT scale changes, this is
+        # the right place to add LRU eviction.
+        self._by_tenant: dict[str, PolicyCache] = {}
+
+    def _for_current_tenant(self) -> PolicyCache:
+        # Deferred import avoids a cycle: shu.core.tenant doesn't import
+        # services, but importing tenant_context at module-import time would
+        # widen the dependency surface unnecessarily.
+        from shu.core.tenant import tenant_context
+
+        tid = tenant_context.get(None)
+        if tid is None:
+            raise RuntimeError(
+                "PolicyCache invoked without tenant_context set. PBAC checks "
+                "must run inside a request handler (after fetch_user) or a "
+                "worker dispatch wrapper (which sets tenant_context per job)."
+            )
+        cache = self._by_tenant.get(tid)
+        if cache is None:
+            cache = PolicyCache()
+            self._by_tenant[tid] = cache
+        return cache
+
+    async def initialize(self, db: AsyncSession) -> None:
+        """No-op kept for backward compat with the lifespan startup call.
+
+        Per-tenant caches are built lazily on first access. We could eagerly
+        warm one cache per tenant by walking the ``tenants`` catalog, but
+        that wins nothing for self-hosted/silo (one tenant) and burns
+        startup time on MT for tenants that may not see traffic this
+        process lifetime.
+        """
+
+    def invalidate(self) -> None:
+        """Invalidate the current tenant's cache only.
+
+        Mutation endpoints run under a tenant context (an admin editing
+        their tenant's policies) so per-tenant invalidation is what we
+        want — blowing away every tenant's cache for one tenant's edit
+        would force every other tenant to pay a refresh on their next
+        check, for no reason.
+
+        If invoked without a tenant context (rare — administrative tooling
+        that touches policy data globally), invalidate every cache as a
+        safety fallback.
+        """
+        from shu.core.tenant import tenant_context
+
+        tid = tenant_context.get(None)
+        if tid is None:
+            for cache in self._by_tenant.values():
+                cache.invalidate()
+            logger.info("policy_cache.invalidated_all_tenants")
+            return
+        if tid in self._by_tenant:
+            self._by_tenant[tid].invalidate()
+
+    async def check(self, user_id: str, action: str, resource: str, db: AsyncSession) -> bool:
+        return await self._for_current_tenant().check(user_id, action, resource, db)
+
+    async def is_admin(self, user_id: str, db: AsyncSession) -> bool:
+        return await self._for_current_tenant().is_admin(user_id, db)
+
+    async def get_denied_resources(
+        self,
+        user_id: str,
+        action: str,
+        resource_type: str,
+        resource_ids: list[str],
+        db: AsyncSession,
+    ) -> set[str]:
+        return await self._for_current_tenant().get_denied_resources(user_id, action, resource_type, resource_ids, db)
+
+
+POLICY_CACHE = _PerTenantPolicyCache()
 
 
 async def enforce_pbac(

@@ -27,27 +27,129 @@ import os
 import sqlalchemy as sa
 from alembic import op
 
-import shu.auth.models
-import shu.models  # noqa: F401 - register every model on Base.metadata
 from shu.core.config import SELF_HOSTED_TENANT_UUID, DeploymentMode, get_settings_instance
-from shu.core.database import Base
-from shu.models.composite_fk_inventory import compute_composite_fk_inventory
 
 revision = "009_tenant_isolation"
 down_revision = "008"
 branch_labels = None
 depends_on = None
 
+# Frozen tenant-scoped table inventory for this migration.
+#
+# DELIBERATELY NOT computed from Base.metadata at apply time: a future model
+# addition would either (a) crash this migration on a fresh install because
+# the table being ALTERed doesn't exist yet at this revision, or (b) silently
+# leave the new table unprotected on already-migrated DBs that ran 009 before
+# the model was added. Either way, migration behavior would depend on when it
+# was applied relative to model edits.
+#
+# The companion test in tests/unit/migrations/test_stage_a_table_inventory.py
+# diffs this list against the live Base.metadata and fails CI on drift — that's
+# the forcing function that makes "adding a tenant-scoped model without a
+# matching follow-on migration" impossible to merge.
+_TENANT_SCOPED_TABLES: tuple[str, ...] = (
+    "access_policies",
+    "access_policy_bindings",
+    "access_policy_statements",
+    "agent_memory",
+    "attachments",
+    "billing_state",
+    "billing_state_audit",
+    "conversations",
+    "document_chunks",
+    "document_participants",
+    "document_projects",
+    "document_queries",
+    "documents",
+    "email_send_log",
+    "experience_runs",
+    "experience_steps",
+    "experiences",
+    "knowledge_bases",
+    "llm_usage",
+    "mcp_server_connections",
+    "message_attachments",
+    "messages",
+    "model_configuration_kb_prompts",
+    "model_configuration_knowledge_bases",
+    "model_configurations",
+    "password_reset_token",
+    "plugin_executions",
+    "plugin_feeds",
+    "plugin_storage",
+    "plugin_subscriptions",
+    "prompt_assignments",
+    "prompts",
+    "provider_credentials",
+    "provider_identities",
+    "system_settings",
+    "user_group_memberships",
+    "user_groups",
+    "user_preferences",
+    "users",
+)
+
 # Tables that grow large in self-hosted installs and so warrant CONCURRENTLY
 # index creation — listed explicitly so the set is reviewable rather than
 # inferred from row counts at migration time.
 _LARGE_TABLES = frozenset({"document_chunks"})
 
-
-def _tenant_scoped_table_names() -> list[str]:
-    # Walking metadata rather than maintaining a hand-curated list keeps the
-    # migration in sync as new tenant-scoped models arrive.
-    return sorted(name for name, table in Base.metadata.tables.items() if "tenant_id" in table.columns)
+# Frozen composite-FK inventory for this migration. Same rationale as
+# _TENANT_SCOPED_TABLES above: a live walk of Base.metadata at apply time
+# would produce different DDL on a fresh install vs. an already-migrated DB
+# whenever the model graph picks up a new tenant-scoped FK.
+#
+# Each tuple is (child_table, child_column, parent_table, parent_column).
+# The companion test diffs against the live `compute_composite_fk_inventory()`
+# and against `composite_fk_inventory.json`, failing CI on drift.
+_COMPOSITE_FKS: tuple[tuple[str, str, str, str], ...] = (
+    ("access_policies", "created_by", "users", "id"),
+    ("access_policy_bindings", "policy_id", "access_policies", "id"),
+    ("access_policy_statements", "policy_id", "access_policies", "id"),
+    ("agent_memory", "user_id", "users", "id"),
+    ("attachments", "conversation_id", "conversations", "id"),
+    ("attachments", "user_id", "users", "id"),
+    ("conversations", "model_configuration_id", "model_configurations", "id"),
+    ("document_chunks", "document_id", "documents", "id"),
+    ("document_chunks", "knowledge_base_id", "knowledge_bases", "id"),
+    ("document_participants", "document_id", "documents", "id"),
+    ("document_participants", "knowledge_base_id", "knowledge_bases", "id"),
+    ("document_projects", "document_id", "documents", "id"),
+    ("document_projects", "knowledge_base_id", "knowledge_bases", "id"),
+    ("document_queries", "document_id", "documents", "id"),
+    ("document_queries", "knowledge_base_id", "knowledge_bases", "id"),
+    ("document_queries", "source_chunk_id", "document_chunks", "id"),
+    ("documents", "knowledge_base_id", "knowledge_bases", "id"),
+    ("experience_runs", "experience_id", "experiences", "id"),
+    ("experience_runs", "user_id", "users", "id"),
+    ("experience_steps", "experience_id", "experiences", "id"),
+    ("experience_steps", "knowledge_base_id", "knowledge_bases", "id"),
+    ("experiences", "created_by", "users", "id"),
+    ("experiences", "model_configuration_id", "model_configurations", "id"),
+    ("experiences", "prompt_id", "prompts", "id"),
+    ("knowledge_bases", "owner_id", "users", "id"),
+    ("message_attachments", "attachment_id", "attachments", "id"),
+    ("message_attachments", "message_id", "messages", "id"),
+    ("messages", "conversation_id", "conversations", "id"),
+    ("model_configuration_kb_prompts", "knowledge_base_id", "knowledge_bases", "id"),
+    ("model_configuration_kb_prompts", "model_configuration_id", "model_configurations", "id"),
+    ("model_configuration_kb_prompts", "prompt_id", "prompts", "id"),
+    ("model_configuration_knowledge_bases", "knowledge_base_id", "knowledge_bases", "id"),
+    ("model_configuration_knowledge_bases", "model_configuration_id", "model_configurations", "id"),
+    ("model_configurations", "prompt_id", "prompts", "id"),
+    ("password_reset_token", "user_id", "users", "id"),
+    ("plugin_executions", "schedule_id", "plugin_feeds", "id"),
+    ("plugin_storage", "user_id", "users", "id"),
+    ("plugin_subscriptions", "user_id", "users", "id"),
+    ("prompt_assignments", "prompt_id", "prompts", "id"),
+    ("provider_credentials", "user_id", "users", "id"),
+    ("provider_identities", "user_id", "users", "id"),
+    ("user_group_memberships", "granted_by", "users", "id"),
+    ("user_group_memberships", "group_id", "user_groups", "id"),
+    ("user_group_memberships", "user_id", "users", "id"),
+    ("user_groups", "created_by", "users", "id"),
+    ("user_preferences", "user_id", "users", "id"),
+)
 
 
 def _resolve_default(mode: DeploymentMode, tenant_id: str | None) -> str | None:
@@ -60,10 +162,65 @@ def _resolve_default(mode: DeploymentMode, tenant_id: str | None) -> str | None:
     raise RuntimeError(f"Unknown deployment mode: {mode!r}")
 
 
-def _read_password(env_var: str, default: str) -> str:
+def _read_password(env_var: str) -> str:
     # CREATE ROLE PASSWORD doesn't accept bind parameters, so we interpolate.
     # Doubling single quotes is the standard Postgres string-literal escape.
-    return os.environ.get(env_var, default).replace("'", "''")
+    #
+    # Required, not optional: a missing env var would create a LOGIN-capable role
+    # with whatever hardcoded fallback we shipped — i.e. a well-known credential
+    # for anyone able to reach the DB port. Local dev injects these via
+    # `make migrate-local-lab`; production via the deploy pipeline. Either way,
+    # absence is a misconfiguration we want to fail on, not paper over.
+    value = os.environ.get(env_var)
+    if not value:
+        raise RuntimeError(
+            f"{env_var} is required to create the shu_admin / shu_app roles. "
+            "Set it in the deploy environment (or the `make migrate-local-lab` target for dev) "
+            "before running this migration."
+        )
+    return value.replace("'", "''")
+
+
+# ----------------------------------------------------------------------------
+# Idempotency helpers
+#
+# This migration uses an autocommit_block() partway through (for CONCURRENTLY
+# indexes), which commits whatever ran before it. If anything fails AFTER that
+# commit, alembic_version stays at the previous revision but the partially-
+# committed DDL is on disk. A naive re-run would then trip on "table already
+# exists" / "column already exists" / "constraint already exists" / etc.
+#
+# Every helper below is a no-op if the target object is already in the desired
+# state. That makes the migration safe to re-run after any partial failure.
+# ----------------------------------------------------------------------------
+
+
+def _add_constraint_if_missing(table: str, constraint: str, definition: str) -> None:
+    """ALTER TABLE ... ADD CONSTRAINT, no-op if a constraint with this name already exists."""
+    op.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = '{constraint}'
+                  AND conrelid = '{table}'::regclass
+            ) THEN
+                ALTER TABLE {table} ADD CONSTRAINT {constraint} {definition};
+            END IF;
+        END $$;
+        """
+    )
+
+
+def _replace_policy(table: str, policy: str, body: str) -> None:
+    """Drop-and-create the policy so re-runs land on the desired definition.
+
+    ``CREATE POLICY`` fails if the policy exists; ``CREATE OR REPLACE POLICY``
+    doesn't exist. Dropping first is the standard idempotent shape.
+    """
+    op.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+    op.execute(f"CREATE POLICY {policy} ON {table} {body}")
 
 
 # Section C SQL kept as a single string so the function bodies (which include
@@ -94,45 +251,31 @@ REVOKE ALL ON FUNCTION tenant_for_email(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tenant_for_email(text) TO shu_app;
 
 -- tenant_for_reset_token: argument is the sha256 hex digest, never the
--- plaintext. INTO STRICT raises NO_DATA_FOUND on miss and TOO_MANY_ROWS on
--- collision; the caller treats both as "no valid reset session".
+-- plaintext. Returns NULL on miss so all five tenant_for_* lookups behave
+-- the same — an INTO STRICT raise-on-miss here previously bit the route
+-- layer because callers couldn't tell "no row" from a real DB outage.
+-- Plain SQL returns NULL uniformly; the Python wrapper keeps DBAPIError
+-- translation as defense-in-depth if anyone reverts to PL/pgSQL.
 CREATE OR REPLACE FUNCTION tenant_for_reset_token(p_token_hash text)
 RETURNS text
-LANGUAGE plpgsql
+LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
-AS $$
-DECLARE
-    result text;
-BEGIN
-    SELECT tenant_id INTO STRICT result
-    FROM password_reset_token
-    WHERE token_hash = p_token_hash;
-    RETURN result;
-END;
-$$;
+AS $$ SELECT tenant_id FROM password_reset_token WHERE token_hash = p_token_hash $$;
 ALTER FUNCTION tenant_for_reset_token(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_reset_token(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tenant_for_reset_token(text) TO shu_app;
 
 -- tenant_for_verification_token: same sha256-hash convention as reset_token.
+-- Plain SQL so all five tenant_for_* lookups return NULL on miss uniformly.
 CREATE OR REPLACE FUNCTION tenant_for_verification_token(p_hash text)
 RETURNS text
-LANGUAGE plpgsql
+LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
-AS $$
-DECLARE
-    result text;
-BEGIN
-    SELECT tenant_id INTO STRICT result
-    FROM users
-    WHERE email_verification_token_hash = p_hash;
-    RETURN result;
-END;
-$$;
+AS $$ SELECT tenant_id FROM users WHERE email_verification_token_hash = p_hash $$;
 ALTER FUNCTION tenant_for_verification_token(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_verification_token(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tenant_for_verification_token(text) TO shu_app;
@@ -155,13 +298,13 @@ GRANT EXECUTE ON FUNCTION tenant_for_stripe_customer(text) TO shu_app;
 
 def upgrade() -> None:
     settings = get_settings_instance()
-    tables = _tenant_scoped_table_names()
+    tables = list(_TENANT_SCOPED_TABLES)
 
     # =========================================================================
     # A. tenants catalog table + seed row
     # =========================================================================
     op.execute(
-        "CREATE TABLE tenants ("
+        "CREATE TABLE IF NOT EXISTS tenants ("
         "id text PRIMARY KEY, "
         "created_at timestamptz NOT NULL DEFAULT now()"
         ")"
@@ -170,7 +313,9 @@ def upgrade() -> None:
     seed_id = _resolve_default(settings.deployment_mode, settings.tenant_id)
     if seed_id is not None:
         # ON CONFLICT DO NOTHING keeps re-runs against partially-seeded DBs idempotent.
-        op.execute(f"INSERT INTO tenants (id) VALUES ('{seed_id}') ON CONFLICT (id) DO NOTHING")
+        op.execute(
+            sa.text("INSERT INTO tenants (id) VALUES (:tid) ON CONFLICT (id) DO NOTHING").bindparams(tid=seed_id)
+        )
 
     # =========================================================================
     # B. tenant_id columns + indexes + FK constraints
@@ -183,21 +328,83 @@ def upgrade() -> None:
             # at Settings load — so neither can carry a quote or semicolon. DDL
             # DEFAULT clauses don't accept bind params anyway.
             op.execute(
-                f"ALTER TABLE {table_name} ADD COLUMN tenant_id text NOT NULL DEFAULT '{column_default}'"
+                f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT '{column_default}'"
             )
         else:
-            op.execute(f"ALTER TABLE {table_name} ADD COLUMN tenant_id text NOT NULL")
+            op.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL")
+
+    # system_settings: switch the PK from `(key)` to `(tenant_id, key)` so
+    # the same key (e.g. "side_call_model_config_id") can exist independently
+    # per tenant. Has to happen AFTER ADD COLUMN tenant_id (above — the new
+    # column has to exist before the PK can reference it) and BEFORE the
+    # downgrade-symmetric DROP COLUMN runs at downgrade time.
+    #
+    # Idempotent shape: only swap when the existing PK is still single-column
+    # (the pre-009 shape). Re-runs after a successful swap see a 2-column PK
+    # and skip — without this guard, dropping a PK that's already the new
+    # composite shape would just re-create it pointlessly (or worse, drop it
+    # and then ADD CONSTRAINT would fail if the name conflict timing went wrong).
+    op.execute(
+        """
+        DO $$
+        DECLARE pk_col_count int;
+        BEGIN
+            SELECT array_length(conkey, 1) INTO pk_col_count
+            FROM pg_constraint
+            WHERE conname = 'system_settings_pkey'
+              AND conrelid = 'system_settings'::regclass;
+            IF pk_col_count = 1 THEN
+                ALTER TABLE system_settings DROP CONSTRAINT system_settings_pkey;
+                ALTER TABLE system_settings ADD CONSTRAINT system_settings_pkey
+                    PRIMARY KEY (tenant_id, key);
+            END IF;
+        END $$;
+        """
+    )
+
+    # Drop column-level UNIQUE constraints that were globally-unique pre-009
+    # and replace with composite (tenant_id, col) UNIQUEs. Values like
+    # ``mcp_server_connections.name`` and ``user_groups.name`` are
+    # per-tenant identifiers — tenant A picking "Engineering" must not
+    # block tenant B from using the same. Old constraint names follow the
+    # Postgres default for column-unique (``<table>_<column>_key``);
+    # ``IF EXISTS`` covers re-runs after the swap landed once.
+    _tenant_scoped_unique_swaps = (
+        # (table, column, old_constraint, new_constraint)
+        ("mcp_server_connections", "name", "mcp_server_connections_name_key", "uq_mcp_server_connections_tenant_name"),
+        ("access_policies", "name", "access_policies_name_key", "uq_access_policies_tenant_name"),
+        ("knowledge_bases", "slug", "knowledge_bases_slug_key", "uq_knowledge_bases_tenant_slug"),
+        ("experiences", "slug", "experiences_slug_key", "uq_experiences_tenant_slug"),
+        ("user_groups", "name", "user_groups_name_key", "uq_user_groups_tenant_name"),
+    )
+    for table_name, col, old_constraint, new_constraint in _tenant_scoped_unique_swaps:
+        op.execute(f"ALTER TABLE {table_name} DROP CONSTRAINT IF EXISTS {old_constraint}")
+        _add_constraint_if_missing(
+            table_name, new_constraint, f"UNIQUE (tenant_id, {col})"
+        )
 
     for table_name in tables:
         if table_name not in _LARGE_TABLES:
-            op.create_index(f"ix_{table_name}_tenant_id", table_name, ["tenant_id"])
+            # IF NOT EXISTS so a partial-failure re-run doesn't fail on the
+            # subset of indexes that were committed last time.
+            op.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_{table_name}_tenant_id ON {table_name} (tenant_id)"
+            )
 
     for table_name in tables:
         constraint_name = f"{table_name}_tenant_id_fk"
-        op.execute(
-            f"ALTER TABLE {table_name} ADD CONSTRAINT {constraint_name} "
-            f"FOREIGN KEY (tenant_id) REFERENCES tenants(id) NOT VALID"
+        # ON DELETE RESTRICT matches the ``ondelete="RESTRICT"`` declared on
+        # TenantScopedMixin (models/base.py). Without it, Postgres defaults
+        # to NO ACTION, which is similar but not identical (NO ACTION is
+        # deferrable). Keep model + DB constraint in lockstep so a future
+        # reader inspecting either sees the same behavior.
+        _add_constraint_if_missing(
+            table_name,
+            constraint_name,
+            "FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT NOT VALID",
         )
+        # VALIDATE CONSTRAINT on an already-validated constraint is a no-op,
+        # so this is safe to re-run unconditionally.
         op.execute(f"ALTER TABLE {table_name} VALIDATE CONSTRAINT {constraint_name}")
 
     # CONCURRENTLY needs autocommit — alembic's autocommit_block() ends the
@@ -211,8 +418,8 @@ def upgrade() -> None:
     # =========================================================================
     # C. Roles + grants + unique lookup constraints + SECURITY DEFINER functions
     # =========================================================================
-    admin_pw = _read_password("SHU_ADMIN_DB_PASSWORD", "shu_admin_dev")
-    app_pw = _read_password("SHU_APP_DB_PASSWORD", "shu_app_dev")
+    admin_pw = _read_password("SHU_ADMIN_DB_PASSWORD")
+    app_pw = _read_password("SHU_APP_DB_PASSWORD")
 
     # CREATE ROLE has no IF NOT EXISTS. Roles are cluster-wide and persist
     # past DB drops, so DO blocks keep re-runs idempotent.
@@ -248,6 +455,19 @@ def upgrade() -> None:
         op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table_name} TO shu_app")
     op.execute("GRANT SELECT ON tenants TO shu_app")
 
+    # Global tables — RLS-exempt but still touched by request-path code, so
+    # shu_app needs the right grants or routine requests will 'permission
+    # denied' after cutover. Verbs are the minimum each table actually needs:
+    #   llm_providers, llm_models — admin UI provider/model CRUD (DML)
+    #   plugin_definitions        — plugin registry sync on startup writes rows (DML)
+    #   llm_provider_type_definitions — read-only at runtime; seeded by migrations (SELECT)
+    # If a future global table is added, its grants belong alongside its
+    # CREATE TABLE migration, not here. (``system_settings`` is tenant-scoped
+    # — its grants come from the per-table loop above.)
+    for table_name in ("llm_providers", "llm_models", "plugin_definitions"):
+        op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table_name} TO shu_app")
+    op.execute("GRANT SELECT ON llm_provider_type_definitions TO shu_app")
+
     # Sequences cover Identity columns and legacy autoincrement PKs.
     op.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO shu_app")
 
@@ -270,18 +490,26 @@ def upgrade() -> None:
 
     # Unique constraints on SD-function lookup columns — the functions return
     # a single row via WHERE col = $1, so the schema must enforce that.
+    #
+    # DROP IF EXISTS + CREATE UNIQUE INDEX IF NOT EXISTS: the DROP handles the
+    # pre-009 non-unique index of the same name; the IF NOT EXISTS on the
+    # CREATE handles partial-failure re-runs where the unique index already
+    # landed last time.
     op.execute("DROP INDEX IF EXISTS ix_password_reset_token_token_hash")
-    op.execute("CREATE UNIQUE INDEX ix_password_reset_token_token_hash ON password_reset_token (token_hash)")
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_password_reset_token_token_hash "
+        "ON password_reset_token (token_hash)"
+    )
 
     op.execute("DROP INDEX IF EXISTS ix_users_email_verification_token_hash")
     op.execute(
-        "CREATE UNIQUE INDEX ix_users_email_verification_token_hash "
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_verification_token_hash "
         "ON users (email_verification_token_hash) "
         "WHERE email_verification_token_hash IS NOT NULL"
     )
 
     op.execute(
-        "CREATE UNIQUE INDEX ix_billing_state_stripe_customer_id "
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_billing_state_stripe_customer_id "
         "ON billing_state (stripe_customer_id) "
         "WHERE stripe_customer_id IS NOT NULL"
     )
@@ -297,21 +525,24 @@ def upgrade() -> None:
     # row to reference a parent in a different tenant — Postgres refuses the
     # insert. The existing single-column FK stays in place alongside.
     # =========================================================================
-    inventory = compute_composite_fk_inventory()
+    inventory = list(_COMPOSITE_FKS)
 
     parent_uniques = sorted({(parent, parent_col) for _, _, parent, parent_col in inventory})
     for parent, parent_col in parent_uniques:
-        op.execute(
-            f"ALTER TABLE {parent} ADD CONSTRAINT {parent}_tenant_id_{parent_col}_unique "
-            f"UNIQUE (tenant_id, {parent_col})"
+        _add_constraint_if_missing(
+            parent,
+            f"{parent}_tenant_id_{parent_col}_unique",
+            f"UNIQUE (tenant_id, {parent_col})",
         )
 
     for child, child_col, parent, parent_col in inventory:
         constraint_name = f"{child}_{child_col}_tfk"
-        op.execute(
-            f"ALTER TABLE {child} ADD CONSTRAINT {constraint_name} "
-            f"FOREIGN KEY (tenant_id, {child_col}) REFERENCES {parent}(tenant_id, {parent_col}) NOT VALID"
+        _add_constraint_if_missing(
+            child,
+            constraint_name,
+            f"FOREIGN KEY (tenant_id, {child_col}) REFERENCES {parent}(tenant_id, {parent_col}) NOT VALID",
         )
+        # VALIDATE CONSTRAINT on already-valid is a no-op; safe to re-run.
         op.execute(f"ALTER TABLE {child} VALIDATE CONSTRAINT {constraint_name}")
 
     # =========================================================================
@@ -324,26 +555,54 @@ def upgrade() -> None:
     # invariant. Then RLS turns on for every tenant-scoped table and the
     # tenant_isolation policy starts filtering.
     # =========================================================================
-    op.execute("ALTER TABLE billing_state DROP CONSTRAINT billing_state_singleton")
-    op.execute("ALTER TABLE billing_state ALTER COLUMN id DROP DEFAULT")
-    op.execute("ALTER TABLE billing_state ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (START WITH 2)")
-    op.execute("ALTER TABLE billing_state ADD CONSTRAINT billing_state_one_per_tenant UNIQUE (tenant_id)")
+    op.execute("ALTER TABLE billing_state DROP CONSTRAINT IF EXISTS billing_state_singleton")
+    # Convert id to a GENERATED BY DEFAULT identity column. Postgres rejects
+    # the ADD if it's already an identity, so guard on pg_attribute.attidentity
+    # ('' means not-an-identity; 'a' means ALWAYS; 'd' means BY DEFAULT).
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF (
+                SELECT attidentity FROM pg_attribute
+                WHERE attrelid = 'billing_state'::regclass AND attname = 'id'
+            ) = '' THEN
+                ALTER TABLE billing_state ALTER COLUMN id DROP DEFAULT;
+                ALTER TABLE billing_state ALTER COLUMN id
+                    ADD GENERATED BY DEFAULT AS IDENTITY (START WITH 2);
+            END IF;
+        END $$;
+        """
+    )
+    _add_constraint_if_missing(
+        "billing_state",
+        "billing_state_one_per_tenant",
+        "UNIQUE (tenant_id)",
+    )
 
     for table_name in tables:
+        # ENABLE / FORCE are idempotent in Postgres — no guard needed.
         op.execute(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY")
         # FORCE so even the table owner can't bypass the policy — only roles
         # with BYPASSRLS (shu_admin) get through.
         op.execute(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY")
-        op.execute(
-            f"CREATE POLICY tenant_isolation ON {table_name} AS PERMISSIVE FOR ALL TO shu_app "
-            f"USING (tenant_id = current_setting('app.tenant_id', true)) "
-            f"WITH CHECK (tenant_id = current_setting('app.tenant_id', true))"
+        # CREATE POLICY would fail on a re-run; drop-then-create is the
+        # standard idempotent shape and also lets us pick up policy-body
+        # changes on re-run.
+        _replace_policy(
+            table_name,
+            "tenant_isolation",
+            (
+                "AS PERMISSIVE FOR ALL TO shu_app "
+                "USING (tenant_id = current_setting('app.tenant_id', true)) "
+                "WITH CHECK (tenant_id = current_setting('app.tenant_id', true))"
+            ),
         )
 
 
 def downgrade() -> None:
-    tables = _tenant_scoped_table_names()
-    inventory = compute_composite_fk_inventory()
+    tables = list(_TENANT_SCOPED_TABLES)
+    inventory = list(_COMPOSITE_FKS)
 
     # Reverse section E (RLS + billing restructure)
     for table_name in tables:
@@ -398,6 +657,9 @@ def downgrade() -> None:
         "REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM shu_app"
     )
     op.execute("REVOKE USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public FROM shu_app")
+    op.execute("REVOKE SELECT ON llm_provider_type_definitions FROM shu_app")
+    for table_name in ("llm_providers", "llm_models", "plugin_definitions"):
+        op.execute(f"REVOKE SELECT, INSERT, UPDATE, DELETE ON {table_name} FROM shu_app")
     op.execute("REVOKE SELECT ON tenants FROM shu_app")
     for table_name in tables:
         op.execute(f"REVOKE SELECT, INSERT, UPDATE, DELETE ON {table_name} FROM shu_app")
@@ -418,6 +680,28 @@ def downgrade() -> None:
         op.execute(f"ALTER TABLE {table_name} DROP CONSTRAINT IF EXISTS {table_name}_tenant_id_fk")
     for table_name in tables:
         op.execute(f"DROP INDEX IF EXISTS ix_{table_name}_tenant_id")
+
+    # system_settings: restore the original single-column PK on `key` so the
+    # subsequent ``DROP COLUMN tenant_id`` doesn't trip on a PK that
+    # references it. Symmetric with the upgrade's PK swap.
+    op.execute("ALTER TABLE system_settings DROP CONSTRAINT IF EXISTS system_settings_pkey")
+    op.execute("ALTER TABLE system_settings ADD CONSTRAINT system_settings_pkey PRIMARY KEY (key)")
+
+    # Reverse the composite-unique swaps: drop the (tenant_id, col)
+    # constraints and restore the original single-column UNIQUEs.
+    _tenant_unique_swaps_reverse = (
+        ("mcp_server_connections", "name", "mcp_server_connections_name_key", "uq_mcp_server_connections_tenant_name"),
+        ("access_policies", "name", "access_policies_name_key", "uq_access_policies_tenant_name"),
+        ("knowledge_bases", "slug", "knowledge_bases_slug_key", "uq_knowledge_bases_tenant_slug"),
+        ("experiences", "slug", "experiences_slug_key", "uq_experiences_tenant_slug"),
+        ("user_groups", "name", "user_groups_name_key", "uq_user_groups_tenant_name"),
+    )
+    for table_name, col, old_constraint, new_constraint in _tenant_unique_swaps_reverse:
+        op.execute(f"ALTER TABLE {table_name} DROP CONSTRAINT IF EXISTS {new_constraint}")
+        op.execute(
+            f"ALTER TABLE {table_name} ADD CONSTRAINT {old_constraint} UNIQUE ({col})"
+        )
+
     for table_name in tables:
         op.execute(f"ALTER TABLE {table_name} DROP COLUMN IF EXISTS tenant_id")
 

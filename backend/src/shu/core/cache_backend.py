@@ -40,7 +40,6 @@ Example usage:
 import logging
 import threading
 import time
-from collections.abc import Callable
 from typing import Any, Optional, Protocol, runtime_checkable
 
 import redis.asyncio as redis
@@ -917,7 +916,7 @@ class RedisCacheBackend:
         redis_client: Any,
         redis_binary_client: Any | None = None,
         *,
-        tenant_id_provider: Callable[[], str] | None = None,
+        namespace: str | None = None,
     ) -> None:
         """Initialize with an existing Redis client.
 
@@ -928,21 +927,22 @@ class RedisCacheBackend:
                 instead of constructing this class directly.
             redis_binary_client: An async Redis client instance with decode_responses=False
                 for binary operations. If None, binary operations will not be available.
-            tenant_id_provider: Optional callable returning the current tenant_id.
-                Called per-key so multi-tenant deployments get the right namespace
-                for each request — silo / self-hosted deployments pass a function
-                that always returns the same string, with no behavioral change vs.
-                a static prefix. ``None`` disables prefixing entirely.
+            namespace: Static prefix applied to every cache key built by this
+                backend. Resolved once at construction; callers that run outside
+                a tenant context (warmers, schedulers) build the same keys as
+                the request path. Tenant isolation comes from RLS at the DB
+                layer and per-job ``tenant_context.set`` at the worker — the
+                namespace only exists to prevent collisions between
+                **deployments** sharing one Redis instance. ``None`` leaves
+                keys unprefixed.
 
         """
         self._client = redis_client
         self._binary_client = redis_binary_client
-        self._tenant_id_provider = tenant_id_provider
+        self._prefix = f"{namespace}:" if namespace else ""
 
     def _key(self, key: str) -> str:
-        if self._tenant_id_provider is None:
-            return key
-        return f"{self._tenant_id_provider()}:{key}"
+        return f"{self._prefix}{key}"
 
     async def get(self, key: str) -> str | None:
         """Retrieve a value by key.
@@ -1478,11 +1478,19 @@ async def get_cache_backend() -> CacheBackend:
     settings = get_settings_instance()
 
     if not settings.redis_enabled:
-        # Silo means a tenant is configured that expects shared cache state — in-memory
-        # means each pod's cache is invisible to the others, almost certainly a
-        # misconfigured hosted deploy. We warn loudly but continue so local dev still
-        # works; raising here would break that workflow. self_hosted has no shared-state
-        # expectation; multi_tenant skips inside the warn helper.
+        # Multi-tenant without Redis is structurally broken (each pod has its
+        # own InMemoryCacheBackend; cross-pod cache hits are impossible). Fail
+        # fast at startup rather than silently degrade.
+        if settings.deployment_mode == DeploymentMode.MULTI_TENANT:
+            raise RuntimeError(
+                "SHU_REDIS_URL is required when SHU_DEPLOYMENT_MODE=multi_tenant. "
+                "An in-memory cache fragments across pods and cannot serve a multi-tenant "
+                "deployment correctly."
+            )
+        # Silo: a tenant is configured but Redis is missing — in-memory means
+        # each pod's cache is invisible to the others, almost certainly a
+        # misconfigured hosted deploy. Warn loudly but continue so local dev
+        # still works; self_hosted has no shared-state expectation.
         if settings.deployment_mode == DeploymentMode.SILO:
             warn_tenant_without_redis(logger, "cache", settings.tenant_id)
         logger.info("SHU_REDIS_URL not configured, using InMemoryCacheBackend")
@@ -1503,9 +1511,12 @@ async def get_cache_backend() -> CacheBackend:
         )
         logger.info("Using RedisCacheBackend without binary support")
 
-    from .tenant import resolve_tenant_for_infra
+    # Namespace is a deployment-level prefix (NOT per-tenant) — collision
+    # avoidance between deployments sharing one Redis. Tenant isolation comes
+    # from RLS at the DB layer.
+    from .tenant import resolve_redis_namespace
 
-    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client, tenant_id_provider=resolve_tenant_for_infra)
+    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client, namespace=resolve_redis_namespace())
     return _cache_backend
 
 

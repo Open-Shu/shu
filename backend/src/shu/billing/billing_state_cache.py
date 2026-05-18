@@ -233,7 +233,9 @@ async def get_billing_state_cache() -> BillingStateCache | None:
 
     billing_settings = get_billing_settings()
     if not (billing_settings.router_shared_secret and billing_settings.cp_base_url):
-        # Remember "no CP configured" so future requests skip the recheck.
+        # Definitively no CP configured for this deployment — memoize so future
+        # requests skip the recheck. Distinguished from the exception branch
+        # below: this is steady-state config, not a transient build error.
         _cache_by_tenant[tid] = None
         return None
 
@@ -256,17 +258,22 @@ async def get_billing_state_cache() -> BillingStateCache | None:
         cache = BillingStateCache(
             client=cp_client,
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
-            persister=BillingStatePersister(tenant_id=tid),
+            persister=BillingStatePersister(),
             markup_fetcher=_build_markup_fetcher(billing_settings),
         )
         _cp_client_by_tenant[tid] = cp_client
         _cache_by_tenant[tid] = cache
         return cache
     except Exception as e:
-        # Programmer errors (bad UUID, broken httpx, etc.) shouldn't take
-        # the request down. Cache the None so we don't retry every request.
+        # A transient blip during build (DNS hiccup, httpx pool exhaustion,
+        # something flaky) used to write None into the slot and permanently
+        # disable enforcement for this tenant until process restart — operator
+        # had no way to tell "configured-off" from "stuck-after-blip". We now
+        # leave the slot empty so the next caller retries the build. Cost:
+        # subsequent failing requests during a sustained outage each do one
+        # CP-client construction attempt before failing closed; a circuit-
+        # breaker can be added later if benchmarks warrant.
         _logger.warning("CP billing-state cache build failed for tenant %s: %s", tid, e)
-        _cache_by_tenant[tid] = None
         return None
 
 
@@ -300,19 +307,40 @@ def reset_billing_state_cache() -> None:
 def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
     """Build the closure BillingStateCache uses to enrich each refresh.
 
-    Returns None when Stripe isn't fully configured — the cache then leaves
-    `usage_markup_multiplier` as whatever CP sent (today: nothing), and
-    consumers fall back to the configured default. Constructing the
-    StripeClient once at init time avoids per-refresh setup cost and keeps
-    `stripe.api_key` stable across the process.
+    The closure reads ``stripe_subscription_id`` from this tenant's
+    ``billing_state`` row at fetch time — **not** from the env var that
+    historically held it. The env-var path predates multi-tenant and would
+    return the same subscription ID for every tenant in a multi-tenant
+    deployment, mis-billing every tenant against one customer's markup.
+    Reading from the row scopes correctly under RLS (the same per-tenant
+    cache that owns this fetcher already runs under the right tenant
+    context when ``get()`` is called).
+
+    Returns None when Stripe isn't configured — Stripe SDK initialization
+    needs at least ``secret_key``. The cache then leaves
+    ``usage_markup_multiplier`` as whatever CP sent (today: nothing), and
+    consumers fall back to the configured default.
     """
-    if not (billing_settings.secret_key and billing_settings.subscription_id):
+    if not billing_settings.secret_key:
         return None
-    stripe_client = StripeClient(billing_settings)
-    subscription_id = billing_settings.subscription_id
 
     async def fetch() -> Decimal | None:
-        return await stripe_client.get_subscription_markup_multiplier(subscription_id)
+        # Deferred import to avoid pulling the BillingStateService at module
+        # import time (it transitively imports the SQLAlchemy session
+        # factory, which we don't want resolved during settings construction).
+        from shu.billing.state_service import BillingStateService
+        from shu.core.database import get_async_session_local
+
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            row = await BillingStateService.get(session)
+        if row is None or not row.stripe_subscription_id:
+            # No tenant-scoped subscription yet (pre-onboarding, or CP hasn't
+            # synced the customer to Stripe). Fall through to the default
+            # multiplier rather than blowing up the whole CP poll.
+            return None
+        stripe_client = StripeClient(billing_settings)
+        return await stripe_client.get_subscription_markup_multiplier(row.stripe_subscription_id)
 
     return fetch
 

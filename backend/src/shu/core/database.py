@@ -176,12 +176,35 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 # =============================================================================
 
 
+def _is_admin_connection(conn) -> bool:
+    """Evaluate, true iff this connection belongs to the lazy admin engine.
+
+    The begin listener below is registered class-level on ``Engine``, so it
+    matches both ``_async_engine`` (shu_app, RLS-enforced) and
+    ``_admin_engine`` (shu_admin, BYPASSRLS). For the admin path the
+    ``set_config`` would be a no-op (BYPASSRLS ignores the GUC) but the
+    round-trip still costs latency, and ``cross_tenant_query`` documents
+    ``app.tenant_id`` as intentionally not set on admin sessions — a
+    promise the code can actually keep by skipping the stamp here.
+
+    Lazy-check ``_admin_engine`` because at import time it doesn't exist
+    yet. ``AsyncEngine.sync_engine`` is what the listener's ``conn.engine``
+    matches against.
+    """
+    if _admin_engine is None:
+        return False
+    return conn.engine is _admin_engine.sync_engine
+
+
 @event.listens_for(Engine, "begin")
 def _set_tenant_on_begin(conn) -> None:
     # set_config is Postgres-specific. SQLite-backed unit-test sessions hit
     # this hook too and would fail with "no such function: set_config" —
     # gate the whole hook on the dialect, not just the missing-context log.
     if conn.dialect.name != "postgresql":
+        return
+    # Admin engine bypasses RLS — stamping the GUC there is wasted work.
+    if _is_admin_connection(conn):
         return
     tid = tenant_context.get(None)
     if tid is None:
@@ -196,29 +219,57 @@ def _set_tenant_on_begin(conn) -> None:
     )
 
 
+def _is_tenant_scoped(obj: object) -> bool:
+    """Check duck-typed: does this ORM object map to a tenant-scoped table.
+
+    Avoids importing ``models.base.TenantScopedMixin`` here — that would
+    close a circular import (models.base imports Base from this module).
+    Looking for the column instead is equivalent: every tenant-scoped table
+    has a ``tenant_id`` column by definition (the mixin declares it), and
+    no global table has one.
+    """
+    table = getattr(type(obj), "__table__", None)
+    return table is not None and "tenant_id" in table.columns
+
+
 @event.listens_for(Session, "before_flush")
 def _stamp_tenant_id(session, flush_context, instances) -> None:
     tid = tenant_context.get(None)
+
+    # session.new — auto-stamp from context, or raise on mismatch / missing context.
     for obj in session.new:
-        cls = type(obj)
-        # Duck-typing rather than `isinstance(TenantScopedMixin, ...)` keeps
-        # core/database.py from importing models.base, which would close a
-        # circular import (models.base imports Base from this module).
-        table = getattr(cls, "__table__", None)
-        if table is None or "tenant_id" not in table.columns:
+        if not _is_tenant_scoped(obj):
             continue
         current = getattr(obj, "tenant_id", None)
+        cls_name = type(obj).__name__
         if current is None:
             if tid is None:
                 raise MissingTenantContextError(
-                    f"Cannot flush {cls.__name__}: tenant_id not set and tenant_context is empty. "
+                    f"Cannot flush {cls_name}: tenant_id not set and tenant_context is empty. "
                     "Ensure the route has a tenant-resolution dependency or the worker handler "
                     "is wrapped to set tenant_context for the job."
                 )
             obj.tenant_id = tid
         elif tid is not None and current != tid:
+            raise CrossTenantInsertError(f"{cls_name}.tenant_id = {current!r} does not match session context {tid!r}")
+
+    # session.dirty — catch UPDATE-time cross-tenant mismatches the same way
+    # as inserts. Loading an object under tenant X then mutating its
+    # tenant_id to Y is almost always a bug; the RLS WITH CHECK policy would
+    # reject the UPDATE at the DB layer anyway, but raising here gives a
+    # stack trace pointing at the mutation site instead of a generic
+    # row-rejected error at flush. UPDATEs don't auto-stamp (we never
+    # silently change tenant_id on an existing row); they only validate.
+    for obj in session.dirty:
+        if not _is_tenant_scoped(obj):
+            continue
+        current = getattr(obj, "tenant_id", None)
+        # ``current is None`` on a dirty object means the row's tenant_id was
+        # explicitly cleared, which is also a write that RLS would reject —
+        # surface it as a mismatch with the session's context.
+        if tid is not None and current != tid:
             raise CrossTenantInsertError(
-                f"{cls.__name__}.tenant_id = {current!r} does not match session context {tid!r}"
+                f"{type(obj).__name__}.tenant_id = {current!r} does not match session context " f"{tid!r} (update path)"
             )
 
 
@@ -228,16 +279,6 @@ _SET_TENANT_RE = re.compile(
     r"^\s*SET\s+(?:SESSION\s+|LOCAL\s+)?app\.tenant_id\b",
     re.IGNORECASE,
 )
-_DEBUG_MODE: bool | None = None
-
-
-def _is_debug_mode() -> bool:
-    # Cached after first call: Settings is fully built by then, and re-reading
-    # on every cursor exec would add a noticeable overhead in tight loops.
-    global _DEBUG_MODE  # noqa: PLW0603
-    if _DEBUG_MODE is None:
-        _DEBUG_MODE = bool(get_settings().debug)
-    return _DEBUG_MODE
 
 
 @event.listens_for(Engine, "before_cursor_execute")
@@ -245,7 +286,10 @@ def _reject_unsafe_set(conn, cursor, statement, parameters, context, executemany
     # The check is dev/test/CI only — production runs with debug=False, so the
     # function returns immediately. There is no legitimate use of raw SET on
     # app.tenant_id; the begin hook is the single point of enforcement.
-    if not _is_debug_mode():
+    # get_settings() is already cached at the Settings layer, so no need for
+    # a separate module-level cache here (and a module global would make
+    # tests brittle without buying measurable perf).
+    if not get_settings().debug:
         return
     if _SET_TENANT_RE.match(statement):
         raise RuntimeError(

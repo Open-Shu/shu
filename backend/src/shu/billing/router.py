@@ -50,7 +50,6 @@ from shu.billing.seat_service import (
 from shu.billing.service import BillingService, CustomerMismatchError
 from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient, StripeClientError
-from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
 from shu.core.tenant import tenant_context_for_stripe_customer
@@ -326,9 +325,12 @@ async def _post_trial_action(
     # Tenant doesn't have the Stripe subscription id at this layer — CP
     # holds it. Kept on the audit shape with None so future enrichment
     # (e.g., echoing the id back from CP's response) is additive.
+    # tenant_id comes from the (RLS-filtered) authenticated User row,
+    # not `settings.tenant_id` — the settings field is None in multi-
+    # tenant mode and would log a null tenant on every audit event.
     audit_extra = {
         "acting_user_id": user.id,
-        "tenant_id": get_settings_instance().tenant_id,
+        "tenant_id": user.tenant_id,
         "action": action,
         "stripe_subscription_id": None,
     }
@@ -661,10 +663,23 @@ async def handle_webhook(
     # The event's data.object always carries a `customer` field for the events
     # we handle (subscription.*, invoice.*, etc.); extract it so the pre-auth
     # tenant resolver can map it to the right tenant before any billing_state
-    # read/write. Falls through to empty string if absent — silo/self-hosted
-    # short-circuit on deployment_mode anyway, and multi-tenant will fail loud.
+    # read/write.
     event_data_object = event_payload.get("data", {}).get("object", {})
-    customer_id = event_data_object.get("customer", "") if isinstance(event_data_object, dict) else ""
+    customer_id = event_data_object.get("customer") if isinstance(event_data_object, dict) else None
+
+    if not isinstance(customer_id, str) or not customer_id.strip():
+        # Malformed event — no customer means no way to resolve tenant. Returning
+        # 400 (not 500) is critical: Stripe retries 5xx with exponential backoff,
+        # so a single malformed event would create a sustained retry storm. 4xx
+        # signals "don't retry, the request was bad" and Stripe drops it.
+        logger.warning(
+            "Webhook event missing 'customer' field; cannot resolve tenant",
+            extra={"event_type": event_payload.get("type"), "event_id": event_payload.get("id")},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "missing_customer"},
+        )
 
     try:
         async with tenant_context_for_stripe_customer(customer_id):

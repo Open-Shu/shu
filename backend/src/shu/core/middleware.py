@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse, Response
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
+from ..core.tenant import tenant_context_for_email, tenant_context_for_user_id
 
 if TYPE_CHECKING:
     from .rate_limiting import RateLimitService
@@ -261,111 +262,137 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # SECURITY FIX: Check current user status in database
         # JWT tokens contain user data from when they were created, but we need to verify
         # the user is still active in the database
+        #
+        # SHU-761: every DB read below runs under RLS once Stage F cuts over,
+        # so a tenant_context must be set BEFORE the SELECT or the query
+        # default-denies and every authenticated request 401s. The credential
+        # we have at this point — user_id from the verified JWT, or the
+        # configured email from the API-key mapping — is what the SECURITY
+        # DEFINER lookup resolves the tenant from.
+        #
+        # TODO(SHU-761-followup): this middleware does DB-backed user
+        # validation because three downstream middlewares
+        # (MustChangePassword, RateLimit, RequestID logging) read
+        # ``request.state.user`` and need the resolved dict before the
+        # FastAPI dependency tree runs. A cleaner split — middleware
+        # JWT-decode only; ``fetch_user`` dep owns the row + checks — is
+        # a multi-middleware refactor parked as a follow-up.
         try:
             from sqlalchemy import select
 
             from ..auth.models import User
             from ..core.database import get_db
 
-            # Get database session
-            async for db in get_db():
-                # Determine lookup based on auth mode
-                if getattr(request.state, "api_key_authenticated", False):
-                    settings = get_settings_instance()
-                    if not settings.api_key_user_email:
-                        logger.warning("API key user mapping not configured (SHU_API_KEY_USER_EMAIL missing)")
-                        return JSONResponse(
-                            status_code=401,
-                            content={"detail": "API key user mapping not configured"},
-                        )
-                    stmt = select(User).where(User.email == settings.api_key_user_email)
-                else:
-                    stmt = select(User).where(User.id == user_data["user_id"])
-
-                result = await db.execute(stmt)
-                current_user = result.scalar_one_or_none()
-
-                if not current_user:
-                    missing = (
-                        settings.api_key_user_email
-                        if getattr(request.state, "api_key_authenticated", False)
-                        else user_data.get("user_id")
-                    )
-                    logger.warning(f"User not found in database for {request.method} {request.url.path}: {missing}")
-                    return JSONResponse(status_code=401, content={"detail": "User account not found"})
-
-                if not current_user.is_active:
-                    logger.warning(
-                        f"Inactive user {current_user.email} attempted access to {request.method} {request.url.path}"
-                    )
+            # Pick the tenant-resolution context shape that matches the auth
+            # mode. The contextmanagers reset tenant_context on exit so the
+            # downstream FastAPI dep tree (which sets its own context via
+            # ``resolve_tenant``) sees a clean slate.
+            if getattr(request.state, "api_key_authenticated", False):
+                settings = get_settings_instance()
+                if not settings.api_key_user_email:
+                    logger.warning("API key user mapping not configured (SHU_API_KEY_USER_EMAIL missing)")
                     return JSONResponse(
-                        status_code=400,
-                        content={"detail": "User account is inactive. Please contact an administrator for activation."},
+                        status_code=401,
+                        content={"detail": "API key user mapping not configured"},
                     )
+                _tenant_ctx = tenant_context_for_email(settings.api_key_user_email)
+                _lookup_stmt = select(User).where(User.email == settings.api_key_user_email)
+            else:
+                _tenant_ctx = tenant_context_for_user_id(user_data["user_id"])
+                _lookup_stmt = select(User).where(User.id == user_data["user_id"])
 
-                # SHU-745: invalidate JWTs issued before the most recent
-                # password change. password_changed_at is set whenever the
-                # user resets via the /reset-password flow; when it is
-                # newer than the token's `iat`, the token (and any siblings
-                # that share an `iat` window) is rejected. This is the
-                # session-invalidation primitive — JWTs are otherwise
-                # stateless and there is no token blacklist or refresh-
-                # token table. Skipped for API-key auth (no JWT iat to
-                # compare against).
-                #
-                # Both sides are floored to integer seconds before
-                # comparison: JWT `iat` is serialised as integer seconds by
-                # the encoder, but `password_changed_at` is microsecond-
-                # precision. Without flooring, a token issued in the same
-                # wall-clock second as the reset (iat second == floor of
-                # password_changed_at) compares as strictly less and gets a
-                # false-positive 401 — the user's freshly-issued token
-                # bounces on its first request. Flooring keeps the rejection
-                # second-grained, which matches the resolution of the iat
-                # claim itself.
-                if not getattr(request.state, "api_key_authenticated", False):
-                    from ..auth.jwt_manager import is_token_revoked_by_password_change
+            # Get database session. The tenant_ctx wraps every DB op inside —
+            # the SELECT above, plus the last_login UPDATE below — so both run
+            # under the right RLS scope. Resetting on exit lets the FastAPI
+            # dep tree later set its own context cleanly.
+            async for db in get_db():
+                async with _tenant_ctx:
+                    result = await db.execute(_lookup_stmt)
+                    current_user = result.scalar_one_or_none()
 
-                    token_iat = user_data.get("iat") if isinstance(user_data, dict) else None
-                    if is_token_revoked_by_password_change(token_iat, current_user.password_changed_at):
-                        logger.info(
-                            "Token revoked by password change for %s",
-                            current_user.email,
-                            extra={
-                                "event": "auth.token_revoked_by_password_change",
-                                "user_id": current_user.id,
-                                "email": current_user.email,
+                    if not current_user:
+                        missing = (
+                            settings.api_key_user_email
+                            if getattr(request.state, "api_key_authenticated", False)
+                            else user_data.get("user_id")
+                        )
+                        logger.warning(f"User not found in database for {request.method} {request.url.path}: {missing}")
+                        return JSONResponse(status_code=401, content={"detail": "User account not found"})
+
+                    if not current_user.is_active:
+                        logger.warning(
+                            f"Inactive user {current_user.email} attempted access to {request.method} {request.url.path}"
+                        )
+                        return JSONResponse(
+                            status_code=400,
+                            content={
+                                "detail": "User account is inactive. Please contact an administrator for activation."
                             },
                         )
-                        return JSONResponse(
-                            status_code=401,
-                            content={"detail": "Session expired due to password change. Please sign in again."},
-                        )
 
-                # Update last_login on first request of the day
-                await self._update_daily_login(db, current_user)
+                    # SHU-745: invalidate JWTs issued before the most recent
+                    # password change. password_changed_at is set whenever the
+                    # user resets via the /reset-password flow; when it is
+                    # newer than the token's `iat`, the token (and any siblings
+                    # that share an `iat` window) is rejected. This is the
+                    # session-invalidation primitive — JWTs are otherwise
+                    # stateless and there is no token blacklist or refresh-
+                    # token table. Skipped for API-key auth (no JWT iat to
+                    # compare against).
+                    #
+                    # Both sides are floored to integer seconds before
+                    # comparison: JWT `iat` is serialised as integer seconds by
+                    # the encoder, but `password_changed_at` is microsecond-
+                    # precision. Without flooring, a token issued in the same
+                    # wall-clock second as the reset (iat second == floor of
+                    # password_changed_at) compares as strictly less and gets a
+                    # false-positive 401 — the user's freshly-issued token
+                    # bounces on its first request. Flooring keeps the rejection
+                    # second-grained, which matches the resolution of the iat
+                    # claim itself.
+                    if not getattr(request.state, "api_key_authenticated", False):
+                        from ..auth.jwt_manager import is_token_revoked_by_password_change
 
-                # Build user context for RBAC
-                if getattr(request.state, "api_key_authenticated", False):
-                    user_data = {
-                        "user_id": current_user.id,
-                        "email": current_user.email,
-                        "name": current_user.name,
-                        "role": current_user.role,
-                        "is_active": current_user.is_active,
-                        "must_change_password": current_user.must_change_password,
-                    }
-                else:
-                    # Update user data with current database values to ensure consistency
-                    user_data.update(
-                        {
+                        token_iat = user_data.get("iat") if isinstance(user_data, dict) else None
+                        if is_token_revoked_by_password_change(token_iat, current_user.password_changed_at):
+                            logger.info(
+                                "Token revoked by password change for %s",
+                                current_user.email,
+                                extra={
+                                    "event": "auth.token_revoked_by_password_change",
+                                    "user_id": current_user.id,
+                                    "email": current_user.email,
+                                },
+                            )
+                            return JSONResponse(
+                                status_code=401,
+                                content={"detail": "Session expired due to password change. Please sign in again."},
+                            )
+
+                    # Update last_login on first request of the day
+                    await self._update_daily_login(db, current_user)
+
+                    # Build user context for RBAC
+                    if getattr(request.state, "api_key_authenticated", False):
+                        user_data = {
+                            "user_id": current_user.id,
                             "email": current_user.email,
                             "name": current_user.name,
                             "role": current_user.role,
                             "is_active": current_user.is_active,
                             "must_change_password": current_user.must_change_password,
                         }
-                    )
+                    else:
+                        # Update user data with current database values to ensure consistency
+                        user_data.update(
+                            {
+                                "email": current_user.email,
+                                "name": current_user.name,
+                                "role": current_user.role,
+                                "is_active": current_user.is_active,
+                                "must_change_password": current_user.must_change_password,
+                            }
+                        )
                 break
 
         except Exception as e:

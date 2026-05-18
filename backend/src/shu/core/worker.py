@@ -671,7 +671,7 @@ class Worker:
 # =============================================================================
 
 
-async def _list_all_tenant_ids() -> list[str]:
+async def list_all_tenant_ids() -> list[str]:
     """Return every tenant_id from the global tenants catalog.
 
     Used by the fan-out and recovery patterns to drive per-tenant scoped
@@ -706,7 +706,7 @@ async def fan_out_per_tenant(
 
     Returns the list of job ids enqueued, one per tenant.
     """
-    tenant_ids = await _list_all_tenant_ids()
+    tenant_ids = await list_all_tenant_ids()
     job_ids: list[str] = []
     for tid in tenant_ids:
         job = await enqueue_job(

@@ -16,12 +16,16 @@ Two operation shapes, each with its own role binding and isolation story:
 Both paths audit-log entry and exit. Emission happens **before** the session
 yields — if the audit logger raises, the session never opens and the caller
 sees the audit failure, not a successful operation with a missing record.
+The exit audit fires in a ``finally`` so the trail never loses an event,
+even when the caller's body raises; the exit event is ``*_close`` on a
+clean exit and ``*_aborted`` (carrying the original error class) on a raise.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -53,6 +57,49 @@ class TenantAdminService:
         self._admin_session_local = admin_session_local
         self._audit = audit_logger
 
+    async def _emit_exit_audit(
+        self,
+        *,
+        event_prefix: str,
+        actor_user_id: str,
+        target: str | None,
+        body_exc: BaseException | None,
+    ) -> None:
+        """Emit the close/aborted audit, swallowing failures when the body raised.
+
+        Two failure modes have to be handled differently:
+
+        * Body succeeded → emit ``*_close``. If THIS audit raises, propagate —
+          the operator needs to know the close record didn't make it.
+        * Body raised → emit ``*_aborted`` with the error class so the trail
+          captures the failure. If THIS audit raises, log loudly and swallow —
+          we want the original ``body_exc`` to be the visible failure, not the
+          audit-transport error masking it.
+        """
+        audit_kwargs: dict[str, Any] = {
+            "event": f"{event_prefix}_close" if body_exc is None else f"{event_prefix}_aborted",
+            "actor": actor_user_id,
+            "target": target,
+        }
+        if body_exc is not None:
+            audit_kwargs["error_class"] = type(body_exc).__name__
+
+        try:
+            await self._audit.log(**audit_kwargs)
+        except Exception:
+            if body_exc is None:
+                # Clean-exit audit failure surfaces to the caller — same
+                # contract as the open-audit failure (fail-closed on audit).
+                raise
+            logger.exception(
+                "audit_emit_failed_during_unwind",
+                extra={
+                    "event_prefix": event_prefix,
+                    "actor": actor_user_id,
+                    "original_exception": type(body_exc).__name__,
+                },
+            )
+
     @asynccontextmanager
     async def impersonate_tenant(
         self,
@@ -67,8 +114,7 @@ class TenantAdminService:
         ``app.tenant_id`` via ``set_config(..., true)`` on every transaction,
         so the impersonation persists for the session's lifetime.
         """
-        # Audit FIRST. If this raises we never open the session — that's the
-        # fail-closed contract the design demands.
+        # Audit FIRST. If this raises we never open the session — fail-closed.
         await self._audit.log(
             event="impersonate_tenant_open",
             actor=actor_user_id,
@@ -76,18 +122,21 @@ class TenantAdminService:
             reason=reason,
         )
 
-        async with tenant_context_for_tenant_id(target_tenant_id), self._app_session_local() as session:
-            yield session
-
-        # Best-effort close audit. We do *not* wrap this in try/except — a
-        # close-time audit failure surfaces as a 500 to the caller, which is
-        # the correct signal: the open record exists, the close doesn't, and
-        # the operator should know about it.
-        await self._audit.log(
-            event="impersonate_tenant_close",
-            actor=actor_user_id,
-            target=target_tenant_id,
-        )
+        body_exc: BaseException | None = None
+        try:
+            async with tenant_context_for_tenant_id(target_tenant_id), self._app_session_local() as session:
+                try:
+                    yield session
+                except BaseException as exc:
+                    body_exc = exc
+                    raise
+        finally:
+            await self._emit_exit_audit(
+                event_prefix="impersonate_tenant",
+                actor_user_id=actor_user_id,
+                target=target_tenant_id,
+                body_exc=body_exc,
+            )
 
     @asynccontextmanager
     async def cross_tenant_query(
@@ -108,10 +157,18 @@ class TenantAdminService:
             reason=reason,
         )
 
-        async with self._admin_session_local() as session:
-            yield session
-
-        await self._audit.log(
-            event="cross_tenant_query_close",
-            actor=actor_user_id,
-        )
+        body_exc: BaseException | None = None
+        try:
+            async with self._admin_session_local() as session:
+                try:
+                    yield session
+                except BaseException as exc:
+                    body_exc = exc
+                    raise
+        finally:
+            await self._emit_exit_audit(
+                event_prefix="cross_tenant_query",
+                actor_user_id=actor_user_id,
+                target=None,
+                body_exc=body_exc,
+            )

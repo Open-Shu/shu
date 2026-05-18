@@ -29,9 +29,14 @@ class AccessPolicy(TenantScopedMixin, BaseModel):
 
     __tablename__ = "access_policies"
 
-    __table_args__ = (CheckConstraint("effect IN ('allow', 'deny')", name="chk_policy_effect"),)
+    __table_args__ = (
+        CheckConstraint("effect IN ('allow', 'deny')", name="chk_policy_effect"),
+        # Per-tenant uniqueness, not global. Two tenants can both have an
+        # "Engineering Read-Only" policy without colliding.
+        UniqueConstraint("tenant_id", "name", name="uq_access_policies_tenant_name"),
+    )
 
-    name = Column(String(255), nullable=False, unique=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     effect = Column(String(10), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)

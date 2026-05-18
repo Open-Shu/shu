@@ -13,7 +13,7 @@ Design Decision:
 
 from datetime import UTC
 
-from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSON, TIMESTAMP
 from sqlalchemy.orm import relationship
 
@@ -36,9 +36,13 @@ class Experience(TenantScopedMixin, BaseModel):
 
     __tablename__ = "experiences"
 
+    # Per-tenant uniqueness on slug, not global — two tenants can both have
+    # an experience slug like "weekly-report" without colliding.
+    __table_args__ = (UniqueConstraint("tenant_id", "slug", name="uq_experiences_tenant_slug"),)
+
     # Basic information
     name = Column(String(100), nullable=False, index=True)
-    slug = Column(String(100), nullable=False, unique=True, index=True)
+    slug = Column(String(100), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
     # Ownership & visibility

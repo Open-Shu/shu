@@ -1,16 +1,17 @@
-"""Composite-FK inventory used by migration 009 and its snapshot test.
+"""Live-model-graph helpers used only by the migration inventory tests.
 
-The function walks ``Base.metadata.tables`` so the inventory tracks the live
-model graph without a hand-curated list. Two consumers share it:
+Two tests in this directory compare the live SQLAlchemy model graph against
+frozen snapshots:
 
-  * migration 009 (Section D) — emits ``ALTER TABLE ... ADD CONSTRAINT ... FK``
-    for every tuple at apply time.
-  * ``test_composite_fk_inventory`` — diffs the live result against the
-    committed JSON snapshot so a PR that adds a tenant-scoped FK has to
-    update the snapshot, making the change visible in review.
+  * ``test_composite_fk_inventory`` — diffs against ``composite_fk_inventory.json``.
+  * ``test_stage_a_table_inventory`` — diffs against the inline frozen lists
+    in migration 009.
 
-Keeping the walker here (and not duplicating it in each consumer) means the
-snapshot reflects exactly what the migration will emit — no drift window.
+Both need the same walker. Originally this lived under ``shu.models`` because
+migration 009 also called it at apply time, but 009's inventory was later
+frozen inline so the walker is now test-only. Keeping it under ``tests/``
+makes the dependency direction explicit: tests reach into models, not the
+other way.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from shu.core.database import Base
 CompositeFk = tuple[str, str, str, str]
 
 
-def _tenant_scoped_table_names() -> set[str]:
+def tenant_scoped_table_names() -> set[str]:
     return {name for name, table in Base.metadata.tables.items() if "tenant_id" in table.columns}
 
 
@@ -32,7 +33,7 @@ def compute_composite_fk_inventory() -> list[CompositeFk]:
     ``plugin_definitions``, etc.) are excluded — composite tenant matching
     is only meaningful between two tenant-stamped rows.
     """
-    tenant_scoped = _tenant_scoped_table_names()
+    tenant_scoped = tenant_scoped_table_names()
     result: list[CompositeFk] = []
     for child_name, child_table in Base.metadata.tables.items():
         if child_name not in tenant_scoped:

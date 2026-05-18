@@ -125,7 +125,8 @@ from pathlib import Path
 
 import shu.auth.models
 import shu.models  # noqa: F401 - register every model on Base.metadata
-from shu.models.composite_fk_inventory import compute_composite_fk_inventory
+
+from tests.unit.migrations._inventory import compute_composite_fk_inventory
 
 # Anchored on __file__ so the test runs from any cwd (pytest, IDE, CI).
 _SNAPSHOT_PATH = (

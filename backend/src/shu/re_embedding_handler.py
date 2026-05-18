@@ -178,10 +178,10 @@ async def recover_interrupted_re_embedding_jobs(queue_backend) -> int:
     Returns the number of KBs whose jobs were re-enqueued across all tenants.
     """
     from .core.tenant import tenant_context_for_tenant_id
-    from .core.worker import _list_all_tenant_ids
+    from .core.worker import list_all_tenant_ids
 
     resumed_count = 0
-    for tenant_id in await _list_all_tenant_ids():
+    for tenant_id in await list_all_tenant_ids():
         async with tenant_context_for_tenant_id(tenant_id):
             resumed_count += await _recover_stuck_kbs_for_current_tenant(queue_backend)
     return resumed_count
