@@ -1,7 +1,7 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, Self
@@ -53,11 +53,157 @@ REGEN_MAX_ATTEMPTS = 3
 logger = get_logger(__name__)
 
 
+# SHU-784: lifecycle reasons. First-writer-wins ordering matters here —
+# `user_terminated` and `shutdown` are intentional server-side stops that
+# must win over a `client_disconnected` that races them. The lifecycle's
+# `signal()` enforces that without depending on event-firing order.
+StreamLifecycleReason = Literal["complete", "client_disconnected", "user_terminated", "shutdown"]
+
+
+@dataclass
+class StreamLifecycle:
+    """SHU-784: process-local signal channel for an in-flight SSE chat stream.
+
+    Created once per ``send_message`` / ``regenerate_message`` call and
+    shared across all ensemble variants in that call. Carries three
+    pieces of cross-task state:
+
+    - **identification** (``stream_id``) — the key under which this
+      lifecycle is registered in ``app.state.in_flight_streams``, and
+      the path parameter for the terminate endpoint.
+    - **authz context** (``user_id``) — the terminate endpoint enforces
+      ``lifecycle.user_id == current_user.id`` before honoring a stop
+      request, so the lifecycle has to carry it.
+    - **cross-task signal** (``event`` + ``reason``) — fired by the SSE
+      wrapper on client disconnect, by the terminate endpoint on user
+      stop, and by the lifespan shutdown handler on SIGTERM. Observed
+      by ``_stream_variant_phase``'s provider consumer loop (to
+      short-circuit cleanly) and read by ``_finalize_variant_phase`` at
+      commit time (to stamp ``Message.message_metadata["stream_state"]``).
+
+    ``signal()`` is first-writer-wins: a later signal does NOT overwrite
+    the first reason. This preserves the intent ordering where an
+    intentional stop (``user_terminated`` / ``shutdown``) wins over an
+    incidental ``client_disconnected`` that races it, regardless of the
+    actual firing order on the event loop.
+
+    Lifetime: registered in ``app.state.in_flight_streams`` when the
+    stream starts; removed by the ``stream_variant`` task's ``finally``
+    when its variant completes. Process-local — never serialized, never
+    shared across pods. The terminate endpoint is single-pod-scoped by
+    construction (an SSE stream is anchored to the pod that opened it).
+    """
+
+    stream_id: str
+    user_id: str
+    conversation_id: str
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    reason: StreamLifecycleReason | None = None
+    # SHU-784: cleanup callback. Set by the endpoint when it registers the
+    # lifecycle in `app.state.in_flight_streams`; invoked by the per-stream
+    # supervisor when all variant tasks have completed (registry pop). The
+    # supervisor uses `fire_on_complete()` which guards against missing /
+    # raising callbacks so a bookkeeping failure can't break the supervisor.
+    # `repr=False` keeps lifecycle log lines from dumping closures.
+    on_complete: Callable[[], None] | None = field(default=None, repr=False)
+    # SHU-784: the per-stream supervisor task. Set by
+    # `stream_ensemble_responses` once the supervisor is spawned. The
+    # lifespan shutdown drain (step 10) iterates the registry and awaits
+    # each entry's supervise_task so all in-flight finalizes can land
+    # before the process exits. `repr=False` to keep log lines tidy.
+    supervise_task: "asyncio.Task[None] | None" = field(default=None, repr=False)
+
+    def signal(self, reason: StreamLifecycleReason) -> bool:
+        """Set ``reason`` and fire ``event`` atomically. First-writer-wins.
+
+        Returns True if this caller's reason was accepted (no prior
+        signal had fired); False if the lifecycle was already signalled
+        and this call is a no-op. The event is fired regardless — a
+        second caller observing ``False`` still wants the wakeup.
+
+        Safe to call from any coroutine on the same event loop;
+        not safe to call from a threadpool worker. See the
+        ``app.state.in_flight_streams`` docstring.
+        """
+        accepted = self.reason is None
+        if accepted:
+            self.reason = reason
+        # Always set the event so consumers blocked on `await event.wait()`
+        # wake up even when a prior signal already won the reason race.
+        self.event.set()
+        return accepted
+
+    def resolved_reason(self) -> StreamLifecycleReason:
+        """Return the lifecycle reason or ``"complete"`` if none fired.
+
+        Called by ``_finalize_variant_phase`` at commit time to stamp
+        ``Message.message_metadata["stream_state"]``. ``"complete"`` is
+        the default for the happy path: stream finished naturally, no
+        disconnect / terminate / shutdown signal ever fired.
+        """
+        return self.reason or "complete"
+
+    def fire_on_complete(self) -> None:
+        """Invoke the cleanup callback (registry pop) exactly once.
+
+        Defensive — the supervisor calls this in a ``finally`` after
+        gathering all variant tasks. A raising callback or a missing
+        callback both no-op cleanly; the registry's cleanup contract
+        survives downstream test stubs that don't set ``on_complete``.
+        """
+        cb = self.on_complete
+        if cb is None:
+            return
+        self.on_complete = None  # idempotent — only run once
+        try:
+            cb()
+        except Exception as e:
+            logger.warning("StreamLifecycle on_complete failed: %s", e, exc_info=True)
+
+
+async def periodic_in_flight_streams_size_log(
+    registry: dict[str, StreamLifecycle],
+    interval_seconds: float,
+) -> None:
+    """SHU-784: log ``len(in_flight_streams)`` every ``interval_seconds``.
+
+    A leak in the per-variant ``try/finally`` registry cleanup would
+    grow the dict monotonically. Logging the size periodically makes
+    the leak visible without waiting for memory pressure or pool
+    exhaustion. Logged at ``INFO`` regardless of size so the absence
+    of a log line is itself a signal that the size-log task crashed.
+    """
+    if interval_seconds <= 0:
+        logger.info("in_flight_streams size log disabled (interval=%s)", interval_seconds)
+        return
+    logger.info("in_flight_streams size log started (interval=%ss)", interval_seconds)
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            logger.info("in_flight_streams size log cancelled")
+            raise
+        try:
+            logger.info(
+                "in_flight_streams size snapshot",
+                extra={"in_flight_streams_size": len(registry)},
+            )
+        except Exception as e:
+            logger.warning(f"in_flight_streams size log error: {e}")
+
+
 @dataclass
 class ProviderResponseEvent:
     """Normalized chat completion stream event."""
 
-    type: Literal["content_delta", "reasoning_delta", "final_message", "user_message", "error"]
+    type: Literal[
+        "stream_start",
+        "content_delta",
+        "reasoning_delta",
+        "final_message",
+        "user_message",
+        "error",
+    ]
     content: Any
     variant_index: int | None = None
     model_configuration_id: str | None = None
@@ -246,7 +392,9 @@ class EnsembleStreamingHelper:
         queue: asyncio.Queue,
         variant_index: int,
         tools_enabled: bool,
-    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None]:
+        lifecycle: "StreamLifecycle",
+        content_accumulator: list[str],
+    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool]:
         """Stream provider responses for a single model variant and enqueue interim events to the provided queue.
 
         Parameters
@@ -260,17 +408,29 @@ class EnsembleStreamingHelper:
             queue (asyncio.Queue): Queue to which intermediate ProviderResponseEvent objects are put.
             variant_index (int): Index of the current model variant within the ensemble.
             tools_enabled (bool): Whether tool-calling is enabled for this run.
+            lifecycle (StreamLifecycle): SHU-784. Observed between provider events for an early-exit
+                signal (``user_terminated`` / ``shutdown``). ``client_disconnected`` does NOT
+                short-circuit — disconnected streams are intentionally allowed to run to natural
+                completion so the message lands.
+            content_accumulator (list[str]): SHU-784. Mutable list the caller passes in;
+                content-delta strings are appended in order. The list is the source of truth
+                for partial content on early termination — `"".join(content_accumulator)` gives
+                whatever the provider had emitted before the break.
 
         Returns
         -------
-            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]]]:
+            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]], bool]:
                 final_message_event: The provider's final event (content or error) if produced, otherwise None.
                 followup_messages: Additional messages emitted by the provider (e.g., from a tool call) to be sent back for follow-up, or None.
+                terminated: SHU-784. True if the loop exited early because the lifecycle was
+                    signalled with ``user_terminated`` / ``shutdown``; the caller transitions
+                    to finalize with the partial content from ``content_accumulator``.
 
         """
         final_message_event: ProviderFinalEventResult | None = None
         followup_messages: list[ChatMessage] | None = None
         llm_params = None
+        terminated = False
 
         async for stream_event in await client.chat_completion(
             messages=messages,
@@ -281,6 +441,19 @@ class EnsembleStreamingHelper:
             return_as_stream=True,  # We always stream to our frontends
             tools_enabled=tools_enabled,
         ):
+            # SHU-784: between-events terminate check. Only intentional stops
+            # short-circuit — `client_disconnected` lets the LLM run to its
+            # natural end so the full response lands (the headline bug-fix
+            # behavior). The check fires BEFORE event processing so we don't
+            # enqueue a stale delta after the user has hit Stop. Sub-100ms
+            # latency from terminate-POST → break is gated by the provider's
+            # inter-chunk interval (the provider has to deliver the next chunk
+            # before we can observe the event); this matches the design
+            # decision around per-provider partial-usage accuracy in H4.
+            if lifecycle.event.is_set() and lifecycle.reason in ("user_terminated", "shutdown"):
+                terminated = True
+                break
+
             stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
             logger.debug("EVENT %s", stream_event)
             if isinstance(stream_event, ProviderToolCallEventResult) and tools_enabled:
@@ -301,6 +474,13 @@ class EnsembleStreamingHelper:
                 isinstance(stream_event, (ProviderContentDeltaEventResult, ProviderReasoningDeltaEventResult))
                 and stream_event.content
             ):
+                # SHU-784: accumulate content-delta strings so finalize can
+                # persist partial content if the stream is terminated. We
+                # only track ContentDelta (not ReasoningDelta) since the
+                # assistant Message.content field holds final answer text,
+                # not reasoning traces.
+                if isinstance(stream_event, ProviderContentDeltaEventResult):
+                    content_accumulator.append(stream_event.content)
                 await queue.put(
                     ProviderResponseEvent.from_provider_event_result(
                         stream_event,
@@ -321,9 +501,9 @@ class EnsembleStreamingHelper:
                     inputs.model.model_name,
                 )
 
-        return final_message_event, followup_messages
+        return final_message_event, followup_messages, terminated
 
-    async def _stream_variant_phase(  # noqa: PLR0915
+    async def _stream_variant_phase(  # noqa: PLR0912, PLR0915
         self,
         *,
         variant_index: int,
@@ -332,6 +512,7 @@ class EnsembleStreamingHelper:
         conversation_id: str,
         force_no_streaming: bool,
         start_time: datetime,
+        lifecycle: "StreamLifecycle",
     ) -> "VariantStreamResult":
         """SHU-759: stream-only portion of per-variant processing.
 
@@ -436,10 +617,17 @@ class EnsembleStreamingHelper:
 
             final_message_event: ProviderResponseEvent | None = None
             call_messages = inputs.context_messages
+            # SHU-784: passed by reference into `_call_provider`; the consumer
+            # loop appends content-delta strings here so we can persist
+            # partial content on early termination. Survives across
+            # tool-loop iterations so multi-round tool calls accumulate
+            # the full assistant-visible content trail.
+            content_accumulator: list[str] = []
+            terminated = False
 
             # We loop until the agents are done pulling what they need to pull.
             while True:
-                final_message_event, additional_messages = await self._call_provider(
+                final_message_event, additional_messages, terminated = await self._call_provider(
                     client=client,
                     messages=call_messages,
                     inputs=inputs,
@@ -449,7 +637,16 @@ class EnsembleStreamingHelper:
                     queue=queue,
                     variant_index=variant_index,
                     tools_enabled=tools_enabled,
+                    lifecycle=lifecycle,
+                    content_accumulator=content_accumulator,
                 )
+                # SHU-784: user_terminated / shutdown short-circuits the tool
+                # loop too — once the lifecycle is signalled we stop calling
+                # the provider and transition straight to the terminated-
+                # finalize path. The provider HTTP stream was already broken
+                # in `_call_provider` via the inner-loop break.
+                if terminated:
+                    break
                 # Break as soon as we have a final answer — regardless of whether tool calls also
                 # occurred in the same cycle. Reasoning models (e.g. Grok 4) can emit function
                 # call items alongside their final message; continuing the loop would feed those
@@ -461,6 +658,41 @@ class EnsembleStreamingHelper:
                 if not additional_messages:
                     break
                 call_messages.messages += additional_messages
+
+            # SHU-784: terminated short-circuit — package partial content and
+            # return a VariantStreamResult with `terminated=True`. Finalize
+            # (step 8) stamps the stream_state, writes the partial Message
+            # + LLMUsage(success=False), and emits the terminal SSE event.
+            if terminated:
+                partial_content = "".join(content_accumulator).strip()
+                metadata = dict(config_metadata)
+                metadata["response_time_ms"] = (datetime.now(UTC) - start_time).total_seconds() * 1000
+                metadata["streamed"] = True
+                metadata["has_citations"] = False
+                logger.info(
+                    "Variant stream phase terminated",
+                    extra={
+                        "phase": "stream_complete",
+                        "conversation_id": conversation_id,
+                        "variant_index": variant_index,
+                        "success": True,
+                        "terminated": True,
+                        "lifecycle_reason": lifecycle.reason,
+                        "partial_content_chars": len(partial_content),
+                        "elapsed_ms": (datetime.now(UTC) - stream_phase_start).total_seconds() * 1000,
+                    },
+                )
+                return _VariantStreamResult(
+                    success=True,
+                    terminated=True,
+                    partial_usage_unavailable=True,
+                    full_content=partial_content,
+                    final_source_metadata=[],
+                    metadata=metadata,
+                    usage={},
+                    model_name_for_event=model_display_name,
+                    final_event_type="final_message",
+                )
 
             if final_message_event is None:
                 raise LLMProviderError(
@@ -572,7 +804,7 @@ class EnsembleStreamingHelper:
                 error_details=None,
             )
 
-    async def _finalize_variant_phase(  # noqa: PLR0915
+    async def _finalize_variant_phase(  # noqa: PLR0912, PLR0915
         self,
         *,
         variant_index: int,
@@ -583,6 +815,7 @@ class EnsembleStreamingHelper:
         parent_message_id: str,
         use_parent_as_message_id: bool,
         regen_lineage: "RegenLineageInfo | None" = None,
+        lifecycle: "StreamLifecycle | None" = None,
     ) -> None:
         """SHU-759: writes assistant Message + LLMUsage in one fresh-session transaction.
 
@@ -618,6 +851,18 @@ class EnsembleStreamingHelper:
         model_snapshot = dict(config_metadata.get("model_configuration") or {})
         model_display_name = getattr(inputs.model_configuration, "name", None)
         conversation_owner_id = inputs.conversation_owner_id  # prepare-snapshot
+
+        # SHU-784: synthesize a stub lifecycle when the caller (e.g. a direct
+        # unit test) doesn't provide one. The stub stamps `stream_state="complete"`
+        # via `resolved_reason()` since no signal can fire on a lifecycle nothing
+        # references — equivalent to the pre-SHU-784 behavior. Mirrors the same
+        # pattern in `stream_ensemble_responses`.
+        if lifecycle is None:
+            lifecycle = StreamLifecycle(
+                stream_id=str(uuid.uuid4()),
+                user_id="",
+                conversation_id=conversation_id,
+            )
 
         session_factory = get_async_session_local()
 
@@ -677,6 +922,20 @@ class EnsembleStreamingHelper:
                             )
                             metadata_dict = dict(result.metadata or {})
 
+                        # SHU-784: stamp stream_state on every persisted Message.
+                        # `resolved_reason()` returns `"complete"` if no lifecycle
+                        # signal fired, otherwise one of `client_disconnected` /
+                        # `user_terminated` / `shutdown`. The frontend can read
+                        # this flag at message-render time to decide whether to
+                        # show an "interrupted" indicator (deferred to a
+                        # follow-up ticket per Phase 2.1 (b)).
+                        metadata_dict["stream_state"] = lifecycle.resolved_reason()
+                        if result.terminated and result.partial_usage_unavailable:
+                            # SHU-784 (H4): honest flag — token counts are zero
+                            # because the provider never emitted a usage event
+                            # before the break, not because no tokens were used.
+                            metadata_dict["partial_usage_unavailable"] = True
+
                         assistant_msg = Message(
                             id=assigned_message_id,
                             conversation_id=conversation_id,
@@ -696,6 +955,20 @@ class EnsembleStreamingHelper:
                         )
 
                         # Record usage on the same session so Message + LLMUsage commit atomically.
+                        # SHU-784: terminated streams record success=False — the
+                        # LLM did not produce a complete response — even though
+                        # the result has `success=True` (meaning "we have
+                        # content worth persisting"). The two dimensions are
+                        # independent: result.success governs which finalize
+                        # branch runs (apology Message vs. real content);
+                        # llm_usage.success governs whether the row counts
+                        # toward "successful chat completions" metrics.
+                        if result.terminated:
+                            usage_success = False
+                            usage_error_message: str | None = f"Stream interrupted: {lifecycle.resolved_reason()}"
+                        else:
+                            usage_success = True
+                            usage_error_message = None
                         await get_usage_recorder().record(
                             provider_id=inputs.model.provider_id,
                             model_id=inputs.model.id,
@@ -705,7 +978,8 @@ class EnsembleStreamingHelper:
                             total_cost=safe_decimal(result.usage.get("cost")),
                             user_id=str(conversation_owner_id) if conversation_owner_id else None,
                             response_time_ms=result.metadata.get("response_time_ms"),
-                            success=True,
+                            success=usage_success,
+                            error_message=usage_error_message,
                             session=session,
                         )
 
@@ -856,13 +1130,23 @@ class EnsembleStreamingHelper:
             error_text = result.error_message or "An unexpected error occurred"
             try:
                 async with session_factory() as session:
+                    # SHU-784: stamp stream_state on the apology Message too —
+                    # if the LLM call failed AND the client had already left,
+                    # the message persists with both `error` and `stream_state`
+                    # set. The two metadata fields are independent: `error`
+                    # describes WHY this is an apology row; `stream_state`
+                    # describes the lifecycle outcome at commit time.
+                    error_metadata: dict[str, Any] = {
+                        "error": result.error_details if result.error_details else error_text,
+                        "stream_state": lifecycle.resolved_reason(),
+                    }
                     error_msg = Message(
                         id=str(uuid.uuid4()),
                         conversation_id=conversation_id,
                         role="assistant",
                         content=f"I apologize, but I encountered an error: {error_text}",
                         model_id=inputs.model.id,
-                        message_metadata={"error": result.error_details if result.error_details else error_text},
+                        message_metadata=error_metadata,
                     )
                     session.add(error_msg)
                     await session.flush()
@@ -936,6 +1220,15 @@ class EnsembleStreamingHelper:
                 "conversation_id": conversation_id,
                 "variant_index": variant_index,
                 "success": result.success,
+                # SHU-784: lifecycle_reason gives ops a one-grep summary of
+                # how streams ended. `grep finalize_complete | jq .lifecycle_reason
+                # | sort | uniq -c` shows the distribution of complete /
+                # client_disconnected / user_terminated / shutdown finals
+                # without needing to join across separate disconnect log
+                # lines. Read at log-emit time (after the commit), so it
+                # reflects the same value stamped in message_metadata.
+                "lifecycle_reason": lifecycle.resolved_reason(),
+                "terminated": result.terminated,
                 "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
             },
         )
@@ -948,6 +1241,7 @@ class EnsembleStreamingHelper:
         parent_message_id_override: str | None = None,
         force_no_streaming: bool = False,
         regen_lineage: "RegenLineageInfo | None" = None,
+        lifecycle: "StreamLifecycle | None" = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream responses from multiple model configurations in parallel and emit multiplexed server-sent-event style events.
 
@@ -959,6 +1253,8 @@ class EnsembleStreamingHelper:
             conversation_id (str): Identifier of the conversation to which produced assistant messages will be appended.
             parent_message_id_override (Optional[str]): If provided, use this value as the parent message id for all produced messages; otherwise a new UUID is generated and the first variant may reuse it as the message id.
             force_no_streaming (bool): If True, force non-streaming mode regardless of provider/model configuration settings.
+            regen_lineage (RegenLineageInfo | None): SHU-759 regen-only lineage data threaded into finalize. When set, finalize backfills the original target's parent_message_id / variant_index, computes the new variant's variant_index from siblings, and stamps regenerated metadata.
+            lifecycle (StreamLifecycle | None): SHU-784 stream-lifecycle handle. When provided, the supervisor stores its task on `lifecycle.supervise_task` (for the shutdown drain) and the per-variant consumer loop observes its event for early-termination signals. When None, a stub is synthesized internally so direct unit-test callers don't have to construct one.
 
         Returns
         -------
@@ -973,6 +1269,19 @@ class EnsembleStreamingHelper:
 
         parent_message_id = parent_message_id_override or str(uuid.uuid4())
         use_parent_as_message_id = parent_message_id_override is None
+
+        # SHU-784: downstream code (consumer-loop event check, finalize
+        # stream_state stamp) treats lifecycle as non-optional. Synthesize a
+        # stub when a caller (e.g., a direct unit test) doesn't supply one.
+        # The stub is never registered in app.state.in_flight_streams, so it
+        # carries no external behavior — finalize still reads its
+        # resolved_reason() and stamps `"complete"`.
+        if lifecycle is None:
+            lifecycle = StreamLifecycle(
+                stream_id=str(uuid.uuid4()),
+                user_id="",
+                conversation_id=conversation_id,
+            )
 
         async def stream_variant(variant_index: int, inputs: "ModelExecutionInputs") -> None:
             """SHU-759: per-variant pipeline as the prepare → stream → finalize split.
@@ -1004,16 +1313,31 @@ class EnsembleStreamingHelper:
                     conversation_id=conversation_id,
                     force_no_streaming=force_no_streaming,
                     start_time=start_time,
+                    lifecycle=lifecycle,
                 )
-                await self._finalize_variant_phase(
-                    variant_index=variant_index,
-                    inputs=inputs,
-                    result=result,
-                    queue=queue,
-                    conversation_id=conversation_id,
-                    parent_message_id=parent_message_id,
-                    use_parent_as_message_id=use_parent_as_message_id,
-                    regen_lineage=regen_lineage,
+                # SHU-784: shield finalize. The supervisor is normally
+                # disconnect-immune (detached from the SSE generator), but if
+                # the shutdown drain (step 10) times out and cancels the
+                # supervisor, that cancellation would propagate into the
+                # variant tasks. Shielding the finalize await means an
+                # incoming cancellation completes the finalize transaction
+                # before unwinding — Message + LLMUsage land atomically or
+                # neither lands. Without this, cancellation mid-finalize
+                # rolls back the `async with session_factory()` block and
+                # we lose the row. Belt-and-suspenders against the disconnect
+                # bug class even with detachment in place.
+                await asyncio.shield(
+                    self._finalize_variant_phase(
+                        variant_index=variant_index,
+                        inputs=inputs,
+                        result=result,
+                        queue=queue,
+                        conversation_id=conversation_id,
+                        parent_message_id=parent_message_id,
+                        use_parent_as_message_id=use_parent_as_message_id,
+                        regen_lineage=regen_lineage,
+                        lifecycle=lifecycle,
+                    )
                 )
             except Exception as exc:
                 logger.error(
@@ -1037,24 +1361,52 @@ class EnsembleStreamingHelper:
                     )
                 )
 
-        tasks = [loop.create_task(stream_variant(idx, inputs)) for idx, inputs in enumerate(ensemble_inputs)]
-        completed = 0
+        tasks = [
+            loop.create_task(
+                stream_variant(idx, inputs),
+                name=f"chat-stream-variant:{lifecycle.stream_id}:{idx}",
+            )
+            for idx, inputs in enumerate(ensemble_inputs)
+        ]
 
-        try:
-            while completed < total_variants:
-                event = await queue.get()
-                if event.type in {"reasoning_delta", "content_delta"}:
-                    yield event
-                elif event.type == "final_message":
-                    completed += 1
-                    yield event
-                elif event.type == "error":
-                    # Yield error event to client so they see the error message,
-                    # then count as completed so we exit the loop
-                    completed += 1
-                    yield event
-        finally:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # SHU-784: per-stream supervisor. Runs detached from the SSE generator
+        # so a client disconnect (which cancels the generator) cannot cancel
+        # the variant tasks. The pre-SHU-784 pattern was
+        # `await asyncio.gather(*tasks, return_exceptions=True)` inside the
+        # generator's `finally`, which propagated cancellation into the
+        # variants and rolled back their finalize transactions before commit
+        # — the disconnect-persistence bug. The supervisor fires the
+        # lifecycle's `on_complete` (registry pop) regardless of variant
+        # outcome so a crashed variant doesn't leak its registry entry.
+        async def supervise() -> None:
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                lifecycle.fire_on_complete()
+
+        lifecycle.supervise_task = loop.create_task(
+            supervise(),
+            name=f"chat-stream-supervise:{lifecycle.stream_id}",
+        )
+
+        completed = 0
+        while completed < total_variants:
+            event = await queue.get()
+            if event.type in {"reasoning_delta", "content_delta"}:
+                yield event
+            elif event.type == "final_message":
+                completed += 1
+                yield event
+            elif event.type == "error":
+                # Yield error event to client so they see the error message,
+                # then count as completed so we exit the loop
+                completed += 1
+                yield event
+        # No `finally: await gather(...)` here: variant tasks are detached
+        # (see supervisor above). The generator returns once all variants
+        # have emitted their terminal events; if the generator is closed
+        # early via client disconnect, the variants keep running
+        # independently on the event loop and the supervisor cleans up.
 
     async def _adjust_event_metadata(
         self,

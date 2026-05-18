@@ -39,7 +39,7 @@ from ..services.message_utils import serialize_message_for_sse
 from ..services.prompt_service import PromptService
 from ..services.query_service import QueryService
 from ..services.side_call_service import SideCallService
-from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent
+from .chat_streaming import EnsembleStreamingHelper, ProviderResponseEvent, StreamLifecycle
 from .knowledge_base_service import KnowledgeBaseService
 from .providers.adapter_base import get_adapter_from_provider
 
@@ -110,10 +110,27 @@ class ModelExecutionInputs:
 class VariantStreamResult:
     """Outcome of `_stream_variant_phase` — handed to `_finalize_variant_phase` (SHU-759).
 
-    Discriminated by `success`. Fields are primitive types only (str, int,
-    dict, list of primitives); no ORM-attached objects. Finalize opens a
-    fresh session and writes the assistant Message + LLMUsage row using
-    these primitives only, avoiding any cross-session ORM identity issues.
+    Discriminated by `success` AND `terminated`. Fields are primitive types
+    only (str, int, dict, list of primitives); no ORM-attached objects.
+    Finalize opens a fresh session and writes the assistant Message + LLMUsage
+    row using these primitives only, avoiding any cross-session ORM identity
+    issues.
+
+    Three branches (mutually exclusive):
+
+    - **success=True, terminated=False** — happy path. LLM completed
+      naturally. `full_content` is the full response.
+    - **success=False, terminated=False** — LLM error / provider failure.
+      `error_message` / `error_type` / `error_details` carry the failure
+      payload; finalize writes an apology Message + LLMUsage(success=False).
+    - **success=True, terminated=True** (SHU-784) — stream was interrupted
+      by user-terminate or shutdown drain. `full_content` is whatever the
+      provider emitted before the break; `usage` carries whatever partial
+      tokens the provider reported (possibly zero with
+      `partial_usage_unavailable=True`). Finalize writes the partial
+      Message + LLMUsage(success=False, error_message="Stream interrupted: ...").
+      The `success=True` here means "we have content worth persisting,"
+      not "the LLM call succeeded."
     """
 
     success: bool
@@ -130,6 +147,17 @@ class VariantStreamResult:
     error_message: str | None = None
     error_type: str | None = None
     error_details: dict[str, Any] | None = None
+
+    # SHU-784: termination metadata. `terminated=True` indicates the stream
+    # was interrupted before its natural end (user-terminate or shutdown);
+    # `partial_usage_unavailable=True` indicates the provider never emitted
+    # a usage event before the break, so token counts are zero by absence
+    # rather than by reality. Finalize uses these to stamp the right
+    # `stream_state` value and add the `partial_usage_unavailable` metadata
+    # flag if applicable. Per ticket decision H4 ("we never silently
+    # overcount") — the absence flag is the load-bearing signal here.
+    terminated: bool = False
+    partial_usage_unavailable: bool = False
 
 
 @dataclass
@@ -1107,16 +1135,24 @@ class ChatService:
         ensemble_model_configuration_ids: list[str] | None = None,
         attachment_ids: list[str] | None = None,
         force_no_streaming: bool = False,
+        lifecycle: StreamLifecycle | None = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """Send a message and get LLM response using the conversation model or an ensemble.
 
         Args:
             conversation_id: ID of the conversation
             user_message: User's message content
+            current_user: Authenticated User object (used for ownership / RBAC checks)
             knowledge_base_ids: Optional list of knowledge base IDs for RAG (overrides model config KBs)
             rag_rewrite_mode: Strategy for preparing retrieval queries / disabling RAG
+            client_temp_id: Client-supplied placeholder ID echoed back in the user_message SSE event
             ensemble_model_configuration_ids: Optional additional model configuration IDs to execute
+            attachment_ids: Optional attachment IDs to associate with the persisted user message
             force_no_streaming: If True, force non-streaming mode regardless of config settings
+            lifecycle: SHU-784. Optional StreamLifecycle owned by the endpoint; threaded
+                through to the ensemble so the consumer loop can observe terminate signals
+                and finalize can stamp `stream_state`. Synthesized internally when omitted
+                (direct-call test paths).
 
         Returns:
             Async generator of ProviderResponseEvent for streaming responses to the caller
@@ -1244,7 +1280,28 @@ class ChatService:
             },
         )
 
+        # SHU-784: capture for the nested generator closure. Synthesizing
+        # a lifecycle when the caller didn't provide one keeps unit tests
+        # that drive `send_message` directly (without an HTTP endpoint to
+        # generate the stream_id) working — the synthesized lifecycle is
+        # never registered in `app.state.in_flight_streams` so it carries
+        # no external behavior.
+        gen_lifecycle = lifecycle or StreamLifecycle(
+            stream_id=str(uuid.uuid4()),
+            user_id=str(getattr(current_user, "id", "") or ""),
+            conversation_id=conversation_id,
+        )
+
         async def _gen():
+            # SHU-784: stream_start is emitted before any content / user_message
+            # event so the client can capture stream_id as the first thing it
+            # sees on the SSE channel. The frontend uses it for the terminate
+            # endpoint; treating it as additive means existing clients that
+            # don't parse it ignore the event without breaking.
+            yield ProviderResponseEvent(
+                type="stream_start",
+                content={"stream_id": gen_lifecycle.stream_id},
+            )
             # Emit persisted user message early so client can replace placeholder deterministically
             try:
                 yield ProviderResponseEvent(
@@ -1258,6 +1315,7 @@ class ChatService:
                 ensemble_inputs=execution_inputs,
                 conversation_id=conversation_id,
                 force_no_streaming=force_no_streaming,
+                lifecycle=gen_lifecycle,
             ):
                 yield event
 
@@ -1274,6 +1332,7 @@ class ChatService:
         parent_message_id: str | None = None,
         rag_rewrite_mode: RagRewriteMode = RagRewriteMode.RAW_QUERY,
         knowledge_base_ids: list[str] | None = None,
+        lifecycle: StreamLifecycle | None = None,
     ) -> AsyncGenerator["ProviderResponseEvent", None]:
         """Regenerate an assistant message by rebuilding context up to the preceding user turn."""
         prepare_phase_start = datetime.now(UTC)
@@ -1294,6 +1353,15 @@ class ChatService:
         # Basic RBAC: ensure owner
         if hasattr(current_user, "id") and conversation.user_id != current_user.id:
             raise ShuException("You don't have access to this conversation", "UNAUTHORIZED", status_code=403)
+
+        # SHU-784: backfill conversation_id on the caller-provided lifecycle.
+        # The regenerate endpoint receives `message_id` from the URL path and
+        # doesn't know which conversation it belongs to until target lookup
+        # — so the endpoint creates the lifecycle with conversation_id="" and
+        # we fill it in here. Logged via the existing `prepare_complete`
+        # extra below.
+        if lifecycle is not None:
+            lifecycle.conversation_id = target.conversation_id
 
         # Reload conversation with full relationships to avoid async lazy loads
 
@@ -1411,12 +1479,35 @@ class ChatService:
         # write, replacing the two-commit pattern of the old regen_stream
         # wrapper and gaining UNIQUE-constraint retry on variant_index
         # collisions (r009_0001).
-        return self.streaming_helper.stream_ensemble_responses(
-            ensemble_inputs=execution_inputs,
+        # SHU-784: capture for the nested generator closure. Mirrors the
+        # synthesizing pattern in send_message — unit tests that drive
+        # regenerate_message without an endpoint get a synthesized lifecycle
+        # that's never registered in app.state.in_flight_streams.
+        gen_lifecycle = lifecycle or StreamLifecycle(
+            stream_id=str(uuid.uuid4()),
+            user_id=str(getattr(current_user, "id", "") or ""),
             conversation_id=conversation.id,
-            parent_message_id_override=root_id,
-            regen_lineage=RegenLineageInfo(target_message_id=target.id, root_id=root_id),
         )
+
+        async def _gen():
+            # SHU-784: stream_start first, mirrors send_message. The regenerate
+            # path previously returned the ensemble generator directly; wrapping
+            # it in `_gen()` so we can emit stream_start before the first
+            # variant event.
+            yield ProviderResponseEvent(
+                type="stream_start",
+                content={"stream_id": gen_lifecycle.stream_id},
+            )
+            async for event in self.streaming_helper.stream_ensemble_responses(
+                ensemble_inputs=execution_inputs,
+                conversation_id=conversation.id,
+                parent_message_id_override=root_id,
+                regen_lineage=RegenLineageInfo(target_message_id=target.id, root_id=root_id),
+                lifecycle=gen_lifecycle,
+            ):
+                yield event
+
+        return _gen()
 
     def _locate_regeneration_indices(
         self,

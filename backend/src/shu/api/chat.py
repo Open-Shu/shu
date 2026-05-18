@@ -5,6 +5,7 @@ messages, and LLM interactions.
 """
 
 import traceback
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path as PathlibPath
 from typing import Any, Literal
@@ -14,6 +15,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user
@@ -30,12 +32,30 @@ from ..schemas.envelope import SuccessResponse
 from ..schemas.query import RagRewriteMode
 from ..services.attachment_service import AttachmentService
 from ..services.chat_service import ChatService
+from ..services.chat_streaming import StreamLifecycle
 from .dependencies import get_db
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 settings = get_settings_instance()
+
+
+def _ensure_in_flight_streams(app: Any) -> dict[str, StreamLifecycle]:
+    """SHU-784: lazy-init the in-flight stream registry on app.state.
+
+    The lifespan in `main.py` initializes this on startup, but unit tests
+    that mount the chat router into a bare FastAPI app skip the lifespan
+    entirely. Treating absence as "create on first request" lets those
+    tests work without each having to manually wire app.state, while the
+    production path through the lifespan still initializes the registry
+    early and runs the size-log task and the shutdown drain against it.
+    """
+    in_flight = getattr(app.state, "in_flight_streams", None)
+    if in_flight is None:
+        in_flight = {}
+        app.state.in_flight_streams = in_flight
+    return in_flight
 
 
 # Pydantic models for API requests/responses
@@ -838,6 +858,7 @@ async def add_message(
     description="Send a message and get an LLM response, with optional RAG context and streaming.",
 )
 async def send_message(
+    request: Request,
     conversation_id: str = Path(..., description="Conversation ID"),
     request_data: SendMessageRequest = ...,
     current_user: User = Depends(get_current_user),
@@ -850,14 +871,29 @@ async def send_message(
 
     Parameters
     ----------
+        request (Request): Starlette request, used to access `app.state.in_flight_streams` for SHU-784 lifecycle registration.
         conversation_id (str): ID of the conversation to send the message to.
         request_data (SendMessageRequest): Payload containing the user message and optional parameters (knowledge_base_ids, rag_rewrite_mode, client_temp_id, ensemble_model_configuration_ids, attachment_ids).
+        current_user (User): Authenticated user (RBAC dependency).
+        db (AsyncSession): Request-scoped DB session. Closed early — see SHU-759.
+        config_manager (ConfigurationManager): Cascading config resolver (DI).
 
     Returns
     -------
         StreamingResponse | Response: A StreamingResponse that yields SSE payloads where each event is a JSON object representing LLM or system events; the stream always concludes with a terminal `data: [DONE]` event. If validation or permission checks fail, returns a standardized error response with an error code and HTTP status.
 
     """
+    # SHU-784: lifecycle is created up-front so we can pass it to
+    # chat_service.send_message; registration in app.state.in_flight_streams
+    # is deferred until validation succeeds so a 4xx response (no conversation,
+    # not the owner, etc.) doesn't leak a registry entry that nothing cleans
+    # up. The terminate endpoint is invisible to the client until the
+    # `stream_start` SSE event lands, which only fires after validation.
+    lifecycle = StreamLifecycle(
+        stream_id=str(uuid.uuid4()),
+        user_id=str(current_user.id),
+        conversation_id=conversation_id,
+    )
     try:
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)
@@ -876,7 +912,21 @@ async def send_message(
             client_temp_id=getattr(request_data, "client_temp_id", None),
             ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
             attachment_ids=request_data.attachment_ids,
+            lifecycle=lifecycle,
         )
+
+        # SHU-784: register only after prepare/validation has returned cleanly.
+        # The cleanup callback is invoked by the per-stream supervisor (added
+        # in step 3) when all variants finalize, OR by the lifespan shutdown
+        # drain. `.pop(..., None)` keeps the callback idempotent so a second
+        # invocation (e.g. shutdown firing after a supervisor cleanup) is safe.
+        # Lazy-initialize if absent: unit tests that mount the router into a
+        # bare FastAPI app skip the lifespan and never populate this attribute;
+        # treat its absence as "single-process state, initialize on first use"
+        # rather than failing the request.
+        in_flight_streams = _ensure_in_flight_streams(request.app)
+        in_flight_streams[lifecycle.stream_id] = lifecycle
+        lifecycle.on_complete = lambda: in_flight_streams.pop(lifecycle.stream_id, None)
 
         # SHU-759: release the request-scoped DB session before yielding the
         # StreamingResponse. The prepare phase has already loaded everything
@@ -889,8 +939,18 @@ async def send_message(
         # a no-op second close.
         await db.close()
 
+        # SHU-784: closure captures the lifecycle so the SSE wrapper can
+        # signal client_disconnected from its finally block (regardless of
+        # whether GeneratorExit or CancelledError caused the close). The
+        # lifecycle's first-writer-wins semantics mean this no-ops cleanly
+        # if user_terminated or shutdown already fired.
+        def _signal_client_disconnected() -> None:
+            lifecycle.signal("client_disconnected")
+
         async def stream_generator():
-            async for data in create_sse_stream_generator(event_gen, "send_message"):
+            async for data in create_sse_stream_generator(
+                event_gen, "send_message", on_close=_signal_client_disconnected
+            ):
                 yield data
 
         return StreamingResponse(
@@ -905,6 +965,76 @@ async def send_message(
     except Exception as e:
         logger.error(f"Unexpected error sending message: {e}")
         return create_error_response(message="Internal server error", code="INTERNAL_ERROR", status_code=500)
+
+
+@router.post(
+    "/streams/{stream_id}/terminate",
+    status_code=202,
+    summary="Terminate an in-flight chat stream",
+    description=(
+        "SHU-784: signal the server to stop an in-flight chat stream. "
+        "The variant tasks observe the signal on their next provider event, "
+        "break the consumer loop, and transition to finalize — persisting "
+        'whatever partial content was accumulated with `stream_state="user_terminated"`. '
+        "Returns 202 immediately; actual termination is asynchronous and races "
+        "the next inter-chunk arrival from the provider (typically sub-second "
+        "but provider-dependent)."
+    ),
+)
+async def terminate_stream(
+    http_request: Request,
+    stream_id: str = Path(..., description="The stream_id from the stream_start SSE event"),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Signal a chat stream to terminate early.
+
+    Returns:
+        202: signal accepted; the in-flight stream's variants will short-circuit and persist partial content.
+        403: the requester does not own this stream.
+        410 Gone (`code="STREAM_NOT_ACTIVE"`): the stream is not in the registry — either the stream_id is unknown, or the stream has already finalized.
+
+    """
+    in_flight_streams: dict[str, StreamLifecycle] = http_request.app.state.in_flight_streams
+    lifecycle = in_flight_streams.get(stream_id)
+    if lifecycle is None:
+        # 410 over 404: the stream may have existed but completed already.
+        # The client UI typically races a Stop click against the final
+        # `final_message` event; "the stream is no longer active" is a more
+        # honest reason than "we never heard of it." Same code value for
+        # both unknown and already-done — the client treats them identically.
+        return create_error_response(
+            code="STREAM_NOT_ACTIVE",
+            message="Stream is not active (already complete or unknown)",
+            status_code=410,
+        )
+    if lifecycle.user_id != str(current_user.id):
+        # SHU-784 (scenario S1): stream_id is a UUID but UUIDs are not secrets
+        # — they appear in the SSE channel, browser network tab, and any
+        # client-side logs. Ownership check is the gate, not unguessability.
+        return create_error_response(
+            code="FORBIDDEN",
+            message="You do not own this stream",
+            status_code=403,
+        )
+    # First-writer-wins: if `client_disconnected` already fired, this call
+    # is logged-but-no-op (lifecycle.reason already set). The endpoint still
+    # returns 202 — the signal was accepted on its merits, even if the
+    # lifecycle had already moved on.
+    accepted = lifecycle.signal("user_terminated")
+    logger.info(
+        "Stream terminate requested",
+        extra={
+            "stream_id": stream_id,
+            "user_id": lifecycle.user_id,
+            "conversation_id": lifecycle.conversation_id,
+            "accepted": accepted,
+            "resolved_reason": lifecycle.resolved_reason(),
+        },
+    )
+    return create_success_response(
+        data={"stream_id": stream_id, "reason": lifecycle.resolved_reason()},
+        status_code=202,
+    )
 
 
 class ModelSwitchRequest(BaseModel):
@@ -1042,6 +1172,7 @@ class RegenerateMessageRequest(BaseModel):
     description="Re-run a previous assistant response with the same context and attachments as its preceding user message.",
 )
 async def regenerate_message(
+    http_request: Request,
     message_id: str = Path(..., description="Message ID of the assistant message to regenerate"),
     request: RegenerateMessageRequest = ...,
     current_user: User = Depends(get_current_user),
@@ -1056,14 +1187,28 @@ async def regenerate_message(
 
     Parameters
     ----------
+        http_request (Request): Starlette request, used to access `app.state.in_flight_streams` for SHU-784 lifecycle registration. Named `http_request` to avoid collision with the body-param `request` below.
         message_id (str): ID of the assistant message to regenerate.
         request (RegenerateMessageRequest): Optional regeneration options (e.g., `parent_message_id`, `rag_rewrite_mode`).
+        current_user (User): Authenticated user (RBAC dependency).
+        db (AsyncSession): Request-scoped DB session. Closed early — see SHU-759.
+        config_manager (ConfigurationManager): Cascading config resolver (DI).
 
     Returns
     -------
         StreamingResponse: An SSE stream where each event is prefixed with `data: ` and contains a JSON payload; the stream ends with `data: [DONE]`.
 
     """
+    # SHU-784: created up-front with an empty conversation_id — the regenerate
+    # endpoint receives `message_id` from the URL and only learns the
+    # conversation_id after target lookup. chat_service.regenerate_message
+    # backfills it inside prepare. user_id is known up-front and gates the
+    # terminate endpoint's authz check, so we set it here.
+    lifecycle = StreamLifecycle(
+        stream_id=str(uuid.uuid4()),
+        user_id=str(current_user.id),
+        conversation_id="",
+    )
     try:
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)
@@ -1078,14 +1223,27 @@ async def regenerate_message(
             parent_message_id=request.parent_message_id,
             rag_rewrite_mode=request.rag_rewrite_mode,
             knowledge_base_ids=request.knowledge_base_ids,
+            lifecycle=lifecycle,
         )
+
+        # SHU-784: register only after prepare/validation has returned cleanly.
+        # See send_message for rationale.
+        in_flight_streams = _ensure_in_flight_streams(http_request.app)
+        in_flight_streams[lifecycle.stream_id] = lifecycle
+        lifecycle.on_complete = lambda: in_flight_streams.pop(lifecycle.stream_id, None)
 
         # SHU-759: release the request-scoped DB session before yielding the
         # StreamingResponse. See the matching comment in send_message above.
         await db.close()
 
+        # SHU-784: see matching closure in send_message.
+        def _signal_client_disconnected() -> None:
+            lifecycle.signal("client_disconnected")
+
         async def stream_generator():
-            async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
+            async for data in create_sse_stream_generator(
+                event_gen, "regenerate_message", on_close=_signal_client_disconnected
+            ):
                 yield data
 
         return StreamingResponse(
