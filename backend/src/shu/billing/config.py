@@ -86,6 +86,14 @@ class BillingSettings(BaseSettings):
     # This is for informational purposes; actual credits are in Stripe product config
     included_tokens_per_user: int = Field(0, alias="SHU_STRIPE_INCLUDED_TOKENS_PER_USER")
 
+    # Initial seat-enforcement mode written to `billing_state.user_limit_enforcement`
+    # on the very first startup against a fresh DB (see main.py startup seed).
+    # Operator overrides via DB UPDATE survive restarts. `None` → fall back to
+    # the built-in default (`hard` when `is_configured`, else `none`).
+    user_limit_enforcement_default: Literal["soft", "hard", "none"] | None = Field(
+        None, alias="SHU_USER_LIMIT_ENFORCEMENT_DEFAULT"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

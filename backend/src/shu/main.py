@@ -295,17 +295,20 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         async with session_maker() as session:
             async with session.begin():
                 _, inserted = await BillingStateService.ensure_singleton(session)
-            # SHU-730: seed enforcement mode exactly once per deployment. Only
-            # writes when the singleton was freshly inserted so operator edits
-            # survive restarts. `is_configured` is our proxy for "hosted +
-            # billed", where hard enforcement is the safe default; self-hosted
-            # stays `none`.
+            # SHU-730 / SHU-784: seed enforcement mode exactly once per
+            # deployment. Only writes when the singleton was freshly inserted
+            # so operator edits survive restarts. Explicit operator override
+            # via SHU_USER_LIMIT_ENFORCEMENT_DEFAULT wins; otherwise
+            # `is_configured` is our proxy for "hosted + billed", where hard
+            # enforcement is the safe default; self-hosted stays `none`.
             if inserted:
+                if billing_settings.user_limit_enforcement_default is not None:
+                    enforcement_seed = billing_settings.user_limit_enforcement_default
+                else:
+                    enforcement_seed = "hard" if billing_settings.is_configured else "none"
                 await BillingStateService.update(
                     session,
-                    updates={
-                        "user_limit_enforcement": "hard" if billing_settings.is_configured else "none",
-                    },
+                    updates={"user_limit_enforcement": enforcement_seed},
                     source="startup:seed_enforcement",
                 )
             await BillingStateService.seed_from_config(session, billing_settings)
