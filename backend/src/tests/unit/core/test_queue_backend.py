@@ -2171,47 +2171,53 @@ class TestInitializeQueueBackend:
 
 
 class TestRedisQueueBackendTenantPrefix:
-    """Verify every queue key flows through the tenant prefix.
+    """Pin the tenant-prefix behavior of every key helper.
 
-    The queue backend routes all Redis access through four centralized key
-    helpers (`_queue_key`, `_processing_key`, `_scheduled_key`, `_job_key`).
-    If the prefix is missing from any of them, tenant jobs could collide on
-    the shared Redis deployment.
+    Multi-tenant / silo deployments may share a single Redis instance — without
+    per-tenant prefixing the queue / processing / scheduled / job-data keys
+    would collide and workloads from one tenant would surface to another's
+    workers. ``None`` provider (self-hosted) leaves keys unprefixed.
     """
 
-    def test_prefix_applied_to_all_four_key_helpers(self) -> None:
-        backend = RedisQueueBackend(MockRedisClientForQueue(), tenant_prefix="t1")
-        assert backend._queue_key("tasks") == "t1:queue:tasks"
-        assert backend._processing_key("tasks") == "t1:queue:tasks:processing"
-        assert backend._scheduled_key("tasks") == "t1:queue:tasks:scheduled"
-        assert backend._job_key("tasks", "abc") == "t1:queue:tasks:job:abc"
-
-    def test_no_prefix_preserves_legacy_key_shape(self) -> None:
+    def test_no_provider_leaves_keys_unprefixed(self) -> None:
         backend = RedisQueueBackend(MockRedisClientForQueue())
         assert backend._queue_key("tasks") == "queue:tasks"
         assert backend._processing_key("tasks") == "queue:tasks:processing"
         assert backend._scheduled_key("tasks") == "queue:tasks:scheduled"
         assert backend._job_key("tasks", "abc") == "queue:tasks:job:abc"
 
-    @pytest.mark.asyncio
-    async def test_two_tenants_sharing_redis_cannot_see_each_others_jobs(self) -> None:
-        shared_client = MockRedisClientForQueue()
-        tenant_a = RedisQueueBackend(shared_client, tenant_prefix="a")
-        tenant_b = RedisQueueBackend(shared_client, tenant_prefix="b")
+    def test_provider_prefixes_every_key_helper(self) -> None:
+        backend = RedisQueueBackend(
+            MockRedisClientForQueue(), tenant_id_provider=lambda: "t1"
+        )
+        assert backend._queue_key("tasks") == "t1:queue:tasks"
+        assert backend._processing_key("tasks") == "t1:queue:tasks:processing"
+        assert backend._scheduled_key("tasks") == "t1:queue:tasks:scheduled"
+        assert backend._job_key("tasks", "abc") == "t1:queue:tasks:job:abc"
 
-        await tenant_a.enqueue(Job(queue_name="tasks", payload={"for": "a"}))
+    def test_provider_called_per_key_so_tenants_dont_collide(self) -> None:
+        # Same backend instance, different return values across calls — proves
+        # we read the provider lazily rather than caching at __init__.
+        tenant_ids = iter(["a", "b"])
+        backend = RedisQueueBackend(
+            MockRedisClientForQueue(), tenant_id_provider=lambda: next(tenant_ids)
+        )
+        assert backend._queue_key("tasks") == "a:queue:tasks"
+        assert backend._queue_key("tasks") == "b:queue:tasks"
 
-        assert await tenant_b.dequeue("tasks") is None
-        dequeued = await tenant_a.dequeue("tasks")
-        assert dequeued is not None
-        assert dequeued.payload == {"for": "a"}
 
+def _factory_settings(
+    *, redis_url: str | None, tenant_id: str | None, deployment_mode: Any = None
+) -> SimpleNamespace:
+    from shu.core.config import DeploymentMode
 
-def _factory_settings(*, redis_url: str | None, tenant_id: str | None) -> SimpleNamespace:
+    if deployment_mode is None:
+        deployment_mode = DeploymentMode.SILO if tenant_id else DeploymentMode.SELF_HOSTED
     return SimpleNamespace(
         redis_url=redis_url,
         redis_enabled=bool(redis_url),
         tenant_id=tenant_id,
+        deployment_mode=deployment_mode,
     )
 
 
@@ -2227,7 +2233,13 @@ class TestGetQueueBackendFactory:
         queue_backend_module._queue_backend = None
 
     @pytest.mark.asyncio
-    async def test_redis_enabled_with_tenant_id_propagates_prefix(self) -> None:
+    async def test_redis_enabled_wires_resolve_tenant_for_infra(self) -> None:
+        """Factory must hand the tenant resolver to the backend so silo /
+        multi-tenant deployments sharing a Redis instance namespace their
+        queue keys per-tenant.
+        """
+        from shu.core.tenant import resolve_tenant_for_infra
+
         settings = _factory_settings(redis_url="redis://localhost", tenant_id="t1")
         mock_client = MockRedisClientForQueue()
 
@@ -2241,7 +2253,7 @@ class TestGetQueueBackendFactory:
             backend = await get_queue_backend()
 
         assert isinstance(backend, RedisQueueBackend)
-        assert backend._prefix == "t1:"
+        assert backend._tenant_id_provider is resolve_tenant_for_infra
 
     @pytest.mark.asyncio
     async def test_redis_disabled_with_tenant_id_logs_warning(

@@ -40,6 +40,7 @@ Example usage:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, Optional, Protocol, runtime_checkable
 
 import redis.asyncio as redis
@@ -916,7 +917,7 @@ class RedisCacheBackend:
         redis_client: Any,
         redis_binary_client: Any | None = None,
         *,
-        tenant_prefix: str | None = None,
+        tenant_id_provider: Callable[[], str] | None = None,
     ) -> None:
         """Initialize with an existing Redis client.
 
@@ -927,23 +928,21 @@ class RedisCacheBackend:
                 instead of constructing this class directly.
             redis_binary_client: An async Redis client instance with decode_responses=False
                 for binary operations. If None, binary operations will not be available.
-            tenant_prefix: Optional tenant identifier prepended as `{prefix}:` to
-                every Redis key for shared-deployment isolation. None = no prefix.
-
-        Raises:
-            ValueError: If ``tenant_prefix`` is provided but empty/whitespace.
-                Empty would silently disable prefixing — dangerous in a hosted
-                context where callers expect structural isolation.
+            tenant_id_provider: Optional callable returning the current tenant_id.
+                Called per-key so multi-tenant deployments get the right namespace
+                for each request — silo / self-hosted deployments pass a function
+                that always returns the same string, with no behavioral change vs.
+                a static prefix. ``None`` disables prefixing entirely.
 
         """
-        if tenant_prefix is not None and not tenant_prefix.strip():
-            raise ValueError("tenant_prefix must be None or a non-empty string")
         self._client = redis_client
         self._binary_client = redis_binary_client
-        self._prefix = f"{tenant_prefix}:" if tenant_prefix else ""
+        self._tenant_id_provider = tenant_id_provider
 
     def _key(self, key: str) -> str:
-        return f"{self._prefix}{key}"
+        if self._tenant_id_provider is None:
+            return key
+        return f"{self._tenant_id_provider()}:{key}"
 
     async def get(self, key: str) -> str | None:
         """Retrieve a value by key.
@@ -1474,18 +1473,18 @@ async def get_cache_backend() -> CacheBackend:
     if _cache_backend is not None:
         return _cache_backend
 
-    from .config import get_settings_instance
+    from .config import DeploymentMode, get_settings_instance
 
     settings = get_settings_instance()
-    tenant_id = settings.tenant_id
 
     if not settings.redis_enabled:
-        if tenant_id:
-            # Tenant-scoped without Redis means per-pod in-memory state no other
-            # pod can see — almost certainly a misconfigured hosted deploy. We
-            # warn loudly but continue so local dev (tenant_id set, no Redis)
-            # still works; raising here would break that workflow.
-            warn_tenant_without_redis(logger, "cache", tenant_id)
+        # Silo means a tenant is configured that expects shared cache state — in-memory
+        # means each pod's cache is invisible to the others, almost certainly a
+        # misconfigured hosted deploy. We warn loudly but continue so local dev still
+        # works; raising here would break that workflow. self_hosted has no shared-state
+        # expectation; multi_tenant skips inside the warn helper.
+        if settings.deployment_mode == DeploymentMode.SILO:
+            warn_tenant_without_redis(logger, "cache", settings.tenant_id)
         logger.info("SHU_REDIS_URL not configured, using InMemoryCacheBackend")
         _cache_backend = InMemoryCacheBackend()
         return _cache_backend
@@ -1504,7 +1503,9 @@ async def get_cache_backend() -> CacheBackend:
         )
         logger.info("Using RedisCacheBackend without binary support")
 
-    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client, tenant_prefix=tenant_id)
+    from .tenant import resolve_tenant_for_infra
+
+    _cache_backend = RedisCacheBackend(redis_client, redis_binary_client, tenant_id_provider=resolve_tenant_for_infra)
     return _cache_backend
 
 

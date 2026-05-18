@@ -33,6 +33,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional, Protocol, runtime_checkable
@@ -121,6 +122,18 @@ class JobSerializationError(QueueError):
     pass
 
 
+class EnqueueError(QueueError):
+    """Raised by the high-level enqueue helper when the job can't be tenant-stamped.
+
+    The worker pipeline relies on every job carrying a ``tenant_id`` so the
+    dispatch wrapper can set tenant_context before the handler runs. Refusing
+    to enqueue without one is loud-fail-at-the-source rather than silent
+    default-deny later when the handler queries return zero rows under RLS.
+    """
+
+    pass
+
+
 # =============================================================================
 # Job Dataclass
 # =============================================================================
@@ -170,6 +183,13 @@ class Job:
     attempts: int = 0
     max_attempts: int = 3
     visibility_timeout: int = 300  # 5 minutes default
+    # Tenant that owns this job. The worker dispatch wrapper sets
+    # tenant_context to this value before invoking the handler, so any DB
+    # query the handler runs is scoped to the right tenant under RLS.
+    # Optional so legacy jobs enqueued before SHU-761 still deserialize;
+    # such jobs run with no tenant context (default-deny on RLS-protected
+    # tables — surfaces as missing rows, not a leak).
+    tenant_id: str | None = None
 
     def to_json(self) -> str:
         """Serialize job to JSON string.
@@ -199,6 +219,7 @@ class Job:
                     "attempts": self.attempts,
                     "max_attempts": self.max_attempts,
                     "visibility_timeout": self.visibility_timeout,
+                    "tenant_id": self.tenant_id,
                 }
             )
         except (TypeError, ValueError) as e:
@@ -238,6 +259,7 @@ class Job:
                 attempts=obj.get("attempts", 0),
                 max_attempts=obj.get("max_attempts", 3),
                 visibility_timeout=obj.get("visibility_timeout", 300),
+                tenant_id=obj.get("tenant_id"),
             )
         except json.JSONDecodeError as e:
             raise JobSerializationError(
@@ -1162,7 +1184,12 @@ class RedisQueueBackend:
 
     """
 
-    def __init__(self, redis_client: Any, *, tenant_prefix: str | None = None) -> None:
+    def __init__(
+        self,
+        redis_client: Any,
+        *,
+        tenant_id_provider: Callable[[], str] | None = None,
+    ) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -1170,35 +1197,36 @@ class RedisQueueBackend:
                 created internally by `get_queue_backend()`. External code
                 should use the factory function instead of constructing
                 this class directly.
-            tenant_prefix: Optional tenant identifier prepended as `{prefix}:` to
-                every Redis key for shared-deployment isolation. None = no prefix.
-
-        Raises:
-            ValueError: If ``tenant_prefix`` is provided but empty/whitespace.
-                Empty would silently disable prefixing — dangerous in a hosted
-                context where callers expect structural isolation.
+            tenant_id_provider: Optional callable returning the current tenant_id.
+                Called per-key so silo / multi-tenant deployments sharing a
+                Redis instance never clash on queue / processing / scheduled
+                / job-data keys. Self-hosted (single tenant, no Redis sharing)
+                passes ``None``, leaving keys unprefixed.
 
         """
-        if tenant_prefix is not None and not tenant_prefix.strip():
-            raise ValueError("tenant_prefix must be None or a non-empty string")
         self._client = redis_client
-        self._prefix = f"{tenant_prefix}:" if tenant_prefix else ""
+        self._tenant_id_provider = tenant_id_provider
+
+    def _prefix(self) -> str:
+        if self._tenant_id_provider is None:
+            return ""
+        return f"{self._tenant_id_provider()}:"
 
     def _queue_key(self, queue_name: str) -> str:
         """Get the Redis key for the main queue list."""
-        return f"{self._prefix}queue:{queue_name}"
+        return f"{self._prefix()}queue:{queue_name}"
 
     def _processing_key(self, queue_name: str) -> str:
         """Get the Redis key for the processing sorted set."""
-        return f"{self._prefix}queue:{queue_name}:processing"
+        return f"{self._prefix()}queue:{queue_name}:processing"
 
     def _scheduled_key(self, queue_name: str) -> str:
         """Get the Redis key for the scheduled sorted set."""
-        return f"{self._prefix}queue:{queue_name}:scheduled"
+        return f"{self._prefix()}queue:{queue_name}:scheduled"
 
     def _job_key(self, queue_name: str, job_id: str) -> str:
         """Get the Redis key for storing job data while in processing."""
-        return f"{self._prefix}queue:{queue_name}:job:{job_id}"
+        return f"{self._prefix()}queue:{queue_name}:job:{job_id}"
 
     async def _restore_expired_jobs(self, queue_name: str) -> int:
         """Move expired processing jobs back to the queue.
@@ -1842,25 +1870,31 @@ async def get_queue_backend() -> QueueBackend:
     if _queue_backend is not None:
         return _queue_backend
 
-    from .config import get_settings_instance
+    from .config import DeploymentMode, get_settings_instance
 
     settings = get_settings_instance()
-    tenant_id = settings.tenant_id
 
     if not settings.redis_enabled:
-        if tenant_id:
-            # Tenant-scoped without Redis means per-pod in-memory jobs no other
-            # pod can see — almost certainly a misconfigured hosted deploy. We
-            # warn loudly but continue so local dev (tenant_id set, no Redis)
-            # still works; raising here would break that workflow.
-            warn_tenant_without_redis(logger, "queue", tenant_id)
+        # Silo means a tenant is configured that expects shared queue state — in-memory
+        # means each pod's queue is invisible to the others, almost certainly a
+        # misconfigured hosted deploy. We warn loudly but continue so local dev still
+        # works; raising here would break that workflow. self_hosted has no shared-state
+        # expectation; multi_tenant skips inside the warn helper.
+        if settings.deployment_mode == DeploymentMode.SILO:
+            warn_tenant_without_redis(logger, "queue", settings.tenant_id)
         logger.info("SHU_REDIS_URL not configured, using InMemoryQueueBackend")
         _queue_backend = InMemoryQueueBackend()
         return _queue_backend
 
-    # Redis is enabled — connection failure is fatal
+    # Redis is enabled — connection failure is fatal. Tenant-prefix the
+    # queue / processing / scheduled / job-data keys so multiple silo or
+    # multi-tenant deployments can safely share one Redis instance without
+    # workloads from one tenant clashing with another's. Self-hosted (no
+    # SHU_TENANT_ID) gets an empty prefix and unprefixed keys.
+    from .tenant import resolve_tenant_for_infra
+
     redis_client = await _get_shared_redis_client()
-    _queue_backend = RedisQueueBackend(redis_client, tenant_prefix=tenant_id)
+    _queue_backend = RedisQueueBackend(redis_client, tenant_id_provider=resolve_tenant_for_infra)
     logger.info("Using RedisQueueBackend")
     return _queue_backend
 
