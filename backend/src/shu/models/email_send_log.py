@@ -42,10 +42,14 @@ class EmailSendLog(TenantScopedMixin, Base):
             "created_at",
             postgresql_using="btree",
         ),
-        # Idempotency: at most one row per (template, recipient, key) when
-        # the caller passes a key. NULL keys are allowed to repeat.
+        # Idempotency: at most one row per (tenant, template, recipient, key)
+        # when the caller passes a key. NULL keys are allowed to repeat.
+        # tenant_id is part of the constraint so two tenants can submit the
+        # same idempotency_key without colliding — RLS hides their rows from
+        # each other, but the unique constraint would still trip on INSERT.
         Index(
             "uq_email_send_log_idempotency",
+            "tenant_id",
             "template_name",
             "to_address",
             "idempotency_key",

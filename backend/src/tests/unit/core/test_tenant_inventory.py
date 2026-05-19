@@ -12,9 +12,11 @@ to hold:
    land after later model edits.
 3. ``composite_fk_inventory.json`` next to the migrations — the
    committed snapshot of every tenant-scoped → tenant-scoped composite FK.
-4. ``_ALLOWED_READERS`` / ``_ALLOWED_LISTEN`` below — source-code
-   policies enforcing "no stray ``settings.tenant_id`` readers" and "no
-   LISTEN/NOTIFY pinned-connection leak surfaces."
+4. Inline ``# noqa: STRAY-TENANT-ID`` / ``# noqa: LISTEN-NOTIFY`` markers
+   on the few legitimate sites — source-code policies enforcing "no stray
+   ``settings.tenant_id`` readers" and "no LISTEN/NOTIFY pinned-connection
+   leak surfaces." Pragma-based (vs. line-number allowlist) so reformatting
+   doesn't drift the check.
 
 If any falls out of sync with reality, new tables / relationships / code
 sites ship with a silent tenant-isolation hole. Each test below names
@@ -324,50 +326,23 @@ def test_composite_fk_inventory_matches_snapshot() -> None:
 # per-transaction ``set_config('app.tenant_id', ..., true)`` resets from
 # the engine begin hook, so any read it performs lands under whatever
 # tenant happened to be bound when the LISTEN started — a tenant leak.
-
-# (file_relative_to_shu_root, line_number) tuples — every hit outside this
-# allowlist fails the test. Update with reviewer ack when a new legitimate
-# reader lands; the comment beside each entry must explain WHY this site is
-# allowed to read the static config field rather than the runtime context.
-_ALLOWED_READERS: frozenset[tuple[str, int]] = frozenset(
-    {
-        # core/tenant.py — silo branch in _tenant_context_for_credential.
-        # Silo's deployment_mode guarantees the field is a UUID string here.
-        ("core/tenant.py", 260),
-        # core/tenant.py — docstring in resolve_redis_namespace explaining
-        # the SILO default. Documentation reference, not a runtime read.
-        ("core/tenant.py", 367),
-        # core/tenant.py — resolve_redis_namespace silo branch. Static
-        # deployment-level Redis namespace; silo's tenant_id is the natural
-        # deployment identifier.
-        ("core/tenant.py", 383),
-        # core/tenant.py — resolve_tenant_for_infra silo branch, same reason.
-        ("core/tenant.py", 404),
-        # core/queue_backend.py — warn helper for "silo without Redis"
-        # misconfig. Only fires in DeploymentMode.SILO so the value is set.
-        ("core/queue_backend.py", 1901),
-        # core/cache_backend.py — same warn-helper pattern as queue_backend.
-        ("core/cache_backend.py", 1495),
-    }
-)
-
-# Files in core/config.py are validator code (cross-field check on
-# tenant_id vs. deployment_mode); they're the *source* of the field, not
-# downstream readers. Allowed at file-level to avoid line-by-line drift.
-_ALLOWED_SETTINGS_TENANT_ID_FILES: frozenset[str] = frozenset({"core/config.py"})
+#
+# Both checks skip lines tagged with the corresponding ``# noqa: ...``
+# pragma. Pragma-based (not line-number allowlist) so reformatting and
+# whitespace edits don't drift the check.
 
 # Only the "reading from settings" shapes — NOT bare ``self.tenant_id``,
 # which is legitimate on ORM objects (Job, User) and inside the Settings
-# class itself (already file-allowlisted via core/config.py).
+# class itself.
 _SETTINGS_TENANT_ID_PATTERN = re.compile(
     r"\b(?:settings|get_settings_instance\(\)|get_settings\(\))\.tenant_id\b"
 )
 
-_LISTEN_NOTIFY_PATTERN = re.compile(r"\b(?:LISTEN|NOTIFY|pg_notify)\b")
+# Files where the field is *defined* (validator code) rather than read —
+# matches in these files are the source of truth, not downstream reads.
+_ALLOWED_SETTINGS_TENANT_ID_FILES: frozenset[str] = frozenset({"core/config.py"})
 
-# Populate per-line if intentional (with a ``# noqa: LISTEN-NOTIFY`` marker
-# and a route to ``shu_admin`` documented at the call site).
-_ALLOWED_LISTEN: frozenset[tuple[str, int]] = frozenset()
+_LISTEN_NOTIFY_PATTERN = re.compile(r"\b(?:LISTEN|NOTIFY|pg_notify)\b")
 
 
 def _iter_shu_python_files() -> list[Path]:
@@ -375,6 +350,9 @@ def _iter_shu_python_files() -> list[Path]:
 
 
 def test_no_stray_settings_tenant_id_readers() -> None:
+    """Each legitimate reader must carry ``# noqa: STRAY-TENANT-ID`` with a
+    one-liner WHY. Today: three silo branches in ``core/tenant.py`` and
+    the two warn-helpers in queue / cache backends."""
     violations: list[tuple[str, int, str]] = []
     for file in _iter_shu_python_files():
         rel = file.relative_to(_SHU_ROOT).as_posix()
@@ -385,9 +363,9 @@ def test_no_stray_settings_tenant_id_readers() -> None:
             stripped = line.lstrip()
             if stripped.startswith("#"):
                 continue
-            if not _SETTINGS_TENANT_ID_PATTERN.search(line):
+            if "# noqa: STRAY-TENANT-ID" in line:
                 continue
-            if (rel, lineno) in _ALLOWED_READERS:
+            if not _SETTINGS_TENANT_ID_PATTERN.search(line):
                 continue
             violations.append((rel, lineno, line.strip()))
 
@@ -395,8 +373,8 @@ def test_no_stray_settings_tenant_id_readers() -> None:
         "Stray settings.tenant_id readers found. SHU-761 moved tenant_id "
         "resolution to runtime context — use tenant_context.get() (request "
         "/ job code) or resolve_tenant_for_infra() (infra). To add a "
-        "legitimate reader, append the (file, line) to _ALLOWED_READERS in "
-        "this test with a WHY comment.\n  "
+        "legitimate reader, append ``# noqa: STRAY-TENANT-ID — <why>`` to "
+        "the line.\n  "
         + "\n  ".join(f"{f}:{ln} — {snippet}" for f, ln, snippet in violations)
     )
 
@@ -405,8 +383,8 @@ def test_no_listen_notify_in_source() -> None:
     """Today there are no LISTEN/NOTIFY callers; this test pins that posture
     so adding one is a conscious decision. Acceptable mitigations when a
     real need lands: route the long-running connection to a dedicated,
-    RLS-safe role (e.g. ``shu_admin``) or document the constraint with a
-    ``# noqa: LISTEN-NOTIFY`` marker and add the line to ``_ALLOWED_LISTEN``."""
+    RLS-safe role (e.g. ``shu_admin``) and document the constraint with
+    a ``# noqa: LISTEN-NOTIFY`` marker on the line."""
     violations: list[tuple[str, int, str]] = []
     for file in _iter_shu_python_files():
         rel = file.relative_to(_SHU_ROOT).as_posix()
@@ -417,8 +395,6 @@ def test_no_listen_notify_in_source() -> None:
             if "# noqa: LISTEN-NOTIFY" in line:
                 continue
             if not _LISTEN_NOTIFY_PATTERN.search(line):
-                continue
-            if (rel, lineno) in _ALLOWED_LISTEN:
                 continue
             violations.append((rel, lineno, line.strip()))
 
@@ -431,20 +407,3 @@ def test_no_listen_notify_in_source() -> None:
         "add ``# noqa: LISTEN-NOTIFY`` to the line.\n  "
         + "\n  ".join(f"{f}:{ln} — {snippet}" for f, ln, snippet in violations)
     )
-
-
-def test_allowed_readers_are_still_real() -> None:
-    """Catch drift: if a file is renamed or a line shifts, the allowlist
-    entry becomes a phantom and the protection silently weakens."""
-    for rel, lineno in _ALLOWED_READERS:
-        path = _SHU_ROOT / rel
-        assert path.exists(), f"_ALLOWED_READERS entry refers to missing file: {rel}"
-        lines = path.read_text().splitlines()
-        assert lineno <= len(lines), (
-            f"_ALLOWED_READERS entry refers to non-existent line {rel}:{lineno}"
-        )
-        assert _SETTINGS_TENANT_ID_PATTERN.search(lines[lineno - 1]), (
-            f"_ALLOWED_READERS entry {rel}:{lineno} no longer matches the "
-            f"settings.tenant_id pattern — line content: {lines[lineno - 1]!r}. "
-            "If the reader was removed, drop this allowlist entry."
-        )

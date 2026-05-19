@@ -1492,7 +1492,7 @@ async def get_cache_backend() -> CacheBackend:
         # misconfigured hosted deploy. Warn loudly but continue so local dev
         # still works; self_hosted has no shared-state expectation.
         if settings.deployment_mode == DeploymentMode.SILO:
-            warn_tenant_without_redis(logger, "cache", settings.tenant_id)
+            warn_tenant_without_redis(logger, "cache", settings.tenant_id)  # noqa: STRAY-TENANT-ID — silo-only warn helper
         logger.info("SHU_REDIS_URL not configured, using InMemoryCacheBackend")
         _cache_backend = InMemoryCacheBackend()
         return _cache_backend

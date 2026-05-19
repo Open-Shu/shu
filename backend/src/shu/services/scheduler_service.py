@@ -595,29 +595,32 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
                 # stays outside the per-tenant loop so tick cadence isn't
                 # multiplied by tenant count.
                 async def _tick_for_tenant(tid: str, _queue: QueueBackend = queue) -> None:
-                    db = await get_db_session()
-                    async with db as session:
-                        svc = UnifiedSchedulerService(session, _queue, sources)
-                        results = await svc.tick(limit=batch_limit)
+                    try:
+                        db = await get_db_session()
+                        async with db as session:
+                            svc = UnifiedSchedulerService(session, _queue, sources)
+                            results = await svc.tick(limit=batch_limit)
 
-                        # Log if any source had activity
-                        has_activity = any(
-                            r.get("enqueued", 0) > 0 or r.get("stale_cleaned", 0) > 0
-                            for r in results.values()
-                            if isinstance(r, dict) and "error" not in r
-                        )
-                        if has_activity:
-                            logger.info("Scheduler tick | tenant=%s | %s", tid, results)
-                            try:
-                                TICK_HISTORY.append(
-                                    {
-                                        "ts": datetime.now(UTC).isoformat(),
-                                        "tenant_id": tid,
-                                        **results,
-                                    }
-                                )
-                            except Exception:
-                                pass
+                            # Log if any source had activity
+                            has_activity = any(
+                                r.get("enqueued", 0) > 0 or r.get("stale_cleaned", 0) > 0
+                                for r in results.values()
+                                if isinstance(r, dict) and "error" not in r
+                            )
+                            if has_activity:
+                                logger.info("Scheduler tick | tenant=%s | %s", tid, results)
+                                try:
+                                    TICK_HISTORY.append(
+                                        {
+                                            "ts": datetime.now(UTC).isoformat(),
+                                            "tenant_id": tid,
+                                            **results,
+                                        }
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        logger.exception("Scheduler tick failed for tenant=%s", tid)
 
                 await for_each_tenant_in_deployment(_tick_for_tenant)
             except Exception as ex:

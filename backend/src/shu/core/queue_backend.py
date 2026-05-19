@@ -1898,7 +1898,7 @@ async def get_queue_backend() -> QueueBackend:
         # misconfigured hosted deploy. Warn loudly but continue so local dev
         # still works; self_hosted has no shared-state expectation.
         if settings.deployment_mode == DeploymentMode.SILO:
-            warn_tenant_without_redis(logger, "queue", settings.tenant_id)
+            warn_tenant_without_redis(logger, "queue", settings.tenant_id)  # noqa: STRAY-TENANT-ID — silo-only warn helper
         logger.info("SHU_REDIS_URL not configured, using InMemoryQueueBackend")
         _queue_backend = InMemoryQueueBackend()
         return _queue_backend

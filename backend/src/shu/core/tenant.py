@@ -257,7 +257,7 @@ async def _tenant_context_for_credential(
         if settings.deployment_mode == DeploymentMode.SELF_HOSTED:
             tid = SELF_HOSTED_TENANT_UUID
         elif settings.deployment_mode == DeploymentMode.SILO:
-            tid = settings.tenant_id  # validator guarantees this is a UUID string
+            tid = settings.tenant_id  # noqa: STRAY-TENANT-ID — silo: validator guarantees UUID string
         elif user_id is not None:
             tid = await _lookup_tenant_for_user(user_id)
             if tid is None:
@@ -360,8 +360,8 @@ def resolve_redis_namespace() -> str:
     Defaults per mode:
       * SELF_HOSTED  → ``SELF_HOSTED_TENANT_UUID`` (matches the deployment's
         identity in every other code path).
-      * SILO         → ``settings.tenant_id`` (the deployment is the tenant;
-        validator guarantees the field is a UUID).
+      * SILO         → the configured ``SHU_TENANT_ID`` (the deployment is
+        the tenant; validator guarantees the field is a UUID).
       * MULTI_TENANT → literal ``"multitenant"``.
 
     Operators can override via ``SHU_REDIS_NAMESPACE`` — useful when two
@@ -376,7 +376,7 @@ def resolve_redis_namespace() -> str:
     if settings.deployment_mode == DeploymentMode.SELF_HOSTED:
         return SELF_HOSTED_TENANT_UUID
     if settings.deployment_mode == DeploymentMode.SILO:
-        return settings.tenant_id  # validator guarantees this is a UUID string
+        return settings.tenant_id  # noqa: STRAY-TENANT-ID — silo: validator guarantees UUID string
     return "multitenant"
 
 
@@ -397,7 +397,7 @@ def resolve_tenant_for_infra() -> str:
     if settings.deployment_mode == DeploymentMode.SELF_HOSTED:
         return SELF_HOSTED_TENANT_UUID
     if settings.deployment_mode == DeploymentMode.SILO:
-        return settings.tenant_id  # validator guarantees this is a UUID string
+        return settings.tenant_id  # noqa: STRAY-TENANT-ID — silo: validator guarantees UUID string
     # MULTI_TENANT — the only place tenant_context might be unset, in which case
     # we have a real misconfiguration: some code path is touching infra without
     # having gone through the request resolver or the worker dispatch wrapper.

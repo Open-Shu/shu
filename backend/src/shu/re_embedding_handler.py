@@ -81,10 +81,12 @@ async def _recover_stuck_kbs_for_current_tenant(queue_backend) -> int:
     # tenant_context, the KB SELECT below would default-deny under RLS
     # (silent zero-row recovery) and any re-enqueued job would also lack
     # a tenant — fail loud so the caller fixes the invocation site.
-    assert tenant_context.get(None) is not None, (
-        "_recover_stuck_kbs_for_current_tenant requires tenant_context to be set; "
-        "wrap the call site in `async with tenant_context_for_tenant_id(...)`."
-    )
+    # Explicit check (not ``assert``) so the guard survives ``python -O``.
+    if tenant_context.get(None) is None:
+        raise RuntimeError(
+            "_recover_stuck_kbs_for_current_tenant requires tenant_context to be set; "
+            "wrap the call site in `async with tenant_context_for_tenant_id(...)`."
+        )
 
     stale_after = timedelta(minutes=3)
     resumed_count = 0

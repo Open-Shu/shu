@@ -23,6 +23,7 @@ from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse, create_error_response, create_success_response
 from ..core.streaming import create_sse_stream_generator
+from ..core.tenant import tenant_context_for_tenant_id
 from ..models.attachment import Attachment
 from ..models.llm_provider import Conversation, Message
 from ..schemas.chat import ConversationFromExperienceRequest
@@ -881,20 +882,27 @@ async def send_message(
         if conversation.user_id != current_user.id:
             return create_error_response(code="UNAUTHORIZED", status_code=403)
 
-        # Send message and get response
+        # Capture the request's tenant_id eagerly — by the time the
+        # StreamingResponse generator runs, FastAPI has unwound the
+        # resolve_tenant yield-dependency and ``tenant_context`` is back
+        # to None. Re-bind it inside the generator so the chat service's
+        # tenant-scoped writes (Message inserts, etc.) see the right tenant.
+        tenant_id = current_user.tenant_id
+
         async def stream_generator():
-            event_gen = await chat_service.send_message(
-                conversation_id=conversation_id,
-                user_message=request_data.message,
-                current_user=current_user,
-                knowledge_base_ids=request_data.knowledge_base_ids,
-                rag_rewrite_mode=request_data.rag_rewrite_mode,
-                client_temp_id=getattr(request_data, "client_temp_id", None),
-                ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
-                attachment_ids=request_data.attachment_ids,
-            )
-            async for data in create_sse_stream_generator(event_gen, "send_message"):
-                yield data
+            async with tenant_context_for_tenant_id(tenant_id):
+                event_gen = await chat_service.send_message(
+                    conversation_id=conversation_id,
+                    user_message=request_data.message,
+                    current_user=current_user,
+                    knowledge_base_ids=request_data.knowledge_base_ids,
+                    rag_rewrite_mode=request_data.rag_rewrite_mode,
+                    client_temp_id=getattr(request_data, "client_temp_id", None),
+                    ensemble_model_configuration_ids=request_data.ensemble_model_configuration_ids,
+                    attachment_ids=request_data.attachment_ids,
+                )
+                async for data in create_sse_stream_generator(event_gen, "send_message"):
+                    yield data
 
         return StreamingResponse(
             stream_generator(),
@@ -1071,16 +1079,20 @@ async def regenerate_message(
         # Note: LLM rate limiting is now per-provider, enforced in chat_streaming.py
         chat_service = ChatService(db, config_manager)
 
+        # See ``send_message`` for the contextvar-capture rationale.
+        tenant_id = current_user.tenant_id
+
         async def stream_generator():
-            event_gen = await chat_service.regenerate_message(
-                message_id=message_id,
-                current_user=current_user,
-                parent_message_id=request.parent_message_id,
-                rag_rewrite_mode=request.rag_rewrite_mode,
-                knowledge_base_ids=request.knowledge_base_ids,
-            )
-            async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
-                yield data
+            async with tenant_context_for_tenant_id(tenant_id):
+                event_gen = await chat_service.regenerate_message(
+                    message_id=message_id,
+                    current_user=current_user,
+                    parent_message_id=request.parent_message_id,
+                    rag_rewrite_mode=request.rag_rewrite_mode,
+                    knowledge_base_ids=request.knowledge_base_ids,
+                )
+                async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
+                    yield data
 
         return StreamingResponse(
             stream_generator(),

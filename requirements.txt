@@ -90,7 +90,7 @@ greenlet==3.2.3
 jmespath==1.0.1
 croniter>=6.0.0  # Cron expression parsing for schedulers
 PyYAML==6.0.3  # YAML processing for experience import/export
-async-lru>=2.0  # Async LRU cache for tenant resolver (SHU-761)
+async-lru==2.3.0  # Async LRU cache for tenant resolver (SHU-761)
 
 # OCR dependencies for image-based PDF text extraction
 pytesseract==0.3.13  # OCR engine wrapper (fallback)
