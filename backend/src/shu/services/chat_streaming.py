@@ -161,6 +161,68 @@ class StreamLifecycle:
             logger.warning("StreamLifecycle on_complete failed: %s", e, exc_info=True)
 
 
+async def drain_in_flight_streams(
+    registry: dict[str, StreamLifecycle],
+    timeout_seconds: float,
+) -> int:
+    """SHU-784: signal ``shutdown`` on every lifecycle and await supervisors.
+
+    Used by the lifespan shutdown hook to ensure in-flight chat streams
+    land their finalize transactions before the process exits. Returns
+    the number of supervisor tasks that did NOT complete within the
+    drain budget — those will be killed by the surrounding asyncio
+    teardown and their shielded finalize transactions roll back. Per
+    Phase 2.3 scenario S2 / decision option (c): we accept this
+    trade-off and surface it via the return value so the caller can log
+    a loud ERROR for ops to grep.
+
+    Args:
+        registry: ``app.state.in_flight_streams`` (live dict). The
+            function snapshots ``.values()`` before iteration so a
+            supervisor completing during the signal phase (which would
+            ``fire_on_complete`` and mutate the registry) doesn't crash
+            the iteration.
+        timeout_seconds: Max wall-clock seconds to wait for supervisors.
+            Validated as ``>=1`` by the Pydantic settings model — calling
+            with sub-1s values here is allowed (tests use 0.1s) but
+            production should respect the validator.
+
+    Returns:
+        Count of supervisor tasks still incomplete when the drain
+        timeout fired. Zero means clean shutdown; non-zero means N
+        in-flight messages will not land.
+
+    """
+    lifecycles = list(registry.values())
+    if not lifecycles:
+        return 0
+
+    for lc in lifecycles:
+        lc.signal("shutdown")
+
+    supervise_tasks = [lc.supervise_task for lc in lifecycles if lc.supervise_task is not None]
+    if not supervise_tasks:
+        return 0
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*supervise_tasks, return_exceptions=True),
+            timeout=timeout_seconds,
+        )
+        return 0
+    except TimeoutError:
+        # `t.done()` returns True for cancelled tasks too, so we'd
+        # undercount the kills if we relied on `not t.done()` alone.
+        # `wait_for`'s timeout cancels the inner gather, which cancels
+        # the not-yet-finished supervisor tasks; those should count as
+        # killed because their work didn't land. A supervisor that
+        # raised (e.g. `fire_on_complete` crashed) is `done() and not
+        # cancelled()` and is NOT counted — the variants underneath
+        # presumably already finished; the bookkeeping failure is a
+        # separate concern.
+        return sum(1 for t in supervise_tasks if t.cancelled() or not t.done())
+
+
 async def periodic_in_flight_streams_size_log(
     registry: dict[str, StreamLifecycle],
     interval_seconds: float,

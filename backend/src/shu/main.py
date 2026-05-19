@@ -563,40 +563,35 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     # gathers its variant tasks and fires registry cleanup) up to the
     # configured drain timeout. Runs BEFORE the OCR / embedding / DB cleanup
     # below because the shielded finalizes need a live pool to commit on.
+    # The signal-and-wait core is in `chat_streaming.drain_in_flight_streams`
+    # so it can be unit-tested with mocked supervisor tasks; this block owns
+    # the lifecycle-level logging policy (info vs error).
     in_flight_streams = getattr(app.state, "in_flight_streams", None) or {}
     if in_flight_streams:
+        from .services.chat_streaming import drain_in_flight_streams
+
         drain_timeout = float(getattr(settings, "stream_drain_timeout_s", 5))
-        # Snapshot before iteration: supervisors that complete during the
-        # signal phase will pop themselves from the registry, mutating it
-        # under our feet otherwise.
-        lifecycles = list(in_flight_streams.values())
-        for lc in lifecycles:
-            lc.signal("shutdown")
-        supervise_tasks = [lc.supervise_task for lc in lifecycles if lc.supervise_task is not None]
+        streams_count = len(in_flight_streams)
         logger.info(
             "Draining in-flight chat streams",
-            extra={"streams_count": len(lifecycles), "drain_timeout_s": drain_timeout},
+            extra={"streams_count": streams_count, "drain_timeout_s": drain_timeout},
         )
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*supervise_tasks, return_exceptions=True),
-                timeout=drain_timeout,
-            )
+        tasks_killed = await drain_in_flight_streams(in_flight_streams, drain_timeout)
+        if tasks_killed == 0:
             logger.info("In-flight chat streams drained cleanly")
-        except TimeoutError:
+        else:
             # Tail-case tasks get killed when the process exits. Their
             # shielded finalize transactions roll back; the Messages those
             # streams were about to persist are lost. Scenario S2 / decision
             # option (c): we accept this trade-off and surface it loudly so
             # ops can tune `SHU_STREAM_DRAIN_TIMEOUT_S` up if it fires.
-            remaining = [t for t in supervise_tasks if not t.done()]
             logger.error(
                 "stream drain timeout exceeded: %d tasks killed",
-                len(remaining),
+                tasks_killed,
                 extra={
                     "drain_timeout_s": drain_timeout,
-                    "tasks_killed": len(remaining),
-                    "streams_count": len(lifecycles),
+                    "tasks_killed": tasks_killed,
+                    "streams_count": streams_count,
                 },
             )
 
