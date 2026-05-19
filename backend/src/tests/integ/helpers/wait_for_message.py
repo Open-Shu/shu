@@ -107,7 +107,7 @@ async def wait_for_message_persisted(
     if interval_seconds <= 0:
         raise ValueError(f"interval_seconds must be > 0, got {interval_seconds}")
 
-    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_row: PersistedMessage | None = None
     while True:
         # Roll back the session view before querying. SQLAlchemy keeps an
@@ -155,7 +155,7 @@ async def wait_for_message_persisted(
             if count >= min_count:
                 return last_row
 
-        if asyncio.get_event_loop().time() >= deadline:
+        if asyncio.get_running_loop().time() >= deadline:
             logger.warning(
                 "wait_for_message_persisted: timeout after %.3fs (conversation_id=%s, role=%s, min_count=%d)",
                 timeout_seconds,
