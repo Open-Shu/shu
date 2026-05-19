@@ -41,7 +41,7 @@ from .api.side_call import router as side_call_router
 from .api.system import router as system_router
 from .api.user_permissions import router as user_permissions_router
 from .api.user_preferences import router as user_preferences_router
-from .billing.billing_state_cache import initialize_billing_state_cache, reset_billing_state_cache
+from .billing.billing_state_cache import reset_billing_state_cache
 from .billing.router import router as billing_router
 from .core.cache_backend import initialize_cache_backend
 from .core.config import get_settings_instance
@@ -372,10 +372,8 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.error(f"Failed to mark stale imports: {e}", exc_info=True)
 
-    # Initialize the CP billing-state cache before inline workers can start
-    # dequeueing jobs. We're unlikely to hit this scenario, but we'll guard
-    # anyway.
-    await initialize_billing_state_cache()
+    # Billing-state caches are built lazily per-tenant on first request — no
+    # eager warm-up needed at startup. (Pre-SHU-761 there was an init call here.)
 
     # Start inline workers if workers are enabled
     try:
@@ -532,11 +530,11 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Error clearing embedding service cache during shutdown: {e}")
 
-    # Drop the billing-state cache singleton before closing the HTTP client.
-    # The cache holds a reference to the shared client; if the lifespan ever
+    # Drop the per-tenant billing-state caches before closing the HTTP client.
+    # Each cache holds a reference to the shared client; if the lifespan ever
     # restarts in the same process (test harness, some process managers),
-    # the next initialize_billing_state_cache() would short-circuit on the
-    # populated singleton and serve a closed client.
+    # the next lazy build would otherwise short-circuit on the populated
+    # per-tenant map and hand callers a cache wrapping a closed client.
     reset_billing_state_cache()
 
     # Close HTTP client connections

@@ -23,7 +23,9 @@ from ..billing.seat_service import (
     get_seat_service,
 )
 from ..billing.stripe_client import StripeClientError
-from ..core.rate_limiting import get_rate_limit_service
+from ..core.config import DeploymentMode, get_settings_instance
+from ..core.email.factory import get_effective_email_backend_name
+from ..core.rate_limiting import get_client_ip, get_rate_limit_service
 from ..core.response import ShuResponse
 from ..core.tenant import (
     tenant_context_for_email,
@@ -37,6 +39,11 @@ from ..services.email_verification_service import (
     TokenInvalidError,
     get_email_verification_service_dependency,
 )
+
+# password_reset_service exports its own TokenExpiredError / TokenInvalidError
+# that collide with the email_verification_service names above. The two
+# handlers that use them stay with inline imports so the local except
+# clauses unambiguously bind to the password-reset variants.
 from ..services.user_service import UserService, create_token_response, get_user_service
 
 logger = logging.getLogger(__name__)
@@ -58,8 +65,6 @@ async def _check_auth_rate_limit(request: Request) -> None:
         HTTPException: with status 429 and a payload containing `retry_after` when the auth rate limit is exceeded.
 
     """
-    from ..core.rate_limiting import get_client_ip
-
     rate_limit_service = get_rate_limit_service()
 
     if not rate_limit_service.enabled:
@@ -278,8 +283,6 @@ async def register_user(
     # Multi-tenant deployments do not allow open self-registration. New users
     # arrive via invitation tokens (sibling spec); CP creates the first admin
     # for a new tenant out-of-band. Silo/self-hosted retain the original flow.
-    from ..core.config import DeploymentMode, get_settings_instance
-
     if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -321,8 +324,6 @@ async def register_user(
             #   because the configured backend's required config is missing):
             #   legacy admin-activation gate
             # - Email backend effectively configured: email-verification gate
-            from ..core.email.factory import get_effective_email_backend_name
-
             verification_required = not is_admin and get_effective_email_backend_name() != "disabled"
 
             if verification_required:
@@ -480,9 +481,7 @@ async def resend_verification(
     verified, or hit the rate limit — no enumeration. The actual send happens
     only when there is a real pending verification.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -531,9 +530,7 @@ async def resend_verification_from_token(
     of whether the token matched a real user, was already verified, or
     hit the rate limit).
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -600,9 +597,7 @@ async def request_password_reset(
     they did before SHU-745). The frontend cannot distinguish from the
     other no-op branches.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         logger.warning(
             "Password reset requested for %s but SHU_EMAIL_BACKEND=disabled — operators must reset manually",
@@ -611,7 +606,6 @@ async def request_password_reset(
         )
         return SuccessResponse(data=_RESET_NEUTRAL_RESPONSE)
 
-    from ..core.rate_limiting import get_client_ip
     from ..services.password_reset_service import get_password_reset_service_dependency
 
     client_ip = get_client_ip(
@@ -719,9 +713,7 @@ async def resend_password_reset_from_token(
     of whether the token matched a real user, was already used, ineligible,
     or rate-limited.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -960,9 +952,7 @@ async def refresh_token(
             # login endpoint already gates on email_verified; this is a belt and
             # suspenders so a regression in any login path can't leak through
             # refresh and grant an unverified user continued access.
-            from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-            email_backend = _eff_backend()
+            email_backend = get_effective_email_backend_name()
             if email_backend != "disabled" and user.auth_method == "password" and not user.email_verified:
                 logger.info(
                     "Refresh blocked for %s (user %s): email not verified",

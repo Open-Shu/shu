@@ -73,8 +73,18 @@ async def _recover_stuck_kbs_for_current_tenant(queue_backend) -> int:
     from sqlalchemy import select
 
     from .core.database import get_async_session_local
+    from .core.tenant import tenant_context
     from .core.workload_routing import WorkloadType, enqueue_job
     from .models.knowledge_base import KnowledgeBase
+
+    # Enforce the precondition the function name promises. Without
+    # tenant_context, the KB SELECT below would default-deny under RLS
+    # (silent zero-row recovery) and any re-enqueued job would also lack
+    # a tenant — fail loud so the caller fixes the invocation site.
+    assert tenant_context.get(None) is not None, (
+        "_recover_stuck_kbs_for_current_tenant requires tenant_context to be set; "
+        "wrap the call site in `async with tenant_context_for_tenant_id(...)`."
+    )
 
     stale_after = timedelta(minutes=3)
     resumed_count = 0

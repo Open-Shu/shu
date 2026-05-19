@@ -120,9 +120,15 @@ async def resolve_tenant(
     and silo short-circuit to a config constant; multi-tenant calls the
     appropriate SECURITY DEFINER lookup.
     """
-    cm = (
-        tenant_context_for_user_id(cred.user_id) if cred.user_id is not None else tenant_context_for_email(cred.email)  # type: ignore[arg-type]
-    )
+    # ``decode_credential`` guarantees exactly one of (user_id, email) is set;
+    # the asserts narrow the type for the static checker and double as a
+    # defensive guard if a future credential decoder ever produced an empty
+    # resolution.
+    if cred.user_id is not None:
+        cm = tenant_context_for_user_id(cred.user_id)
+    else:
+        assert cred.email is not None, "CredentialResolution must carry either user_id or email"
+        cm = tenant_context_for_email(cred.email)
     async with cm as tid:
         yield tid
 
@@ -137,6 +143,7 @@ async def fetch_user(
         stmt = select(User).where(User.id == cred.user_id).options(selectinload(User.preferences))
     else:
         # API key path — look up by configured email under the now-active tenant.
+        assert cred.email is not None, "CredentialResolution.email required on api_key path"
         stmt = select(User).where(User.email == cred.email).options(selectinload(User.preferences))
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()

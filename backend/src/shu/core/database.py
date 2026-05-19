@@ -77,6 +77,10 @@ def get_settings():
             # branch on deployment_mode get the most permissive non-tenant mode
             # rather than crashing on a missing attribute.
             deployment_mode = DeploymentMode.SELF_HOSTED
+            # db_admin_url has no sensible fallback — the admin engine is
+            # opt-in. Declared here so ``get_admin_engine`` can read the
+            # attribute directly without defensive getattr.
+            db_admin_url = None
 
         return MinimalSettings()
 
@@ -315,7 +319,7 @@ def get_admin_engine():
     global _admin_engine  # noqa: PLW0603
     if _admin_engine is None:
         settings = get_settings()
-        admin_url = getattr(settings, "db_admin_url", None)
+        admin_url = settings.db_admin_url
         if not admin_url:
             raise DatabaseConnectionError(
                 "SHU_DB_ADMIN_URL is not configured. The admin engine is only valid "
@@ -465,12 +469,28 @@ async def verify_schema_version() -> None:
 
 
 async def close_db() -> None:
+    # Two engines may have been lazily built: the app engine (every process)
+    # and the admin engine (only when an admin-tooling code path actually
+    # called get_admin_engine). Dispose whichever was built so neither pool
+    # outlives the process shutdown. Reading the module globals directly
+    # avoids accidentally building the admin engine just to tear it down.
+    global _admin_engine, _AdminSessionLocal  # noqa: PLW0603
+
     try:
         engine = get_async_engine()
         await engine.dispose()
-        logger.debug("Database connections closed")
     except Exception as e:
-        logger.error(f"Error closing database connections: {e!s}")
+        logger.error(f"Error closing app engine: {e!s}")
+
+    if _admin_engine is not None:
+        try:
+            await _admin_engine.dispose()
+        except Exception as e:
+            logger.error(f"Error closing admin engine: {e!s}")
+        _admin_engine = None
+        _AdminSessionLocal = None
+
+    logger.debug("Database connections closed")
 
 
 async def check_db_connection() -> bool:

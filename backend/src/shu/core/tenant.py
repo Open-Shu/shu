@@ -368,14 +368,14 @@ def tenant_context_for_tenant_id(tenant_id: str | None):
     return _tenant_context_for_credential(tenant_id=tenant_id)
 
 
-def warn_tenant_without_redis(logger: Logger, backend_kind: str, tenant_id: str) -> None:
+def warn_tenant_without_redis(caller_logger: Logger, backend_kind: str, tenant_id: str) -> None:
     # Multi-tenant deployments have many tenants; warning per-tenant about a
     # missing Redis URL would either spam logs or only fire for one tenant's
     # request. The misconfiguration there is structural (operator shipped
     # multi-tenant without Redis) and surfaces other ways — skip the noise.
     if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
         return
-    logger.warning(
+    caller_logger.warning(
         "SHU_TENANT_ID is set (tenant=%s) but SHU_REDIS_URL is not — " "falling back to in-memory %s backend.",
         tenant_id,
         backend_kind,

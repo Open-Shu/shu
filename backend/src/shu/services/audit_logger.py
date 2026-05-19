@@ -24,6 +24,16 @@ from shu.core.logging import get_logger
 _logger = get_logger(__name__)
 
 
+class AuditLogEmitError(RuntimeError):
+    """Raised when the audit logger cannot durably emit a record.
+
+    Cross-tenant admin paths catch nothing — this propagates out of the
+    ``TenantAdminService`` context managers so the calling endpoint returns
+    503 and the operator addresses the audit infrastructure before any
+    cross-tenant work proceeds.
+    """
+
+
 @runtime_checkable
 class AuditLogger(Protocol):
     """Protocol for emitting cross-tenant audit events.
@@ -93,13 +103,3 @@ class DefaultAuditLogger:
             _logger.info("audit", extra=record_fields)
         except Exception as exc:
             raise AuditLogEmitError("Failed to emit audit log record") from exc
-
-
-class AuditLogEmitError(RuntimeError):
-    """Raised when the audit logger cannot durably emit a record.
-
-    Cross-tenant admin paths catch nothing — this propagates out of the
-    ``TenantAdminService`` context managers so the calling endpoint returns
-    503 and the operator addresses the audit infrastructure before any
-    cross-tenant work proceeds.
-    """

@@ -33,9 +33,12 @@ from shu.billing.cp_client import (
     CpClient,
     CpClientError,
 )
+from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient, StripeClientError
+from shu.core.database import get_async_session_local
 from shu.core.http_client import get_http_client
 from shu.core.logging import get_logger
+from shu.core.tenant import tenant_context
 
 _logger = get_logger(__name__)
 
@@ -223,8 +226,6 @@ async def get_billing_state_cache() -> BillingStateCache | None:
     per-tenant secrets — a future change would add a per-tenant secret table
     and an ``X-Shu-Tenant-Id`` envelope header for upfront verification.
     """
-    from ..core.tenant import tenant_context
-
     tid = tenant_context.get(None)
     if tid is None:
         return None
@@ -285,8 +286,6 @@ async def get_cp_client() -> CpClient | None:
     ``get_billing_state_cache`` so the cache and the client land together
     in their respective per-tenant maps.
     """
-    from ..core.tenant import tenant_context
-
     tid = tenant_context.get(None)
     if tid is None:
         return None
@@ -325,12 +324,6 @@ def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
         return None
 
     async def fetch() -> Decimal | None:
-        # Deferred import to avoid pulling the BillingStateService at module
-        # import time (it transitively imports the SQLAlchemy session
-        # factory, which we don't want resolved during settings construction).
-        from shu.billing.state_service import BillingStateService
-        from shu.core.database import get_async_session_local
-
         session_factory = get_async_session_local()
         async with session_factory() as session:
             row = await BillingStateService.get(session)
@@ -343,14 +336,3 @@ def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
         return await stripe_client.get_subscription_markup_multiplier(row.stripe_subscription_id)
 
     return fetch
-
-
-async def initialize_billing_state_cache() -> None:
-    """No-op kept for backward compatibility with lifespan callers.
-
-    Caches are built lazily per-tenant on the first request that resolves to
-    each tenant; there's nothing useful to eager-warm at process startup
-    because (a) we don't know which tenants will be active yet, and (b) new
-    tenants may be provisioned after start. The first request from each
-    tenant pays one CP-call latency; subsequent requests hit the cache.
-    """

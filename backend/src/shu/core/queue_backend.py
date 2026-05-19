@@ -185,9 +185,17 @@ class Job:
     # Tenant that owns this job. The worker dispatch wrapper sets
     # tenant_context to this value before invoking the handler, so any DB
     # query the handler runs is scoped to the right tenant under RLS.
-    # Optional so legacy jobs enqueued before SHU-761 still deserialize;
-    # such jobs run with no tenant context (default-deny on RLS-protected
-    # tables — surfaces as missing rows, not a leak).
+    #
+    # The field defaults to None for two reasons: (1) keeps the dataclass
+    # ergonomic for tests that build ``Job`` objects in-process, and (2)
+    # lets ``from_json`` deserialize legacy jobs left in the queue from
+    # before this field was added. Production ENQUEUE always supplies one
+    # — ``enqueue_job`` raises EnqueueError otherwise. Production DEQUEUE
+    # of a tenant_id-less job is treated as a poison pill: the worker
+    # dispatcher catches the resulting MissingTenantContextError in MT
+    # and rejects without requeue. Silo/self-hosted callers resolve a
+    # None tenant_id to the deployment constant, so legacy in-flight
+    # jobs drain cleanly there.
     tenant_id: str | None = None
 
     def to_json(self) -> str:
