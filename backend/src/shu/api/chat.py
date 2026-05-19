@@ -1033,10 +1033,13 @@ async def terminate_stream(
             message="You do not own this stream",
             status_code=403,
         )
-    # First-writer-wins: if `client_disconnected` already fired, this call
-    # is logged-but-no-op (lifecycle.reason already set). The endpoint still
-    # returns 202 — the signal was accepted on its merits, even if the
-    # lifecycle had already moved on.
+    # Priority-based: `user_terminated` (tier 2) overrides a prior
+    # `client_disconnected` (tier 1), so a tab-close followed by terminate
+    # from another device correctly stamps `user_terminated` on the row.
+    # If `shutdown` already fired (same priority tier), the call is a
+    # no-op on `reason` (first-writer-wins within a tier). The endpoint
+    # returns 202 regardless — the signal was accepted on its merits,
+    # `accepted` reflects whether `reason` was actually replaced.
     accepted = lifecycle.signal("user_terminated")
     logger.info(
         "Stream terminate requested",
