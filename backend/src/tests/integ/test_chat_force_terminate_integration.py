@@ -151,12 +151,21 @@ async def _capture_stream_id_and_terminate(
         deadline = asyncio.get_running_loop().time() + 5.0
         while True:
             registry = getattr(_app.state, "in_flight_streams", {}) or {}
-            new_ids = set(registry.keys()) - known_ids
-            if new_ids:
-                # Take the lexicographically-first new id (deterministic
-                # if multiple appeared; in practice there's always exactly
-                # one for this test).
-                stream_id_future.set_result(sorted(new_ids)[0])
+            # Filter by conversation_id so the poller doesn't grab a stream
+            # from elsewhere (a browser tab open during dev smoke testing, a
+            # leftover stream from a prior test, or any future parallel-test
+            # framework change). The lifecycle's `conversation_id` is set on
+            # registration in api/chat.py, so the match is reliable. Sort
+            # for determinism if multiple matched (in practice exactly one
+            # does per test method).
+            matching_ids = sorted(
+                stream_id
+                for stream_id, lifecycle in registry.items()
+                if stream_id not in known_ids
+                and getattr(lifecycle, "conversation_id", None) == conv_id
+            )
+            if matching_ids:
+                stream_id_future.set_result(matching_ids[0])
                 return
             if asyncio.get_running_loop().time() >= deadline:
                 if not stream_id_future.done():

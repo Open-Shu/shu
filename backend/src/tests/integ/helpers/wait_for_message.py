@@ -133,10 +133,18 @@ async def wait_for_message_persisted(
         # `expire_on_commit=False` so the rollback only drops the read
         # view — no in-memory ORM state is affected.)
         await db.rollback()
+        # Latest row AND total count from a single query via a window
+        # function. `COUNT(*) OVER ()` computes the unfiltered total
+        # before the LIMIT 1 is applied, so the row and the count come
+        # from the same atomic snapshot — no race window between a
+        # separate SELECT-LIMIT-1 and SELECT-COUNT where another finalize
+        # could commit and make the returned row stale relative to the
+        # threshold that triggered the return.
         result = await db.execute(
             text(
                 "SELECT id, role, content, model_id, message_metadata, "
-                "parent_message_id, variant_index "
+                "parent_message_id, variant_index, "
+                "COUNT(*) OVER () AS total_count "
                 "FROM messages "
                 "WHERE conversation_id = :conv_id AND role = :role "
                 "ORDER BY created_at DESC "
@@ -155,18 +163,12 @@ async def wait_for_message_persisted(
                 parent_message_id=row[5],
                 variant_index=row[6],
             )
+            count = row[7]
             # Single-variant fast path — return as soon as the row exists.
             if min_count <= 1:
                 return last_row
-            # Ensemble path — also count, return when threshold hit.
-            count_result = await db.execute(
-                text(
-                    "SELECT COUNT(*) FROM messages "
-                    "WHERE conversation_id = :conv_id AND role = :role"
-                ),
-                {"conv_id": conversation_id, "role": role},
-            )
-            count = count_result.scalar_one()
+            # Ensemble path — return when the snapshot's count meets the
+            # threshold (row and count are from the same query, no race).
             if count >= min_count:
                 return last_row
 

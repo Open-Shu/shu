@@ -267,11 +267,12 @@ class TestSignalShutdownToInFlightStreams:
 
     def test_snapshot_guards_against_mid_iteration_mutation(self):
         """A supervisor completing mid-iteration would call its
-        ``on_complete`` callback, which pops the registry entry — if we
-        iterated ``registry.values()`` directly that would raise
+        ``on_complete`` callback, which pops the registry entry — if the
+        helper iterated ``registry.values()`` directly that would raise
         ``RuntimeError: dictionary changed size during iteration``. The
         helper takes a ``list(registry.values())`` snapshot before
-        iterating so concurrent mutations don't crash the handler.
+        iterating so concurrent mutations don't crash the handler AND
+        every original lifecycle still receives the signal.
         """
         registry: dict[str, StreamLifecycle] = {}
         first = _build_lifecycle("first")
@@ -279,18 +280,36 @@ class TestSignalShutdownToInFlightStreams:
         registry[first.stream_id] = first
         registry[second.stream_id] = second
 
-        # Simulate a supervisor completing during signaling: when first's
-        # signal() fires, an on_complete-style callback removes second
-        # from the registry. The helper's snapshot should still cover
-        # second and signal it before returning.
-        first.on_complete = lambda: registry.pop(second.stream_id, None)
-        first.fire_on_complete()  # mutate the registry now, mid-handler
+        # Wrap first.signal so calling it triggers the registry mutation
+        # MID-iteration (the realistic case: a supervisor on a parallel
+        # task fires its on_complete callback, popping another lifecycle's
+        # entry from app.state.in_flight_streams while the signal handler
+        # is still iterating). Without the helper's
+        # `list(registry.values())` snapshot, this would raise
+        # ``RuntimeError: dictionary changed size during iteration`` as
+        # soon as the next iteration step looked at the dict.
+        original_signal = first.signal
 
+        def mutating_signal(reason):
+            registry.pop(second.stream_id, None)
+            return original_signal(reason)
+
+        first.signal = mutating_signal  # type: ignore[method-assign]
+
+        # Must not raise. If the snapshot guard regresses, this call
+        # raises RuntimeError mid-iteration.
         count = signal_shutdown_to_in_flight_streams(registry)
 
-        # Snapshot was taken AFTER the mutation in this test (we
-        # pre-popped to make the assertion well-defined); both that
-        # remain in the registry get signalled.
-        assert count == len(registry)
-        for lc in registry.values():
-            assert lc.reason == "shutdown"
+        # Both lifecycles received the signal — even `second`, which was
+        # popped from the registry during the iteration. Proof that the
+        # snapshot was taken before mutation and that every original
+        # entry was processed.
+        assert first.reason == "shutdown"
+        assert second.reason == "shutdown", (
+            "second must be signalled even though it was popped from the "
+            "registry mid-iteration — the snapshot taken at the start of "
+            "the helper protects against concurrent mutation"
+        )
+        # Count reflects the snapshot length (2), not the post-mutation
+        # registry length (1).
+        assert count == 2

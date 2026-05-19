@@ -939,13 +939,21 @@ async def send_message(
         # a no-op second close.
         await db.close()
 
-        # SHU-802: closure captures the lifecycle so the SSE wrapper can
-        # signal client_disconnected from its finally block (regardless of
-        # whether GeneratorExit or CancelledError caused the close).
-        # client_disconnected is lower-priority than user_terminated /
-        # shutdown, so this no-ops cleanly on reason if either intentional
-        # stop already fired.
-        def _signal_client_disconnected() -> None:
+        # SHU-802: SSE wrapper's on_close hook. The wrapper fires this in
+        # its `finally` block on every close path — normal completion,
+        # GeneratorExit, and CancelledError (the actual disconnect path).
+        # We call `signal("client_disconnected")` unconditionally because
+        # the priority semantics make it correct on every path: on a real
+        # disconnect, this stamps `client_disconnected` (so finalize can
+        # surface it via `stream_state`); on natural completion, finalize
+        # has ALREADY committed the Message with `stream_state="complete"`
+        # (read from `resolved_reason()` before this hook fires) so the
+        # post-hoc mutation of `lifecycle.reason` has no observable
+        # effect — the lifecycle object is about to be garbage-collected
+        # after the supervisor's registry pop. On user_terminated or
+        # shutdown, those priority-2 reasons outrank client_disconnected
+        # (priority 1) and the signal is a clean no-op on `reason`.
+        def _on_stream_close() -> None:
             lifecycle.signal("client_disconnected")
 
         async def stream_generator():
@@ -958,9 +966,7 @@ async def send_message(
             # cleanup and the pop here is an idempotent no-op.
             in_flight_streams[lifecycle.stream_id] = lifecycle
             try:
-                async for data in create_sse_stream_generator(
-                    event_gen, "send_message", on_close=_signal_client_disconnected
-                ):
+                async for data in create_sse_stream_generator(event_gen, "send_message", on_close=_on_stream_close):
                     yield data
             finally:
                 if lifecycle.supervise_task is None:
@@ -1256,8 +1262,10 @@ async def regenerate_message(
         # StreamingResponse. See the matching comment in send_message above.
         await db.close()
 
-        # SHU-802: see matching closure in send_message.
-        def _signal_client_disconnected() -> None:
+        # SHU-802: see matching on_close hook in send_message for the
+        # full rationale (fires on every close path; priority semantics
+        # make the unconditional client_disconnected signal correct).
+        def _on_stream_close() -> None:
             lifecycle.signal("client_disconnected")
 
         async def stream_generator():
@@ -1265,7 +1273,7 @@ async def regenerate_message(
             in_flight_streams[lifecycle.stream_id] = lifecycle
             try:
                 async for data in create_sse_stream_generator(
-                    event_gen, "regenerate_message", on_close=_signal_client_disconnected
+                    event_gen, "regenerate_message", on_close=_on_stream_close
                 ):
                     yield data
             finally:
