@@ -533,6 +533,37 @@ def upgrade() -> None:
     op.execute("GRANT SELECT ON password_reset_token TO shu_admin")
     op.execute("GRANT SELECT ON billing_state TO shu_admin")
 
+    # Catalog / tenant-provisioning writes — shu_admin owns operator-only
+    # operations that need to write across tenants: seeding the ``tenants``
+    # catalog, creating the first admin user for a new tenant, stubbing the
+    # per-tenant ``billing_state`` row. These are CLI / control-plane paths
+    # (e.g. ``backend/scripts/seed_tenant.py``), not request-path code.
+    #
+    # SELECT is included alongside the write verbs because ``INSERT ... ON
+    # CONFLICT DO NOTHING`` (the idempotent shape these scripts use) needs
+    # SELECT on the conflict target to check existence — INSERT alone errors
+    # with "permission denied for table".
+    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON tenants TO shu_admin")
+    op.execute("GRANT INSERT, UPDATE ON users TO shu_admin")
+    op.execute("GRANT INSERT, UPDATE ON billing_state TO shu_admin")
+
+    # shu_app needs to read ``alembic_version`` because the API's startup
+    # schema-baseline check (``verify_schema_version`` in main.py) queries
+    # it before serving traffic. Alembic creates the table itself the first
+    # time a migration runs, so no GRANT happens automatically — we add it
+    # here, gated on the table existing (skipped if alembic was never used).
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT FROM pg_class WHERE relname = 'alembic_version') THEN
+                GRANT SELECT ON alembic_version TO shu_app;
+                GRANT SELECT ON alembic_version TO shu_admin;
+            END IF;
+        END $$;
+        """
+    )
+
     # Unique constraints on SD-function lookup columns — the functions return
     # a single row via WHERE col = $1, so the schema must enforce that.
     #
@@ -719,6 +750,20 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_password_reset_token_token_hash")
     op.execute("CREATE INDEX ix_password_reset_token_token_hash ON password_reset_token (token_hash)")
 
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT FROM pg_class WHERE relname = 'alembic_version') THEN
+                REVOKE SELECT ON alembic_version FROM shu_app;
+                REVOKE SELECT ON alembic_version FROM shu_admin;
+            END IF;
+        END $$;
+        """
+    )
+    op.execute("REVOKE INSERT, UPDATE ON billing_state FROM shu_admin")
+    op.execute("REVOKE INSERT, UPDATE ON users FROM shu_admin")
+    op.execute("REVOKE SELECT, INSERT, UPDATE, DELETE ON tenants FROM shu_admin")
     op.execute("REVOKE SELECT ON billing_state FROM shu_admin")
     op.execute("REVOKE SELECT ON password_reset_token FROM shu_admin")
     op.execute("REVOKE SELECT ON users FROM shu_admin")
