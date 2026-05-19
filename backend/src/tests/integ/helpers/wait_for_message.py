@@ -80,19 +80,34 @@ async def wait_for_message_persisted(
 ) -> PersistedMessage | None:
     """Poll for an assistant Message row, returning the most recent on success.
 
-    Returns the latest matching Message as a :class:`PersistedMessage`, or
-    ``None`` if no row appeared within ``timeout_seconds``. On each poll
-    iteration the test session is rolled back to release any read view
-    so the next query sees committed-elsewhere rows.
+    Return contract:
+
+    - Returns the latest matching :class:`PersistedMessage` if at least one
+      row exists for ``(conversation_id, role)`` at any point during the
+      poll budget.
+    - Returns ``None`` only if **zero** matching rows ever appeared within
+      ``timeout_seconds``.
+    - When ``min_count > 1`` and the budget expires with at least one but
+      fewer than ``min_count`` rows persisted, the latest row is still
+      returned — i.e. a **partial** result, NOT ``None``. The caller is
+      responsible for verifying the row's identity / count if a strict
+      threshold matters (the regenerate disconnect test does this by
+      asserting ``persisted.id != target_message_id``, which catches
+      "regen didn't land" with a more informative failure than a bare
+      ``None``).
+
+    On each poll iteration the test session is rolled back to release any
+    read view so the next query sees committed-elsewhere rows.
 
     Args:
         db: Test ``AsyncSession``.
         conversation_id: Conversation to filter on.
         role: Message role (defaults to ``"assistant"`` — the SHU-802
             disconnect tests target the AI side).
-        min_count: Wait until at least this many rows match before
-            returning the latest. Used by ensemble tests where N variants
-            must persist; defaults to 1 for single-variant cases.
+        min_count: Early-exit threshold. When the number of matching rows
+            reaches this value, returns immediately. On timeout with a
+            partial match (one or more rows but fewer than ``min_count``),
+            returns the latest row — see return contract above.
         timeout_seconds: Bounded budget. The happy path is sub-200ms;
             2.0s is comfortable headroom that still fails fast if the
             row genuinely doesn't land.

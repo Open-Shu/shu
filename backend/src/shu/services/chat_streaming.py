@@ -507,11 +507,12 @@ class EnsembleStreamingHelper:
             # short-circuit — `client_disconnected` lets the LLM run to its
             # natural end so the full response lands (the headline bug-fix
             # behavior). The check fires BEFORE event processing so we don't
-            # enqueue a stale delta after the user has hit Stop. Sub-100ms
-            # latency from terminate-POST → break is gated by the provider's
-            # inter-chunk interval (the provider has to deliver the next chunk
-            # before we can observe the event); this matches the design
-            # decision around per-provider partial-usage accuracy in H4.
+            # enqueue a stale delta after the user has hit Stop. Latency from
+            # terminate-POST → break is gated by the provider's inter-chunk
+            # interval: the provider has to deliver the next chunk before we
+            # can observe the event, so a slow provider extends the window.
+            # This matches the design decision around per-provider
+            # partial-usage accuracy in H4.
             if lifecycle.event.is_set() and lifecycle.reason in ("user_terminated", "shutdown"):
                 terminated = True
                 break
@@ -1125,7 +1126,7 @@ class EnsembleStreamingHelper:
                         # above for server-side debugging.
                         await queue.put(
                             self._create_error_event(
-                                "Could not save the response after multiple " "attempts. Please try again.",
+                                "Could not save the response after multiple attempts. Please try again.",
                                 variant_index,
                                 inputs,
                                 model_snapshot,
@@ -1163,7 +1164,7 @@ class EnsembleStreamingHelper:
                     # debugging.
                     await queue.put(
                         self._create_error_event(
-                            "An internal error prevented saving your response. " "Please try again.",
+                            "An internal error prevented saving your response. Please try again.",
                             variant_index,
                             inputs,
                             model_snapshot,
@@ -1382,12 +1383,22 @@ class EnsembleStreamingHelper:
                 # the shutdown drain (step 10) times out and cancels the
                 # supervisor, that cancellation would propagate into the
                 # variant tasks. Shielding the finalize await means an
-                # incoming cancellation completes the finalize transaction
-                # before unwinding — Message + LLMUsage land atomically or
-                # neither lands. Without this, cancellation mid-finalize
-                # rolls back the `async with session_factory()` block and
-                # we lose the row. Belt-and-suspenders against the disconnect
-                # bug class even with detachment in place.
+                # incoming cancellation does NOT cancel the in-flight
+                # finalize Task — it keeps running detached. The DB
+                # transaction is still atomic at the Postgres level
+                # regardless (it commits or doesn't — no half-state).
+                #
+                # Important: shield does NOT extend finalize's lease past
+                # the drain budget. asyncio.shield(coro) wraps coro in an
+                # internal Task that survives cancellation of the awaiter,
+                # but past the drain timeout the detached Task is racing
+                # process teardown (engine dispose, loop close) with no
+                # awaiter. Within the drain budget, the shield guarantees
+                # finalize gets to its commit; past the budget, finalize
+                # is best-effort and may not land. Ticket decision option
+                # (c) under S2 accepts this trade-off; the ERROR-level
+                # "stream drain timeout exceeded" log surfaces the
+                # tail-case for ops.
                 await asyncio.shield(
                     self._finalize_variant_phase(
                         variant_index=variant_index,

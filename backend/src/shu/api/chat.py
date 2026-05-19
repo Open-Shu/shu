@@ -915,17 +915,17 @@ async def send_message(
             lifecycle=lifecycle,
         )
 
-        # SHU-802: register only after prepare/validation has returned cleanly.
-        # The cleanup callback is invoked by the per-stream supervisor (added
-        # in step 3) when all variants finalize, OR by the lifespan shutdown
-        # drain. `.pop(..., None)` keeps the callback idempotent so a second
-        # invocation (e.g. shutdown firing after a supervisor cleanup) is safe.
+        # SHU-802: resolve the registry up-front (so the closure below captures it)
+        # but defer actual registration to stream_generator's first iteration.
+        # Registering in the endpoint body would leak the entry if anything
+        # raises between here and the moment the supervisor task spawns —
+        # specifically: `await db.close()` failing, BaseException during the
+        # StreamingResponse handoff, or task cancellation before Starlette
+        # begins iterating. In all those windows there is no supervisor to
+        # fire `on_complete`, so the entry would persist for process lifetime.
         # Lazy-initialize if absent: unit tests that mount the router into a
-        # bare FastAPI app skip the lifespan and never populate this attribute;
-        # treat its absence as "single-process state, initialize on first use"
-        # rather than failing the request.
+        # bare FastAPI app skip the lifespan and never populate this attribute.
         in_flight_streams = _ensure_in_flight_streams(request.app)
-        in_flight_streams[lifecycle.stream_id] = lifecycle
         lifecycle.on_complete = lambda: in_flight_streams.pop(lifecycle.stream_id, None)
 
         # SHU-759: release the request-scoped DB session before yielding the
@@ -948,10 +948,22 @@ async def send_message(
             lifecycle.signal("client_disconnected")
 
         async def stream_generator():
-            async for data in create_sse_stream_generator(
-                event_gen, "send_message", on_close=_signal_client_disconnected
-            ):
-                yield data
+            # SHU-802: register here, immediately before iteration begins, so
+            # the registry entry's lifetime is bounded by this generator's
+            # lifetime. The `finally` below handles the narrow window where
+            # registration succeeded but the supervisor never spawned (e.g.
+            # the inner _gen() raised before reaching stream_ensemble_responses);
+            # once the supervisor exists, its own fire_on_complete handles
+            # cleanup and the pop here is an idempotent no-op.
+            in_flight_streams[lifecycle.stream_id] = lifecycle
+            try:
+                async for data in create_sse_stream_generator(
+                    event_gen, "send_message", on_close=_signal_client_disconnected
+                ):
+                    yield data
+            finally:
+                if lifecycle.supervise_task is None:
+                    in_flight_streams.pop(lifecycle.stream_id, None)
 
         return StreamingResponse(
             stream_generator(),
@@ -994,7 +1006,11 @@ async def terminate_stream(
         410 Gone (`code="STREAM_NOT_ACTIVE"`): the stream is not in the registry — either the stream_id is unknown, or the stream has already finalized.
 
     """
-    in_flight_streams: dict[str, StreamLifecycle] = http_request.app.state.in_flight_streams
+    # Use the lazy-init helper for symmetry with send_message / regenerate_message.
+    # Without it, a test that mounts the chat router into a bare FastAPI app and
+    # only exercises terminate (no prior send to lazy-init the registry) would
+    # hit AttributeError → HTTP 500 instead of the sensible 410 Gone.
+    in_flight_streams = _ensure_in_flight_streams(http_request.app)
     lifecycle = in_flight_streams.get(stream_id)
     if lifecycle is None:
         # 410 over 404: the stream may have existed but completed already.
@@ -1226,10 +1242,10 @@ async def regenerate_message(
             lifecycle=lifecycle,
         )
 
-        # SHU-802: register only after prepare/validation has returned cleanly.
-        # See send_message for rationale.
+        # SHU-802: resolve the registry up-front but defer actual registration
+        # to stream_generator's first iteration. See send_message for the
+        # leak-window rationale; the regenerate path has the same shape.
         in_flight_streams = _ensure_in_flight_streams(http_request.app)
-        in_flight_streams[lifecycle.stream_id] = lifecycle
         lifecycle.on_complete = lambda: in_flight_streams.pop(lifecycle.stream_id, None)
 
         # SHU-759: release the request-scoped DB session before yielding the
@@ -1241,10 +1257,16 @@ async def regenerate_message(
             lifecycle.signal("client_disconnected")
 
         async def stream_generator():
-            async for data in create_sse_stream_generator(
-                event_gen, "regenerate_message", on_close=_signal_client_disconnected
-            ):
-                yield data
+            # SHU-802: see matching pattern in send_message.
+            in_flight_streams[lifecycle.stream_id] = lifecycle
+            try:
+                async for data in create_sse_stream_generator(
+                    event_gen, "regenerate_message", on_close=_signal_client_disconnected
+                ):
+                    yield data
+            finally:
+                if lifecycle.supervise_task is None:
+                    in_flight_streams.pop(lifecycle.stream_id, None)
 
         return StreamingResponse(
             stream_generator(),
