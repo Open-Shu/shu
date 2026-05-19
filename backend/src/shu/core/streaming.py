@@ -99,7 +99,7 @@ async def create_sse_stream_generator(
         include_correlation_id: When ``True``, generates a UUID correlation ID
             and includes it in catch-all error payloads and log messages.
         error_code: Error code string included in catch-all error payloads.
-        on_close: SHU-784. Optional cleanup callback invoked from the wrapper's
+        on_close: SHU-802. Optional cleanup callback invoked from the wrapper's
             ``finally`` block regardless of how the stream ended (normal
             completion, client disconnect, internal error). Chat passes a
             closure that fires the stream's ``StreamLifecycle`` with
@@ -133,7 +133,7 @@ async def create_sse_stream_generator(
                 # Continue to next event rather than breaking the stream
                 continue
     except GeneratorExit:
-        # Client disconnected (aclose() form). Pre-SHU-784 behavior: log
+        # Client disconnected (aclose() form). Pre-SHU-802 behavior: log
         # and fall through to the finally block so the DONE marker still
         # has a chance to emit. We deliberately do NOT re-raise here —
         # re-raising would prevent the finally's `yield "[DONE]"` from
@@ -148,7 +148,7 @@ async def create_sse_stream_generator(
         # Client disconnected (task-cancel form). Starlette cancels the
         # streaming task when the underlying TCP connection closes. We
         # re-raise to honor the cancellation contract — the enclosing
-        # framework relies on CancelledError propagating up. SHU-784:
+        # framework relies on CancelledError propagating up. SHU-802:
         # without this branch, CancelledError fell through to the
         # `except Exception` catch-all below and was logged as a streaming
         # error, which polluted the error-rate metrics for what is in fact
@@ -181,7 +181,7 @@ async def create_sse_stream_generator(
         except Exception:
             logger.exception(f"Failed to send error event to client during {error_context}")
     finally:
-        # SHU-784: fire the on_close hook regardless of how we got here —
+        # SHU-802: fire the on_close hook regardless of how we got here —
         # normal completion, client disconnect (either form), or internal
         # error. Wrapped in try/except so a misbehaving callback doesn't
         # block the [DONE] emit or surface as a confusing secondary error.

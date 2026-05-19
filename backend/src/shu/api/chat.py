@@ -42,7 +42,7 @@ settings = get_settings_instance()
 
 
 def _ensure_in_flight_streams(app: Any) -> dict[str, StreamLifecycle]:
-    """SHU-784: lazy-init the in-flight stream registry on app.state.
+    """SHU-802: lazy-init the in-flight stream registry on app.state.
 
     The lifespan in `main.py` initializes this on startup, but unit tests
     that mount the chat router into a bare FastAPI app skip the lifespan
@@ -871,7 +871,7 @@ async def send_message(
 
     Parameters
     ----------
-        request (Request): Starlette request, used to access `app.state.in_flight_streams` for SHU-784 lifecycle registration.
+        request (Request): Starlette request, used to access `app.state.in_flight_streams` for SHU-802 lifecycle registration.
         conversation_id (str): ID of the conversation to send the message to.
         request_data (SendMessageRequest): Payload containing the user message and optional parameters (knowledge_base_ids, rag_rewrite_mode, client_temp_id, ensemble_model_configuration_ids, attachment_ids).
         current_user (User): Authenticated user (RBAC dependency).
@@ -883,7 +883,7 @@ async def send_message(
         StreamingResponse | Response: A StreamingResponse that yields SSE payloads where each event is a JSON object representing LLM or system events; the stream always concludes with a terminal `data: [DONE]` event. If validation or permission checks fail, returns a standardized error response with an error code and HTTP status.
 
     """
-    # SHU-784: lifecycle is created up-front so we can pass it to
+    # SHU-802: lifecycle is created up-front so we can pass it to
     # chat_service.send_message; registration in app.state.in_flight_streams
     # is deferred until validation succeeds so a 4xx response (no conversation,
     # not the owner, etc.) doesn't leak a registry entry that nothing cleans
@@ -915,7 +915,7 @@ async def send_message(
             lifecycle=lifecycle,
         )
 
-        # SHU-784: register only after prepare/validation has returned cleanly.
+        # SHU-802: register only after prepare/validation has returned cleanly.
         # The cleanup callback is invoked by the per-stream supervisor (added
         # in step 3) when all variants finalize, OR by the lifespan shutdown
         # drain. `.pop(..., None)` keeps the callback idempotent so a second
@@ -939,7 +939,7 @@ async def send_message(
         # a no-op second close.
         await db.close()
 
-        # SHU-784: closure captures the lifecycle so the SSE wrapper can
+        # SHU-802: closure captures the lifecycle so the SSE wrapper can
         # signal client_disconnected from its finally block (regardless of
         # whether GeneratorExit or CancelledError caused the close). The
         # lifecycle's first-writer-wins semantics mean this no-ops cleanly
@@ -972,7 +972,7 @@ async def send_message(
     status_code=202,
     summary="Terminate an in-flight chat stream",
     description=(
-        "SHU-784: signal the server to stop an in-flight chat stream. "
+        "SHU-802: signal the server to stop an in-flight chat stream. "
         "The variant tasks observe the signal on their next provider event, "
         "break the consumer loop, and transition to finalize — persisting "
         'whatever partial content was accumulated with `stream_state="user_terminated"`. '
@@ -1008,7 +1008,7 @@ async def terminate_stream(
             status_code=410,
         )
     if lifecycle.user_id != str(current_user.id):
-        # SHU-784 (scenario S1): stream_id is a UUID but UUIDs are not secrets
+        # SHU-802 (scenario S1): stream_id is a UUID but UUIDs are not secrets
         # — they appear in the SSE channel, browser network tab, and any
         # client-side logs. Ownership check is the gate, not unguessability.
         return create_error_response(
@@ -1187,7 +1187,7 @@ async def regenerate_message(
 
     Parameters
     ----------
-        http_request (Request): Starlette request, used to access `app.state.in_flight_streams` for SHU-784 lifecycle registration. Named `http_request` to avoid collision with the body-param `request` below.
+        http_request (Request): Starlette request, used to access `app.state.in_flight_streams` for SHU-802 lifecycle registration. Named `http_request` to avoid collision with the body-param `request` below.
         message_id (str): ID of the assistant message to regenerate.
         request (RegenerateMessageRequest): Optional regeneration options (e.g., `parent_message_id`, `rag_rewrite_mode`).
         current_user (User): Authenticated user (RBAC dependency).
@@ -1199,7 +1199,7 @@ async def regenerate_message(
         StreamingResponse: An SSE stream where each event is prefixed with `data: ` and contains a JSON payload; the stream ends with `data: [DONE]`.
 
     """
-    # SHU-784: created up-front with an empty conversation_id — the regenerate
+    # SHU-802: created up-front with an empty conversation_id — the regenerate
     # endpoint receives `message_id` from the URL and only learns the
     # conversation_id after target lookup. chat_service.regenerate_message
     # backfills it inside prepare. user_id is known up-front and gates the
@@ -1226,7 +1226,7 @@ async def regenerate_message(
             lifecycle=lifecycle,
         )
 
-        # SHU-784: register only after prepare/validation has returned cleanly.
+        # SHU-802: register only after prepare/validation has returned cleanly.
         # See send_message for rationale.
         in_flight_streams = _ensure_in_flight_streams(http_request.app)
         in_flight_streams[lifecycle.stream_id] = lifecycle
@@ -1236,7 +1236,7 @@ async def regenerate_message(
         # StreamingResponse. See the matching comment in send_message above.
         await db.close()
 
-        # SHU-784: see matching closure in send_message.
+        # SHU-802: see matching closure in send_message.
         def _signal_client_disconnected() -> None:
             lifecycle.signal("client_disconnected")
 

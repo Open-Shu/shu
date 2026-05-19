@@ -1,4 +1,4 @@
-"""Unit tests for ``drain_in_flight_streams`` (SHU-784).
+"""Unit tests for ``drain_in_flight_streams`` (SHU-802).
 
 The drain is the lifespan-shutdown counterpart to the per-stream
 supervisor: when the process receives SIGTERM, every entry in

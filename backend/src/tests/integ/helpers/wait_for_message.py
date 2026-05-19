@@ -1,6 +1,6 @@
-"""Poll for a persisted Message row (SHU-784).
+"""Poll for a persisted Message row (SHU-802).
 
-After SHU-784 detached the chat variant tasks from the SSE generator
+After SHU-802 detached the chat variant tasks from the SSE generator
 lifecycle, there's a small race window between the SSE response closing
 (client sees ``[DONE]``) and the variant's shielded finalize transaction
 committing. In practice the window is sub-200ms on the happy path because
@@ -18,7 +18,7 @@ re-querying every ``interval_seconds`` until either the row appears or
 2. Query the database immediately after a chat ``POST /send`` returns and
    want to be tolerant of finalize-after-response timing.
 
-Existing chat integration tests pre-SHU-784 read the row synchronously
+Existing chat integration tests pre-SHU-802 read the row synchronously
 after the SSE response closes, which still works on the happy path —
 finalize commits BEFORE emitting ``final_message``, and ``[DONE]`` only
 lands after the consumer sees ``final_message``. So the helper is for
@@ -88,7 +88,7 @@ async def wait_for_message_persisted(
     Args:
         db: Test ``AsyncSession``.
         conversation_id: Conversation to filter on.
-        role: Message role (defaults to ``"assistant"`` — the SHU-784
+        role: Message role (defaults to ``"assistant"`` — the SHU-802
             disconnect tests target the AI side).
         min_count: Wait until at least this many rows match before
             returning the latest. Used by ensemble tests where N variants

@@ -532,7 +532,7 @@ class Settings(BaseSettings):
     # startup. A startup WARNING is logged in any environment when non-zero.
     local_stream_test_chunk_delay_ms: int = Field(0, alias="SHU_LOCAL_STREAM_TEST_CHUNK_DELAY_MS")
 
-    # SHU-784: budget for the lifespan shutdown drain of in-flight chat streams.
+    # SHU-802: budget for the lifespan shutdown drain of in-flight chat streams.
     # When the FastAPI process receives SIGTERM (rolling deploy, k8s eviction),
     # the shutdown hook signals every registered StreamLifecycle with
     # `reason="shutdown"`. Each variant's consumer loop observes the signal,
@@ -757,7 +757,7 @@ class Settings(BaseSettings):
     @field_validator("stream_drain_timeout_s")
     @classmethod
     def validate_stream_drain_timeout_s(cls, v: int) -> int:
-        """SHU-784: drain budget must be at least one second.
+        """SHU-802: drain budget must be at least one second.
 
         A zero or negative drain means in-flight finalizes get cancelled
         immediately on shutdown, which reintroduces the disconnect-loss bug

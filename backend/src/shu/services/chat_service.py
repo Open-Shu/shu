@@ -123,7 +123,7 @@ class VariantStreamResult:
     - **success=False, terminated=False** — LLM error / provider failure.
       `error_message` / `error_type` / `error_details` carry the failure
       payload; finalize writes an apology Message + LLMUsage(success=False).
-    - **success=True, terminated=True** (SHU-784) — stream was interrupted
+    - **success=True, terminated=True** (SHU-802) — stream was interrupted
       by user-terminate or shutdown drain. `full_content` is whatever the
       provider emitted before the break; `usage` carries whatever partial
       tokens the provider reported (possibly zero with
@@ -148,7 +148,7 @@ class VariantStreamResult:
     error_type: str | None = None
     error_details: dict[str, Any] | None = None
 
-    # SHU-784: termination metadata. `terminated=True` indicates the stream
+    # SHU-802: termination metadata. `terminated=True` indicates the stream
     # was interrupted before its natural end (user-terminate or shutdown);
     # `partial_usage_unavailable=True` indicates the provider never emitted
     # a usage event before the break, so token counts are zero by absence
@@ -1149,7 +1149,7 @@ class ChatService:
             ensemble_model_configuration_ids: Optional additional model configuration IDs to execute
             attachment_ids: Optional attachment IDs to associate with the persisted user message
             force_no_streaming: If True, force non-streaming mode regardless of config settings
-            lifecycle: SHU-784. Optional StreamLifecycle owned by the endpoint; threaded
+            lifecycle: SHU-802. Optional StreamLifecycle owned by the endpoint; threaded
                 through to the ensemble so the consumer loop can observe terminate signals
                 and finalize can stamp `stream_state`. Synthesized internally when omitted
                 (direct-call test paths).
@@ -1280,7 +1280,7 @@ class ChatService:
             },
         )
 
-        # SHU-784: capture for the nested generator closure. Synthesizing
+        # SHU-802: capture for the nested generator closure. Synthesizing
         # a lifecycle when the caller didn't provide one keeps unit tests
         # that drive `send_message` directly (without an HTTP endpoint to
         # generate the stream_id) working — the synthesized lifecycle is
@@ -1293,7 +1293,7 @@ class ChatService:
         )
 
         async def _gen():
-            # SHU-784: stream_start is emitted before any content / user_message
+            # SHU-802: stream_start is emitted before any content / user_message
             # event so the client can capture stream_id as the first thing it
             # sees on the SSE channel. The frontend uses it for the terminate
             # endpoint; treating it as additive means existing clients that
@@ -1354,7 +1354,7 @@ class ChatService:
         if hasattr(current_user, "id") and conversation.user_id != current_user.id:
             raise ShuException("You don't have access to this conversation", "UNAUTHORIZED", status_code=403)
 
-        # SHU-784: backfill conversation_id on the caller-provided lifecycle.
+        # SHU-802: backfill conversation_id on the caller-provided lifecycle.
         # The regenerate endpoint receives `message_id` from the URL path and
         # doesn't know which conversation it belongs to until target lookup
         # — so the endpoint creates the lifecycle with conversation_id="" and
@@ -1479,7 +1479,7 @@ class ChatService:
         # write, replacing the two-commit pattern of the old regen_stream
         # wrapper and gaining UNIQUE-constraint retry on variant_index
         # collisions (r009_0001).
-        # SHU-784: capture for the nested generator closure. Mirrors the
+        # SHU-802: capture for the nested generator closure. Mirrors the
         # synthesizing pattern in send_message — unit tests that drive
         # regenerate_message without an endpoint get a synthesized lifecycle
         # that's never registered in app.state.in_flight_streams.
@@ -1490,7 +1490,7 @@ class ChatService:
         )
 
         async def _gen():
-            # SHU-784: stream_start first, mirrors send_message. The regenerate
+            # SHU-802: stream_start first, mirrors send_message. The regenerate
             # path previously returned the ensemble generator directly; wrapping
             # it in `_gen()` so we can emit stream_start before the first
             # variant event.

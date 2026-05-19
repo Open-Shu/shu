@@ -492,7 +492,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Failed to start memory trim task: {e}")
 
-    # SHU-784: in-flight SSE chat stream registry. Keyed by stream_id,
+    # SHU-802: in-flight SSE chat stream registry. Keyed by stream_id,
     # values are StreamLifecycle instances. Mutated only on the single
     # event loop — never from threadpool / worker contexts. See
     # `services/chat_streaming.py:StreamLifecycle` for the contract.
@@ -525,7 +525,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     task_attrs = [
         ("scheduler", "scheduler_task"),
         ("memory_trim", "memory_trim_task"),
-        # SHU-784: size-log task is a long-running asyncio.sleep loop; cancel
+        # SHU-802: size-log task is a long-running asyncio.sleep loop; cancel
         # it cleanly so the cancellation doesn't surface as a noisy warning
         # during the in-flight-streams drain (added in step 10 of this ticket).
         ("in_flight_streams_size_log", "in_flight_streams_size_log_task"),
@@ -556,7 +556,7 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
             except Exception as e:
                 logger.warning(f"Error while cancelling background task '{name}': {e}")
 
-    # SHU-784: drain in-flight chat streams. Signal `reason="shutdown"` on
+    # SHU-802: drain in-flight chat streams. Signal `reason="shutdown"` on
     # every registered StreamLifecycle; the variants' consumer loops observe
     # the signal at their next provider event and short-circuit to the
     # shielded finalize. We then await each stream's supervise_task (which
