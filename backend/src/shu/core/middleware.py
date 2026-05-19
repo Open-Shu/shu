@@ -19,7 +19,11 @@ from starlette.responses import JSONResponse, Response
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
-from ..core.tenant import tenant_context_for_email, tenant_context_for_user_id
+from ..core.tenant import (
+    UserTenantNotFoundError,
+    tenant_context_for_email,
+    tenant_context_for_user_id,
+)
 
 if TYPE_CHECKING:
     from .rate_limiting import RateLimitService
@@ -395,6 +399,15 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         )
                 break
 
+        except UserTenantNotFoundError:
+            # Verified JWT but the user has since been deleted. Match the
+            # "user not found" 401 that the in-context lookup branch returns
+            # so a missing user looks the same to the client regardless of
+            # whether the resolver or RLS-default-deny path surfaces it.
+            logger.warning(
+                f"JWT references deleted user for {request.method} {request.url.path}: {user_data.get('user_id')}"
+            )
+            return JSONResponse(status_code=401, content={"detail": "User account not found"})
         except Exception as e:
             logger.error(f"Database error during user validation: {e}")
             return JSONResponse(status_code=500, content={"detail": "Authentication validation failed"})

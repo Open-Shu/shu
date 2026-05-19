@@ -6,7 +6,7 @@ locking (SELECT ... FOR UPDATE) so no field update is silently clobbered
 by a racing webhook handler.
 
 Tables:
-    billing_state       — one row per tenant (UNIQUE on tenant_id)
+    billing_state       — one row per tenant; ``tenant_id`` IS the PK
     billing_state_audit — append-only field-change log for diagnostics
 """
 
@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Identity, Integer, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.orm import Mapped, mapped_column
 
 from shu.core.database import Base
 
@@ -25,22 +26,29 @@ from .base import TenantScopedMixin
 class BillingState(TenantScopedMixin, Base):
     """One billing-state row per tenant.
 
-    All webhook handlers and scheduler jobs MUST go through
-    BillingStateService.update() to mutate this row — never write directly
-    — so the row-level lock and audit trail are never bypassed.
+    Per-tenant by definition — there's no separate ``id``; ``tenant_id``
+    IS the primary key. All webhook handlers and scheduler jobs MUST go
+    through ``BillingStateService.update()`` to mutate this row — never
+    write directly — so the row-level lock and audit trail are never
+    bypassed.
     """
 
     __tablename__ = "billing_state"
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", name="billing_state_one_per_tenant"),
         CheckConstraint(
             "user_limit_enforcement IN ('soft', 'hard', 'none')",
             name="billing_state_enforcement_check",
         ),
     )
 
-    id = Column(Integer, Identity(), primary_key=True)
+    # Override the mixin's tenant_id column to make it the primary key.
+    # No explicit index — the PK constraint creates one implicitly.
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
 
     # Stripe customer/subscription identity
     stripe_customer_id = Column(Text, nullable=True)

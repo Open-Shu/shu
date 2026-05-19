@@ -28,6 +28,7 @@ from ..core.email.factory import get_effective_email_backend_name
 from ..core.rate_limiting import get_client_ip, get_rate_limit_service
 from ..core.response import ShuResponse
 from ..core.tenant import (
+    UserTenantNotFoundError,
     tenant_context_for_email,
     tenant_context_for_reset_token,
     tenant_context_for_user_id,
@@ -972,6 +973,11 @@ async def refresh_token(
             # Create JWT token response using shared helper
             return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
 
+    except UserTenantNotFoundError:
+        # Refresh token references a user that's been deleted since the
+        # token was issued. Surface as 401 so the client clears the session;
+        # 500 would mask a normal "you're not authenticated anymore" path.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     except HTTPException:
         raise
     except Exception as e:

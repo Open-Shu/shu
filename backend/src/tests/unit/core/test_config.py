@@ -83,6 +83,30 @@ class TestValidateTenantId:
         with pytest.raises(ValidationError, match="SHU_TENANT_ID must be a valid UUID"):
             Settings(_env_file=None)
 
+    def test_uppercase_uuid_is_normalized_to_lowercase(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SECURITY DEFINER lookups compare tenant_id via exact text
+        equality, so the validator canonicalizes the operator-typed string.
+        ``str(uuid.UUID(...))`` produces hyphenated-lowercase.
+        """
+        monkeypatch.setenv("SHU_DEPLOYMENT_MODE", "silo")
+        monkeypatch.setenv("SHU_TENANT_ID", "A9C8D3E2-1F4B-4C7E-9A0D-5B6E7F8A9B0C")
+        settings = Settings(_env_file=None)
+        assert settings.tenant_id == "a9c8d3e2-1f4b-4c7e-9a0d-5b6e7f8a9b0c"
+
+    def test_braced_uuid_is_normalized_to_canonical(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Python's UUID accepts ``{...}`` and urn:uuid:... wrappers; normalize
+        to the canonical hyphenated form so downstream comparisons see one
+        shape regardless of how an operator typed the env var.
+        """
+        monkeypatch.setenv("SHU_DEPLOYMENT_MODE", "silo")
+        monkeypatch.setenv("SHU_TENANT_ID", "{a9c8d3e2-1f4b-4c7e-9a0d-5b6e7f8a9b0c}")
+        settings = Settings(_env_file=None)
+        assert settings.tenant_id == "a9c8d3e2-1f4b-4c7e-9a0d-5b6e7f8a9b0c"
+
 
 class TestValidateDeploymentModeTenantCombo:
     """Tests for the cross-field model validator gating SHU_TENANT_ID on SHU_DEPLOYMENT_MODE."""

@@ -15,7 +15,7 @@ class McpServerConnection(TenantScopedMixin, BaseModel):
     # like "github" must not block tenant B from using the same. The composite
     # UniqueConstraint below enforces the per-tenant scope.
     name = Column(String(96), nullable=False)
-    __table_args__ = UniqueConstraint("tenant_id", "name", name="uq_mcp_server_connections_tenant_name")
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_mcp_server_connections_tenant_name"),)
     url = Column(String(500), nullable=False)
     tool_configs = Column(JSON, nullable=True)
     discovered_tools = Column(JSON, nullable=True)

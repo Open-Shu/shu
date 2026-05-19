@@ -29,7 +29,11 @@ from sqlalchemy.orm import selectinload
 
 from ..core.config import get_settings_instance
 from ..core.database import get_db
-from ..core.tenant import tenant_context_for_email, tenant_context_for_user_id
+from ..core.tenant import (
+    UserTenantNotFoundError,
+    tenant_context_for_email,
+    tenant_context_for_user_id,
+)
 from .jwt_manager import JWTManager
 from .models import User
 
@@ -129,8 +133,19 @@ async def resolve_tenant(
     else:
         assert cred.email is not None, "CredentialResolution must carry either user_id or email"
         cm = tenant_context_for_email(cred.email)
-    async with cm as tid:
-        yield tid
+    try:
+        async with cm as tid:
+            yield tid
+    except UserTenantNotFoundError as e:
+        # Verified JWT but the user row has since been deleted. Translate to
+        # 401 so the client sees a clean "you're no longer authenticated"
+        # signal instead of mysterious RLS-default-deny errors from any
+        # downstream query the route would have run.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
 
 
 async def fetch_user(

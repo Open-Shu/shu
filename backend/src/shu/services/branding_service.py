@@ -14,6 +14,25 @@ from ..schemas.branding import BrandingSettings, BrandingSettingsUpdate
 from .system_settings_service import SystemSettingsService
 
 
+def _build_default_payload(settings: Settings) -> dict[str, object]:
+    """Return default branding payload, derived from the operator-configured env vars.
+
+    Module-level so the instance method (``_default_payload``) and the
+    classmethod (``defaults``) share one shape without touching ``self``.
+    """
+    return {
+        "favicon_url": settings.branding_default_favicon_url,
+        "app_name": settings.app_name,
+        "light_theme_overrides": {},
+        "dark_theme_overrides": {},
+        "dark_favicon_url": settings.branding_default_dark_favicon_url,
+        "light_topbar_text_color": None,
+        "dark_topbar_text_color": None,
+        "updated_at": None,
+        "updated_by": None,
+    }
+
+
 class BrandingService:
     """Encapsulates branding configuration persistence and asset storage."""
 
@@ -36,6 +55,19 @@ class BrandingService:
             payload[key] = value
 
         return BrandingSettings.model_validate(payload)
+
+    @classmethod
+    def defaults(cls, settings: Settings | None = None) -> BrandingSettings:
+        """Build the default branding payload with no DB read.
+
+        Used by the public ``GET /settings/branding`` route in multi-tenant
+        mode, where the per-tenant ``system_settings`` row isn't readable
+        without a tenant_context and the policy is "no per-tenant branding
+        in MT" anyway. Skips the transaction we'd otherwise burn just to
+        fall back to defaults.
+        """
+        settings = settings or get_settings_instance()
+        return BrandingSettings.model_validate(_build_default_payload(settings))
 
     async def update_branding(
         self,
@@ -163,17 +195,7 @@ class BrandingService:
         return mime_type or "application/octet-stream"
 
     def _default_payload(self) -> dict[str, object]:
-        return {
-            "favicon_url": self.settings.branding_default_favicon_url,
-            "app_name": self.settings.app_name,
-            "light_theme_overrides": {},
-            "dark_theme_overrides": {},
-            "dark_favicon_url": self.settings.branding_default_dark_favicon_url,
-            "light_topbar_text_color": None,
-            "dark_topbar_text_color": None,
-            "updated_at": None,
-            "updated_by": None,
-        }
+        return _build_default_payload(self.settings)
 
     def _validate_asset(self, *, filename: str, file_bytes: bytes) -> None:
         if not filename:

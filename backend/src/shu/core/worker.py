@@ -39,6 +39,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from .config import DeploymentMode, get_settings_instance
 from .database import get_async_session_local
 from .queue_backend import Job, QueueBackend
 from .tenant import MissingTenantContextError, tenant_context_for_tenant_id
@@ -93,8 +94,6 @@ class WorkloadCapacityLimiter:
             A configured WorkloadCapacityLimiter.
 
         """
-        from .config import get_settings_instance
-
         settings = get_settings_instance()
         limits: dict[WorkloadType, int] = {}
 
@@ -694,8 +693,6 @@ async def list_all_tenant_ids() -> list[str]:
     isolation posture of ``tenants`` is the equivalent of breaking
     catalog reads system-wide; treat with care.
     """
-    from .config import DeploymentMode, get_settings_instance
-
     session_factory = get_async_session_local()
     async with session_factory() as session:
         result = await session.execute(text("SELECT id FROM tenants"))

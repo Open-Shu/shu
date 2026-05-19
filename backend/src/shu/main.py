@@ -268,34 +268,52 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"billing config validation failed: {e}")
 
-    # Ensure the billing_state singleton row exists, then seed from env vars.
-    # These run in separate transaction scopes: ensure_singleton commits via
-    # session.begin() context exit; seed_from_config → BillingStateService.update()
-    # always commits its own transaction and must not run inside an outer begin().
+    # Ensure the billing_state row exists, then seed from env vars.
+    # ensure_exists commits via session.begin() context exit; seed_from_config
+    # → BillingStateService.update() always commits its own transaction and
+    # must not run inside an outer begin(). Multi-tenant skips entirely —
+    # tenant onboarding (out of scope here) owns the per-tenant create. For
+    # self-hosted/silo the per-tenant fan-out resolves to one tenant.
     try:
         from .billing.config import get_billing_settings
         from .billing.state_service import BillingStateService
+        from .core.config import DeploymentMode
         from .core.database import get_async_session_local
+        from .core.tenant import for_each_tenant_in_deployment
 
-        session_maker = get_async_session_local()
-        billing_settings = get_billing_settings()
-        async with session_maker() as session:
-            async with session.begin():
-                _, inserted = await BillingStateService.ensure_singleton(session)
-            # SHU-730: seed enforcement mode exactly once per deployment. Only
-            # writes when the singleton was freshly inserted so operator edits
-            # survive restarts. `is_configured` is our proxy for "hosted +
-            # billed", where hard enforcement is the safe default; self-hosted
-            # stays `none`.
-            if inserted:
-                await BillingStateService.update(
-                    session,
-                    updates={
-                        "user_limit_enforcement": "hard" if billing_settings.is_configured else "none",
-                    },
-                    source="startup:seed_enforcement",
-                )
-            await BillingStateService.seed_from_config(session, billing_settings)
+        if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
+            # SHU-785: tenant onboarding (in shu-control-plane) owns the
+            # per-tenant ``BillingStateService.ensure_exists`` + Stripe-customer
+            # wire-up. Without it, the first webhook for an unseeded tenant
+            # 409s (no stripe_customer_id mapping) and every billing mutation
+            # raises ``RuntimeError("billing_state row missing")``.
+            logger.debug(
+                "billing_state seed skipped (multi-tenant; tenant onboarding owns per-tenant create — SHU-785)"
+            )
+        else:
+            session_maker = get_async_session_local()
+            billing_settings = get_billing_settings()
+
+            async def _seed_billing_for_tenant(_tid: str) -> None:
+                async with session_maker() as session:
+                    async with session.begin():
+                        _, inserted = await BillingStateService.ensure_exists(session)
+                    # SHU-730: seed enforcement mode exactly once per deployment.
+                    # Only writes when the row was freshly inserted so operator
+                    # edits survive restarts. ``is_configured`` is our proxy for
+                    # "hosted + billed", where hard enforcement is the safe
+                    # default; self-hosted stays ``none``.
+                    if inserted:
+                        await BillingStateService.update(
+                            session,
+                            updates={
+                                "user_limit_enforcement": "hard" if billing_settings.is_configured else "none",
+                            },
+                            source="startup:seed_enforcement",
+                        )
+                    await BillingStateService.seed_from_config(session, billing_settings)
+
+            await for_each_tenant_in_deployment(_seed_billing_for_tenant)
     except Exception as e:
         logger.warning(f"billing_state init failed: {e}")
 
@@ -319,32 +337,43 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.error(f"Failed to initialize vector store: {e}", exc_info=True)
 
-    # Detect stale knowledge bases (embedding model mismatch)
+    # Detect stale knowledge bases (embedding model mismatch). Two passes:
+    # the per-tenant pass reads tenant-scoped ``KnowledgeBase`` rows under
+    # each tenant's RLS scope; the global pass touches HNSW indexes which
+    # are schema-level (pg_indexes / DDL on shared tables), so it runs once
+    # without a tenant context.
     try:
         from .core.database import get_async_session_local
         from .core.embedding_service import get_embedding_service
+        from .core.tenant import for_each_tenant_in_deployment
+        from .core.vector_store import drop_orphaned_indexes, get_vector_store
         from .services.knowledge_base_service import detect_stale_kbs
 
         embedding_service = await get_embedding_service()
         session_factory = get_async_session_local()
+
+        total_stale = 0
+
+        async def _detect_stale_for_tenant(_tid: str) -> None:
+            nonlocal total_stale
+            async with session_factory() as session:
+                stale_ids = await detect_stale_kbs(session, embedding_service.model_name)
+                total_stale += len(stale_ids)
+                await session.commit()
+
+        await for_each_tenant_in_deployment(_detect_stale_for_tenant)
+        if total_stale:
+            logger.warning(f"Found {total_stale} stale knowledge base(s) needing re-embedding")
+
         async with session_factory() as session:
-            stale_ids = await detect_stale_kbs(session, embedding_service.model_name)
-            if stale_ids:
-                logger.warning(f"Found {len(stale_ids)} stale knowledge base(s) needing re-embedding")
-
-            # Drop HNSW indexes for dimensions that no longer match the active model
-            from .core.vector_store import drop_orphaned_indexes
-
             dropped = await drop_orphaned_indexes(session, embedding_service.dimension)
             if dropped:
                 logger.info(f"Dropped {len(dropped)} orphaned vector index(es)")
 
-            # Ensure HNSW indexes exist for the current embedding dimension.
-            # After the dimensionless migration drops old IVFFlat indexes, new HNSW
-            # indexes won't exist until something triggers ensure_index(). Run it
-            # unconditionally so vector search has indexes from the first query.
-            from .core.vector_store import get_vector_store
-
+            # After the dimensionless migration drops old IVFFlat indexes, new
+            # HNSW indexes won't exist until something triggers ensure_index().
+            # Run unconditionally so vector search has indexes from the first
+            # query.
             vs = await get_vector_store()
             for collection in ("chunks", "synopses", "queries", "chunk_summaries"):
                 await vs.ensure_index(collection, embedding_service.dimension, db=session)
@@ -362,13 +391,22 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         logger.warning(f"Failed to start unified scheduler: {e}")
 
     # Mark stale KB imports as error (runs unconditionally — imports use background
-    # tasks in the API process, not the worker queue)
+    # tasks in the API process, not the worker queue). Reads tenant-scoped
+    # ``KnowledgeBase`` rows, so fan out per-tenant — otherwise RLS default-deny
+    # silently zeros the result in every deployment mode.
     try:
+        from .core.tenant import for_each_tenant_in_deployment
         from .services.kb_import_export_service import mark_stale_imports_as_error
 
-        marked = await mark_stale_imports_as_error()
-        if marked:
-            logger.info(f"Marked {marked} stale importing KB(s) as error")
+        total_marked = 0
+
+        async def _mark_stale_for_tenant(_tid: str) -> None:
+            nonlocal total_marked
+            total_marked += await mark_stale_imports_as_error()
+
+        await for_each_tenant_in_deployment(_mark_stale_for_tenant)
+        if total_marked:
+            logger.info(f"Marked {total_marked} stale importing KB(s) as error")
     except Exception as e:
         logger.error(f"Failed to mark stale imports: {e}", exc_info=True)
 

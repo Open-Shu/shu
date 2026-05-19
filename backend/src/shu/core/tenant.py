@@ -21,7 +21,7 @@ Holds:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from logging import Logger
@@ -67,6 +67,39 @@ class CrossTenantInsertError(RuntimeError):
     """
 
 
+class TenantResolutionError(RuntimeError):
+    """Credential didn't map to any tenant.
+
+    Base class for credential-specific subclasses so route layers can
+    catch precisely the credential kind they own (a webhook handler
+    catches ``UnknownStripeCustomerError`` and returns 409; an auth
+    dependency catches ``UserTenantNotFoundError`` and returns 401).
+    Catching the base class is fine for a generic "no tenant" guard.
+    """
+
+
+class UnknownStripeCustomerError(TenantResolutionError):
+    """Stripe customer_id from a webhook payload doesn't map to any tenant.
+
+    Without this, the legacy silent-None path stamped
+    ``tenant_context=None``, ran the webhook body under RLS default-deny,
+    returned a successful 200, and let Stripe drop the event — no record,
+    no retry. Raising here lets the route return a non-2xx so the event
+    stays visible.
+    """
+
+
+class UserTenantNotFoundError(TenantResolutionError):
+    """user_id from a verified JWT doesn't map to any tenant.
+
+    Practical cause is the deleted-user-with-active-JWT edge: the JWT was
+    valid when issued, the user row has since been removed. Without this,
+    the legacy silent-None path produced confusing RLS-default-deny errors
+    from downstream queries; with it, the auth dependency surfaces a
+    clean 401.
+    """
+
+
 # =============================================================================
 # Multi-tenant lookups via SECURITY DEFINER functions (SHU-761)
 #
@@ -90,9 +123,12 @@ def _open_app_session():
 
 
 @alru_cache(maxsize=4096)
-async def _lookup_tenant_for_user(user_id: str) -> str:
+async def _lookup_tenant_for_user(user_id: str) -> str | None:
     # Cached: fires on every authenticated request that hits resolve_tenant —
     # the hot path. user→tenant is set-once, so the cache can't go stale.
+    # Returns None on miss (deleted-user-with-active-JWT edge); the caller
+    # in ``_tenant_context_for_credential`` translates that to a typed
+    # ``UserTenantNotFoundError`` so the auth dependency can 401 cleanly.
     async with _open_app_session() as session:
         result = await session.execute(
             text("SELECT tenant_for_user_id(:uid)"),
@@ -172,10 +208,14 @@ def _is_no_data_found(exc: DBAPIError) -> bool:
     return sqlstate == "P0002"
 
 
-async def _lookup_tenant_for_stripe_customer(customer_id: str) -> str:
+async def _lookup_tenant_for_stripe_customer(customer_id: str) -> str | None:
     # Uncached: webhooks are bursty per customer but ultimately rare per
     # second; the cost of an extra session is dominated by the network RTT
     # the webhook already paid.
+    # Returns None on miss (unknown customer in our DB — e.g. webhook for a
+    # deleted tenant). The caller in ``_tenant_context_for_credential``
+    # translates that to ``UnknownStripeCustomerError`` so the webhook
+    # route returns 409 instead of silently ack'ing 200.
     async with _open_app_session() as session:
         result = await session.execute(
             text("SELECT tenant_for_stripe_customer(:cid)"),
@@ -220,7 +260,16 @@ async def _tenant_context_for_credential(
             tid = settings.tenant_id  # validator guarantees this is a UUID string
         elif user_id is not None:
             tid = await _lookup_tenant_for_user(user_id)
+            if tid is None:
+                # Deleted user with a still-valid JWT — surface to auth
+                # dependency as a clean 401, not as downstream RLS noise.
+                raise UserTenantNotFoundError(f"No tenant found for user_id={user_id!r}; user may have been deleted.")
         elif email is not None:
+            # ``_lookup_tenant_for_email`` returns None silently on miss; the
+            # login/SSO/password-reset routes that funnel through here want
+            # the RLS-default-deny path so they emit a generic "invalid
+            # credentials" 401 (and don't leak email existence). Don't
+            # translate to a typed exception here.
             tid = await _lookup_tenant_for_email(email)
         elif reset_token_hash is not None:
             tid = await _lookup_tenant_for_reset_token(reset_token_hash)
@@ -228,6 +277,11 @@ async def _tenant_context_for_credential(
             tid = await _lookup_tenant_for_verification_token(verification_token_hash)
         elif stripe_customer_id is not None:
             tid = await _lookup_tenant_for_stripe_customer(stripe_customer_id)
+            if tid is None:
+                # Webhook for a customer we don't have in billing_state — let
+                # the route surface a non-2xx so Stripe stops retrying but the
+                # event stays visible (the legacy silent-200 dropped events).
+                raise UnknownStripeCustomerError(f"No tenant found for stripe customer_id={stripe_customer_id!r}.")
         else:
             raise MissingTenantContextError(
                 "Multi-tenant tenant resolution requires a credential identifier; none was provided."
@@ -366,6 +420,40 @@ def tenant_context_for_tenant_id(tenant_id: str | None):
     — silo / self-hosted produce the right tenant; multi-tenant raises.
     """
     return _tenant_context_for_credential(tenant_id=tenant_id)
+
+
+async def for_each_tenant_in_deployment(
+    work: Callable[[str], Awaitable[None]],
+) -> None:
+    """Run ``work(tenant_id)`` once per tenant under that tenant's context.
+
+    Self-hosted / silo: invokes ``work`` once with the deployment's tenant.
+    Multi-tenant: invokes ``work`` for every row of the ``tenants`` catalog
+    in catalog-insertion order.
+
+    Each invocation runs inside ``tenant_context_for_tenant_id(tid)`` so
+    DB queries scope correctly under RLS. The context resets between
+    invocations and on exception — exceptions raised by ``work`` propagate
+    after the current tenant's context is cleaned up.
+
+    Why a higher-order function instead of an async generator: the natural
+    ``async for tid in helper(): ...`` shape leaks tenant_context if the
+    loop body raises. Python's async-iter protocol schedules generator
+    cleanup but doesn't await it before the exception unwinds — leaving
+    the contextvar in the failed iteration's tenant. The callback shape
+    guarantees ``__aexit__`` runs synchronously before propagating.
+
+    Suitable for boot-time fan-outs (stale-KB detection) and scheduler
+    ticks that need identical work against every tenant.
+    """
+    # Deferred import: ``list_all_tenant_ids`` lives in ``core.worker`` to
+    # keep it next to the dispatch loop that owns the BYPASSRLS reasoning.
+    # Top-level import would close the cycle (worker → tenant → worker).
+    from .worker import list_all_tenant_ids
+
+    for tid in await list_all_tenant_ids():
+        async with tenant_context_for_tenant_id(tid):
+            await work(tid)
 
 
 def warn_tenant_without_redis(caller_logger: Logger, backend_kind: str, tenant_id: str) -> None:

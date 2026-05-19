@@ -52,7 +52,7 @@ from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient, StripeClientError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
-from shu.core.tenant import tenant_context_for_stripe_customer
+from shu.core.tenant import UnknownStripeCustomerError, tenant_context_for_stripe_customer
 
 logger = get_logger(__name__)
 
@@ -711,6 +711,21 @@ async def handle_webhook(
             ).model_dump()
         )
 
+    except UnknownStripeCustomerError:
+        # Webhook for a customer that doesn't exist in our billing_state.
+        # Returning 409 (not 200) is critical to prevent retry storms.
+        logger.warning(
+            "Webhook event for unknown stripe customer; cannot resolve tenant",
+            extra={
+                "stripe_customer_id": customer_id,
+                "event_type": event_payload.get("type"),
+                "event_id": event_payload.get("id"),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "unknown_customer"},
+        )
     except CustomerMismatchError as e:
         # Defense-in-depth surfaced a router registry misconfiguration. Return
         # a structured 409 so the router (once its forwarder parses error

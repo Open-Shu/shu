@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from shu.billing.cp_client import _BILLING_STATE_ADAPTER, BillingState
@@ -66,9 +67,13 @@ class BillingStatePersister:
             session_local = self._session_factory()
             async with session_local() as db:
                 await SystemSettingsService(db).upsert(PERSIST_KEY, payload)
-        except Exception:
-            # Persistence is best-effort; the in-memory value is already
-            # correct and a write failure shouldn't take down the request.
+        except SQLAlchemyError:
+            # Persistence is best-effort against transient DB issues; the
+            # in-memory cache value is already correct and a write failure
+            # shouldn't take down the request. ``SQLAlchemyError`` covers
+            # DBAPIError/OperationalError/IntegrityError without swallowing
+            # bare programming errors (TypeError, AttributeError) — those
+            # indicate a bug and should propagate.
             _logger.warning("failed to persist billing state to system_settings", exc_info=True)
 
     async def load(self) -> BillingState | None:
@@ -76,7 +81,9 @@ class BillingStatePersister:
             session_local = self._session_factory()
             async with session_local() as db:
                 value = await SystemSettingsService(db).get_value(PERSIST_KEY)
-        except Exception:
+        except SQLAlchemyError:
+            # Same narrowing as ``save`` — let non-DB exceptions propagate so
+            # bugs aren't masked behind a "cache miss".
             _logger.warning("failed to load persisted billing state from system_settings", exc_info=True)
             return None
         if value is None:

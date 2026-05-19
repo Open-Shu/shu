@@ -286,6 +286,17 @@ max_attempts_strategy = st.integers(min_value=1, max_value=100)
 # Strategy for generating valid visibility_timeout
 visibility_timeout_strategy = st.integers(min_value=1, max_value=86400)  # 1 second to 24 hours
 
+# Strategy for generating tenant_id values. Required on every serialized Job
+# (``from_json`` rejects payloads without it), so the property test must
+# always set one.
+tenant_id_strategy = st.sampled_from(
+    [
+        "00000000-0000-0000-0000-000000000001",
+        "11111111-1111-1111-1111-111111111111",
+        "deadbeef-dead-beef-dead-beefdeadbeef",
+    ]
+)
+
 
 # Strategy for generating complete Job objects
 job_strategy = st.builds(
@@ -301,6 +312,7 @@ job_strategy = st.builds(
     attempts=attempts_strategy,
     max_attempts=max_attempts_strategy,
     visibility_timeout=visibility_timeout_strategy,
+    tenant_id=tenant_id_strategy,
 )
 
 
@@ -2186,24 +2198,27 @@ class TestRedisQueueBackendTenantPrefix:
         assert backend._scheduled_key("tasks") == "queue:tasks:scheduled"
         assert backend._job_key("tasks", "abc") == "queue:tasks:job:abc"
 
-    def test_provider_prefixes_every_key_helper(self) -> None:
+    def test_namespace_prefixes_every_key_helper(self) -> None:
         backend = RedisQueueBackend(
-            MockRedisClientForQueue(), tenant_id_provider=lambda: "t1"
+            MockRedisClientForQueue(), namespace="t1"
         )
         assert backend._queue_key("tasks") == "t1:queue:tasks"
         assert backend._processing_key("tasks") == "t1:queue:tasks:processing"
         assert backend._scheduled_key("tasks") == "t1:queue:tasks:scheduled"
         assert backend._job_key("tasks", "abc") == "t1:queue:tasks:job:abc"
 
-    def test_provider_called_per_key_so_tenants_dont_collide(self) -> None:
-        # Same backend instance, different return values across calls — proves
-        # we read the provider lazily rather than caching at __init__.
-        tenant_ids = iter(["a", "b"])
+    def test_namespace_is_static_so_keys_are_deterministic(self) -> None:
+        # Pre-SHU-761 fix this constructor took a per-call callable, and the
+        # worker poll loop blew up calling it without a tenant context. The
+        # namespace is now resolved once at construction — every key built
+        # by this backend instance shares the same prefix regardless of
+        # caller context.
         backend = RedisQueueBackend(
-            MockRedisClientForQueue(), tenant_id_provider=lambda: next(tenant_ids)
+            MockRedisClientForQueue(), namespace="deployment-A"
         )
-        assert backend._queue_key("tasks") == "a:queue:tasks"
-        assert backend._queue_key("tasks") == "b:queue:tasks"
+        assert backend._queue_key("tasks") == "deployment-A:queue:tasks"
+        assert backend._queue_key("tasks") == "deployment-A:queue:tasks"
+        assert backend._prefix == "deployment-A:"
 
 
 def _factory_settings(
@@ -2233,14 +2248,15 @@ class TestGetQueueBackendFactory:
         queue_backend_module._queue_backend = None
 
     @pytest.mark.asyncio
-    async def test_redis_enabled_wires_resolve_tenant_for_infra(self) -> None:
-        """Factory must hand the tenant resolver to the backend so silo /
-        multi-tenant deployments sharing a Redis instance namespace their
-        queue keys per-tenant.
+    async def test_redis_enabled_wires_deployment_namespace(self) -> None:
+        """Factory resolves the Redis key namespace once at construction
+        (deployment-level, not per-tenant) so the worker poll loop —
+        which runs without a tenant context — can build the same keys
+        as the request path.
         """
-        from shu.core.tenant import resolve_tenant_for_infra
-
         settings = _factory_settings(redis_url="redis://localhost", tenant_id="t1")
+        # Silo with tenant_id="t1" → resolve_redis_namespace() returns "t1".
+        settings.redis_namespace = None
         mock_client = MockRedisClientForQueue()
 
         async def _fake_shared_client() -> Any:
@@ -2248,12 +2264,16 @@ class TestGetQueueBackendFactory:
 
         with (
             patch("shu.core.config.get_settings_instance", return_value=settings),
+            # resolve_redis_namespace lives in shu.core.tenant and binds
+            # get_settings_instance at import — patch the attribute in that
+            # module too so the namespace lookup actually sees our stub.
+            patch("shu.core.tenant.get_settings_instance", return_value=settings),
             patch.object(queue_backend_module, "_get_shared_redis_client", _fake_shared_client),
         ):
             backend = await get_queue_backend()
 
         assert isinstance(backend, RedisQueueBackend)
-        assert backend._tenant_id_provider is resolve_tenant_for_infra
+        assert backend._prefix == "t1:"
 
     @pytest.mark.asyncio
     async def test_redis_disabled_with_tenant_id_logs_warning(

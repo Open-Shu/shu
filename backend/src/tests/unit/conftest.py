@@ -59,7 +59,15 @@ def _default_tenant_context():
     Tests that need to exercise the missing-context path should pop the
     context with ``tenant_context.reset(token)``.
     """
-    from shu.core.tenant import tenant_context
+    from shu.core.tenant import _lookup_tenant_for_user, tenant_context
+
+    # Clear the process-local async-LRU on _lookup_tenant_for_user before
+    # every test. The cache is sized at 4096 and persists across tests, so a
+    # test that patches the underlying lookup (or the SD function) to return
+    # one tenant_id for a given user_id will see the stale earlier value if a
+    # prior test mocked it differently. Clearing per-test gives us
+    # isolation; production still benefits from cross-request caching.
+    _lookup_tenant_for_user.cache_clear()
 
     token = tenant_context.set("00000000-0000-0000-0000-000000000001")
     yield

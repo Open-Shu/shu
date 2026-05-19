@@ -17,7 +17,7 @@ Sections, in apply order:
      unique constraints on the SD-function lookup columns, and the
      SECURITY DEFINER family of pre-auth tenant resolvers.
 
-Revision: 009_tenant_isolation
+Revision: 009
 Revises: 008
 Create Date: 2026-05-15
 """
@@ -29,7 +29,7 @@ from alembic import op
 
 from shu.core.config import SELF_HOSTED_TENANT_UUID, DeploymentMode, get_settings_instance
 
-revision = "009_tenant_isolation"
+revision = "009"
 down_revision = "008"
 branch_labels = None
 depends_on = None
@@ -339,11 +339,13 @@ def upgrade() -> None:
     # column has to exist before the PK can reference it) and BEFORE the
     # downgrade-symmetric DROP COLUMN runs at downgrade time.
     #
-    # Idempotent shape: only swap when the existing PK is still single-column
-    # (the pre-009 shape). Re-runs after a successful swap see a 2-column PK
-    # and skip — without this guard, dropping a PK that's already the new
-    # composite shape would just re-create it pointlessly (or worse, drop it
-    # and then ADD CONSTRAINT would fail if the name conflict timing went wrong).
+    # Idempotent shape: swap when the existing PK is still single-column
+    # (the pre-009 shape) OR when there's no PK at all (a previous run
+    # crashed between DROP and ADD). Re-runs after a successful swap see a
+    # 2-column PK and skip. Without the ``IS NULL`` branch the recovery
+    # path silently leaves the table without a PK — belt-and-suspenders
+    # against any future refactor that moves this swap past an autocommit
+    # boundary where partial-failure recovery becomes possible.
     op.execute(
         """
         DO $$
@@ -353,8 +355,8 @@ def upgrade() -> None:
             FROM pg_constraint
             WHERE conname = 'system_settings_pkey'
               AND conrelid = 'system_settings'::regclass;
-            IF pk_col_count = 1 THEN
-                ALTER TABLE system_settings DROP CONSTRAINT system_settings_pkey;
+            IF pk_col_count IS NULL OR pk_col_count = 1 THEN
+                ALTER TABLE system_settings DROP CONSTRAINT IF EXISTS system_settings_pkey;
                 ALTER TABLE system_settings ADD CONSTRAINT system_settings_pkey
                     PRIMARY KEY (tenant_id, key);
             END IF;
@@ -383,6 +385,30 @@ def upgrade() -> None:
             table_name, new_constraint, f"UNIQUE (tenant_id, {col})"
         )
 
+    # plugin_storage uniqueness pre-009 was (scope, user_id, plugin_name,
+    # namespace, key) — globally unique. With the table tenant-scoped, two
+    # tenants writing the same (plugin_name, namespace, key) at scope='system'
+    # would collide on INSERT even though RLS hides the other row from reads.
+    # Add tenant_id to both the named UNIQUE and the partial system-scope
+    # index, dropping the legacy shapes if present.
+    op.execute("ALTER TABLE plugin_storage DROP CONSTRAINT IF EXISTS uq_plugin_storage_scope_key")
+    op.execute("DROP INDEX IF EXISTS ix_plugin_storage_lookup")
+    op.execute("DROP INDEX IF EXISTS uq_plugin_storage_system_scope_key")
+    _add_constraint_if_missing(
+        "plugin_storage",
+        "uq_plugin_storage_tenant_scope_key",
+        "UNIQUE (tenant_id, scope, user_id, plugin_name, namespace, key)",
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_plugin_storage_lookup "
+        "ON plugin_storage (tenant_id, scope, user_id, plugin_name, namespace, key)"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_plugin_storage_system_scope_key "
+        "ON plugin_storage (tenant_id, plugin_name, namespace, key) "
+        "WHERE scope = 'system'"
+    )
+
     for table_name in tables:
         if table_name not in _LARGE_TABLES:
             # IF NOT EXISTS so a partial-failure re-run doesn't fail on the
@@ -409,10 +435,29 @@ def upgrade() -> None:
 
     # CONCURRENTLY needs autocommit — alembic's autocommit_block() ends the
     # current transaction, runs the body in autocommit, opens a fresh tx after.
+    #
+    # If a previous run was interrupted (process kill, OOM, network blip)
+    # during a CREATE INDEX CONCURRENTLY, Postgres leaves the index in the
+    # catalog with ``pg_index.indisvalid = false``. ``IF NOT EXISTS`` would
+    # then silently skip the rebuild on re-run — the migration completes
+    # "successfully" with a non-functional index. Drop any invalid sibling
+    # first so the recreate has a clean slate.
     with op.get_context().autocommit_block():
+        conn = op.get_bind()
         for table_name in sorted(_LARGE_TABLES & set(tables)):
+            idx_name = f"ix_{table_name}_tenant_id"
+            invalid = conn.execute(
+                sa.text(
+                    "SELECT 1 FROM pg_index i "
+                    "JOIN pg_class c ON c.oid = i.indexrelid "
+                    "WHERE c.relname = :name AND NOT i.indisvalid"
+                ),
+                {"name": idx_name},
+            ).first()
+            if invalid is not None:
+                op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {idx_name}")
             op.execute(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_{table_name}_tenant_id ON {table_name} (tenant_id)"
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {idx_name} ON {table_name} (tenant_id)"
             )
 
     # =========================================================================
@@ -548,47 +593,40 @@ def upgrade() -> None:
     # =========================================================================
     # E. billing_state restructure (task 4.3) + RLS enablement (task 14.1)
     #
-    # The billing restructure lifts the singleton pin so we can hold one row
-    # per tenant: drop the id=1 CHECK, switch id to Identity (START WITH 2 so
-    # the existing singleton row at id=1 doesn't collide with the sequence's
-    # first emission), and add UNIQUE(tenant_id) to encode the per-tenant
-    # invariant. Then RLS turns on for every tenant-scoped table and the
-    # tenant_isolation policy starts filtering.
+    # ``tenant_id`` IS the primary key — one row per tenant by definition; no
+    # separate surrogate ``id`` needed. The pre-009 shape pinned ``id = 1``
+    # via a CHECK constraint and a separate UNIQUE(tenant_id); we drop the
+    # CHECK, drop the legacy ``id`` column, drop the now-redundant UNIQUE,
+    # and promote tenant_id to PK. Then RLS turns on for every tenant-scoped
+    # table and the tenant_isolation policy starts filtering.
     # =========================================================================
     op.execute("ALTER TABLE billing_state DROP CONSTRAINT IF EXISTS billing_state_singleton")
-    # Convert id to a GENERATED BY DEFAULT identity column.
-    #
-    # ``BY DEFAULT`` (not ``ALWAYS``): explicit ``id`` values in INSERTs are
-    # still accepted — the sequence only kicks in when ``id`` is omitted.
-    # That matters because the pre-009 singleton row already has ``id = 1``
-    # in production data; we keep that row's id stable across the migration
-    # rather than rewriting it. ``ALWAYS`` would forbid explicit inserts and
-    # would require an ``OVERRIDING SYSTEM VALUE`` clause everywhere that
-    # writes ids — too much churn for a structural-only migration.
-    #
-    # Postgres rejects the ADD if it's already an identity, so guard on
-    # pg_attribute.attidentity ('' means not-an-identity; 'a' means ALWAYS;
-    # 'd' means BY DEFAULT).
+    # Drop any UNIQUE(tenant_id) constraint left over from an earlier version
+    # of this migration. Once tenant_id is PK, the PK enforces uniqueness on
+    # its own and a separate UNIQUE is redundant.
+    op.execute("ALTER TABLE billing_state DROP CONSTRAINT IF EXISTS billing_state_one_per_tenant")
+    # Swap the PK from `id` to `tenant_id`. Guard so a re-run after the swap
+    # is a no-op.
     op.execute(
         """
         DO $$
+        DECLARE pk_def text;
         BEGIN
-            IF (
-                SELECT attidentity FROM pg_attribute
-                WHERE attrelid = 'billing_state'::regclass AND attname = 'id'
-            ) = '' THEN
-                ALTER TABLE billing_state ALTER COLUMN id DROP DEFAULT;
-                ALTER TABLE billing_state ALTER COLUMN id
-                    ADD GENERATED BY DEFAULT AS IDENTITY (START WITH 2);
+            SELECT pg_get_constraintdef(oid) INTO pk_def
+            FROM pg_constraint
+            WHERE conrelid = 'billing_state'::regclass AND contype = 'p';
+            IF pk_def IS NULL OR pk_def NOT LIKE '%(tenant_id)%' THEN
+                ALTER TABLE billing_state DROP CONSTRAINT IF EXISTS billing_state_pkey;
+                ALTER TABLE billing_state ADD CONSTRAINT billing_state_pkey
+                    PRIMARY KEY (tenant_id);
             END IF;
         END $$;
         """
     )
-    _add_constraint_if_missing(
-        "billing_state",
-        "billing_state_one_per_tenant",
-        "UNIQUE (tenant_id)",
-    )
+    # Drop the legacy id column. ``IF EXISTS`` keeps re-runs idempotent after
+    # the column is gone. Sequence backing the column (if any) is dropped
+    # with the column.
+    op.execute("ALTER TABLE billing_state DROP COLUMN IF EXISTS id")
 
     for table_name in tables:
         # ENABLE / FORCE are idempotent in Postgres — no guard needed.
@@ -620,9 +658,36 @@ def downgrade() -> None:
         op.execute(f"ALTER TABLE {table_name} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table_name} DISABLE ROW LEVEL SECURITY")
 
+    # Restore the legacy ``id = 1`` singleton shape. Downgrade fails noisily
+    # if more than one tenant has a billing_state row — collapsing them into
+    # a single id=1 would silently drop customer data.
+    op.execute(
+        """
+        DO $$
+        DECLARE row_count int;
+        BEGIN
+            SELECT COUNT(*) INTO row_count FROM billing_state;
+            IF row_count > 1 THEN
+                RAISE EXCEPTION 'Cannot downgrade billing_state restructure: % rows present (need <= 1 to fit the pre-009 singleton shape)', row_count;
+            END IF;
+        END $$;
+        """
+    )
+    # Drop the post-009-original UNIQUE on tenant_id if a previous deploy
+    # of 009 left it in place — Section B's ``DROP COLUMN tenant_id`` below
+    # would otherwise fail (UNIQUE references the column we're about to drop).
     op.execute("ALTER TABLE billing_state DROP CONSTRAINT IF EXISTS billing_state_one_per_tenant")
-    op.execute("ALTER TABLE billing_state ALTER COLUMN id DROP IDENTITY IF EXISTS")
+    op.execute("ALTER TABLE billing_state ADD COLUMN IF NOT EXISTS id INTEGER")
+    op.execute("UPDATE billing_state SET id = 1 WHERE id IS NULL")
+    op.execute("ALTER TABLE billing_state ALTER COLUMN id SET NOT NULL")
     op.execute("ALTER TABLE billing_state ALTER COLUMN id SET DEFAULT 1")
+    op.execute("ALTER TABLE billing_state DROP CONSTRAINT IF EXISTS billing_state_pkey")
+    op.execute("ALTER TABLE billing_state ADD CONSTRAINT billing_state_pkey PRIMARY KEY (id)")
+    # NOTE: we intentionally do NOT add ``billing_state_one_per_tenant`` (UNIQUE
+    # on tenant_id) back here. Pre-009 had no tenant_id column at all, and
+    # Section B downgrade will ``DROP COLUMN tenant_id`` shortly — a UNIQUE
+    # referencing the column would block that drop without CASCADE.
+    #
     # Drop-then-add keeps the downgrade idempotent — the upgrade might have
     # failed before Section E ran, in which case the singleton CHECK is still
     # there from migration 008 and a bare ADD CONSTRAINT would conflict.
@@ -711,6 +776,25 @@ def downgrade() -> None:
         op.execute(
             f"ALTER TABLE {table_name} ADD CONSTRAINT {old_constraint} UNIQUE ({col})"
         )
+
+    # Reverse plugin_storage uniqueness swap: drop the tenant-aware shapes
+    # and restore the original global UNIQUE + lookup index + system-scope
+    # partial index.
+    op.execute("ALTER TABLE plugin_storage DROP CONSTRAINT IF EXISTS uq_plugin_storage_tenant_scope_key")
+    op.execute("DROP INDEX IF EXISTS ix_plugin_storage_lookup")
+    op.execute("DROP INDEX IF EXISTS uq_plugin_storage_system_scope_key")
+    op.execute(
+        "ALTER TABLE plugin_storage ADD CONSTRAINT uq_plugin_storage_scope_key "
+        "UNIQUE (scope, user_id, plugin_name, namespace, key)"
+    )
+    op.execute(
+        "CREATE INDEX ix_plugin_storage_lookup "
+        "ON plugin_storage (scope, user_id, plugin_name, namespace, key)"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX uq_plugin_storage_system_scope_key "
+        "ON plugin_storage (plugin_name, namespace, key) WHERE scope = 'system'"
+    )
 
     for table_name in tables:
         op.execute(f"ALTER TABLE {table_name} DROP COLUMN IF EXISTS tenant_id")

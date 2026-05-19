@@ -44,17 +44,24 @@ class PluginStorage(TenantScopedMixin, BaseModel):
     key = Column(String(200), nullable=False, index=True)
     value = Column(JSON, nullable=True)
 
+    # Tenant_id is included in both the UNIQUE constraint and the lookup
+    # index because plugin_storage is tenant-scoped. Two tenants picking the
+    # same (plugin_name, namespace, key) at scope='system' must not collide;
+    # without tenant_id in the constraint, the second tenant's INSERT raises
+    # a duplicate-key error even though RLS hides the other row from reads.
     __table_args__ = (
         UniqueConstraint(
+            "tenant_id",
             "scope",
             "user_id",
             "plugin_name",
             "namespace",
             "key",
-            name="uq_plugin_storage_scope_key",
+            name="uq_plugin_storage_tenant_scope_key",
         ),
         Index(
             "ix_plugin_storage_lookup",
+            "tenant_id",
             "scope",
             "user_id",
             "plugin_name",

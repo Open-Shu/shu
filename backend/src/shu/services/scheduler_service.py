@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,16 +27,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..auth.models import User
-from ..core.config import DeploymentMode, get_settings_instance
+from ..billing.config import get_billing_settings
+from ..billing.sync import BillingQuantitySyncSource, UsageReportingSource
+from ..core.config import get_settings_instance
 from ..core.database import get_db_session
-from ..core.queue_backend import QueueBackend
-from ..core.tenant import resolve_tenant_for_infra, tenant_context_for_tenant_id
-from ..core.worker import list_all_tenant_ids
+from ..core.logging import get_managed_file_handler, run_log_cleanup
+from ..core.queue_backend import QueueBackend, get_queue_backend
+from ..core.tenant import for_each_tenant_in_deployment
 from ..core.workload_routing import WorkloadType, enqueue_job
 from ..models.experience import Experience, ExperienceRun
 from ..models.user_preferences import UserPreferences
 from ..schemas.experience import ExperienceScope
-from ..services.policy_engine import POLICY_CACHE
+from .attachment_cleanup import AttachmentCleanupService
+from .policy_engine import POLICY_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -345,8 +349,6 @@ class LogMaintenanceSource:
         return "log_maintenance"
 
     async def cleanup_stale(self, db: AsyncSession) -> int:
-        from ..core.logging import get_managed_file_handler, run_log_cleanup
-
         # Rotation check — runs every tick (cheap date comparison)
         handler = get_managed_file_handler()
         if handler is not None:
@@ -384,10 +386,6 @@ class IngestionStagingMaintenanceSource:
         return "ingestion_staging_maintenance"
 
     async def cleanup_stale(self, db: AsyncSession) -> int:
-        import time
-
-        from ..core.config import get_settings_instance
-
         settings = get_settings_instance()
         staging_dir = settings.ingestion_staging_dir
         max_age_seconds = settings.ingestion_staging_max_age_hours * 3600
@@ -455,8 +453,6 @@ class AttachmentCleanupSource:
             if elapsed < interval_seconds:
                 return 0
 
-        from .attachment_cleanup import AttachmentCleanupService
-
         service = AttachmentCleanupService(db)
         deleted = await service.cleanup_expired_attachments()
         self._last_run = now
@@ -508,8 +504,6 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
 
     Single loop that polls all registered sources.
     """
-    from ..core.queue_backend import get_queue_backend
-
     settings = get_settings_instance()
 
     # Check if scheduler is enabled
@@ -578,11 +572,7 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
     sources.append(AttachmentCleanupSource())
 
     # Billing sources: only register when Stripe is configured for this instance
-    from ..billing.config import get_billing_settings
-
     if get_billing_settings().is_configured:
-        from ..billing.sync import BillingQuantitySyncSource, UsageReportingSource
-
         sources.append(BillingQuantitySyncSource())
         sources.append(UsageReportingSource())
 
@@ -597,40 +587,39 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
         while True:
             try:
                 queue = await get_queue_backend()
+
                 # The scheduler reads/writes tenant-scoped tables (Experience,
                 # ExperienceRun, PluginFeed, ...) so every tick must run under
-                # a tenant_context — otherwise under RLS the SELECTs see zero
-                # rows and the scheduler silently stops firing. For
-                # self-hosted/silo this resolves to one tenant; for
-                # multi-tenant we fan out per-tenant so every tenant's due
-                # work gets picked up. The ``finally``-sleep stays outside
-                # the per-tenant loop so the tick cadence isn't multiplied
-                # by tenant count.
-                for tid in await _tenant_ids_for_tick():
-                    async with tenant_context_for_tenant_id(tid):
-                        db = await get_db_session()
-                        async with db as session:
-                            svc = UnifiedSchedulerService(session, queue, sources)
-                            results = await svc.tick(limit=batch_limit)
+                # tenant_context — otherwise under RLS the SELECTs see zero
+                # rows and the scheduler silently stops firing. ``finally``-sleep
+                # stays outside the per-tenant loop so tick cadence isn't
+                # multiplied by tenant count.
+                async def _tick_for_tenant(tid: str, _queue: QueueBackend = queue) -> None:
+                    db = await get_db_session()
+                    async with db as session:
+                        svc = UnifiedSchedulerService(session, _queue, sources)
+                        results = await svc.tick(limit=batch_limit)
 
-                            # Log if any source had activity
-                            has_activity = any(
-                                r.get("enqueued", 0) > 0 or r.get("stale_cleaned", 0) > 0
-                                for r in results.values()
-                                if isinstance(r, dict) and "error" not in r
-                            )
-                            if has_activity:
-                                logger.info("Scheduler tick | tenant=%s | %s", tid, results)
-                                try:
-                                    TICK_HISTORY.append(
-                                        {
-                                            "ts": datetime.now(UTC).isoformat(),
-                                            "tenant_id": tid,
-                                            **results,
-                                        }
-                                    )
-                                except Exception:
-                                    pass
+                        # Log if any source had activity
+                        has_activity = any(
+                            r.get("enqueued", 0) > 0 or r.get("stale_cleaned", 0) > 0
+                            for r in results.values()
+                            if isinstance(r, dict) and "error" not in r
+                        )
+                        if has_activity:
+                            logger.info("Scheduler tick | tenant=%s | %s", tid, results)
+                            try:
+                                TICK_HISTORY.append(
+                                    {
+                                        "ts": datetime.now(UTC).isoformat(),
+                                        "tenant_id": tid,
+                                        **results,
+                                    }
+                                )
+                            except Exception:
+                                pass
+
+                await for_each_tenant_in_deployment(_tick_for_tenant)
             except Exception as ex:
                 logger.warning("Scheduler tick failed: %s", ex)
             finally:
@@ -641,19 +630,3 @@ async def start_scheduler() -> asyncio.Task:  # noqa: PLR0915
                     break
 
     return asyncio.create_task(_runner(), name="scheduler:unified")
-
-
-async def _tenant_ids_for_tick() -> list[str]:
-    """Return the tenants this tick should iterate over.
-
-    Self-hosted / silo collapse to a single id (deployment constant for
-    self-hosted, ``SHU_TENANT_ID`` for silo). Multi-tenant walks the
-    ``tenants`` catalog so every tenant's due work is picked up.
-
-    The catalog read uses ``shu_app`` because ``tenants`` is global
-    (no RLS); no admin engine needed.
-    """
-    settings = get_settings_instance()
-    if settings.deployment_mode in (DeploymentMode.SELF_HOSTED, DeploymentMode.SILO):
-        return [resolve_tenant_for_infra()]
-    return await list_all_tenant_ids()

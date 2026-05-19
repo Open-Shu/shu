@@ -21,7 +21,9 @@ from shu.core.queue_backend import InMemoryQueueBackend, Job, RedisQueueBackend
 
 
 def _make_job(queue_name: str = "test_queue") -> Job:
-    return Job(queue_name=queue_name, payload={"action": "test"})
+    # Tenant_id is required on every serialized Job; the backend tests
+    # round-trip through to_json/from_json so the helper has to set it.
+    return Job(queue_name=queue_name, payload={"action": "test"}, tenant_id="test-tenant")
 
 
 # ---------------------------------------------------------------------------

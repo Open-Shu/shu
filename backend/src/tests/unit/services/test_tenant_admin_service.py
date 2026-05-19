@@ -159,3 +159,92 @@ async def test_cross_tenant_query_audits_open_before_session_opens() -> None:
             pass  # pragma: no cover
 
     admin_factory.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Exit-audit coverage
+#
+# Every open audit must be matched by a close-or-aborted exit audit, even
+# when the caller's body raises. And when audit emission itself fails
+# during unwind, the caller's original exception must surface — the
+# audit-transport error must not mask it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_impersonate_tenant_emits_aborted_event_when_body_raises() -> None:
+    app_factory, _ = _stub_session_factory()
+    admin_factory, _ = _stub_session_factory()
+    audit = AsyncMock()
+
+    svc = TenantAdminService(
+        app_session_local=app_factory,
+        admin_session_local=admin_factory,
+        audit_logger=audit,
+    )
+
+    class _CustomError(RuntimeError):
+        pass
+
+    with pytest.raises(_CustomError):
+        async with svc.impersonate_tenant("tenant-X", "actor-1", "ticket 7"):
+            raise _CustomError("simulated failure in body")
+
+    open_call, exit_call = audit.log.call_args_list
+    assert open_call.kwargs["event"] == "impersonate_tenant_open"
+    assert exit_call.kwargs["event"] == "impersonate_tenant_aborted"
+    assert exit_call.kwargs["error_class"] == "_CustomError"
+    # Target carried through so the audit trail can be filtered by tenant.
+    assert exit_call.kwargs["target"] == "tenant-X"
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_query_emits_aborted_event_when_body_raises() -> None:
+    app_factory, _ = _stub_session_factory()
+    admin_factory, _ = _stub_session_factory()
+    audit = AsyncMock()
+
+    svc = TenantAdminService(
+        app_session_local=app_factory,
+        admin_session_local=admin_factory,
+        audit_logger=audit,
+    )
+
+    class _CustomError(RuntimeError):
+        pass
+
+    with pytest.raises(_CustomError):
+        async with svc.cross_tenant_query("actor-1", "usage report"):
+            raise _CustomError("simulated failure")
+
+    open_call, exit_call = audit.log.call_args_list
+    assert open_call.kwargs["event"] == "cross_tenant_query_open"
+    assert exit_call.kwargs["event"] == "cross_tenant_query_aborted"
+    assert exit_call.kwargs["error_class"] == "_CustomError"
+
+
+@pytest.mark.asyncio
+async def test_aborted_audit_failure_does_not_mask_original_exception() -> None:
+    """When close-time audit itself raises while a caller exception is
+    in flight, the caller's exception must be the one that surfaces —
+    otherwise the operator chases the audit infra blip instead of the
+    actual failure that triggered the cross-tenant rollback."""
+    app_factory, _ = _stub_session_factory()
+    admin_factory, _ = _stub_session_factory()
+    audit = AsyncMock()
+
+    # First call (open) succeeds; second call (aborted) raises.
+    audit.log.side_effect = [None, AuditLogEmitError("transport hiccup on close")]
+
+    svc = TenantAdminService(
+        app_session_local=app_factory,
+        admin_session_local=admin_factory,
+        audit_logger=audit,
+    )
+
+    class _OriginalError(RuntimeError):
+        pass
+
+    with pytest.raises(_OriginalError):
+        async with svc.impersonate_tenant("tenant-X", "actor-1", "ticket"):
+            raise _OriginalError("the real reason this failed")
