@@ -66,6 +66,16 @@ class AnthropicAdapter(BaseProviderAdapter):
         ]
         return assistant_message, result_messages
 
+    def get_partial_usage_snapshot(self):
+        """SHU-802: flush any pending ``_latest_usage_event`` into ``self.usage``
+        before returning the snapshot. See the matching override in
+        ``completions_adapter`` for rationale.
+        """
+        if self._latest_usage_event is not None:
+            self._extract_usage(self._latest_usage_event)
+            self._latest_usage_event = None
+        return dict(self.usage)
+
     def _extract_usage(self, payload: dict[str, Any]) -> None:
         usage = jmespath.search("usage", payload) if isinstance(payload, dict) else None
         if not usage:

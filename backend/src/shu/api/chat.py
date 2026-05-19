@@ -941,9 +941,10 @@ async def send_message(
 
         # SHU-802: closure captures the lifecycle so the SSE wrapper can
         # signal client_disconnected from its finally block (regardless of
-        # whether GeneratorExit or CancelledError caused the close). The
-        # lifecycle's first-writer-wins semantics mean this no-ops cleanly
-        # if user_terminated or shutdown already fired.
+        # whether GeneratorExit or CancelledError caused the close).
+        # client_disconnected is lower-priority than user_terminated /
+        # shutdown, so this no-ops cleanly on reason if either intentional
+        # stop already fired.
         def _signal_client_disconnected() -> None:
             lifecycle.signal("client_disconnected")
 

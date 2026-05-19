@@ -315,9 +315,15 @@ class ChatForceTerminateIntegrationTest(BaseIntegrationTestSuite):
                 f"Full metadata: {metadata!r}"
             )
             # AC10 — partial_usage_unavailable flag tells the audit consumer
-            # that token counts are zero by absence, not by reality.
+            # that token counts are zero by absence, not by reality. The
+            # local test provider never emits usage events (see
+            # `client._local_stream` — only ContentDelta + Final), so the
+            # snapshot is empty and the flag must be True. For real
+            # providers that emit usage chunks, the flag would be False and
+            # the LLMUsage row would carry the partial tokens seen so far.
             assert metadata.get("partial_usage_unavailable") is True, (
-                f"Terminated stream should set partial_usage_unavailable=True; got {metadata!r}"
+                f"Terminated stream should set partial_usage_unavailable=True "
+                f"when provider emitted no usage; got {metadata!r}"
             )
         finally:
             settings.local_stream_test_chunk_delay_ms = original_delay

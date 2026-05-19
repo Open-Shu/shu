@@ -7,6 +7,11 @@ SSE event serialization), while preserving Decimal precision for cost.
 The fix stores `cost` as a stringified Decimal and special-cases the
 `cost` key in `_aggregate_usage` so cross-cycle accumulation (tool-use
 loops) sums with Decimal precision rather than string concatenation.
+
+Also covers SHU-802 `get_partial_usage_snapshot()`: the partial-usage
+capture path read by `_call_provider` on terminate / shutdown so the
+interrupted-stream `LLMUsage` row carries real token counts when the
+provider had emitted usage events before the break.
 """
 
 import json
@@ -16,6 +21,9 @@ import pytest
 
 from shu.core.safe_decimal import safe_decimal
 from shu.services.providers.adapter_base import BaseProviderAdapter
+from shu.services.providers.adapters.anthropic_adapter import AnthropicAdapter
+from shu.services.providers.adapters.completions_adapter import CompletionsAdapter
+from shu.services.providers.adapters.gemini_adapter import GeminiAdapter
 
 
 def _make_adapter() -> BaseProviderAdapter:
@@ -173,3 +181,257 @@ class TestUpdateUsageStatefulAccumulation:
         adapter._update_usage(1, 1, 0, 0, 2, cost=first_cost)
         adapter._update_usage(1, 1, 0, 0, 2, cost=second_cost)
         assert safe_decimal(adapter.usage["cost"]) == expected
+
+
+# SHU-802: ``get_partial_usage_snapshot()`` is what `_call_provider` reads
+# on the terminate path to capture provider-emitted usage that landed
+# before the break. The base adapter just returns a copy of ``self.usage``
+# (correct for adapters that update usage eagerly inside
+# ``handle_provider_event`` like responses_adapter). Deferred-extract
+# adapters (completions, gemini, anthropic) MUST override to flush their
+# stashed ``latest_usage_event`` / ``_latest_usage_event`` into
+# ``self.usage`` first, otherwise the most recent provider-emitted usage
+# is silently dropped on terminate — that was the AC10 violation Codex
+# flagged before this fix.
+
+
+def _make_completions_adapter() -> CompletionsAdapter:
+    """Build a bare CompletionsAdapter without running its full __init__.
+
+    The snapshot tests only need ``self.usage`` and ``self.latest_usage_event``
+    to exist; skipping the full constructor keeps the test free of
+    encryption-key / settings / provider dependencies.
+    """
+    adapter = CompletionsAdapter.__new__(CompletionsAdapter)
+    adapter.usage = {}
+    adapter.latest_usage_event = None
+    return adapter
+
+
+def _make_gemini_adapter() -> GeminiAdapter:
+    adapter = GeminiAdapter.__new__(GeminiAdapter)
+    adapter.usage = {}
+    adapter._latest_usage_event = None
+    return adapter
+
+
+def _make_anthropic_adapter() -> AnthropicAdapter:
+    adapter = AnthropicAdapter.__new__(AnthropicAdapter)
+    adapter.usage = {}
+    adapter._latest_usage_event = None
+    return adapter
+
+
+class TestBasePartialUsageSnapshot:
+    """SHU-802: base adapter snapshot — eager-extract path (responses_adapter)."""
+
+    def test_empty_adapter_returns_empty_dict(self):
+        """A fresh adapter that's never seen a usage event returns ``{}`` —
+        NOT ``None``. ``_call_provider`` then sets ``partial_usage_unavailable=True``
+        because ``not {}`` evaluates True."""
+        adapter = _make_adapter()
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot == {}
+        assert isinstance(snapshot, dict)
+
+    def test_returns_current_usage_when_populated(self):
+        """For an eager-extract adapter, ``self.usage`` already reflects
+        the provider-emitted usage at any point. Snapshot returns it
+        directly. This is the responses_adapter happy path — terminate
+        mid-stream, snapshot carries the real numbers."""
+        adapter = _make_adapter()
+        adapter._update_usage(10, 20, 0, 0, 30)
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot == {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 30,
+        }
+
+    def test_returns_a_copy_not_a_reference(self):
+        """Callers must not be able to corrupt the adapter's internal
+        state by mutating the snapshot. ``_call_provider`` passes the
+        snapshot through to the VariantStreamResult, which flows into
+        finalize and persists as ``Message.message_metadata`` — any
+        downstream mutation must not bleed back into the adapter."""
+        adapter = _make_adapter()
+        adapter._update_usage(10, 20, 0, 0, 30)
+        snapshot = adapter.get_partial_usage_snapshot()
+        snapshot["input_tokens"] = 9999
+        assert adapter.usage["input_tokens"] == 10, (
+            "snapshot mutation leaked back into adapter.usage — must return a copy"
+        )
+
+
+class TestCompletionsAdapterPartialUsageSnapshot:
+    """SHU-802: completions_adapter override flushes the deferred usage."""
+
+    def test_snapshot_flushes_pending_usage_event(self):
+        """The OpenAI-style adapter stashes the latest usage chunk in
+        ``latest_usage_event`` and only flushes during
+        ``finalize_provider_events``. On terminate the consumer loop
+        breaks before finalize runs, so the override must call
+        ``_extract_usage`` to pull the pending chunk into ``self.usage``
+        before the snapshot returns. Without the override, the LLMUsage
+        row would record zeros even though the provider had emitted
+        real numbers."""
+        adapter = _make_completions_adapter()
+        adapter.latest_usage_event = {
+            "usage": {
+                "prompt_tokens": 42,
+                "completion_tokens": 17,
+                "total_tokens": 59,
+            }
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 42
+        assert snapshot["output_tokens"] == 17
+        assert snapshot["total_tokens"] == 59
+        # And self.usage now reflects the flush — a second snapshot
+        # would still see these numbers (idempotent against re-call).
+        assert adapter.usage["input_tokens"] == 42
+
+    def test_latest_usage_event_cleared_after_snapshot(self):
+        """Idempotency: a second snapshot call must not double-count
+        the same usage chunk. The override clears ``latest_usage_event``
+        to None after the flush so a subsequent call to either snapshot
+        OR finalize_provider_events doesn't roll the same chunk in twice."""
+        adapter = _make_completions_adapter()
+        adapter.latest_usage_event = {
+            "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}
+        }
+        adapter.get_partial_usage_snapshot()
+        assert adapter.latest_usage_event is None
+        # Second snapshot returns the same values (no double-count).
+        second = adapter.get_partial_usage_snapshot()
+        assert second["input_tokens"] == 5
+
+    def test_no_pending_event_returns_existing_usage(self):
+        """When ``latest_usage_event`` is None (e.g. provider never emitted
+        a usage chunk before the break), the snapshot just returns
+        whatever ``self.usage`` already holds — possibly empty, possibly
+        populated from a prior tool-call cycle."""
+        adapter = _make_completions_adapter()
+        # Pre-populate as if a prior tool-loop cycle had already flushed.
+        adapter.usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 150,
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 100
+        assert snapshot["output_tokens"] == 50
+
+    def test_flush_aggregates_with_prior_cycle_usage(self):
+        """Multi-tool-call cycles: ``self.usage`` carries the prior
+        cycle's totals, and the latest_usage_event holds the current
+        cycle's pending chunk. Snapshot aggregates both — that's the
+        whole point of routing through ``_update_usage`` rather than
+        replacing ``self.usage`` outright."""
+        adapter = _make_completions_adapter()
+        adapter.usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 150,
+        }
+        adapter.latest_usage_event = {
+            "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 108  # 100 + 8
+        assert snapshot["output_tokens"] == 54  # 50 + 4
+        assert snapshot["total_tokens"] == 162  # 150 + 12
+
+
+class TestGeminiAdapterPartialUsageSnapshot:
+    """SHU-802: gemini_adapter override (uses ``_latest_usage_event`` and
+    ``usageMetadata`` shape — distinct enough from completions_adapter that
+    it needs its own pin)."""
+
+    def test_snapshot_flushes_pending_usage_metadata(self):
+        adapter = _make_gemini_adapter()
+        adapter._latest_usage_event = {
+            "usageMetadata": {
+                "promptTokenCount": 30,
+                "candidatesTokenCount": 12,
+                "thoughtsTokenCount": 7,
+                "totalTokenCount": 49,
+            }
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 30
+        assert snapshot["output_tokens"] == 12
+        assert snapshot["reasoning_tokens"] == 7
+        assert snapshot["total_tokens"] == 49
+
+    def test_latest_usage_event_cleared_after_snapshot(self):
+        adapter = _make_gemini_adapter()
+        adapter._latest_usage_event = {
+            "usageMetadata": {
+                "promptTokenCount": 1,
+                "candidatesTokenCount": 1,
+                "totalTokenCount": 2,
+            }
+        }
+        adapter.get_partial_usage_snapshot()
+        assert adapter._latest_usage_event is None
+
+    def test_no_pending_event_returns_existing_usage(self):
+        adapter = _make_gemini_adapter()
+        adapter.usage = {
+            "input_tokens": 50,
+            "output_tokens": 25,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 75,
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot == adapter.usage
+        assert snapshot is not adapter.usage  # still a copy
+
+
+class TestAnthropicAdapterPartialUsageSnapshot:
+    """SHU-802: anthropic_adapter override (uses ``_latest_usage_event`` and
+    the cache_read/cache_creation_input_tokens shape)."""
+
+    def test_snapshot_flushes_pending_usage_event(self):
+        adapter = _make_anthropic_adapter()
+        adapter._latest_usage_event = {
+            "usage": {
+                "input_tokens": 200,
+                "output_tokens": 80,
+                "cache_read_input_tokens": 10,
+                "cache_creation_input_tokens": 5,
+            }
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 200
+        assert snapshot["output_tokens"] == 80
+        # cache_read + cache_creation are summed into cached_tokens.
+        assert snapshot["cached_tokens"] == 15
+
+    def test_latest_usage_event_cleared_after_snapshot(self):
+        adapter = _make_anthropic_adapter()
+        adapter._latest_usage_event = {
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        }
+        adapter.get_partial_usage_snapshot()
+        assert adapter._latest_usage_event is None
+
+    def test_no_pending_event_returns_existing_usage(self):
+        adapter = _make_anthropic_adapter()
+        adapter.usage = {
+            "input_tokens": 7,
+            "output_tokens": 3,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 10,
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot == adapter.usage

@@ -53,11 +53,30 @@ REGEN_MAX_ATTEMPTS = 3
 logger = get_logger(__name__)
 
 
-# SHU-802: lifecycle reasons. First-writer-wins ordering matters here —
-# `user_terminated` and `shutdown` are intentional server-side stops that
-# must win over a `client_disconnected` that races them. The lifecycle's
-# `signal()` enforces that without depending on event-firing order.
+# SHU-802: lifecycle reasons. Priority-based ordering matters here —
+# `user_terminated` and `shutdown` are intentional server-side stops and
+# must win over a `client_disconnected` regardless of firing order on the
+# event loop. The lifecycle's `signal()` enforces that via the priority
+# map below; same-priority signals (e.g. a second `user_terminated`) stay
+# first-writer-wins.
 StreamLifecycleReason = Literal["complete", "client_disconnected", "user_terminated", "shutdown"]
+
+# Higher priority overrides lower. Intentional stops (`shutdown`,
+# `user_terminated`) share the highest priority so a second intentional
+# stop doesn't override the first (first-writer-wins within a tier).
+# `complete` is priority 0: it's the resolved-default when no signal
+# fired, never the value passed to `signal()` in production, but the
+# priority table treats it as the absent-reason baseline. AC12 demands
+# that the shutdown drain be able to override an already-fired
+# `client_disconnected`; without priorities, the drain would no-op on
+# disconnected streams and they'd race process teardown after the
+# drain budget expired.
+_REASON_PRIORITY: dict[StreamLifecycleReason, int] = {
+    "complete": 0,
+    "client_disconnected": 1,
+    "user_terminated": 2,
+    "shutdown": 2,
+}
 
 
 @dataclass
@@ -81,11 +100,13 @@ class StreamLifecycle:
       short-circuit cleanly) and read by ``_finalize_variant_phase`` at
       commit time (to stamp ``Message.message_metadata["stream_state"]``).
 
-    ``signal()`` is first-writer-wins: a later signal does NOT overwrite
-    the first reason. This preserves the intent ordering where an
-    intentional stop (``user_terminated`` / ``shutdown``) wins over an
-    incidental ``client_disconnected`` that races it, regardless of the
-    actual firing order on the event loop.
+    ``signal()`` is priority-based: intentional server-side stops
+    (``user_terminated``, ``shutdown``) outrank an incidental
+    ``client_disconnected`` and override it regardless of firing order
+    on the event loop. Same-priority signals are first-writer-wins
+    within a tier (a second ``user_terminated`` after one already
+    landed is a no-op on ``reason``). See ``_REASON_PRIORITY`` at the
+    top of this module for the priority map and AC12 rationale.
 
     Lifetime: registered in ``app.state.in_flight_streams`` when the
     stream starts; removed by the ``stream_variant`` task's ``finally``
@@ -114,22 +135,33 @@ class StreamLifecycle:
     supervise_task: "asyncio.Task[None] | None" = field(default=None, repr=False)
 
     def signal(self, reason: StreamLifecycleReason) -> bool:
-        """Set ``reason`` and fire ``event`` atomically. First-writer-wins.
+        """Set ``reason`` and fire ``event`` atomically. Priority-based.
 
-        Returns True if this caller's reason was accepted (no prior
-        signal had fired); False if the lifecycle was already signalled
-        and this call is a no-op. The event is fired regardless — a
-        second caller observing ``False`` still wants the wakeup.
+        Intentional server-side stops (``shutdown``, ``user_terminated``)
+        outrank an incidental ``client_disconnected`` and override it
+        regardless of firing order. Same-priority signals stay
+        first-writer-wins (a second ``user_terminated`` after one
+        already landed is a no-op on ``reason``; ``shutdown`` after
+        ``user_terminated`` is a no-op since both are top-priority
+        intentional stops).
+
+        Returns True if this caller's reason was accepted (the new
+        reason was written); False if the current reason has
+        equal-or-higher priority and stays. The event is fired
+        regardless — a second caller observing ``False`` still wants
+        the wakeup so consumer loops re-check.
 
         Safe to call from any coroutine on the same event loop;
         not safe to call from a threadpool worker. See the
         ``app.state.in_flight_streams`` docstring.
         """
-        accepted = self.reason is None
+        new_priority = _REASON_PRIORITY[reason]
+        current_priority = _REASON_PRIORITY[self.reason] if self.reason is not None else 0
+        accepted = new_priority > current_priority
         if accepted:
             self.reason = reason
         # Always set the event so consumers blocked on `await event.wait()`
-        # wake up even when a prior signal already won the reason race.
+        # wake up even when this call didn't change the reason.
         self.event.set()
         return accepted
 
@@ -456,7 +488,7 @@ class EnsembleStreamingHelper:
         tools_enabled: bool,
         lifecycle: "StreamLifecycle",
         content_accumulator: list[str],
-    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool]:
+    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool, dict[str, Any]]:
         """Stream provider responses for a single model variant and enqueue interim events to the provided queue.
 
         Parameters
@@ -481,18 +513,24 @@ class EnsembleStreamingHelper:
 
         Returns
         -------
-            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]], bool]:
+            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]], bool, dict[str, Any]]:
                 final_message_event: The provider's final event (content or error) if produced, otherwise None.
                 followup_messages: Additional messages emitted by the provider (e.g., from a tool call) to be sent back for follow-up, or None.
                 terminated: SHU-802. True if the loop exited early because the lifecycle was
                     signalled with ``user_terminated`` / ``shutdown``; the caller transitions
                     to finalize with the partial content from ``content_accumulator``.
+                partial_usage: SHU-802. Snapshot of ``client.provider_adapter.get_partial_usage_snapshot()``
+                    at the break point — populated only when ``terminated`` is True. Empty dict on
+                    natural completion (the final event's metadata carries the natural-end usage).
+                    See AC10: the LLMUsage row for an interrupted stream records these tokens when
+                    the provider had emitted usage events before the break.
 
         """
         final_message_event: ProviderFinalEventResult | None = None
         followup_messages: list[ChatMessage] | None = None
         llm_params = None
         terminated = False
+        partial_usage: dict[str, Any] = {}
 
         async for stream_event in await client.chat_completion(
             messages=messages,
@@ -515,6 +553,23 @@ class EnsembleStreamingHelper:
             # partial-usage accuracy in H4.
             if lifecycle.event.is_set() and lifecycle.reason in ("user_terminated", "shutdown"):
                 terminated = True
+                # SHU-802 AC10: capture whatever provider-reported usage has
+                # accumulated up to this point so the LLMUsage row for the
+                # interrupted stream records real tokens instead of zeros.
+                # Empty dict (no usage emitted yet) flips partial_usage_unavailable
+                # on in finalize.
+                try:
+                    partial_usage = client.provider_adapter.get_partial_usage_snapshot()
+                except Exception as snapshot_exc:
+                    # Snapshot failure must not mask the terminate path. Log
+                    # and fall through with an empty snapshot — the existing
+                    # partial_usage_unavailable=True path then applies.
+                    logger.warning(
+                        "Failed to capture partial usage on terminate: %s",
+                        snapshot_exc,
+                        exc_info=True,
+                    )
+                    partial_usage = {}
                 break
 
             stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
@@ -564,7 +619,7 @@ class EnsembleStreamingHelper:
                     inputs.model.model_name,
                 )
 
-        return final_message_event, followup_messages, terminated
+        return final_message_event, followup_messages, terminated, partial_usage
 
     async def _stream_variant_phase(  # noqa: PLR0912, PLR0915
         self,
@@ -687,10 +742,16 @@ class EnsembleStreamingHelper:
             # the full assistant-visible content trail.
             content_accumulator: list[str] = []
             terminated = False
+            # SHU-802 AC10: snapshot of provider-reported usage at the break point,
+            # populated by `_call_provider` only when `terminated` is True.
+            # Empty dict means the provider had not yet emitted any usage events
+            # before the break — finalize flags this with
+            # `partial_usage_unavailable=True`.
+            partial_usage: dict[str, Any] = {}
 
             # We loop until the agents are done pulling what they need to pull.
             while True:
-                final_message_event, additional_messages, terminated = await self._call_provider(
+                final_message_event, additional_messages, terminated, partial_usage = await self._call_provider(
                     client=client,
                     messages=call_messages,
                     inputs=inputs,
@@ -732,6 +793,12 @@ class EnsembleStreamingHelper:
                 metadata["response_time_ms"] = (datetime.now(UTC) - start_time).total_seconds() * 1000
                 metadata["streamed"] = True
                 metadata["has_citations"] = False
+                # SHU-802 AC10: when the adapter actually accumulated usage
+                # before the break, surface it through `usage` and clear the
+                # "unavailable" flag. Empty snapshot means the provider hadn't
+                # emitted any usage yet — keep the honest absence flag and the
+                # zero token counts so we don't silently fabricate numbers.
+                partial_usage_unavailable = not partial_usage
                 logger.info(
                     "Variant stream phase terminated",
                     extra={
@@ -742,17 +809,18 @@ class EnsembleStreamingHelper:
                         "terminated": True,
                         "lifecycle_reason": lifecycle.reason,
                         "partial_content_chars": len(partial_content),
+                        "partial_usage_unavailable": partial_usage_unavailable,
                         "elapsed_ms": (datetime.now(UTC) - stream_phase_start).total_seconds() * 1000,
                     },
                 )
                 return _VariantStreamResult(
                     success=True,
                     terminated=True,
-                    partial_usage_unavailable=True,
+                    partial_usage_unavailable=partial_usage_unavailable,
                     full_content=partial_content,
                     final_source_metadata=[],
                     metadata=metadata,
-                    usage={},
+                    usage=partial_usage,
                     model_name_for_event=model_display_name,
                     final_event_type="final_message",
                 )

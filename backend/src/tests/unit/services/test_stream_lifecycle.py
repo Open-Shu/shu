@@ -4,20 +4,24 @@ The lifecycle is the cross-task signal channel that ties chat SSE
 streaming to disconnect / user-terminate / shutdown handling. Its
 correctness rests on three invariants:
 
-1. **First-writer-wins reason locking.** If a server-initiated stop
+1. **Priority-based reason locking.** Intentional server-side stops
    (``user_terminated`` from the terminate endpoint, ``shutdown`` from
-   the lifespan drain) and a client disconnect race each other on the
-   event loop, the *first* signal must win. The intent ordering is
-   intentional: ``shutdown`` and ``user_terminated`` describe what the
-   server decided to do, ``client_disconnected`` only describes what
-   the client did. Without the lock, a stray ``client_disconnected``
-   signal arriving after a ``user_terminated`` would mis-stamp
-   ``Message.message_metadata["stream_state"]`` and obscure why the
-   stream ended in the audit trail.
+   the lifespan drain) outrank an incidental ``client_disconnected``
+   and must override it regardless of firing order on the event loop.
+   Same-priority signals (e.g. a second ``user_terminated``) stay
+   first-writer-wins within a tier. The intent ordering matters:
+   ``shutdown`` / ``user_terminated`` describe what the server decided
+   to do; ``client_disconnected`` only describes what the client did.
+   Without the override, AC12 fails — the shutdown drain would no-op
+   on disconnected streams (their reason already set), the consumer
+   loop wouldn't short-circuit (only ``user_terminated`` /
+   ``shutdown`` trigger short-circuit), and the streams would race
+   the drain timeout. The mis-stamped ``Message.message_metadata
+   ["stream_state"]`` in the audit trail is the secondary symptom.
 
 2. **The event always fires, even when the reason was already taken.**
    Coroutines blocked on ``event.wait()`` must still wake up; the only
-   thing ``signal()`` skips on a second call is the *reason write*.
+   thing ``signal()`` skips on a no-op call is the *reason write*.
 
 3. **``fire_on_complete()`` runs the registry-cleanup callback exactly
    once and never raises.** The supervisor invokes it from its
@@ -81,7 +85,15 @@ class TestStreamLifecycleConstruction:
 
 
 class TestStreamLifecycleSignalAcceptance:
-    """First-writer-wins semantics for ``signal()``."""
+    """Priority-based ordering semantics for ``signal()``.
+
+    Priority map (high → low):
+        ``shutdown`` == ``user_terminated`` (intentional stops, tier 2)
+        ``client_disconnected`` (incidental, tier 1)
+        ``complete`` / unsignalled (tier 0)
+
+    Higher tier overrides lower; same-tier signals are first-writer-wins.
+    """
 
     def test_first_signal_is_accepted(self):
         lc = _build_lifecycle()
@@ -91,63 +103,123 @@ class TestStreamLifecycleSignalAcceptance:
         assert lc.event.is_set()
         assert lc.resolved_reason() == "client_disconnected"
 
-    def test_second_signal_is_no_op_on_reason(self):
-        """user_terminated arrives after client_disconnected already won —
-        reason stays client_disconnected (first writer). This is the
-        less-intuitive direction; the priority-feel ordering (user_terminated
-        > client_disconnected) is *not* enforced by reason precedence — it's
-        enforced by *which signal fires first* in practice (the terminate
-        endpoint fires synchronously from the request handler, the
-        client_disconnected only fires after the SSE wrapper's close hook,
-        which runs later)."""
+    def test_user_terminated_overrides_client_disconnected(self):
+        """user_terminated fired after client_disconnected — intentional
+        stop must outrank the incidental disconnect. Without this,
+        a user who disconnected then clicked Stop from another tab
+        would have their click ignored and the stream wouldn't
+        short-circuit (the consumer loop's check excludes
+        client_disconnected by design — see AC9 in SHU-802)."""
         lc = _build_lifecycle()
         lc.signal("client_disconnected")
         accepted = lc.signal("user_terminated")
-        assert accepted is False, "second signal should report unaccepted"
-        assert lc.reason == "client_disconnected", "first writer wins"
+        assert accepted is True, "intentional stop must override incidental disconnect"
+        assert lc.reason == "user_terminated"
+        assert lc.resolved_reason() == "user_terminated"
 
-    def test_second_signal_still_fires_event(self):
-        """A caller observing ``False`` from signal() still needs the
-        event to wake them up — e.g. shutdown drain calling signal()
-        on a stream that already disconnected should still trip the
-        consumer loop's ``event.is_set()`` check on its next iteration."""
+    def test_shutdown_overrides_client_disconnected(self):
+        """The headline AC12 case: a client that disconnected mid-stream
+        is still on the event loop running the LLM call when the
+        process receives SIGTERM. The drain calls signal("shutdown");
+        without the priority override the reason would stay
+        client_disconnected, the consumer loop wouldn't short-circuit
+        (it filters for user_terminated / shutdown only), and the
+        stream would race the drain timeout. Priority override means
+        the drain can deterministically signal shutdown and the
+        variants can short-circuit with whatever partial content they
+        have."""
         lc = _build_lifecycle()
         lc.signal("client_disconnected")
+        accepted = lc.signal("shutdown")
+        assert accepted is True, "shutdown must override client_disconnected per AC12"
+        assert lc.reason == "shutdown"
+
+    def test_client_disconnected_does_not_override_user_terminated(self):
+        """The reverse direction: user_terminated already won, then
+        client_disconnected arrives (e.g. user clicked Stop, then
+        closed the tab while terminate was still processing). The
+        intentional stop must stay locked in."""
+        lc = _build_lifecycle()
+        lc.signal("user_terminated")
+        accepted = lc.signal("client_disconnected")
+        assert accepted is False, "lower-priority signal must not override"
+        assert lc.reason == "user_terminated"
+
+    def test_client_disconnected_does_not_override_shutdown(self):
+        lc = _build_lifecycle()
+        lc.signal("shutdown")
+        accepted = lc.signal("client_disconnected")
+        assert accepted is False
+        assert lc.reason == "shutdown"
+
+    def test_shutdown_after_user_terminated_is_no_op(self):
+        """Same-priority pair: first writer wins within the intentional
+        tier. If the user explicitly clicked Stop and the process is
+        then shutting down, the stream_state stamp stays user_terminated
+        — that's a more informative audit record than shutdown."""
+        lc = _build_lifecycle()
+        lc.signal("user_terminated")
+        accepted = lc.signal("shutdown")
+        assert accepted is False, "same-priority signal must be first-writer-wins"
+        assert lc.reason == "user_terminated"
+
+    def test_user_terminated_after_shutdown_is_no_op(self):
+        """Reverse same-priority pair: shutdown locked in first, a late
+        user_terminated stays no-op."""
+        lc = _build_lifecycle()
+        lc.signal("shutdown")
+        accepted = lc.signal("user_terminated")
+        assert accepted is False
+        assert lc.reason == "shutdown"
+
+    def test_repeated_same_signal_is_no_op(self):
+        """Signalling the same reason twice is a clean no-op on reason."""
+        lc = _build_lifecycle()
+        lc.signal("client_disconnected")
+        accepted = lc.signal("client_disconnected")
+        assert accepted is False
+        assert lc.reason == "client_disconnected"
+
+    def test_event_fires_even_on_no_op_signal(self):
+        """A caller observing ``False`` from signal() still needs the
+        event to wake them up — e.g. a stray client_disconnected after
+        user_terminated landed should still trip any consumer waiting
+        on event.is_set()."""
+        lc = _build_lifecycle()
+        lc.signal("user_terminated")
         # Manually clear the event to detect whether the second signal
         # re-sets it. (Real code never clears the event; this is a test
         # affordance to make the assertion observable.)
         lc.event.clear()
-        lc.signal("user_terminated")
+        accepted = lc.signal("client_disconnected")
+        assert accepted is False, "lower-priority signal stays no-op on reason"
         assert lc.event.is_set(), "every signal call must fire the event"
-
-    def test_user_terminated_wins_when_it_fires_first(self):
-        """The intent-ordering case the priority comment refers to —
-        when user_terminated wins the race (fires first), it stays the
-        reason and any later client_disconnected is shadowed."""
-        lc = _build_lifecycle()
-        lc.signal("user_terminated")
-        lc.signal("client_disconnected")
-        assert lc.reason == "user_terminated"
-        assert lc.resolved_reason() == "user_terminated"
-
-    def test_shutdown_wins_when_it_fires_first(self):
-        lc = _build_lifecycle()
-        lc.signal("shutdown")
-        lc.signal("client_disconnected")
-        assert lc.reason == "shutdown"
 
     @pytest.mark.parametrize(
         "reason",
-        ["complete", "client_disconnected", "user_terminated", "shutdown"],
+        ["client_disconnected", "user_terminated", "shutdown"],
     )
-    def test_all_valid_reasons_are_acceptable(self, reason):
-        """The Literal type allows four values; each must work as the first
-        signal. ``complete`` is unusual to signal explicitly (it's the default
-        when nothing fires) but the API has to accept it — finalize-success
-        paths could theoretically signal it for symmetry."""
+    def test_all_real_signals_are_acceptable_on_fresh_lifecycle(self, reason):
+        """Three of the four Literal values are real signals (the fourth,
+        ``complete``, is the resolved-default when nothing fired). Each
+        must override the unsignalled state when called on a fresh
+        lifecycle."""
         lc = _build_lifecycle()
         assert lc.signal(reason) is True
         assert lc.reason == reason
+
+    def test_signal_complete_on_fresh_lifecycle_is_no_op(self):
+        """``complete`` is priority-0, same as the unsignalled state. It's
+        the resolved-default — never signalled in production code — so
+        signal("complete") is intentionally a no-op rather than locking
+        the lifecycle into ``complete`` and shadowing later real signals."""
+        lc = _build_lifecycle()
+        accepted = lc.signal("complete")
+        assert accepted is False
+        assert lc.reason is None, "complete-priority signal should not lock in a reason"
+        # A real later signal still wins.
+        assert lc.signal("client_disconnected") is True
+        assert lc.reason == "client_disconnected"
 
 
 class TestStreamLifecycleFireOnComplete:

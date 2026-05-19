@@ -21,12 +21,18 @@ What this suite drives end-to-end:
 2. **send_message disconnect → persistence** — open the response with
    ``httpx.AsyncClient.stream``, read until the first ``content_delta``,
    ``break`` to close the iterator, then poll the DB via
-   ``wait_for_message_persisted``. Asserts the row landed and the
-   stream completed naturally on the server side.
+   ``wait_for_message_persisted``. Asserts the row landed AND that the
+   corresponding ``LLMUsage`` row landed in the same finalize
+   transaction (model_id match, success=True). The LLMUsage check is
+   the actual AC10 / SHU-759 atomicity invariant — pre-SHU-802 the
+   cancellation rolled finalize back, taking out both rows together;
+   a partial regression where only one row survives would mean the
+   atomicity wiring broke.
 
 3. **regenerate_message disconnect → persistence** — same persistence
-   assertion through the regenerate path, which has its own ``_gen()``
-   wrapper after SHU-802 and lives in a different code path.
+   assertion (Message + LLMUsage) through the regenerate path, which
+   has its own ``_gen()`` wrapper after SHU-802 and lives in a
+   different code path.
 
 **Why this suite asserts persistence but not stream_state.**
 
@@ -57,6 +63,9 @@ something to interrupt.
 
 import json
 import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import text
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.auth import cleanup_framework_test_admin, cleanup_test_user, create_active_user_with_id
@@ -255,6 +264,12 @@ class ChatDisconnectPersistenceIntegrationTest(BaseIntegrationTestSuite):
         try:
             conv_id = await self._create_conversation(client, admin_headers, user_headers)
 
+            # llm_usage.created_at is naive-tz in the actual schema (verified by
+            # test_chat_finalize_error_integration's comment on the same column).
+            # Keep this anchor naive so the >= comparison below is well-defined
+            # regardless of how SQLAlchemy / asyncpg surface the value.
+            usage_query_start = datetime.now(UTC).replace(tzinfo=None)
+
             saw_content_delta = False
             async with client.stream(
                 "POST",
@@ -310,6 +325,47 @@ class ChatDisconnectPersistenceIntegrationTest(BaseIntegrationTestSuite):
             # short-circuit on client_disconnected; only user_terminated
             # and shutdown short-circuit).
             assert persisted.content, "Persisted message content should not be empty"
+
+            # AC10 / SHU-759 atomicity: the LLMUsage row must land in the
+            # same finalize transaction as the Message. If the disconnect
+            # cancellation regressed and started rolling back finalize
+            # again, this is the row that would go missing — pre-SHU-802
+            # the Message could land via add_message's separate commit
+            # while the LLMUsage write inside the now-rolled-back
+            # transaction would not. Roll back the test session before the
+            # query so we see committed-elsewhere rows from the detached
+            # finalize task.
+            await db.rollback()
+            usage_row = (
+                await db.execute(
+                    text(
+                        "SELECT model_id, success, error_message "
+                        "FROM llm_usage "
+                        "WHERE created_at >= :start_at AND request_type = 'chat' "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"start_at": usage_query_start},
+                )
+            ).first()
+            assert usage_row is not None, (
+                "LLMUsage row did not persist for the disconnected stream. "
+                "Message landed but usage didn't — this would mean finalize's "
+                "atomicity broke and Message + LLMUsage no longer share a "
+                "transaction. AC10 invariant violated."
+            )
+            usage_model_id, usage_success, usage_error_message = usage_row
+            assert usage_model_id == persisted.model_id, (
+                f"LLMUsage.model_id={usage_model_id!r} should match the Message's "
+                f"model_id={persisted.model_id!r} — divergence here means the rows "
+                f"were not written by the same finalize transaction."
+            )
+            # The LLM completed naturally (we don't short-circuit on
+            # client_disconnected), so the row should reflect a successful chat.
+            assert usage_success is True, (
+                f"LLMUsage.success should be True for a stream that completed "
+                f"naturally (client_disconnected does not short-circuit the LLM "
+                f"call); got success={usage_success!r}, error={usage_error_message!r}"
+            )
         finally:
             settings.local_stream_test_chunk_delay_ms = original_delay
             await cleanup_test_user(client, admin_headers, user_id)
@@ -348,6 +404,12 @@ class ChatDisconnectPersistenceIntegrationTest(BaseIntegrationTestSuite):
             # Now slow the per-chunk emission just for the regenerate stream
             # so the disconnect signal has time to land before finalize commits.
             settings.local_stream_test_chunk_delay_ms = CHUNK_DELAY_MS_FOR_DISCONNECT_TEST
+
+            # Anchor for the regen-specific LLMUsage query below — must be
+            # AFTER the seed turn's LLMUsage row has landed so we don't
+            # confuse the seed's usage for the regen's. Naive tz to match
+            # the schema (see send-test comment).
+            usage_query_start = datetime.now(UTC).replace(tzinfo=None)
 
             saw_content_delta = False
             async with client.stream(
@@ -401,6 +463,37 @@ class ChatDisconnectPersistenceIntegrationTest(BaseIntegrationTestSuite):
             )
             assert metadata.get("regenerated_from_message_id") == target_message_id, (
                 "regenerated_from_message_id should match seed message id"
+            )
+
+            # AC10 / SHU-759 atomicity on the regen path: a separate
+            # LLMUsage row should land for the regenerated turn (not just
+            # the seed's earlier row). Anchored AFTER the seed completed
+            # so the >= filter excludes the seed's usage. Mirrors the
+            # check in test_disconnect_mid_stream_persists_message_and_usage.
+            await db.rollback()
+            usage_row = (
+                await db.execute(
+                    text(
+                        "SELECT model_id, success "
+                        "FROM llm_usage "
+                        "WHERE created_at >= :start_at AND request_type = 'chat' "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"start_at": usage_query_start},
+                )
+            ).first()
+            assert usage_row is not None, (
+                "LLMUsage row did not persist for the regenerated disconnected stream. "
+                "AC10 atomicity invariant violated on the regen path."
+            )
+            usage_model_id, usage_success = usage_row
+            assert usage_model_id == persisted.model_id, (
+                f"LLMUsage.model_id={usage_model_id!r} should match regenerated "
+                f"Message.model_id={persisted.model_id!r} — same-transaction invariant."
+            )
+            assert usage_success is True, (
+                f"Regenerated LLMUsage.success should be True (LLM completed "
+                f"naturally despite the client disconnect); got {usage_success!r}"
             )
         finally:
             settings.local_stream_test_chunk_delay_ms = original_delay
