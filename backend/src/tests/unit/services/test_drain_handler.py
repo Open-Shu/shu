@@ -35,7 +35,11 @@ import asyncio
 
 import pytest
 
-from shu.services.chat_streaming import StreamLifecycle, drain_in_flight_streams
+from shu.services.chat_streaming import (
+    StreamLifecycle,
+    drain_in_flight_streams,
+    signal_shutdown_to_in_flight_streams,
+)
 
 
 def _build_lifecycle(stream_id: str = "test-stream") -> StreamLifecycle:
@@ -201,3 +205,92 @@ class TestDrainInFlightStreams:
 
         assert result == 0, "exceptions are not timeouts; should not count as killed"
         assert lc.supervise_task.done()
+
+
+class TestSignalShutdownToInFlightStreams:
+    """SHU-802: the sync signal-handler helper invoked from ``main.py``'s
+    SIGTERM/SIGINT handler. Preempts uvicorn's graceful-shutdown wait by
+    firing the shutdown signal on every registered lifecycle before
+    lifespan.shutdown gets a chance to run. Separate from the async
+    ``drain_in_flight_streams`` because signal handlers must be sync —
+    ``StreamLifecycle.signal()`` is sync, so this helper just iterates.
+    """
+
+    def test_empty_registry_returns_zero(self):
+        """No in-flight streams → handler is a no-op returning 0. Guards
+        against a misordered iteration that would crash on a missing
+        ``.values()`` or similar Python foot-gun."""
+        result = signal_shutdown_to_in_flight_streams({})
+        assert result == 0
+
+    def test_signals_every_lifecycle_with_shutdown(self):
+        """Every lifecycle in the registry receives ``signal('shutdown')``.
+        Each one's ``reason`` is set to ``shutdown`` (priority semantics
+        from the earlier signal() fix mean nothing was blocking this — a
+        fresh lifecycle has priority 0 and shutdown is priority 2).
+        """
+        registry: dict[str, StreamLifecycle] = {}
+        for i in range(3):
+            lc = _build_lifecycle(f"stream-{i}")
+            registry[lc.stream_id] = lc
+
+        count = signal_shutdown_to_in_flight_streams(registry)
+
+        assert count == 3
+        for lc in registry.values():
+            assert lc.reason == "shutdown", (
+                f"lifecycle {lc.stream_id} should be signalled with reason=shutdown; got {lc.reason!r}"
+            )
+            assert lc.event.is_set(), (
+                f"lifecycle {lc.stream_id} event should be set after signal"
+            )
+
+    def test_overrides_existing_client_disconnected_reason(self):
+        """The load-bearing case the SHU-802 priority-signal fix enabled:
+        a stream that fired ``client_disconnected`` first (e.g. the user
+        closed the tab) must still get its reason overridden to
+        ``shutdown`` when the SIGTERM handler runs. Without this, the
+        consumer loop's short-circuit check (which excludes
+        ``client_disconnected``) would keep the LLM running until SIGKILL.
+        """
+        lc = _build_lifecycle("disconnected-first")
+        lc.signal("client_disconnected")
+        assert lc.reason == "client_disconnected"
+        registry = {lc.stream_id: lc}
+
+        count = signal_shutdown_to_in_flight_streams(registry)
+
+        assert count == 1
+        assert lc.reason == "shutdown", (
+            "shutdown must override the lower-priority client_disconnected"
+        )
+
+    def test_snapshot_guards_against_mid_iteration_mutation(self):
+        """A supervisor completing mid-iteration would call its
+        ``on_complete`` callback, which pops the registry entry — if we
+        iterated ``registry.values()`` directly that would raise
+        ``RuntimeError: dictionary changed size during iteration``. The
+        helper takes a ``list(registry.values())`` snapshot before
+        iterating so concurrent mutations don't crash the handler.
+        """
+        registry: dict[str, StreamLifecycle] = {}
+        first = _build_lifecycle("first")
+        second = _build_lifecycle("second")
+        registry[first.stream_id] = first
+        registry[second.stream_id] = second
+
+        # Simulate a supervisor completing during signaling: when first's
+        # signal() fires, an on_complete-style callback removes second
+        # from the registry. The helper's snapshot should still cover
+        # second and signal it before returning.
+        first.on_complete = lambda: registry.pop(second.stream_id, None)
+        first.fire_on_complete()  # mutate the registry now, mid-handler
+
+        count = signal_shutdown_to_in_flight_streams(registry)
+
+        # Snapshot was taken AFTER the mutation in this test (we
+        # pre-popped to make the assertion well-defined); both that
+        # remain in the registry get signalled.
+        assert count == len(registry)
+        for lc in registry.values():
+            assert lc.reason == "shutdown"

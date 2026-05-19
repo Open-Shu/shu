@@ -255,6 +255,44 @@ async def drain_in_flight_streams(
         return sum(1 for t in supervise_tasks if t.cancelled() or not t.done())
 
 
+def signal_shutdown_to_in_flight_streams(registry: dict[str, StreamLifecycle]) -> int:
+    """SHU-802: synchronously fire ``signal("shutdown")`` on every lifecycle.
+
+    Used by the SIGTERM/SIGINT signal handler in ``main.py`` to preempt
+    uvicorn's graceful-shutdown wait. Uvicorn defers the ASGI
+    ``lifespan.shutdown`` event until current connections close — but the
+    in-flight SSE stream IS the current connection, so the lifespan-only
+    drain (``drain_in_flight_streams``) never gets a chance to signal the
+    variants before they're force-killed at the SIGKILL grace timeout.
+    The signal handler calls this helper directly on the event loop's
+    signal-handler callback, which fires immediately on SIGTERM regardless
+    of uvicorn's connection-close wait. Variants observe the signal at
+    their next provider chunk, short-circuit to the shielded finalize,
+    and the SSE generators then close naturally — which unblocks
+    uvicorn's wait, and the lifespan drain runs afterward as a backstop
+    to await any still-running supervisor tasks.
+
+    Synchronous on purpose: signal handlers must not perform async work
+    or call ``await`` (the asyncio signal-handler contract requires sync
+    callbacks). ``StreamLifecycle.signal()`` is itself synchronous —
+    setting a reason and firing an ``asyncio.Event`` are both sync ops.
+
+    Args:
+        registry: ``app.state.in_flight_streams`` (live dict). Snapshotted
+            via ``list(...)`` so a supervisor completing during this call
+            (which would fire ``on_complete`` and mutate the registry)
+            doesn't crash the iteration.
+
+    Returns:
+        Number of lifecycles signaled (for logging by the caller).
+
+    """
+    lifecycles = list(registry.values())
+    for lc in lifecycles:
+        lc.signal("shutdown")
+    return len(lifecycles)
+
+
 async def periodic_in_flight_streams_size_log(
     registry: dict[str, StreamLifecycle],
     interval_seconds: float,

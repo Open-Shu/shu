@@ -4,6 +4,7 @@ This module creates and configures the FastAPI application for Shu.
 """
 
 import asyncio
+import signal as _signal
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -516,6 +517,46 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
         )
     except Exception as e:
         logger.warning(f"Failed to start in_flight_streams size log: {e}")
+
+    # SHU-802: SIGTERM/SIGINT signal handler. Uvicorn defers the ASGI
+    # lifespan.shutdown event until in-flight connections close — but the
+    # SSE stream IS the in-flight connection, so the lifespan drain block
+    # below never runs before SIGKILL hits at Docker's grace timeout.
+    # Installing a signal handler at startup lets us fire the shutdown
+    # signal on every registered StreamLifecycle BEFORE uvicorn starts
+    # its connection-close wait. Variants observe the signal at their
+    # next provider chunk, short-circuit to the shielded finalize, and
+    # the SSE generators close naturally — which unblocks uvicorn, and
+    # the lifespan drain then runs as a backstop to await stragglers.
+    try:
+        from .services.chat_streaming import signal_shutdown_to_in_flight_streams
+
+        signal_loop = asyncio.get_running_loop()
+
+        def _drain_signal_handler() -> None:
+            try:
+                count = signal_shutdown_to_in_flight_streams(app.state.in_flight_streams)
+                logger.info(
+                    "SIGTERM/SIGINT handler fired shutdown signal to in-flight streams",
+                    extra={"streams_count": count},
+                )
+            except Exception as e:
+                # Signal handlers must NOT raise — asyncio swallows the
+                # exception but logs a noisy warning, and a failing
+                # handler would mask the real shutdown reason.
+                logger.warning(f"In-flight stream signal handler error: {e}")
+
+        signal_loop.add_signal_handler(_signal.SIGTERM, _drain_signal_handler)
+        signal_loop.add_signal_handler(_signal.SIGINT, _drain_signal_handler)
+        logger.info("SIGTERM/SIGINT drain signal handlers installed")
+    except NotImplementedError:
+        # Windows dev environment (asyncio's add_signal_handler is Unix-only).
+        # Lifespan drain still runs as the backstop on clean shutdowns.
+        # Production runs in Linux containers where the handlers install
+        # normally.
+        logger.info("Drain signal handlers unavailable on this platform; using lifespan-only drain")
+    except Exception as e:
+        logger.warning(f"Failed to install drain signal handlers: {e}")
 
     logger.info("Shu startup complete")
 
