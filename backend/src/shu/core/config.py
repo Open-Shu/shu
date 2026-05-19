@@ -393,6 +393,10 @@ class Settings(BaseSettings):
     @field_validator("log_dir", mode="before")
     @classmethod
     def _resolve_log_dir(cls, v: str) -> str:
+        # Empty string is a valid value meaning "no file handler — stdout only".
+        # Used by the hosted profile where kubelet + log aggregation handle capture.
+        if v == "" or v is None:
+            return ""
         try:
             p = Path(v)
             if p.is_absolute():
