@@ -26,7 +26,7 @@ from shu.billing.cp_client import (
     CpClient,
     CpUnreachable,
 )
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementSet, LimitSet
 
 # Module logger name used by BillingStateCache — caplog filters target this.
 _CACHE_LOGGER = "shu.billing.billing_state_cache"
@@ -35,10 +35,10 @@ _T0 = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
 _TTL = 60
 
 
-def _state(disabled: bool = False) -> BillingState:
+def _state(disabled: bool = False, **overrides) -> BillingState:
     # Trial/grant fields default to inert values; tests targeting trial
     # behavior construct dedicated states inline.
-    return BillingState(
+    base = dict(
         openrouter_key_disabled=disabled,
         payment_failed_at=None,
         payment_grace_days=0,
@@ -48,7 +48,16 @@ def _state(disabled: bool = False) -> BillingState:
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
+        limits=LimitSet(),
+        subscription_status=None,
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+        canceled_at=None,
+        usage_markup_multiplier=None,
     )
+    base.update(overrides)
+    return BillingState(**base)
 
 
 def _stub_client(
@@ -367,15 +376,8 @@ def test_healthy_default_blocks_llm_via_trial_cap_and_keeps_or_key_open() -> Non
 
 @pytest.mark.asyncio
 async def test_cold_start_failure_with_persisted_value_serves_it_not_default() -> None:
-    seeded = BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
+    seeded = _state(
         entitlements=EntitlementSet(plugins=True),
-        is_trial=False,  # paying customer state we don't want to lose
-        trial_deadline=None,
-        total_grant_amount=Decimal(0),
-        remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal("20.00"),
     )
     persister = MagicMock()
@@ -423,10 +425,7 @@ async def test_warm_cache_failure_preserves_trial_and_grant_fields() -> None:
     partially-reconstructed one — the trial banner and entitlement gating
     rely on these fields being present on every served value.
     """
-    seeded = BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
+    seeded = _state(
         entitlements=EntitlementSet(plugins=True, experiences=True),
         is_trial=True,
         trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
@@ -555,16 +554,8 @@ async def test_invalidate_serializes_with_in_flight_fetch() -> None:
 
 
 def _state_with_period_end(period_end: datetime, *, is_trial: bool = True) -> BillingState:
-    return BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
-        entitlements=EntitlementSet(),
+    return _state(
         is_trial=is_trial,
-        trial_deadline=None,
-        total_grant_amount=Decimal(0),
-        remaining_grant_amount=Decimal(0),
-        seat_price_usd=Decimal(0),
         current_period_start=_T0,
         current_period_end=period_end,
     )

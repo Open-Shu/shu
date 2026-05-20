@@ -154,7 +154,7 @@ def disabled_billing_state(
     from decimal import Decimal
 
     from shu.billing.cp_client import BillingState
-    from shu.billing.entitlements import EntitlementSet
+    from shu.billing.entitlements import EntitlementSet, LimitSet
 
     return BillingState(
         openrouter_key_disabled=True,
@@ -166,6 +166,13 @@ def disabled_billing_state(
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
+        limits=LimitSet(),
+        subscription_status=None,
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+        canceled_at=None,
+        usage_markup_multiplier=None,
     )
 
 

@@ -42,6 +42,35 @@ def _decode(response) -> dict:
     return json.loads(response.body.decode())["data"]
 
 
+def _make_state(**overrides) -> BillingState:
+    """Build a `BillingState` with safe defaults for the SHU-774 wire fields.
+
+    Tests assert one or two fields at a time — keep the noise of explicit
+    `None` / `False` out of the assertion body. Pass overrides for any
+    field the test actually exercises.
+    """
+    base = dict(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
+        limits=LimitSet(),
+        subscription_status=None,
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+        canceled_at=None,
+        usage_markup_multiplier=None,
+    )
+    base.update(overrides)
+    return BillingState(**base)
+
+
 # Baseline billing config — no subscription, so admin block is mostly null.
 # Tests that assert specifically on the admin block override this.
 _EMPTY_CONFIG: dict = {}
@@ -80,16 +109,10 @@ class TestSubscriptionPaymentStatus:
         mock_count.return_value = 0
         failed_at = datetime(2026, 1, 1, tzinfo=UTC)
         install_stub_cache(
-            BillingState(
+            _make_state(
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
-                entitlements=EntitlementSet(),
-                is_trial=False,
-                trial_deadline=None,
-                total_grant_amount=Decimal(0),
-                remaining_grant_amount=Decimal(0),
-                seat_price_usd=Decimal(0),
             )
         )
 
@@ -149,21 +172,13 @@ _FULL_BILLING_CONFIG = {
 
 def _admin_visible_state() -> BillingState:
     """BillingState that populates every admin-gated CP-sourced field."""
-    return BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
-        entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
+    return _make_state(
         total_grant_amount=Decimal("50.00"),
         remaining_grant_amount=Decimal("50.00"),
         seat_price_usd=Decimal("20.00"),
         subscription_status="active",
         current_period_start=datetime(2026, 1, 1, tzinfo=UTC),
         current_period_end=datetime(2026, 2, 1, tzinfo=UTC),
-        cancel_at_period_end=False,
-        canceled_at=None,
         usage_markup_multiplier=Decimal("1.3"),
     )
 
@@ -241,10 +256,7 @@ class TestSubscriptionTrialAndEntitlements:
         mock_config.return_value = _EMPTY_CONFIG
         mock_count.return_value = 0
         install_stub_cache(
-            BillingState(
-                openrouter_key_disabled=False,
-                payment_failed_at=None,
-                payment_grace_days=0,
+            _make_state(
                 entitlements=EntitlementSet(plugins=True, experiences=True),
                 is_trial=True,
                 trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
@@ -515,11 +527,7 @@ def _trial_state(
     # write tests in raw-dollar terms. Tests covering the markup path pass
     # an explicit multiplier (or None to verify the configured-default
     # fallback path).
-    return BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
-        entitlements=EntitlementSet(),
+    return _make_state(
         is_trial=True,
         trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
         total_grant_amount=total_grant,
@@ -531,13 +539,7 @@ def _trial_state(
 
 
 def _non_trial_state(*, remaining: Decimal = Decimal("12.34")) -> BillingState:
-    return BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
-        entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
+    return _make_state(
         total_grant_amount=Decimal("50"),
         remaining_grant_amount=remaining,
         seat_price_usd=Decimal("20"),
@@ -652,3 +654,71 @@ class TestResolveRemainingGrantAmount:
             )
         # $5 - $2 * 1.5 = $2.00
         assert result == Decimal("2.00")
+
+
+# `/billing/usage` endpoint — `get_current_usage`. SHU-774 regression: period
+# bounds must come from the CP-sourced BillingState (`get_current_billing_state`),
+# not from the now-dead local billing_state columns surfaced by
+# `get_billing_config`. The scheduler twin has its own test in test_service.py
+# — keep these here so a refactor of either reader can't quietly resurrect the
+# unknown-period response on prod paths.
+
+
+_P_GET_STATE_ROUTER = "shu.billing.router.get_current_billing_state"
+_P_USAGE_PROVIDER_ROUTER = "shu.billing.router.UsageProviderImpl"
+
+
+class TestGetCurrentUsage:
+    @pytest.mark.asyncio
+    async def test_period_bounds_sourced_from_cp_wire_not_billing_config(self):
+        """Endpoint must read period bounds from the CP cache, not the local
+        billing_state row. After SHU-774 those columns aren't written anymore
+        — a regression would surface here as `current_period_unknown=True`.
+        """
+        from shu.billing.router import get_current_usage
+
+        state = _make_state(
+            current_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+            current_period_end=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        usage_summary = MagicMock()
+        usage_summary.total_input_tokens = 100
+        usage_summary.total_output_tokens = 200
+        usage_summary.total_cost_usd = Decimal("1.23")
+        usage_summary.by_model = {}
+        usage_provider = MagicMock()
+        usage_provider.get_usage_summary = AsyncMock(return_value=usage_summary)
+
+        with (
+            patch(_P_GET_STATE_ROUTER, AsyncMock(return_value=state)),
+            patch(_P_USAGE_PROVIDER_ROUTER, MagicMock(return_value=usage_provider)),
+        ):
+            response = await get_current_usage(db=AsyncMock())
+
+        body = _decode(response)
+        assert body.get("current_period_unknown") is not True
+        assert body["period_start"] == "2026-05-01T00:00:00+00:00"
+        assert body["period_end"] == "2026-06-01T00:00:00+00:00"
+        assert body["total_input_tokens"] == 100
+        assert body["total_output_tokens"] == 200
+        assert body["total_cost_usd"] == 1.23
+
+    @pytest.mark.asyncio
+    async def test_unknown_period_response_when_wire_lacks_period_bounds(self):
+        """Cold-start / no-subscription wire (period bounds=None) → the
+        documented unknown-period response shape, not a crash.
+        """
+        from shu.billing.router import get_current_usage
+
+        state = _make_state()  # period bounds default to None
+
+        with patch(_P_GET_STATE_ROUTER, AsyncMock(return_value=state)):
+            response = await get_current_usage(db=AsyncMock())
+
+        body = _decode(response)
+        assert body["current_period_unknown"] is True
+        assert body["period_start"] is None
+        assert body["period_end"] is None
+        assert body["total_input_tokens"] == 0
+        assert body["total_output_tokens"] == 0
+        assert body["total_cost_usd"] == 0.0

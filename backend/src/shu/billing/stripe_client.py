@@ -6,7 +6,6 @@ module uses this client rather than importing stripe directly.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 import stripe
@@ -15,7 +14,6 @@ from stripe import Subscription
 from shu.billing.config import BillingSettings, get_billing_settings
 from shu.billing.schemas import (
     PortalSessionResponse,
-    SubscriptionUpdate,
     UsageMeterEvent,
 )
 from shu.core.logging import get_logger
@@ -62,12 +60,13 @@ class StripeClient:
         stripe.api_key = self._settings.secret_key
         # Pin the Stripe API version explicitly. Without this, the SDK sends
         # requests using the account's Dashboard-configured default version,
-        # which Stripe can auto-roll without warning. A silent version bump
-        # broke parse_subscription_update when 2026-03-25.dahlia moved
-        # current_period_{start,end} off the Subscription object onto each
-        # SubscriptionItem (SHU-707). Bumping this pin requires reviewing all
-        # parse_* functions in this file for payload-shape compatibility.
-        # See https://docs.stripe.com/upgrades for the changelog.
+        # which Stripe can auto-roll without warning. The 2026-03-25.dahlia
+        # version moved `current_period_{start,end}` off the Subscription
+        # object onto each SubscriptionItem (SHU-707) — `_period_window` in
+        # this file unpacks period bounds from the item level. Bumping this
+        # pin requires re-reading the period and seat-state helpers below
+        # for payload-shape compatibility. See https://docs.stripe.com/upgrades
+        # for the changelog.
         stripe.api_version = "2026-03-25.dahlia"
         # Set app info for Stripe Dashboard identification
         stripe.set_app_info(
@@ -651,62 +650,6 @@ class StripeClient:
                 },
             )
             raise StripeClientError(f"Failed to get meter summary: {e}", e) from e
-
-    # =========================================================================
-    # Webhooks
-    # =========================================================================
-    #
-    # Stripe signature verification used to live here as construct_webhook_event.
-    # It was retired when the Shu Control Plane took over as the sole Stripe
-    # webhook receiver — the control plane verifies Stripe signatures at its
-    # edge, then forwards events to this tenant under an HMAC envelope.
-    # Envelope verification is in shu.billing.router_envelope.
-
-    def parse_subscription_update(self, subscription_data: dict[str, Any]) -> SubscriptionUpdate:
-        """Parse subscription data from a webhook event into our DTO.
-
-        Args:
-            subscription_data: The 'data.object' from a subscription webhook event
-
-        Returns:
-            SubscriptionUpdate DTO
-
-        """
-        # Stripe API 2026-03-25.dahlia moved current_period_* from the subscription object
-        # onto each subscription item. Prefer the item-level value when present; fall back
-        # to subscription-level fields for older API versions. Any item works — periods are
-        # uniform across the items in a subscription. If neither side carries valid timestamps,
-        # the payload shape has drifted beyond what this parser understands — fail loudly with
-        # context rather than letting datetime.fromtimestamp raise a bare TypeError.
-        items_data = subscription_data.get("items", {}).get("data", [])
-        any_item = items_data[0] if items_data else None
-        period_source = (
-            any_item
-            if any_item and "current_period_start" in any_item and "current_period_end" in any_item
-            else subscription_data
-        )
-        period_start_ts = period_source.get("current_period_start")
-        period_end_ts = period_source.get("current_period_end")
-        if not isinstance(period_start_ts, (int, float)) or not isinstance(period_end_ts, (int, float)):
-            raise StripeClientError(
-                f"Subscription {subscription_data.get('id')!r} webhook payload has no valid "
-                "current_period_start/current_period_end at item level or subscription level; "
-                f"Stripe API version may have drifted past {stripe.api_version!r}"
-            )
-
-        return SubscriptionUpdate(
-            stripe_subscription_id=subscription_data["id"],
-            stripe_customer_id=subscription_data["customer"],
-            status=subscription_data["status"],
-            current_period_start=datetime.fromtimestamp(period_start_ts, tz=UTC),
-            current_period_end=datetime.fromtimestamp(period_end_ts, tz=UTC),
-            cancel_at_period_end=subscription_data.get("cancel_at_period_end", False),
-            canceled_at=(
-                datetime.fromtimestamp(subscription_data["canceled_at"], tz=UTC)
-                if subscription_data.get("canceled_at")
-                else None
-            ),
-        )
 
 
 def resolve_period_end(subscription: Any, seat_item: Any | None) -> int:

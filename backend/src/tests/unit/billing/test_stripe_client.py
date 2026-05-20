@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shu.billing.schemas import SubscriptionUpdate
 from shu.billing.stripe_client import (
     StripeClient,
     StripeClientError,
@@ -30,87 +29,6 @@ def _make_settings(**overrides):
     }
     defaults.update(overrides)
     return MagicMock(**defaults)
-
-
-def _make_subscription_data(*, quantity=5, items_quantity=None, include_items=True):
-    """Build a realistic Stripe subscription webhook payload.
-
-    Args:
-        quantity: The quantity to put on items.data[0] (canonical location).
-        items_quantity: Override for items.data[0].quantity if different from quantity.
-        include_items: Whether to include the items field at all.
-    """
-    data = {
-        "id": "sub_test123",
-        "customer": "cus_test456",
-        "status": "active",
-        "current_period_start": 1712016000,  # 2024-04-02T00:00:00Z
-        "current_period_end": 1714694400,  # 2024-05-03T00:00:00Z
-        "cancel_at_period_end": False,
-        "canceled_at": None,
-    }
-    if include_items:
-        data["items"] = {
-            "data": [
-                {
-                    "id": "si_item1",
-                    "price": {"id": "price_fake"},
-                    "quantity": items_quantity if items_quantity is not None else quantity,
-                }
-            ]
-        }
-    return data
-
-
-class TestParseSubscriptionUpdate:
-    """Tests for StripeClient.parse_subscription_update — the webhook parsing boundary."""
-
-    @patch("shu.billing.stripe_client.stripe")
-    def test_parses_timestamps_as_utc(self, mock_stripe):
-        """Period timestamps must be parsed as UTC datetimes."""
-        client = StripeClient(_make_settings())
-        data = _make_subscription_data()
-
-        result = client.parse_subscription_update(data)
-
-        assert result.current_period_start.tzinfo is not None
-        assert result.current_period_end.tzinfo is not None
-        assert result.current_period_start < result.current_period_end
-
-    @patch("shu.billing.stripe_client.stripe")
-    def test_parses_canceled_at_when_present(self, mock_stripe):
-        """canceled_at should be parsed when set."""
-        client = StripeClient(_make_settings())
-        data = _make_subscription_data()
-        data["canceled_at"] = 1713000000
-        data["cancel_at_period_end"] = True
-
-        result = client.parse_subscription_update(data)
-
-        assert result.canceled_at is not None
-        assert result.cancel_at_period_end is True
-
-    @patch("shu.billing.stripe_client.stripe")
-    def test_canceled_at_none_when_not_set(self, mock_stripe):
-        """canceled_at should be None when subscription isn't canceled."""
-        client = StripeClient(_make_settings())
-        data = _make_subscription_data()
-
-        result = client.parse_subscription_update(data)
-
-        assert result.canceled_at is None
-
-    @patch("shu.billing.stripe_client.stripe")
-    def test_extracts_customer_and_subscription_ids(self, mock_stripe):
-        """Core IDs must be extracted correctly."""
-        client = StripeClient(_make_settings())
-        data = _make_subscription_data()
-
-        result = client.parse_subscription_update(data)
-
-        assert result.stripe_subscription_id == "sub_test123"
-        assert result.stripe_customer_id == "cus_test456"
-        assert result.status == "active"
 
 
 class TestStripeClientInit:

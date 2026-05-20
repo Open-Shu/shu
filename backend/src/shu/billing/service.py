@@ -55,7 +55,7 @@ class BillingService:
     ) -> None:
         self._settings = settings or get_billing_settings()
         self._client = stripe_client or StripeClient(self._settings)
-        self._dispatcher = WebhookDispatcher(self._client)
+        self._dispatcher = WebhookDispatcher()
 
     @property
     def is_configured(self) -> bool:

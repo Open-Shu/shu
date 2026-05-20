@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import httpx
@@ -39,6 +39,12 @@ from shu.billing.router_envelope import (
     TIMESTAMP_HEADER,
     sign_envelope,
 )
+
+# Mirrors CP's `_BILLABLE_SUBSCRIPTION_STATUSES` plus the two terminal states
+# CP can transit into (`canceled`, `unpaid`). Strict Literal so a Stripe enum
+# addition or a typo on CP's side surfaces as CpMalformedResponse rather than
+# silently bypassing the cancel gate in enforcement.assert_subscription_active.
+SubscriptionStatus = Literal["trialing", "active", "past_due", "canceled", "unpaid"]
 
 
 @dataclass(frozen=True, config=ConfigDict(extra="ignore"))
@@ -72,22 +78,28 @@ class BillingState:
     remaining_grant_amount: Annotated[Decimal | None, Field(ge=0)]
     seat_price_usd: Annotated[Decimal, Field(ge=0)]
     # Per-tier integer caps with optional per-tenant overrides, resolved CP-side.
-    # Zero default (LimitSet()) covers older CP releases that don't ship the
-    # field yet — fail-closed quota until CP starts emitting it.
-    limits: LimitSet = LimitSet()
+    # Required on the wire — CP's BillingStateResponse always emits a LimitSet
+    # (defaulting to zeros only on the conservative-fallback branch). Making it
+    # required here means a CP that omits the field surfaces as
+    # CpMalformedResponse instead of silently granting zero quota.
+    limits: LimitSet
     # Stripe subscription status / period, lifted from tenant-side direct
-    # Stripe reads (SHU-774). None when CP has no Shu-managed billable
-    # subscription — the conservative fallback in CP's EntitlementsService.
-    subscription_status: str | None = None
-    current_period_start: AwareDatetime | None = None
-    current_period_end: AwareDatetime | None = None
-    cancel_at_period_end: StrictBool = False
-    canceled_at: AwareDatetime | None = None
+    # Stripe reads (SHU-774). `None` is a meaningful wire value: CP emits
+    # `subscription_status=None` (and the period fields as None) when the
+    # tenant has no Shu-managed billable subscription — the conservative-
+    # fallback branch in CP's EntitlementsService. The field is required on
+    # the wire; a CP that omits it raises CpMalformedResponse rather than
+    # defaulting silently and bypassing the cancel gate.
+    subscription_status: SubscriptionStatus | None
+    current_period_start: AwareDatetime | None
+    current_period_end: AwareDatetime | None
+    cancel_at_period_end: StrictBool
+    canceled_at: AwareDatetime | None
     # Customer-billed markup applied to raw provider cost. CP computes this
     # from the metered Price's unit_amount_decimal. `None` is the "no metered
     # item / tiered pricing" signal; consumers fall back to the configured
     # default via `resolve_markup`.
-    usage_markup_multiplier: Annotated[Decimal | None, Field(gt=0)] = None
+    usage_markup_multiplier: Annotated[Decimal | None, Field(gt=0)]
 
     @field_validator(
         "payment_failed_at",
@@ -153,8 +165,6 @@ HEALTHY_DEFAULT = BillingState(
     current_period_end=None,
     cancel_at_period_end=False,
     canceled_at=None,
-    # Cold-start carries no Stripe-derived markup; consumers fall back to
-    # `BillingSettings.usage_markup_multiplier_default` via `resolve_markup`.
     usage_markup_multiplier=None,
 )
 

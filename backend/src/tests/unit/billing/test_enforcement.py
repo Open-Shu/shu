@@ -7,7 +7,35 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
-from shu.billing.entitlements import EntitlementDeniedError, EntitlementSet
+from shu.billing.entitlements import EntitlementDeniedError, EntitlementSet, LimitSet
+
+
+def _make_state(**overrides) -> BillingState:
+    """Build a `BillingState` with safe defaults for the new SHU-774 fields.
+
+    Tests target one or two fields at a time — keep the noise of explicit
+    `None`s out of the assertion body.
+    """
+    base = dict(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
+        limits=LimitSet(),
+        subscription_status=None,
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+        canceled_at=None,
+        usage_markup_multiplier=None,
+    )
+    base.update(overrides)
+    return BillingState(**base)
 from shu.billing.enforcement import (
     SubscriptionInactiveError,
     TrialCapExhaustedError,
@@ -249,16 +277,9 @@ class TestAssertSubscriptionActive:
         cancel gate doesn't trip.
         """
         install_stub_cache(
-            BillingState(
-                openrouter_key_disabled=False,
+            _make_state(
                 payment_failed_at=datetime(2026, 1, 1, tzinfo=UTC),
                 payment_grace_days=7,
-                entitlements=EntitlementSet(),
-                is_trial=False,
-                trial_deadline=None,
-                total_grant_amount=Decimal(0),
-                remaining_grant_amount=Decimal(0),
-                seat_price_usd=Decimal(0),
                 subscription_status="active",
             )
         )
@@ -270,16 +291,10 @@ class TestAssertSubscriptionActive:
         """Lockout state → raises with grace_deadline = failed_at + grace_days."""
         failed_at = datetime(2026, 1, 1, tzinfo=UTC)
         install_stub_cache(
-            BillingState(
+            _make_state(
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
-                entitlements=EntitlementSet(),
-                is_trial=False,
-                trial_deadline=None,
-                total_grant_amount=Decimal(0),
-                remaining_grant_amount=Decimal(0),
-                seat_price_usd=Decimal(0),
             )
         )
 
@@ -314,11 +329,7 @@ def _trialing_state(
     # Default markup=1.0 keeps existing assertions in raw-dollar terms.
     # The markup-aware test class below passes an explicit multiplier
     # (or None to verify the configured-default fallback path).
-    return BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
-        entitlements=EntitlementSet(),
+    return _make_state(
         is_trial=True,
         trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
         total_grant_amount=total_grant,
@@ -373,18 +384,7 @@ class TestAssertSubscriptionActiveTrialCap:
         """Non-trial tenant with an active subscription_status passes through
         the cancel gate and short-circuits before the trial-cap branch.
         """
-        install_stub_cache(HEALTHY_DEFAULT.__class__(
-            openrouter_key_disabled=False,
-            payment_failed_at=None,
-            payment_grace_days=0,
-            entitlements=EntitlementSet(),
-            is_trial=False,
-            trial_deadline=None,
-            total_grant_amount=Decimal(0),
-            remaining_grant_amount=Decimal(0),
-            seat_price_usd=Decimal(0),
-            subscription_status="active",
-        ))
+        install_stub_cache(_make_state(subscription_status="active"))
 
         # No session needed — non-trial short-circuits before the usage query.
         with patch(_P_SESSION_LOCAL) as session_local:
@@ -397,18 +397,7 @@ class TestAssertSubscriptionActiveTrialCap:
         `openrouter_key_disabled` hasn't flipped yet (CP webhook lag). Source
         of truth lifted to CP in SHU-774.
         """
-        install_stub_cache(HEALTHY_DEFAULT.__class__(
-            openrouter_key_disabled=False,
-            payment_failed_at=None,
-            payment_grace_days=0,
-            entitlements=EntitlementSet(),
-            is_trial=False,
-            trial_deadline=None,
-            total_grant_amount=Decimal(0),
-            remaining_grant_amount=Decimal(0),
-            seat_price_usd=Decimal(0),
-            subscription_status="canceled",
-        ))
+        install_stub_cache(_make_state(subscription_status="canceled"))
 
         with pytest.raises(SubscriptionInactiveError) as exc_info:
             await assert_subscription_active()
@@ -464,11 +453,10 @@ class TestAssertSubscriptionActiveTrialCap:
         Trial-cap branch must not even open a session.
         """
         install_stub_cache(
-            BillingState(
+            _make_state(
                 openrouter_key_disabled=True,
                 payment_failed_at=datetime(2026, 1, 1, tzinfo=UTC),
                 payment_grace_days=7,
-                entitlements=EntitlementSet(),
                 is_trial=True,
                 trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
                 total_grant_amount=Decimal("50.00"),
@@ -570,17 +558,7 @@ class TestAssertSubscriptionActiveTrialCap:
 
 def _state_with_entitlements(**overrides) -> BillingState:
     """Healthy non-trial state with custom entitlements."""
-    return BillingState(
-        openrouter_key_disabled=False,
-        payment_failed_at=None,
-        payment_grace_days=0,
-        entitlements=EntitlementSet(**overrides),
-        is_trial=False,
-        trial_deadline=None,
-        total_grant_amount=Decimal(0),
-        remaining_grant_amount=Decimal(0),
-        seat_price_usd=Decimal(0),
-    )
+    return _make_state(entitlements=EntitlementSet(**overrides))
 
 
 class TestAssertEntitlement:

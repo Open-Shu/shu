@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shu.billing.schemas import SubscriptionUpdate
 from shu.billing.service import BillingService, CustomerMismatchError
 from shu.billing.stripe_client import StripeClientError
 
@@ -28,8 +27,6 @@ def _make_client():
     client.create_customer = AsyncMock()
     client.report_usage = AsyncMock()
     client.get_meter_event_summary = AsyncMock()
-    # Sync methods (no network I/O)
-    client.parse_subscription_update = MagicMock()
     return client
 
 
@@ -142,24 +139,22 @@ class TestWebhookCustomerScoping:
     async def test_accepts_event_for_matching_customer(self):
         """Webhook for the correct customer should be processed.
 
-        Post-SHU-774 the only remaining callback is `on_cycle_rollover`
-        (seat-rollover side-effect). Subscription/payment status
-        persistence was lifted to CP; this test confirms the customer
-        scoping still admits matching events into dispatch.
+        Post-SHU-774 `invoice.paid` is the only event type the dispatcher
+        registers a handler for; this test confirms the customer scoping
+        still admits matching events into dispatch and that a registered
+        handler runs.
         """
         client = _make_client()
         event = MagicMock()
-        event.type = "customer.subscription.updated"
+        event.type = "invoice.paid"
         event.id = "evt_123"
-        event.data.object = {"customer": "cus_mine", "id": "sub_123"}
-        client.parse_subscription_update.return_value = SubscriptionUpdate(
-            stripe_subscription_id="sub_123",
-            stripe_customer_id="cus_mine",
-            status="active",
-            quantity=5,
-            current_period_start=MagicMock(),
-            current_period_end=MagicMock(),
-        )
+        event.data.object = {
+            "customer": "cus_mine",
+            "id": "in_1",
+            "amount_paid": 0,
+            "billing_reason": "manual",
+            "subscription": "sub_123",
+        }
 
         service = BillingService(_make_settings(), stripe_client=client)
 
@@ -709,10 +704,16 @@ class TestWebhookGuard:
 
     @pytest.mark.asyncio
     async def test_missing_customer_id_drops_all_events(self):
-        """When SHU_STRIPE_CUSTOMER_ID is not configured, all events must be dropped."""
+        """When SHU_STRIPE_CUSTOMER_ID is not configured, all events must be dropped.
+
+        Post-SHU-774 the only event type the dispatcher handles is
+        `invoice.paid` (for cycle rollover); the guard test pins it as the
+        representative case — if even that gets dropped, every other type
+        also will.
+        """
         client = _make_client()
         event = MagicMock()
-        event.type = "customer.subscription.updated"
+        event.type = "invoice.paid"
         event.id = "evt_123"
 
         rollover_cb = AsyncMock()
@@ -725,5 +726,5 @@ class TestWebhookGuard:
         )
 
         assert handled is False
-        assert event_type == "customer.subscription.updated"
+        assert event_type == "invoice.paid"
         rollover_cb.assert_not_awaited()
