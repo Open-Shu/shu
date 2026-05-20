@@ -88,10 +88,10 @@ async def _create_provider_model_conversation(
     model_name: str | None = None,
     cost_per_input_unit: Decimal | None = None,
     cost_per_output_unit: Decimal | None = None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     """Provision the four DB rows each test needs: LLMProvider, LLMModel,
     ModelConfiguration, Conversation. Returns
-    ``(provider_id, model_id, conversation_id)``.
+    ``(provider_id, model_id, model_config_id, conversation_id)``.
 
     The ``cost_per_input_unit`` / ``cost_per_output_unit`` arguments are
     written directly onto the model row AFTER creation so the
@@ -159,7 +159,54 @@ async def _create_provider_model_conversation(
     assert conv_response.status_code == 200, conv_response.text
     conversation_id = extract_data(conv_response)["id"]
 
-    return provider_id, model_id, conversation_id
+    return provider_id, model_id, model_config_id, conversation_id
+
+
+async def _cleanup_provider_resources(
+    client,
+    admin_headers: dict,
+    *,
+    model_config_id: str | None = None,
+    provider_id: str | None = None,
+) -> None:
+    """SHU-803: tear down the provider + model_configuration rows a test
+    created so the suite leaves the DB clean and re-runs don't pile up
+    state.
+
+    Order matters: the conversation rows reference ``model_config_id``,
+    so this MUST run AFTER ``cleanup_test_user`` (which cascades-deletes
+    the user's conversations). The model rows are cascaded by the
+    provider delete, so we only delete config + provider explicitly.
+
+    Best-effort — a 404 means a prior test already tore the row down,
+    a 500 means something we can't recover from in test cleanup. Both
+    log at INFO so a failure here doesn't mask the actual test result.
+    """
+    if model_config_id:
+        try:
+            response = await client.delete(
+                f"/api/v1/model-configurations/{model_config_id}", headers=admin_headers
+            )
+            if response.status_code not in (200, 204, 404):
+                logger.warning(
+                    "Cleanup: model_configuration delete returned %d: %s",
+                    response.status_code,
+                    response.text,
+                )
+        except Exception as exc:
+            logger.warning("Cleanup: model_configuration delete raised: %s", exc)
+
+    if provider_id:
+        try:
+            response = await client.delete(f"/api/v1/llm/providers/{provider_id}", headers=admin_headers)
+            if response.status_code not in (200, 204, 404):
+                logger.warning(
+                    "Cleanup: provider delete returned %d: %s",
+                    response.status_code,
+                    response.text,
+                )
+        except Exception as exc:
+            logger.warning("Cleanup: provider delete raised: %s", exc)
 
 
 async def _seed_model_pricing(db, model_id: str, *, cost_per_input_unit: Decimal, cost_per_output_unit: Decimal) -> None:
@@ -264,12 +311,23 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         model_name: str | None = None,
         cost_per_input_unit: Decimal | None = None,
         cost_per_output_unit: Decimal | None = None,
-    ) -> tuple[dict, str, str, str, str]:
-        """Returns ``(user_headers, user_id, provider_id, model_id, conversation_id)``."""
+    ) -> tuple[dict, str, str, str, str, str]:
+        """Returns ``(user_headers, user_id, provider_id, model_id, model_config_id, conversation_id)``.
+
+        ``model_config_id`` is returned so the caller can pass it to
+        ``_cleanup_provider_resources`` in its ``finally`` block — that
+        cleanup is what keeps the suite re-runnable without name
+        collisions on the model_configurations.name UNIQUE constraint.
+        """
         await _ensure_local_provider_type(db)
         admin_headers = auth_headers
         user_headers, user_id = await create_active_user_with_id(client, admin_headers)
-        provider_id, model_id, conversation_id = await _create_provider_model_conversation(
+        (
+            provider_id,
+            model_id,
+            model_config_id,
+            conversation_id,
+        ) = await _create_provider_model_conversation(
             client,
             admin_headers,
             user_headers,
@@ -284,7 +342,7 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 cost_per_input_unit=cost_per_input_unit or Decimal("0"),
                 cost_per_output_unit=cost_per_output_unit or Decimal("0"),
             )
-        return user_headers, user_id, provider_id, model_id, conversation_id
+        return user_headers, user_id, provider_id, model_id, model_config_id, conversation_id
 
     # ------------------------------------------------------------------
     # 1. Anthropic — happy path (message_start + delta both land)
@@ -298,7 +356,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         message_start nested-usage capture work — pre-fix only delta
         was caught.
         """
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="anthropic", provider_name="shu803-anthropic"
         )
         try:
@@ -335,7 +400,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 f"output_tokens should be captured from message_delta; got {usage.output_tokens}"
             )
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 2. Anthropic — pre-delta (input_tokens ONLY)
@@ -349,7 +424,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         post-fix the LLMUsage row carries input_tokens > 0 with
         output_tokens = 0.
         """
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="anthropic", provider_name="shu803-anthropic-predelta"
         )
         try:
@@ -379,7 +461,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 f"got {usage.output_tokens}"
             )
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 3. Gemini — cumulative usageMetadata
@@ -392,7 +484,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         protocol level (usage is incremental), but the drain path
         still runs and the audit fields are recorded.
         """
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="gemini", provider_name="shu803-gemini"
         )
         try:
@@ -421,7 +520,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
             assert usage.output_tokens > 0
 
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 4. OpenAI Chat Completions — drain catches end-of-stream usage
@@ -440,7 +549,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         at terminate (persisted ``Message.content`` shorter than the
         full fixture content).
         """
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="generic_completions", provider_name="shu803-completions"
         )
         try:
@@ -481,7 +597,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 "drain spawns cancel_task concurrently — should be attempted even when adapter is no-op"
             )
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 5. Drain shutdown escape valve
@@ -497,7 +623,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         from shu.main import app as _app
         from shu.services.chat_streaming import signal_shutdown_to_in_flight_streams
 
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="generic_completions", provider_name="shu803-shutdown"
         )
         try:
@@ -566,7 +699,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 f"{request_metadata.get('drain_outcome')!r}"
             )
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 6. OpenAI Responses — drain catches response.completed
@@ -579,7 +722,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         parallel via ``asyncio.gather`` and captures the eventual
         ``response.completed`` chunk's usage.
         """
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="openai", provider_name="shu803-responses"
         )
         try:
@@ -616,7 +766,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
             assert request_metadata.get("cancel_attempted") is True
             assert request_metadata.get("cancel_succeeded") is True
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 7. Responses cancel endpoint URL verification + negative
@@ -632,7 +792,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         end-of-stream usage so the row's token counts are non-zero
         (the value-add of running cancel+drain concurrently).
         """
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client, db, auth_headers, provider_type="openai", provider_name="shu803-cancel-url"
         )
         try:
@@ -690,7 +857,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 "500 from cancel endpoint must surface as cancel_succeeded=False"
             )
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 8. OpenRouter Gemma-4 — DB-rate fallback cost (LOAD BEARING)
@@ -716,7 +893,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         rate_in = Decimal("0.00000018")  # 0.18 / 1e6
         rate_out = Decimal("0.00000050")  # 0.50 / 1e6
 
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client,
             db,
             auth_headers,
@@ -769,7 +953,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                 "fallback resolves rates via AC9d normalization."
             )
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
     # ------------------------------------------------------------------
     # 9. OpenRouter — provider-authoritative wire cost
@@ -788,7 +982,14 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         # computation so the test can prove which path was taken.
         wire_cost = Decimal("0.00012345")
 
-        user_headers, user_id, _, model_id, conv_id = await self._setup_user_and_provider(
+        (
+            user_headers,
+            user_id,
+            provider_id,
+            model_id,
+            model_config_id,
+            conv_id,
+        ) = await self._setup_user_and_provider(
             client,
             db,
             auth_headers,
@@ -831,7 +1032,17 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
             assert usage.input_cost == Decimal("0")
             assert usage.output_cost == Decimal("0")
         finally:
+            # SHU-803: user cleanup MUST run before provider/config
+            # cleanup — conversations FK reference the model_config,
+            # and cleanup_test_user cascades-deletes the user's
+            # conversations.
             await cleanup_test_user(client, auth_headers, user_id)
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=model_config_id,
+                provider_id=provider_id,
+            )
 
 
 if __name__ == "__main__":
