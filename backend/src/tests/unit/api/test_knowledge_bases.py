@@ -11,6 +11,7 @@ Tests cover:
 
 import io
 from datetime import UTC, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,6 +25,7 @@ from shu.api.knowledge_bases import (
 )
 from shu.auth.rbac import require_kb_write_access
 from shu.billing.cp_client import BillingState
+from shu.billing.entitlements import EntitlementSet
 from shu.schemas.knowledge_base import KnowledgeBaseCreate
 from tests.unit.api.conftest import make_app_with_router
 
@@ -187,6 +189,12 @@ class TestUploadDocumentsSubscriptionGate:
                 openrouter_key_disabled=True,
                 payment_failed_at=failed_at,
                 payment_grace_days=7,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
             )
         )
 

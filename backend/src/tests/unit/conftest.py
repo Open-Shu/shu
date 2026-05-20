@@ -100,13 +100,24 @@ def disabled_billing_state(
 
     Default `payment_failed_at` is a fixed 2026-01-01 — tests asserting on
     grace_deadline values get a stable input without each one inventing one.
+    Trial/grant fields default to inert values; tests that target trial
+    behavior construct dedicated states inline.
     """
+    from decimal import Decimal
+
     from shu.billing.cp_client import BillingState
+    from shu.billing.entitlements import EntitlementSet
 
     return BillingState(
         openrouter_key_disabled=True,
         payment_failed_at=payment_failed_at or datetime(2026, 1, 1, tzinfo=UTC),
         payment_grace_days=grace_days,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
     )
 
 

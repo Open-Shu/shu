@@ -5,10 +5,29 @@ import log from '../utils/log';
 
 const POLL_INTERVAL_MS = 60_000;
 
+// Decimal fields arrive as strings from the backend (stringified to dodge
+// JSON-number precision loss). Number('') and Number('abc') yield 0 and NaN
+// respectively, both of which would silently feed into .toFixed() in the
+// trial banner. Normalise to null on anything non-finite so consumers can
+// treat absence and parse-failure the same way.
+const parseDecimalField = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
 const HEALTHY_STATE = {
   paymentFailedAt: null,
   graceDeadline: null,
   servicePaused: false,
+  isTrial: false,
+  trialDeadline: null,
+  totalGrantAmount: null,
+  remainingGrantAmount: null,
+  seatPriceUsd: null,
+  userCount: 0,
 };
 
 const BillingStatusContext = createContext(null);
@@ -34,6 +53,15 @@ export const BillingStatusProvider = ({ children }) => {
         paymentFailedAt: data.payment_failed_at ?? null,
         graceDeadline: data.grace_deadline ?? null,
         servicePaused: Boolean(data.service_paused),
+        isTrial: Boolean(data.is_trial),
+        trialDeadline: data.trial_deadline ?? null,
+        // Decimals are stringified by the backend (JSON has no Decimal type).
+        // parseDecimalField normalises both null and non-finite strings to
+        // null so the banner never renders "NaN" or "0" on a malformed value.
+        totalGrantAmount: parseDecimalField(data.total_grant_amount),
+        remainingGrantAmount: parseDecimalField(data.remaining_grant_amount),
+        seatPriceUsd: parseDecimalField(data.seat_price_usd),
+        userCount: data.user_count ?? 0,
       });
     } catch (error) {
       // Swallow: transient API hiccups must not flash the banner. Keep last-known-healthy state.
@@ -65,7 +93,17 @@ export const BillingStatusProvider = ({ children }) => {
     paymentFailedAt: status.paymentFailedAt,
     graceDeadline: status.graceDeadline,
     servicePaused: status.servicePaused,
+    isTrial: status.isTrial,
+    trialDeadline: status.trialDeadline,
+    totalGrantAmount: status.totalGrantAmount,
+    remainingGrantAmount: status.remainingGrantAmount,
+    seatPriceUsd: status.seatPriceUsd,
+    userCount: status.userCount,
     loading,
+    // Exposed for trial-exit actions (upgrade-now / cancel-trial) so the
+    // banner can pull fresh state immediately after success rather than
+    // waiting for the next 60s polling tick.
+    refetch: fetchBillingStatus,
   };
 
   return <BillingStatusContext.Provider value={value}>{children}</BillingStatusContext.Provider>;

@@ -203,6 +203,97 @@ describe('BillingStatusContext', () => {
     });
   });
 
+  it('parses the trial/grant wire shape into numeric context fields', async () => {
+    // Backend stringifies Decimals to dodge JSON-number precision loss.
+    // The context layer parses them back to Number at the boundary so banner
+    // consumers don't need to remember to. This test pins that contract — a
+    // future shape change (e.g., backend stops stringifying) would surface here.
+    billingAPI.getSubscription.mockResolvedValue({
+      data: {
+        ...HEALTHY_RESPONSE.data,
+        is_trial: true,
+        trial_deadline: '2026-06-15T00:00:00Z',
+        total_grant_amount: '50.00',
+        remaining_grant_amount: '12.34',
+        seat_price_usd: '20.00',
+        user_count: 3,
+      },
+    });
+
+    const TrialProbe = () => {
+      const ctx = useBillingStatus();
+      return (
+        <div>
+          <div data-testid="isTrial">{String(ctx.isTrial)}</div>
+          <div data-testid="trialDeadline">{String(ctx.trialDeadline)}</div>
+          <div data-testid="totalGrantAmount">{String(ctx.totalGrantAmount)}</div>
+          <div data-testid="remainingGrantAmount">{String(ctx.remainingGrantAmount)}</div>
+          <div data-testid="seatPriceUsd">{String(ctx.seatPriceUsd)}</div>
+          <div data-testid="userCount">{String(ctx.userCount)}</div>
+          <div data-testid="totalGrantType">{typeof ctx.totalGrantAmount}</div>
+        </div>
+      );
+    };
+
+    render(
+      <BillingStatusProvider>
+        <TrialProbe />
+      </BillingStatusProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('isTrial').textContent).toBe('true');
+    });
+
+    expect(screen.getByTestId('trialDeadline').textContent).toBe('2026-06-15T00:00:00Z');
+    expect(screen.getByTestId('totalGrantAmount').textContent).toBe('50');
+    expect(screen.getByTestId('remainingGrantAmount').textContent).toBe('12.34');
+    expect(screen.getByTestId('seatPriceUsd').textContent).toBe('20');
+    expect(screen.getByTestId('userCount').textContent).toBe('3');
+    // Type assertion: consumers expect Number, not string. Catches a regression
+    // where a future refactor accidentally passes the raw stringified value through.
+    expect(screen.getByTestId('totalGrantType').textContent).toBe('number');
+  });
+
+  it('coerces malformed decimal strings to null instead of NaN', async () => {
+    // Number('abc') is NaN, which silently feeds into .toFixed() in TrialBanner
+    // and renders "$NaN of $NaN". parseDecimalField should clamp non-finite
+    // values to null so banner consumers can treat absence and parse-failure
+    // identically.
+    billingAPI.getSubscription.mockResolvedValue({
+      data: {
+        ...HEALTHY_RESPONSE.data,
+        is_trial: true,
+        total_grant_amount: 'not-a-number',
+        remaining_grant_amount: '',
+        seat_price_usd: 'NaN',
+      },
+    });
+
+    const NullProbe = () => {
+      const ctx = useBillingStatus();
+      return (
+        <div>
+          <div data-testid="total">{String(ctx.totalGrantAmount)}</div>
+          <div data-testid="remaining">{String(ctx.remainingGrantAmount)}</div>
+          <div data-testid="seat">{String(ctx.seatPriceUsd)}</div>
+        </div>
+      );
+    };
+
+    render(
+      <BillingStatusProvider>
+        <NullProbe />
+      </BillingStatusProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('total').textContent).toBe('null');
+    });
+    expect(screen.getByTestId('remaining').textContent).toBe('null');
+    expect(screen.getByTestId('seat').textContent).toBe('null');
+  });
+
   it('cleans up interval and focus listener on unmount', async () => {
     billingAPI.getSubscription.mockResolvedValue(HEALTHY_RESPONSE);
 
