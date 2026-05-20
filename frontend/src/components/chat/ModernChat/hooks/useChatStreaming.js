@@ -13,6 +13,14 @@ import useReasoningStream from './useReasoningStream';
 import useStreamingPlaceholders from './useStreamingPlaceholders';
 import useMessageRegeneration from './useMessageRegeneration';
 
+// SHU-803 AC5: response-status codes the Stop POST distinguishes.
+// 202 = signal accepted (axios resolves 2xx). 410 = STREAM_NOT_ACTIVE —
+// the stream already finalized before the POST landed; treated as
+// success-equivalent for the UI. 403 = caller doesn't own the stream
+// (defensive; shouldn't happen for the streaming user).
+const STREAM_NOT_ACTIVE_STATUS = 410;
+const FORBIDDEN_STATUS = 403;
+
 const useChatStreaming = ({
   queryClient,
   setError,
@@ -33,6 +41,11 @@ const useChatStreaming = ({
   const conversationRef = useRef(selectedConversation);
   const isMountedRef = useRef(true);
   const activeStreamControllersRef = useRef(new Map());
+  // SHU-803 AC1: stream_id captured from the first `stream_start` SSE
+  // event. Keyed by conversationId so a multi-tab user with multiple
+  // simultaneous streams can stop each independently. Map values reset
+  // when a stream completes or the conversation unmounts.
+  const streamIdByConversationRef = useRef(new Map());
 
   useEffect(() => {
     conversationRef.current = selectedConversation;
@@ -171,8 +184,8 @@ const useChatStreaming = ({
           });
         }
 
-        const ensurePlaceholderForVariant = (variantIndex) =>
-          ensurePlaceholderForVariantImpl({
+        const ensurePlaceholderForVariant = (variantIndex) => {
+          const placeholderId = ensurePlaceholderForVariantImpl({
             conversationId,
             variantIndex,
             placeholderLookup,
@@ -182,6 +195,27 @@ const useChatStreaming = ({
             resolvedParentId,
             placeholderRootOption,
           });
+          // SHU-803: stamp streamId on this placeholder if stream_start
+          // has already landed. Ensemble variants share one stream_id;
+          // each new variant placeholder needs the id stamped so its
+          // Stop button has the value to POST.
+          const streamId = streamIdByConversationRef.current.get(String(conversationId));
+          if (streamId && placeholderId) {
+            queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+              const existing = getMessagesFromCache(oldData);
+              let mutated = false;
+              const updated = existing.map((m) => {
+                if (m.id === placeholderId && m.streamId !== streamId) {
+                  mutated = true;
+                  return { ...m, streamId };
+                }
+                return m;
+              });
+              return mutated ? rebuildCache(oldData, updated) : oldData;
+            });
+          }
+          return placeholderId;
+        };
 
         const syncPlaceholderParentIds = (newParentId) => {
           resolvedParentId = syncPlaceholderParentIdsImpl({
@@ -227,6 +261,10 @@ const useChatStreaming = ({
             } catch (_) {
               // Ignore error
             }
+            // SHU-803: stream completed — clear the captured stream_id
+            // so a future stream for the same conversation gets a fresh
+            // capture from its own stream_start event.
+            streamIdByConversationRef.current.delete(String(conversationId));
 
             if (!isMountedRef.current) {
               return;
@@ -254,6 +292,25 @@ const useChatStreaming = ({
           }
 
           const eventType = parsed?.event;
+
+          // SHU-803 AC1: capture the stream_id from the first SSE event
+          // so the Stop button has the id it needs to POST the terminate
+          // request. The event is additive — pre-SHU-803 clients ignore
+          // it. Stamping the streamId on every current placeholder lets
+          // MessageItem read it directly from the message in cache
+          // (rather than threading another ref through the render tree).
+          if (eventType === 'stream_start') {
+            const streamId = parsed?.content?.stream_id;
+            if (streamId) {
+              streamIdByConversationRef.current.set(String(conversationId), streamId);
+              queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+                const existing = getMessagesFromCache(oldData);
+                const updated = existing.map((m) => (placeholderIdSet.has(m.id) ? { ...m, streamId } : m));
+                return rebuildCache(oldData, updated);
+              });
+            }
+            continue;
+          }
 
           if (eventType === 'user_message' && parsed?.content) {
             const finalUser = parsed.content;
@@ -546,9 +603,81 @@ const useChatStreaming = ({
     ]
   );
 
+  // SHU-803 AC4/AC5: Stop-button handler. POSTs the terminate endpoint
+  // and (on 202 / 410) immediately flips the placeholder out of
+  // `isStreaming` with a client-side `stream_state="user_terminated"`
+  // stamp so the user sees "Stopped by user" without waiting for the
+  // backend's `final_message` to arrive (drain may take many seconds
+  // on end-only-usage providers). When `final_message` lands, the
+  // persisted Message replaces the placeholder and stream_state will
+  // already match — see SHU-803 plan Decisions Log.
+  //
+  // Accepts a message object (so we can read streamId + conversation
+  // context off it). On 403, surfaces an error toast. On 5xx / network,
+  // same. The SSE iteration continues consuming the channel — we do NOT
+  // abort the AbortController; that's reserved for unmount / error.
+  const handleStopStream = useCallback(
+    async (message) => {
+      const streamId = message?.streamId;
+      const conversationId = message?.conversation_id;
+      if (!streamId) {
+        return;
+      }
+
+      let success = false;
+      try {
+        await chatAPI.terminateStream(streamId);
+        success = true;
+      } catch (error) {
+        const status = error?.response?.status;
+        if (status === STREAM_NOT_ACTIVE_STATUS) {
+          // STREAM_NOT_ACTIVE — the stream already finalized before
+          // the POST landed. AC5 treats this as success.
+          success = true;
+        } else if (status === FORBIDDEN_STATUS) {
+          setError("You don't own this stream — can't stop it.");
+        } else {
+          log.error('Failed to stop streaming response', error);
+          setError("Couldn't stop the response. Please try again.");
+        }
+      }
+
+      if (!success || !conversationId) {
+        return;
+      }
+
+      // Optimistic update: flip EVERY placeholder sharing this stream_id
+      // out of isStreaming and stamp `stream_state="user_terminated"`.
+      // Ensembles share a single stream_id across all variants, so a
+      // single Stop click marks all variants as stopped together.
+      queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+        const existing = getMessagesFromCache(oldData);
+        let mutated = false;
+        const updated = existing.map((m) => {
+          if (m.streamId === streamId && (m.isStreaming || m.isPlaceholder)) {
+            mutated = true;
+            return {
+              ...m,
+              isStreaming: false,
+              isPlaceholder: false,
+              message_metadata: {
+                ...(m.message_metadata || {}),
+                stream_state: 'user_terminated',
+              },
+            };
+          }
+          return m;
+        });
+        return mutated ? rebuildCache(oldData, updated) : oldData;
+      });
+    },
+    [queryClient, setError]
+  );
+
   return {
     handleStreamingResponse,
     handleRegenerate,
+    handleStopStream,
   };
 };
 

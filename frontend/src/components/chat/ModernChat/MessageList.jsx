@@ -18,6 +18,7 @@ const MessageList = React.memo(
       onToggleSideBySide,
       onVariantChange,
       onRegenerate,
+      onStop,
       onCopy,
       isVariantGroupStreaming,
       parseDocumentHref,
@@ -200,6 +201,7 @@ const MessageList = React.memo(
                   variantSelection={variantSelection}
                   onVariantChange={onVariantChange}
                   onRegenerate={onRegenerate}
+                  onStop={onStop}
                   onCopy={onCopy}
                   isVariantGroupStreaming={isVariantGroupStreaming}
                   parseDocumentHref={parseDocumentHref}

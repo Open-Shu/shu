@@ -664,7 +664,7 @@ const ModernChat = () => {
     });
   }, []);
 
-  const { handleStreamingResponse, handleRegenerate } = useChatStreaming({
+  const { handleStreamingResponse, handleRegenerate, handleStopStream } = useChatStreaming({
     queryClient,
     setError,
     setStreamingConversationId,
@@ -1277,6 +1277,7 @@ const ModernChat = () => {
     variantSelection,
     onVariantChange: handleVariantChange,
     onRegenerate: handleRegenerate,
+    onStop: handleStopStream,
     onCopy: handleCopyMessage,
     isVariantGroupStreaming,
     parseDocumentHref,

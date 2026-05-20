@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Avatar,
   Box,
@@ -18,6 +18,7 @@ import {
   NavigateBefore as NavigateBeforeIcon,
   NavigateNext as NavigateNextIcon,
   ViewColumn as SideBySideIcon,
+  Stop as StopIcon,
 } from '@mui/icons-material';
 import MessageContent from './MessageContent';
 import UserAvatar from '../../shared/UserAvatar.jsx';
@@ -40,6 +41,7 @@ const MessageItem = React.memo(function MessageItem({
   variantSelection,
   onVariantChange,
   onRegenerate,
+  onStop,
   onCopy,
   isVariantGroupStreaming,
   parseDocumentHref,
@@ -92,6 +94,28 @@ const MessageItem = React.memo(function MessageItem({
   }, [regenerationRequests, parentId]);
 
   const disableRegenerate = message.isStreaming || isVariantGroupStreaming(parentId) || pendingRegenerationForGroup;
+
+  // SHU-803 AC3/AC5: local in-flight state for the Stop POST. While the
+  // POST is open the button shows a spinner + stays disabled so a
+  // double-click can't fire a second terminate request. On
+  // 202 / 410 success the placeholder's ``isStreaming`` flag flips to
+  // false and the Stop button unmounts naturally; on 403 / 5xx the
+  // placeholder stays streaming and the button re-enables for retry.
+  const [stopping, setStopping] = useState(false);
+  const handleStopClick = useCallback(
+    async (variant) => {
+      if (!onStop || stopping || !variant?.streamId) {
+        return;
+      }
+      setStopping(true);
+      try {
+        await onStop(variant);
+      } finally {
+        setStopping(false);
+      }
+    },
+    [onStop, stopping]
+  );
 
   const isUser = message.role === 'user';
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -426,6 +450,32 @@ const MessageItem = React.memo(function MessageItem({
                       <CircularProgress size={12} sx={{ color: theme.palette.secondary.main }} />
                     </Box>
                   )}
+                  {/* SHU-803 AC6/AC7: italic "Stopped by user" caption on
+                      persisted messages whose backend stream_state is
+                      user_terminated or shutdown (server-initiated stop
+                      looks identical from the user's perspective —
+                      partial content, here's what we got). Hidden while
+                      still streaming so the live spinner / Stop button
+                      own the "active" UI; surfaces once the placeholder
+                      flips out of isStreaming (either via SSE
+                      final_message landing or the AC5 optimistic flip
+                      on the terminate POST 202 response). */}
+                  {!variant.isStreaming &&
+                    (variant.message_metadata?.stream_state === 'user_terminated' ||
+                      variant.message_metadata?.stream_state === 'shutdown') && (
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          mt: 0.5,
+                          display: 'block',
+                          fontStyle: 'italic',
+                          opacity: 0.7,
+                          color: timestampColor,
+                        }}
+                      >
+                        Stopped by user
+                      </Typography>
+                    )}
                   <Typography
                     variant="caption"
                     sx={{
@@ -468,6 +518,44 @@ const MessageItem = React.memo(function MessageItem({
                       </span>
                     </Box>
                   </Typography>
+                  {/* SHU-803 AC2/AC3/AC4/AC5/AC8: Stop button toolbar.
+                      Discrete action below the bubble's content for an
+                      in-flight stream. Disabled (rather than hidden)
+                      while ``stream_start`` hasn't yet landed and
+                      ``variant.streamId`` is still missing — that
+                      window is ~10–50ms and the disabled state with
+                      tooltip is more discoverable than an invisible
+                      button. Once SHU-802's terminate endpoint returns
+                      202 (or 410 STREAM_NOT_ACTIVE — treated as
+                      success per AC5), the placeholder flips
+                      ``isStreaming=false`` and this whole block
+                      unmounts. */}
+                  {variant.isStreaming && (
+                    <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-start' }}>
+                      <Tooltip title={variant.streamId ? 'Stop generating' : 'Initializing…'} arrow>
+                        <span>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="inherit"
+                            startIcon={
+                              stopping ? (
+                                <CircularProgress size={12} sx={{ color: 'inherit' }} />
+                              ) : (
+                                <StopIcon fontSize="small" />
+                              )
+                            }
+                            onClick={() => handleStopClick(variant)}
+                            disabled={stopping || !variant.streamId || !onStop}
+                            aria-label="Stop generating"
+                            sx={{ textTransform: 'none', minWidth: 0, py: 0.25, px: 1 }}
+                          >
+                            Stop
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    </Box>
+                  )}
                 </Paper>
               );
             })}
