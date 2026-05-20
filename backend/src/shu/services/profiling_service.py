@@ -12,7 +12,7 @@ Key responsibilities:
 
 import json
 
-import structlog
+from shu.core.logging import get_logger
 
 from ..core.config import Settings
 from ..schemas.profiling import (
@@ -25,7 +25,7 @@ from ..utils.tokenization import estimate_tokens
 from .profile_parser import ProfileParser
 from .side_call_service import SideCallResult, SideCallService
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 # Prompt for chunk-only profiling (used in batch processing)
@@ -209,9 +209,11 @@ class ProfilingService:
             error_msg = f"Input exceeds profiling_max_input_tokens: {token_count} > {max_tokens}"
             logger.warning(
                 "profiling_input_too_large",
-                context=context,
-                token_count=token_count,
-                max_tokens=max_tokens,
+                extra={
+                    "context": context,
+                    "token_count": token_count,
+                    "max_tokens": max_tokens,
+                },
             )
             return SideCallResult(
                 success=False,
@@ -312,7 +314,10 @@ class ProfilingService:
         )
 
         if not result.success:
-            logger.warning("chunk_batch_profiling_failed", error=result.error_message, chunk_count=len(chunks))
+            logger.warning(
+                "chunk_batch_profiling_failed",
+                extra={"error": result.error_message, "chunk_count": len(chunks)},
+            )
             # Return failed results for all chunks, but preserve token count for cost tracking
             failed_results = [
                 self.parser.create_failed_chunk_result(c, result.error_message or "LLM call failed") for c in chunks
@@ -409,9 +414,11 @@ class ProfilingService:
         if not result.success:
             logger.warning(
                 "document_metadata_generation_failed",
-                error=result.error_message,
-                summary_count=len(accumulated_summaries),
-                tokens_used=result.tokens_used,
+                extra={
+                    "error": result.error_message,
+                    "summary_count": len(accumulated_summaries),
+                    "tokens_used": result.tokens_used,
+                },
             )
             return None, [], result.tokens_used
 
@@ -420,8 +427,10 @@ class ProfilingService:
         if not metadata_response:
             logger.warning(
                 "failed_to_parse_document_metadata_response",
-                summary_count=len(accumulated_summaries),
-                response_length=len(result.content) if result.content else 0,
+                extra={
+                    "summary_count": len(accumulated_summaries),
+                    "response_length": len(result.content) if result.content else 0,
+                },
             )
             return None, [], result.tokens_used
 
@@ -527,8 +536,7 @@ class ProfilingService:
         if not result.success:
             logger.warning(
                 "chunk_retry_profiling_failed",
-                error=result.error_message,
-                chunk_count=len(failed_chunks),
+                extra={"error": result.error_message, "chunk_count": len(failed_chunks)},
             )
             failed_results = [
                 self.parser.create_failed_chunk_result(c, result.error_message or "Retry LLM call failed")
@@ -610,10 +618,12 @@ class ProfilingService:
 
             logger.info(
                 "retrying_failed_chunk_profiles",
-                retry_attempt=retry_attempt + 1,
-                max_retries=max_retries,
-                failed_count=len(failed_chunks),
-                successful_context_count=len(successful_summaries),
+                extra={
+                    "retry_attempt": retry_attempt + 1,
+                    "max_retries": max_retries,
+                    "failed_count": len(failed_chunks),
+                    "successful_context_count": len(successful_summaries),
+                },
             )
 
             # Retry failed chunks
@@ -644,9 +654,11 @@ class ProfilingService:
 
         logger.info(
             "chunk_profiling_coverage",
-            total_chunks=len(chunks),
-            successful_chunks=successful_count,
-            coverage_percent=round(coverage_percent, 1),
+            extra={
+                "total_chunks": len(chunks),
+                "successful_chunks": successful_count,
+                "coverage_percent": round(coverage_percent, 1),
+            },
         )
 
         # Phase 4: Generate document metadata from accumulated chunk context (separate LLM call)

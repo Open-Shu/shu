@@ -4,10 +4,10 @@ This module provides REST API endpoints for managing prompts across
 different entity types (knowledge bases, LLM models, agents, etc.).
 """
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..auth.rbac import require_power_user
@@ -27,7 +27,7 @@ from ..schemas.prompt import (
 )
 from ..services.prompt_service import PromptAlreadyExistsError, PromptNotFoundError, PromptService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 

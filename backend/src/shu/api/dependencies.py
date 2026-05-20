@@ -4,16 +4,17 @@ This module provides reusable dependencies for database sessions,
 authentication, and other common requirements.
 """
 
-import logging
 from collections.abc import AsyncGenerator
 
 from fastapi import HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ..core.config import get_settings_instance
 from ..core.database import get_db as core_get_db
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

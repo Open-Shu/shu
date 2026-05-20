@@ -5,9 +5,10 @@ particularly for embedding services and caches.
 """
 
 import gc
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
@@ -25,7 +26,7 @@ from ..core.memory_tools import (
 )
 from ..core.response import ShuResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/resources", tags=["resources"])
 

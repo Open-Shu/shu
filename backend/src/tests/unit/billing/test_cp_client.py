@@ -32,6 +32,7 @@ from shu.billing.cp_client import (
     CpUnreachable,
 )
 from shu.billing.entitlements import EntitlementSet
+from shu.core.logging import get_logger
 
 BASE_URL = "https://cp.example.test"
 TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -106,7 +107,7 @@ def _make_client(http_client: MagicMock) -> CpClient:
         tenant_id=TENANT_ID,
         shared_secret=SHARED_SECRET,
         http_client=http_client,
-        logger=logging.getLogger("test_cp_client"),
+        logger=get_logger("test_cp_client"),
     )
 
 

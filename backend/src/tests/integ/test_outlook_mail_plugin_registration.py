@@ -5,12 +5,12 @@ Verifies that the plugin is properly registered and discoverable by the plugin s
 """
 from __future__ import annotations
 
-import logging
+from shu.core.logging import get_logger
 import sys
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_outlook_mail_plugin_discoverable(client, db, auth_headers):

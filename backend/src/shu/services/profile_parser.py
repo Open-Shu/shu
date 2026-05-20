@@ -7,7 +7,7 @@ This module handles JSON parsing and validation of LLM profile responses.
 import json
 import re
 
-import structlog
+from shu.core.logging import get_logger
 
 from ..schemas.profiling import (
     CapabilityManifest,
@@ -19,7 +19,7 @@ from ..schemas.profiling import (
     SynthesizedQuery,
 )
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ProfileParser:
@@ -187,7 +187,7 @@ class ProfileParser:
             if not synopsis.strip():
                 logger.warning(
                     "document_metadata_response_empty_synopsis",
-                    content_length=len(content) if content else 0,
+                    extra={"content_length": len(content) if content else 0},
                 )
 
             # Parse queries - prefer new chunk_queries format, fallback to legacy synthesized_queries
@@ -203,8 +203,7 @@ class ProfileParser:
         except Exception as e:
             logger.warning(
                 "failed_to_parse_document_metadata_response",
-                error=str(e),
-                content_length=len(content) if content else 0,
+                extra={"error": str(e), "content_length": len(content) if content else 0},
             )
             return None
 
@@ -234,9 +233,11 @@ class ProfileParser:
             if len(data) != len(chunks):
                 logger.warning(
                     "chunk_profile_count_mismatch",
-                    chunks_requested=len(chunks),
-                    profiles_returned=len(data),
-                    content_length=len(content),
+                    extra={
+                        "chunks_requested": len(chunks),
+                        "profiles_returned": len(data),
+                        "content_length": len(content),
+                    },
                 )
 
             results = []
@@ -264,7 +265,7 @@ class ProfileParser:
             return results
 
         except Exception as e:
-            logger.warning("failed_to_parse_chunk_profiles", error=str(e))
+            logger.warning("failed_to_parse_chunk_profiles", extra={"error": str(e)})
             return [self.create_failed_chunk_result(c, str(e)) for c in chunks]
 
     def extract_json(self, content: str) -> str:

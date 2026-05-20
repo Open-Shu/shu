@@ -4,7 +4,7 @@ OCR Quality Integration Tests
 Tests OCR extraction quality by comparing our OCR output against Adobe's OCR output.
 """
 
-import logging
+from shu.core.logging import get_logger
 import os
 import shutil
 import sys
@@ -16,7 +16,7 @@ from integ.base_integration_test import BaseIntegrationTestSuite
 from shu.core.config import get_config_manager
 from shu.processors.text_extractor import TextExtractor
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Test assets - these should be placed in the same directory as this test file
 ASSET_DIR = Path(__file__).parent

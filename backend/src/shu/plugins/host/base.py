@@ -5,11 +5,11 @@ This module provides common patterns used across capability classes.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class StorageScope(str, Enum):
+class StorageScope(StrEnum):
     """Storage scope for plugin data.
 
     - USER: Per-user storage keyed by (user_id, plugin_name, namespace, key).

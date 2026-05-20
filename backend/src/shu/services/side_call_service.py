@@ -5,7 +5,6 @@ like prompt assist, title generation, and UI summaries.
 """
 
 import json
-import logging
 import re
 import time
 from datetime import UTC, datetime
@@ -13,6 +12,8 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..core.config import ConfigurationManager
 from ..core.exceptions import InactiveProviderError, LLMProviderError
@@ -25,7 +26,7 @@ from ..services.model_configuration_service import ModelConfigurationService
 from ..services.system_settings_service import SystemSettingsService
 from ..services.usage_recording import get_usage_recorder
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants for side-call configuration
 SIDE_CALL_MODEL_SETTING_KEY = "side_call_model_config_id"

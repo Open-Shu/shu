@@ -7,7 +7,7 @@ and that DocumentChunks are created.
 """
 
 import asyncio
-import logging
+from shu.core.logging import get_logger
 import uuid
 from collections.abc import Callable
 
@@ -16,7 +16,7 @@ from sqlalchemy import text
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 from integ.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Maximum time to wait for pipeline completion (seconds)
 PIPELINE_TIMEOUT = 60

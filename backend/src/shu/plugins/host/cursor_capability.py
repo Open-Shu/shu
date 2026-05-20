@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
+from shu.core.logging import get_logger
 
 from .base import ImmutableCapabilityMixin
 from .storage_capability import StorageCapability
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CursorCapability(ImmutableCapabilityMixin):

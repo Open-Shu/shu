@@ -7,13 +7,13 @@ test data that should be cleaned up.
 """
 
 import asyncio
-import logging
+from shu.core.logging import get_logger
 import re
 from typing import Any
 
 from httpx import AsyncClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TestDataCleaner:

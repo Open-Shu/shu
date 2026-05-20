@@ -30,7 +30,7 @@ exclude = [
     "backend/src/tests",    # Tests have relaxed rules; excluded from CI lint
     "backend/migrations",   # Auto-generated migrations; excluded from CI lint
     "backend/scripts",      # Dev utilities; excluded from CI lint
-    "plugins",
+    "/plugins",             # Root-level plugin ecosystem (anchored — does not exclude backend/src/shu/plugins/)
 ]
 
 [tool.ruff.format]
@@ -73,6 +73,7 @@ select = [
     "S",      # flake8-bandit (security)
     "ERA",    # eradicate (commented-out code)
     "C90",    # mccabe (complexity)
+    "TID251", # flake8-tidy-imports: banned-api (force logger creation through shu.core.logging.get_logger)
 ]
 
 # Ignore specific rules
@@ -112,7 +113,13 @@ max-branches = 15
 # Increased from default (6) to allow factory patterns and guard clauses
 max-returns = 15
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"logging.getLogger".msg = "Use `from shu.core.logging import get_logger` and `get_logger(__name__)` so all logs route through the canonical entry point."
+"structlog.get_logger".msg = "structlog is not used in this project. Use `from shu.core.logging import get_logger` instead."
+
 [tool.ruff.lint.per-file-ignores]
+# core/logging.py is the canonical logger module — uses stdlib getLogger for root/sqlalchemy/uvicorn
+"backend/src/shu/core/logging.py" = ["TID251"]
 # Allow unused imports in __init__.py files
 "__init__.py" = ["F401", "D"]
 # Allow print statements in scripts

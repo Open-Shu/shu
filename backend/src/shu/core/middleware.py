@@ -6,7 +6,6 @@ cross-cutting concerns.
 
 from __future__ import annotations
 
-import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -17,13 +16,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from shu.core.logging import get_logger
+
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
 
 if TYPE_CHECKING:
     from .rate_limiting import RateLimitService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

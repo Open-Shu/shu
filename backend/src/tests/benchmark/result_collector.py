@@ -6,7 +6,7 @@ compatible with ranx for IR metric computation.
 
 from __future__ import annotations
 
-import logging
+from shu.core.logging import get_logger
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -16,7 +16,7 @@ from .beir_loader import BeirQuery
 if TYPE_CHECKING:
     import httpx
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

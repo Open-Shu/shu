@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import logging
+from shu.core.logging import get_logger
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.api_helpers import list_subscription_plugins
 from integ.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _enable_plugin(client, auth_headers, name: str):

@@ -3,10 +3,11 @@
 Provides vector-based semantic search over document chunks.
 """
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
+
+from shu.core.logging import get_logger
 
 from ...core.exceptions import ShuException
 from .base import measure_execution_time
@@ -14,7 +15,7 @@ from .base import measure_execution_time
 if TYPE_CHECKING:
     from ...schemas.query import SimilaritySearchRequest
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SimilaritySearchMixin:

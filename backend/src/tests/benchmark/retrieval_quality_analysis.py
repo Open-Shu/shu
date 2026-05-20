@@ -23,7 +23,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

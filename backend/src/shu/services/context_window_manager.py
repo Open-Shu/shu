@@ -1,7 +1,7 @@
-import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
 
+from shu.core.logging import get_logger
 from shu.models.llm_provider import Conversation
 
 from .chat_types import ChatMessage
@@ -9,7 +9,7 @@ from .chat_types import ChatMessage
 if TYPE_CHECKING:
     from .side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ContextWindowManager:

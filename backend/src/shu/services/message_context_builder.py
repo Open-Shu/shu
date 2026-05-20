@@ -524,6 +524,7 @@ class MessageContextBuilder:
         source_metadata: list[dict],
         knowledge_base_ids: list[str] | None = None,
         force_references: bool = False,
+        kb_include_references_map: dict[str, bool] | None = None,
     ) -> tuple[str, list[dict]]:
         """Post-process LLM response to intelligently add system references.
 
@@ -535,6 +536,14 @@ class MessageContextBuilder:
             source_metadata: Available source metadata from RAG
             knowledge_base_ids: KB IDs to get include_references setting
             force_references: If True, override KB setting and force references
+            kb_include_references_map: SHU-759 prepare-snapshot of per-KB
+                include_references settings. When provided, this method
+                reads from the snapshot and does **zero DB queries** — the
+                whole purpose of the snapshot is to let post-processing run
+                after the request session has been closed. When omitted,
+                falls back to the legacy in-method KnowledgeBaseService
+                lookup (used by non-streaming callers that still have a
+                live session).
 
         Returns:
             Tuple of (processed_content, final_source_metadata)
@@ -545,7 +554,16 @@ class MessageContextBuilder:
 
         # Get KB configuration for include_references setting
         kb_include_references = True  # Default
-        if knowledge_base_ids and len(knowledge_base_ids) == 1:
+
+        if kb_include_references_map is not None:
+            # SHU-759: use the prepare-snapshot. No DB access here.
+            # Semantics match the legacy DB-lookup path below: any KB with
+            # include_references=False causes the overall flag to flip to
+            # False (most-restrictive wins). Falls back to True for KBs not
+            # in the map (matches the legacy "default to True on missing").
+            if any(not include for include in kb_include_references_map.values()):
+                kb_include_references = False
+        elif knowledge_base_ids and len(knowledge_base_ids) == 1:
             # Single KB specified — check its config
             try:
                 from .knowledge_base_service import KnowledgeBaseService

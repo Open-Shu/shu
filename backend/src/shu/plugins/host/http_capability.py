@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import logging
 import urllib.parse
 from typing import Any
+
+from shu.core.logging import get_logger
 
 from ...core.config import get_settings_instance
 from ...core.http_client import get_http_client
 from .base import ImmutableCapabilityMixin
 from .exceptions import EgressDenied, HttpRequestFailed
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _is_allowed_url(url: str, allowlist: list[str] | None) -> bool:

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import csv
 import json
-import logging
+from shu.core.logging import get_logger
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)

@@ -4,13 +4,14 @@ This module provides REST API endpoints for managing LLM providers,
 models, and handling LLM operations.
 """
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ..api.dependencies import get_db
 from ..auth.models import User
@@ -33,7 +34,7 @@ from ..services import providers as _load_providers  # noqa: F401 ensure adapter
 from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
 from ..services.providers.adapter_base import ProviderAdapterContext, get_adapter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
 

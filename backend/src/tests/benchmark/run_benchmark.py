@@ -21,7 +21,9 @@ import asyncio
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 DATASETS_DIR = Path(__file__).parent / ".datasets"
 

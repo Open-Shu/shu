@@ -28,17 +28,18 @@ Parameter Ordering Convention:
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ...core.database import get_db_session
 from ...models.plugin_storage import PluginStorage
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def normalize_scope(scope: str | None) -> str:
