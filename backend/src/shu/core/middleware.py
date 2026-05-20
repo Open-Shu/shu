@@ -6,7 +6,6 @@ cross-cutting concerns.
 
 from __future__ import annotations
 
-import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -16,6 +15,8 @@ from typing import TYPE_CHECKING, ClassVar
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+from shu.core.logging import get_logger
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
@@ -28,7 +29,7 @@ from ..core.tenant import (
 if TYPE_CHECKING:
     from .rate_limiting import RateLimitService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -285,7 +286,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             from sqlalchemy import select
 
             from ..auth.models import User
-            from ..core.database import get_db
+            from ..core.database import get_async_session_local
 
             # Pick the tenant-resolution context shape that matches the auth
             # mode. The contextmanagers reset tenant_context on exit so the
@@ -305,99 +306,101 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 _tenant_ctx = tenant_context_for_user_id(user_data["user_id"])
                 _lookup_stmt = select(User).where(User.id == user_data["user_id"])
 
-            # Get database session. The tenant_ctx wraps every DB op inside —
-            # the SELECT above, plus the last_login UPDATE below — so both run
-            # under the right RLS scope. Resetting on exit lets the FastAPI
-            # dep tree later set its own context cleanly.
-            async for db in get_db():
-                async with _tenant_ctx:
-                    result = await db.execute(_lookup_stmt)
-                    current_user = result.scalar_one_or_none()
+            # Get database session — use async with to guarantee synchronous
+            # close on every exit path. The previous `async for db in get_db():
+            # ... break` idiom suspended the generator and deferred close() to
+            # the asyncgen GC finalizer, which under load orphaned connections
+            # (main commit 76e9a28; pinned by test_auth_middleware_session_lifecycle).
+            #
+            # The tenant_ctx wraps every DB op inside — the SELECT above, plus
+            # the last_login UPDATE below — so both run under the right RLS
+            # scope. Resetting on exit lets the FastAPI dep tree later set its
+            # own context cleanly.
+            async with get_async_session_local()() as db, _tenant_ctx:
+                result = await db.execute(_lookup_stmt)
+                current_user = result.scalar_one_or_none()
 
-                    if not current_user:
-                        missing = (
-                            settings.api_key_user_email
-                            if getattr(request.state, "api_key_authenticated", False)
-                            else user_data.get("user_id")
-                        )
-                        logger.warning(f"User not found in database for {request.method} {request.url.path}: {missing}")
-                        return JSONResponse(status_code=401, content={"detail": "User account not found"})
+                if not current_user:
+                    missing = (
+                        settings.api_key_user_email
+                        if getattr(request.state, "api_key_authenticated", False)
+                        else user_data.get("user_id")
+                    )
+                    logger.warning(f"User not found in database for {request.method} {request.url.path}: {missing}")
+                    return JSONResponse(status_code=401, content={"detail": "User account not found"})
 
-                    if not current_user.is_active:
-                        logger.warning(
-                            f"Inactive user {current_user.email} attempted access to {request.method} {request.url.path}"
-                        )
-                        return JSONResponse(
-                            status_code=400,
-                            content={
-                                "detail": "User account is inactive. Please contact an administrator for activation."
+                if not current_user.is_active:
+                    logger.warning(
+                        f"Inactive user {current_user.email} attempted access to {request.method} {request.url.path}"
+                    )
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "User account is inactive. Please contact an administrator for activation."},
+                    )
+
+                # SHU-745: invalidate JWTs issued before the most recent
+                # password change. password_changed_at is set whenever the
+                # user resets via the /reset-password flow; when it is
+                # newer than the token's `iat`, the token (and any siblings
+                # that share an `iat` window) is rejected. This is the
+                # session-invalidation primitive — JWTs are otherwise
+                # stateless and there is no token blacklist or refresh-
+                # token table. Skipped for API-key auth (no JWT iat to
+                # compare against).
+                #
+                # Both sides are floored to integer seconds before
+                # comparison: JWT `iat` is serialised as integer seconds by
+                # the encoder, but `password_changed_at` is microsecond-
+                # precision. Without flooring, a token issued in the same
+                # wall-clock second as the reset (iat second == floor of
+                # password_changed_at) compares as strictly less and gets a
+                # false-positive 401 — the user's freshly-issued token
+                # bounces on its first request. Flooring keeps the rejection
+                # second-grained, which matches the resolution of the iat
+                # claim itself.
+                if not getattr(request.state, "api_key_authenticated", False):
+                    from ..auth.jwt_manager import is_token_revoked_by_password_change
+
+                    token_iat = user_data.get("iat") if isinstance(user_data, dict) else None
+                    if is_token_revoked_by_password_change(token_iat, current_user.password_changed_at):
+                        logger.info(
+                            "Token revoked by password change for %s",
+                            current_user.email,
+                            extra={
+                                "event": "auth.token_revoked_by_password_change",
+                                "user_id": current_user.id,
+                                "email": current_user.email,
                             },
                         )
+                        return JSONResponse(
+                            status_code=401,
+                            content={"detail": "Session expired due to password change. Please sign in again."},
+                        )
 
-                    # SHU-745: invalidate JWTs issued before the most recent
-                    # password change. password_changed_at is set whenever the
-                    # user resets via the /reset-password flow; when it is
-                    # newer than the token's `iat`, the token (and any siblings
-                    # that share an `iat` window) is rejected. This is the
-                    # session-invalidation primitive — JWTs are otherwise
-                    # stateless and there is no token blacklist or refresh-
-                    # token table. Skipped for API-key auth (no JWT iat to
-                    # compare against).
-                    #
-                    # Both sides are floored to integer seconds before
-                    # comparison: JWT `iat` is serialised as integer seconds by
-                    # the encoder, but `password_changed_at` is microsecond-
-                    # precision. Without flooring, a token issued in the same
-                    # wall-clock second as the reset (iat second == floor of
-                    # password_changed_at) compares as strictly less and gets a
-                    # false-positive 401 — the user's freshly-issued token
-                    # bounces on its first request. Flooring keeps the rejection
-                    # second-grained, which matches the resolution of the iat
-                    # claim itself.
-                    if not getattr(request.state, "api_key_authenticated", False):
-                        from ..auth.jwt_manager import is_token_revoked_by_password_change
+                # Update last_login on first request of the day
+                await self._update_daily_login(db, current_user)
 
-                        token_iat = user_data.get("iat") if isinstance(user_data, dict) else None
-                        if is_token_revoked_by_password_change(token_iat, current_user.password_changed_at):
-                            logger.info(
-                                "Token revoked by password change for %s",
-                                current_user.email,
-                                extra={
-                                    "event": "auth.token_revoked_by_password_change",
-                                    "user_id": current_user.id,
-                                    "email": current_user.email,
-                                },
-                            )
-                            return JSONResponse(
-                                status_code=401,
-                                content={"detail": "Session expired due to password change. Please sign in again."},
-                            )
-
-                    # Update last_login on first request of the day
-                    await self._update_daily_login(db, current_user)
-
-                    # Build user context for RBAC
-                    if getattr(request.state, "api_key_authenticated", False):
-                        user_data = {
-                            "user_id": current_user.id,
+                # Build user context for RBAC
+                if getattr(request.state, "api_key_authenticated", False):
+                    user_data = {
+                        "user_id": current_user.id,
+                        "email": current_user.email,
+                        "name": current_user.name,
+                        "role": current_user.role,
+                        "is_active": current_user.is_active,
+                        "must_change_password": current_user.must_change_password,
+                    }
+                else:
+                    # Update user data with current database values to ensure consistency
+                    user_data.update(
+                        {
                             "email": current_user.email,
                             "name": current_user.name,
                             "role": current_user.role,
                             "is_active": current_user.is_active,
                             "must_change_password": current_user.must_change_password,
                         }
-                    else:
-                        # Update user data with current database values to ensure consistency
-                        user_data.update(
-                            {
-                                "email": current_user.email,
-                                "name": current_user.name,
-                                "role": current_user.role,
-                                "is_active": current_user.is_active,
-                                "must_change_password": current_user.must_change_password,
-                            }
-                        )
-                break
+                    )
 
         except UserTenantNotFoundError:
             # Verified JWT but the user has since been deleted. Match the

@@ -9,13 +9,14 @@ plugins from mutating internal state.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+from shu.core.logging import get_logger
+
 from .base import ImmutableCapabilityMixin
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 R = TypeVar("R")

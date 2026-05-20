@@ -4,13 +4,13 @@ Provides secure encryption/decryption for OAuth tokens stored in the database.
 Uses Fernet symmetric encryption for secure token storage.
 """
 
-import logging
-
 from cryptography.fernet import Fernet, InvalidToken
+
+from shu.core.logging import get_logger
 
 from .config import get_settings_instance
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class OAuthEncryptionError(Exception):

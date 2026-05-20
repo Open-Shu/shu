@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.core.streaming import create_sse_stream_generator, sanitize_stream_error_message
+from shu.services.chat_streaming import ProviderResponseEvent
 
 
 class TestSanitizeStreamErrorMessage:
@@ -655,3 +656,104 @@ class TestCreateSSEStreamGeneratorDoneMarker:
 
         assert len(results) == 1
         assert results[0] == "data: [DONE]\n\n"
+
+
+class TestProviderResponseEventSanitization:
+    """Regression coverage for SHU-759: the SSE sanitizer must fire for
+    chat error events too, not just experience events.
+
+    The sanitizer at `create_sse_stream_generator` keys off
+    ``payload["type"] == "error"``. ProviderResponseEvent.to_dict()
+    historically emitted only ``"event": self.type`` (not ``"type"``),
+    so the sanitizer was silently skipped for every chat error event
+    ever shipped. Experience events worked because
+    ``experience_executor.to_dict`` emits ``type`` directly. These tests
+    pin the contract so a future refactor of ``to_dict`` can't silently
+    reopen the leak.
+    """
+
+    def test_to_dict_emits_both_event_and_type_keys(self):
+        """ProviderResponseEvent.to_dict() must emit the discriminator
+        under both ``event`` and ``type``. ``event`` is the legacy chat
+        key the frontend reads; ``type`` is what the shared SSE
+        sanitizer keys off. Both must be present and equal so that one
+        place can be changed without re-introducing the leak."""
+        event = ProviderResponseEvent(
+            type="error",
+            content="Database connection refused at internal://prod-db:5432",
+        )
+        payload = event.to_dict()
+
+        assert payload.get("event") == "error", (
+            f"frontend reads `event` — must remain present. payload={payload!r}"
+        )
+        assert payload.get("type") == "error", (
+            f"sanitizer reads `type` — must be present so chat errors get "
+            f"sanitized like experience errors. payload={payload!r}"
+        )
+        assert payload["event"] == payload["type"], (
+            "the two keys must carry the same value or the sanitizer and "
+            "frontend will disagree on what kind of event this is"
+        )
+
+    @pytest.mark.asyncio
+    async def test_chat_error_event_is_sanitized_end_to_end(self):
+        """Drive a real ProviderResponseEvent through
+        create_sse_stream_generator and confirm internal detail is
+        replaced with the generic sanitized message. Pre-fix, this test
+        would have failed: ``to_dict`` emitted only ``event``, the
+        sanitizer's ``payload.get("type") == "error"`` check would
+        evaluate to ``None == "error"`` (False), and the raw DB error
+        text would have leaked verbatim to the SSE client."""
+        leaky_event = ProviderResponseEvent(
+            type="error",
+            content="Database connection refused at internal://prod-db:5432; user=svc_chat",
+        )
+
+        async def gen():
+            yield leaky_event
+
+        results = []
+        async for chunk in create_sse_stream_generator(gen()):
+            results.append(chunk)
+
+        # First chunk is the (sanitized) error event; second is [DONE].
+        sse_data = results[0].removeprefix("data: ").removesuffix("\n\n")
+        parsed = json.loads(sse_data)
+
+        # Both keys present (frontend + sanitizer alignment).
+        assert parsed["event"] == "error"
+        assert parsed["type"] == "error"
+
+        # Internal detail MUST be replaced with the generic message.
+        assert "Database connection refused" not in parsed["content"], (
+            f"raw DB detail leaked to client: {parsed['content']!r} — the "
+            f"sanitizer did not fire on this chat error event"
+        )
+        assert "internal://prod-db:5432" not in parsed["content"]
+        assert "svc_chat" not in parsed["content"]
+        assert parsed["content"] == "The request failed. You may want to try another model."
+
+    @pytest.mark.asyncio
+    async def test_chat_rate_limit_error_passes_through(self):
+        """Rate-limit / timeout / unavailable errors are user-actionable
+        and must survive sanitization. Confirms the sanitizer is firing
+        on chat events (not just punting on all of them)."""
+        rate_limited_event = ProviderResponseEvent(
+            type="error",
+            content="Rate limit exceeded: 60 requests/min",
+        )
+
+        async def gen():
+            yield rate_limited_event
+
+        results = []
+        async for chunk in create_sse_stream_generator(gen()):
+            results.append(chunk)
+
+        sse_data = results[0].removeprefix("data: ").removesuffix("\n\n")
+        parsed = json.loads(sse_data)
+        assert parsed["content"] == "Rate limit exceeded: 60 requests/min", (
+            "rate-limit errors are user-actionable and must pass through "
+            "the sanitizer unchanged"
+        )

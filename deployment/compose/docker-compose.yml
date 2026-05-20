@@ -84,6 +84,59 @@ services:
       shu-db-migrate:
         condition: service_completed_successfully
 
+  # Shu RAG Backend API (Development, slim image — no local torch / OCR engines)
+  # Mutually exclusive with shu-api-dev: both bind port 8000 and the network alias
+  # shu-api-dev so shu-frontend-dev's proxy target resolves to whichever one is up.
+  shu-api-dev-slim:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api/Dockerfile
+      args:
+        INCLUDE_LOCAL_INFERENCE: "0"
+    container_name: shu-api-dev-slim
+    env_file: ../../.env
+    environment:
+      - SHU_DATABASE_URL=postgresql+asyncpg://shu:password@shu-postgres:5432/shu
+      - SHU_REDIS_URL=redis://redis:6379
+      - SHU_LOG_LEVEL=DEBUG
+      - SHU_LOG_FORMAT=text
+      - SHU_API_HOST=0.0.0.0
+      - SHU_API_PORT=8000
+      - SHU_ENVIRONMENT=development
+      - SHU_APP_VERSION=0.0.6-dev-slim
+      - SHU_PLUGINS_ROOT=/app/plugins
+      - SHU_WORKERS_ENABLED=${SHU_WORKERS_ENABLED:-true}
+      # Slim image has no torch / sentence-transformers / pytesseract.
+      # Embedding must route to an external model registered in llm_models.
+      - SHU_LOCAL_EMBEDDING_ENABLED=false
+      - PYTHONPATH=/app/src
+      - OAUTH_REDIRECT_URI=http://localhost:3000/auth/callback
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - SHU_MEMORY_TRIM_INTERVAL_SECONDS=${SHU_MEMORY_TRIM_INTERVAL_SECONDS:-60}
+      - SHU_DISABLE_JEMALLOC=${SHU_DISABLE_JEMALLOC:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../backend/src:/app/src
+      - ../../backend/alembic:/app/alembic
+      - ../../backend/alembic.ini:/app/alembic.ini
+      - ../../backend/scripts:/app/scripts
+      - ../../data:/app/data
+      - ../../plugins:/app/plugins
+    networks:
+      shu-network:
+        aliases:
+          - shu-api-dev
+    restart: unless-stopped
+    profiles:
+      - dev-slim
+    command: ["python", "-m", "uvicorn", "shu.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      shu-postgres:
+        condition: service_healthy
+      shu-db-migrate:
+        condition: service_completed_successfully
+
   # Shu Postgres
   shu-postgres:
     image: paradedb/paradedb:latest-pg18

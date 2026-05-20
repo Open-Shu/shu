@@ -61,6 +61,19 @@ def patch_plugin_calls(monkeypatch):
         "execute_plugin",
         AsyncMock(return_value=FAKE_PLUGIN_RESULT),
     )
+    # SHU-759: _call_plugin now acquires its own session via
+    # get_async_session_local() at the point of use. Patch the factory
+    # to a do-nothing async context manager so this unit test doesn't
+    # try to construct a real async engine — that fails in environments
+    # where SHU_DATABASE_URL is configured for sync psycopg2 (CI).
+    fake_session_cm = AsyncMock()
+    fake_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    fake_session_cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        adapter_base,
+        "get_async_session_local",
+        lambda: lambda: fake_session_cm,
+    )
 
 
 def _evaluate_tool_call_events(tool_event):

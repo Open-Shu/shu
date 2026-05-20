@@ -90,7 +90,7 @@ describe('UserManagement — inline seat affordances (SHU-730)', () => {
     vi.clearAllMocks();
   });
 
-  it('renders no seat UI when user_limit_enforcement is not "hard"', async () => {
+  it('renders no seat UI when user_limit_enforcement is "none"', async () => {
     setupMocks({
       users: [makeUser()],
       subscription: makeSubscription({ user_limit_enforcement: 'none' }),
@@ -102,6 +102,24 @@ describe('UserManagement — inline seat affordances (SHU-730)', () => {
     expect(screen.queryByRole('button', { name: /Schedule deactivation/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Release one open seat/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/open seat/i)).not.toBeInTheDocument();
+  });
+
+  it('renders seat UI when user_limit_enforcement is "soft" (SHU-784)', async () => {
+    // Seat management visible under soft — enforcement mode only controls
+    // self-registration leniency, not whether seat economics apply. The
+    // open-seats counter, release button, and per-row deactivation flag
+    // are the same regardless of hard vs soft.
+    setupMocks({
+      users: [makeUser()],
+      subscription: makeSubscription({ user_limit_enforcement: 'soft' }),
+    });
+    renderComponent();
+
+    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument());
+
+    expect(screen.getByText(/open seat/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Schedule deactivation on period end/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Release one open seat/i })).toBeInTheDocument();
   });
 
   it('renders flag button on each active row when enforcement is hard', async () => {

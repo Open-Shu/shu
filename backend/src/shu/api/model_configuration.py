@@ -5,17 +5,19 @@ the foundational abstraction that combines base models + prompts + optional
 knowledge bases into user-facing configurations.
 """
 
-import logging
 from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.logging import get_logger
+
 from ..api.dependencies import get_db
 from ..auth.models import User, UserRole
 from ..auth.rbac import require_power_user, require_regular_user
 from ..core.config import ConfigurationManager, get_config_manager_dependency
+from ..core.database import get_async_session_local
 from ..core.exceptions import LLMConfigurationError, LLMError, ShuException
 from ..core.response import ShuResponse
 from ..schemas.envelope import SuccessResponse
@@ -35,7 +37,7 @@ from ..services.error_sanitization import ErrorSanitizer
 from ..services.model_configuration_service import ModelConfigurationService
 from ..services.side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
 
@@ -486,7 +488,7 @@ async def delete_model_configuration(
     summary="Test Model Configuration",
     description="Test a model configuration with a sample message (non-streaming for better error messages)",
 )
-async def test_model_configuration(
+async def test_model_configuration(  # noqa: PLR0915
     config_id: str,
     test_message: str = Form(..., description="Test message to send"),
     include_knowledge_bases: bool = Form(True, description="Whether to include KB context"),
@@ -529,14 +531,24 @@ async def test_model_configuration(
         message_metadata: dict[str, Any] = {}
 
         try:
-            async for event in await chat_service.send_message(
+            # SHU-759: drive prepare synchronously, then release the request
+            # session before iterating LLM events — same pattern the chat SSE
+            # endpoints use in api/chat.py. Without the explicit `db.close()`
+            # the request session would be held for the entire provider call
+            # (potentially many seconds on a slow test target), eating one
+            # pool slot per concurrent test invocation and re-introducing
+            # exactly the pool-pressure pattern SHU-759 was meant to remove.
+            event_gen = await chat_service.send_message(
                 conversation_id=conversation.id,
                 user_message=test_message,
                 current_user=current_user,
                 rag_rewrite_mode=RagRewriteMode.NO_RAG,
                 force_no_streaming=True,
                 attachment_ids=attachment_ids,
-            ):
+            )
+            await db.close()
+
+            async for event in event_gen:
                 if event.type == "final_message":
                     response = event.content.get("content")
                     # Extract message_metadata which contains usage and timing info
@@ -544,7 +556,15 @@ async def test_model_configuration(
                 if event.type == "error":
                     error = event.content
         finally:
-            await chat_service.delete_conversation(conversation.id)
+            # SHU-759: the request `db` was closed above (or may still be
+            # alive if `send_message` raised during prepare — either way,
+            # relying on it for cleanup is unsafe). `chat_service.db_session`
+            # was nulled by prepare. Open a fresh short-lived session for
+            # the test conversation teardown — same pattern finalize uses.
+            session_factory = get_async_session_local()
+            async with session_factory() as cleanup_db:
+                cleanup_service = ChatService(cleanup_db, config_manager)
+                await cleanup_service.delete_conversation(conversation.id)
 
         # Extract usage and timing from message_metadata
         usage = message_metadata.get("usage", {}) or {}

@@ -211,9 +211,13 @@ class TestDIWiring:
         reset_embedding_service()
 
     @pytest.mark.asyncio
+    @patch("shu.core.embedding_service.resolve_embedding_dtype", return_value="float32")
+    @patch("shu.core.embedding_service.resolve_embedding_device", return_value="cpu")
     @patch("shu.core.embedding_service._service_manager")
     @patch("shu.core.embedding_service.get_settings_instance")
-    async def test_get_embedding_service_returns_singleton(self, mock_settings, mock_manager):
+    async def test_get_embedding_service_returns_singleton(
+        self, mock_settings, mock_manager, _mock_device, _mock_dtype
+    ):
         """Two calls to get_embedding_service should return the same instance."""
         settings = MagicMock()
         settings.default_embedding_model = "test-model"
@@ -290,9 +294,11 @@ class TestServiceResolution:
         reset_embedding_service()
 
     @pytest.mark.asyncio
+    @patch("shu.core.embedding_service.resolve_embedding_dtype", return_value="float32")
+    @patch("shu.core.embedding_service.resolve_embedding_device", return_value="cpu")
     @patch("shu.core.embedding_service._service_manager")
     @patch("shu.core.embedding_service.get_settings_instance")
-    async def test_local_enabled_uses_local(self, mock_settings, mock_manager):
+    async def test_local_enabled_uses_local(self, mock_settings, mock_manager, _mock_device, _mock_dtype):
         """When SHU_LOCAL_EMBEDDING_ENABLED=true, local service is used regardless of external models."""
         settings = MagicMock()
         settings.local_embedding_enabled = True

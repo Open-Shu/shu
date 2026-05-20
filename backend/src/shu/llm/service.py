@@ -4,7 +4,6 @@ This module provides the service layer for managing LLM providers,
 models, and handling LLM operations with database integration.
 """
 
-import logging
 from typing import Any
 
 from cryptography.fernet import Fernet
@@ -12,6 +11,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from shu.core.logging import get_logger
 from shu.schemas.llm_provider_type import ProviderTypeDefinitionSchema
 from shu.services.providers.adapter_base import (
     ProviderAdapterContext,
@@ -30,7 +30,7 @@ from ..models.llm_provider import LLMModel, LLMProvider, ModelType
 from ..services.provider_type_definition_service import ProviderTypeDefinitionsService
 from .client import UnifiedLLMClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LLMService:

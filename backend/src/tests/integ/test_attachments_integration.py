@@ -4,7 +4,7 @@ Integration tests for Chat Attachments (upload and usage in context).
 Follows custom integration test framework. Negative tests log expected error output explicitly.
 """
 
-import logging
+from shu.core.logging import get_logger
 import os
 import uuid
 from collections.abc import Callable
@@ -12,7 +12,7 @@ from collections.abc import Callable
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _get_unique_provider_data() -> dict:

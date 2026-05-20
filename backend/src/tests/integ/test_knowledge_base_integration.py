@@ -5,7 +5,7 @@ These tests cover knowledge base CRUD operations, document management,
 and the complete knowledge base lifecycle.
 """
 
-import logging
+from shu.core.logging import get_logger
 import sys
 from collections.abc import Callable
 
@@ -16,7 +16,7 @@ from integ.expected_error_context import (
     expect_duplicate_errors,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_health_endpoint(client, db, auth_headers):

@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.config import ConfigurationManager
+from shu.core.logging import get_logger
 from shu.models.llm_provider import Conversation, Message
 from shu.services.chat_service import ChatService
 from shu.services.message_utils import collapse_assistant_variants
 from shu.services.side_call_service import SideCallService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ConversationAutomationService:

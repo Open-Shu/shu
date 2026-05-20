@@ -1,0 +1,24 @@
+# Dependencies for running text-embedding and OCR inference LOCALLY inside
+# the app (no external API calls). Installed by the standard build.
+#
+# Skipped when the Dockerfile is built with `--build-arg INCLUDE_LOCAL_INFERENCE=0`
+# (the `make build-api-slim` target). The slim variant is for deployments
+# that route embedding and OCR through external APIs and don't need these
+# libraries at runtime — skipping them shrinks the image significantly.
+#
+# The runtime code defers imports of these packages behind feature flags
+# (`SHU_LOCAL_EMBEDDING_ENABLED`, OCR engine selection) so a slim image
+# won't reach the import sites as long as those flags select external
+# providers.
+#
+# scipy is intentionally NOT listed — it's pulled in transitively by
+# torch / transformers and falls out naturally when they aren't installed.
+
+# Local text-embedding inference
+sentence-transformers==5.0.0
+torch==2.7.1
+transformers==4.53.2
+
+# Local OCR engines
+pytesseract==0.3.13  # tesseract wrapper
+easyocr==1.7.2       # deep-learning OCR

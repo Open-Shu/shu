@@ -212,6 +212,7 @@ class TestTesseractConfidenceIsQualityHeuristic:
 
     def test_tesseract_confidence_matches_calculate_text_quality(self):
         """The confidence returned equals _calculate_text_quality(text)."""
+        pytest.importorskip("pytesseract")
         extractor = _make_extractor()
 
         page = MagicMock()

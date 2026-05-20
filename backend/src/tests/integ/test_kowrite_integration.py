@@ -1,9 +1,9 @@
-import logging
+from shu.core.logging import get_logger
 import uuid
 
 from integ.base_integration_test import BaseIntegrationTestSuite, create_test_runner_script
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_kowrite_upsert_and_query(client, db, auth_headers):

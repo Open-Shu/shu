@@ -12,13 +12,13 @@ process registered in `shu/worker.py`. See SHU-508 Phase C.
 
 from __future__ import annotations
 
-import logging
+from shu.core.logging import get_logger
 
 from shu.core.queue_backend import QueueBackend
 from shu.core.workload_routing import WorkloadType
 from shu.email_handler import handle_email_job
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def process_email_queue_now(

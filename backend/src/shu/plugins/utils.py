@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from shu.core.logging import get_logger
+
 
 # TODO: Refactor this function. It's too complex (number of branches and statements).
 def log_plugin_diagnostics(  # noqa: PLR0912
@@ -23,7 +25,7 @@ def log_plugin_diagnostics(  # noqa: PLR0912
     """
     if payload is None or not isinstance(payload, dict):
         return
-    logger = _logger or logging.getLogger(__name__)
+    logger = _logger or get_logger(__name__)
 
     # Diagnostics array
     try:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import logging
 import time
 from datetime import UTC
 from typing import Any
 
 from sqlalchemy import and_, select
+
+from shu.core.logging import get_logger
 
 from ...core.config import get_settings_instance
 from ...core.database import get_db_session
@@ -15,7 +16,7 @@ from .base import ImmutableCapabilityMixin
 from .exceptions import HttpRequestFailed
 from .http_capability import HttpCapability
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Simple in-memory token cache: key -> (expires_at_epoch, access_token)
 _TOKEN_CACHE: dict[tuple[str, ...], tuple[float, str]] = {}

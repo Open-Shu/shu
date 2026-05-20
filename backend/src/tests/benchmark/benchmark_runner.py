@@ -6,7 +6,7 @@ run searches, compute metrics, and generate reports.
 
 from __future__ import annotations
 
-import logging
+from shu.core.logging import get_logger
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     import httpx
     from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

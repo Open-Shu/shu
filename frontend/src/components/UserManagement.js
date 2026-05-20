@@ -85,7 +85,12 @@ const UserManagement = () => {
     enabled: canManageUsers(),
   });
   const subscription = extractDataFromResponse(subscriptionResponse) || {};
-  const isSeatGateActive = subscription.user_limit_enforcement === 'hard';
+  // SHU-784: seat-management UI is on whenever billing is enforcing seats —
+  // both `hard` and `soft`. The only behavioral difference between the two
+  // modes is self-registration leniency; seat economics (open seats,
+  // release, scheduled deactivation, Stripe upgrade preview on admin
+  // create/activate) apply identically. Only `none` hides the UI.
+  const isSeatGateActive = subscription.user_limit_enforcement !== 'none';
 
   // Treat a 402 seat_limit_reached response as a phase-1 preview instead
   // of an error: pop the consent modal, and remember the retry closure so

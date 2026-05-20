@@ -8,9 +8,24 @@ VERSION        := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v
 BUILD_TIMESTAMP:= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 DB_RELEASE     := $(shell ls -1 backend/alembic/versions 2>/dev/null | grep -E '^[0-9]{3}_.+\.py$$' | cut -d _ -f1 | sort | tail -n1)
 
-.PHONY: build-api build-fe build-runner build-all
+.PHONY: build-api build-api-slim build-fe build-runner build-all \
+        publish-api publish-api-slim publish-fe publish-runner publish-all \
+        _require-registry
 
-# Build local Docker images
+# ----------------------------------------------------------------------------
+# Local image builds (no push).
+#
+# `build-api` is the standard image. It includes local text-embedding and
+# OCR inference engines (sentence-transformers, torch, transformers, easyocr,
+# pytesseract) so the app can run those workloads without external API
+# dependencies.
+#
+# `build-api-slim` excludes those packages. Use it for deployments that
+# route embedding and OCR through external APIs (e.g. SHU_LOCAL_EMBEDDING_ENABLED=false
+# plus an external OCR engine), where the local libraries are dead weight.
+# Tag suffix `-slim` keeps the two variants distinct in the local image cache.
+# ----------------------------------------------------------------------------
+
 build-api:
 	docker build \
 	  --build-arg SHU_APP_VERSION=$(VERSION) \
@@ -20,6 +35,17 @@ build-api:
 	  -f deployment/docker/api/Dockerfile \
 	  -t shu-api:latest \
 	  -t shu-api:$(VERSION) .
+
+build-api-slim:
+	docker build \
+	  --build-arg INCLUDE_LOCAL_INFERENCE=0 \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  --build-arg SHU_DB_RELEASE=$(DB_RELEASE) \
+	  -f deployment/docker/api/Dockerfile \
+	  -t shu-api:$(VERSION)-slim \
+	  -t shu-api:latest-slim .
 
 build-fe:
 	docker build \
@@ -41,6 +67,96 @@ build-runner:
 
 build-all: build-api build-fe build-runner
 
+# ----------------------------------------------------------------------------
+# Build + push to a container registry (multi-platform-aware).
+#
+# Architecture policy (SHU-779):
+#   * `build-*` targets above produce HOST-ARCH images for local `docker run`.
+#     On Apple Silicon Macs that's `linux/arm64`. Fast iteration, no QEMU.
+#   * `publish-*` targets below produce `linux/amd64` images via `docker buildx
+#     build --platform linux/amd64 --push`. This matches the production
+#     consumer (DOKS amd64 nodes). Builds on Apple Silicon use QEMU
+#     emulation for the amd64 step, which is slow but correct.
+#   * When an arm64-consuming cluster materializes (sovereignty-tier ARM
+#     DOKS, customer on-prem ARM), bump the specific publish target to
+#     `--platform linux/amd64,linux/arm64`. Don't pre-emptively multi-arch
+#     everything — the second arch doubles build time and registry storage
+#     for no benefit when the consumer base is amd64-only.
+#
+# Buildx uses --push to upload directly to the registry without loading
+# the image into the local docker daemon. No separate `docker tag` /
+# `docker push` steps; the -t flags become tags in the registry.
+#
+# Usage:
+#   make publish-api      REGISTRY=<your-registry-prefix>
+#   make publish-api-slim REGISTRY=<your-registry-prefix>
+#   make publish-fe       REGISTRY=<your-registry-prefix>
+#   make publish-runner   REGISTRY=<your-registry-prefix>
+#   make publish-all      REGISTRY=<your-registry-prefix>
+#
+# Each image gets three tags pushed:
+#   :$(VERSION)              — e.g. 1.2.3 (mutable; latest build for that version wins)
+#   :$(VERSION)-$(GIT_SHA)   — e.g. 1.2.3-abc1234 (immutable; bisect-friendly)
+#   :latest                  — convenience; do not pin downstream consumers to this
+#
+# Authenticate to the registry (`docker login <registry>` or `doctl registry
+# login` for DOCR) out-of-band before invoking these targets. buildx uses
+# the local docker config's registry credentials.
+# ----------------------------------------------------------------------------
+
+PUBLISH_PLATFORMS ?= linux/amd64
+
+_require-registry:
+	@if [ -z "$(REGISTRY)" ]; then \
+	  echo "ERROR: REGISTRY is required, e.g. make publish-api REGISTRY=ghcr.io/my-org" ; \
+	  exit 1 ; \
+	fi
+
+publish-api: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  --build-arg SHU_DB_RELEASE=$(DB_RELEASE) \
+	  -f deployment/docker/api/Dockerfile \
+	  -t $(REGISTRY)/shu-api:$(VERSION) \
+	  -t $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA) \
+	  -t $(REGISTRY)/shu-api:latest .
+
+publish-api-slim: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg INCLUDE_LOCAL_INFERENCE=0 \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  --build-arg SHU_DB_RELEASE=$(DB_RELEASE) \
+	  -f deployment/docker/api/Dockerfile \
+	  -t $(REGISTRY)/shu-api:$(VERSION)-slim \
+	  -t $(REGISTRY)/shu-api:$(VERSION)-$(GIT_SHA)-slim \
+	  -t $(REGISTRY)/shu-api:latest-slim .
+
+publish-fe: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  -f deployment/docker/frontend/Dockerfile \
+	  -t $(REGISTRY)/shu-frontend:$(VERSION) \
+	  -t $(REGISTRY)/shu-frontend:$(VERSION)-$(GIT_SHA) \
+	  -t $(REGISTRY)/shu-frontend:latest .
+
+publish-runner: _require-registry
+	docker buildx build --platform $(PUBLISH_PLATFORMS) --push \
+	  --build-arg SHU_APP_VERSION=$(VERSION) \
+	  --build-arg SHU_GIT_SHA=$(GIT_SHA) \
+	  --build-arg SHU_BUILD_TIMESTAMP=$(BUILD_TIMESTAMP) \
+	  -f deployment/docker/runner/Dockerfile \
+	  -t $(REGISTRY)/shu-runner:$(VERSION) \
+	  -t $(REGISTRY)/shu-runner:$(VERSION)-$(GIT_SHA) \
+	  -t $(REGISTRY)/shu-runner:latest .
+
+publish-all: publish-api publish-api-slim publish-fe publish-runner
+
 # Docker Compose build targets
 # Note: Docker Compose v2 uses buildx by default, no explicit builder management needed
 compose-build:
@@ -52,13 +168,15 @@ compose-build-dev:
 
 # Docker Compose targets
 # - make up:           API + Postgres + Redis (backend only, inline workers)
-# - make up-full:      Full stack including frontend
-# - make up-dev:       Backend with hot-reload
-# - make up-full-dev:  Full stack with hot-reload backend
-# - make up-worker:    Dedicated worker (production)
-# - make up-worker-dev: Dedicated worker with hot-reload
+# - make up-full:           Full stack including frontend
+# - make up-dev:            Backend with hot-reload
+# - make up-full-dev:       Full stack with hot-reload backend
+# - make up-dev-slim:       Backend with hot-reload, slim image (external embedding only)
+# - make up-full-dev-slim:  Full stack with hot-reload backend, slim image
+# - make up-worker:         Dedicated worker (production)
+# - make up-worker-dev:     Dedicated worker with hot-reload
 
-.PHONY: up up-full up-dev up-full-dev up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps enable-bm25
+.PHONY: up up-full up-dev up-full-dev up-dev-slim up-full-dev-slim up-worker up-worker-dev up-workers up-split up-dev-split down logs logs-worker ps enable-bm25
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -71,6 +189,16 @@ up-dev:
 
 up-full-dev:
 	docker compose -f $(COMPOSE_FILE) --profile dev up -d shu-api-dev shu-postgres shu-db-migrate redis shu-frontend-dev
+
+# Slim API image (no torch / sentence-transformers / pytesseract). Requires an
+# external embedding model registered in llm_models — slim bakes
+# SHU_LOCAL_EMBEDDING_ENABLED=false. Mutually exclusive with up-dev / up-full-dev
+# (port 8000 + shu-api-dev network alias). Run `make down` between switches.
+up-dev-slim:
+	docker compose -f $(COMPOSE_FILE) --profile dev-slim up -d shu-api-dev-slim shu-postgres shu-db-migrate redis
+
+up-full-dev-slim:
+	docker compose -f $(COMPOSE_FILE) --profile dev-slim --profile dev up -d shu-api-dev-slim shu-postgres shu-db-migrate redis shu-frontend-dev
 
 # Start dedicated worker (requires redis and db-migrate to be running)
 up-worker:
@@ -94,8 +222,8 @@ up-dev-split:
 	SHU_WORKERS_ENABLED=false docker compose -f $(COMPOSE_FILE) --profile dev --profile workers up -d shu-api-dev shu-postgres shu-db-migrate redis shu-worker-ingestion shu-worker-llm shu-worker-maintenance
 
 down:
-	docker compose -f $(COMPOSE_FILE) --profile dev --profile frontend --profile worker --profile worker-dev --profile workers down --remove-orphans || true
-	-docker rm -f shu-frontend shu-frontend-dev shu-api-dev shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
+	docker compose -f $(COMPOSE_FILE) --profile dev --profile dev-slim --profile frontend --profile worker --profile worker-dev --profile workers down --remove-orphans || true
+	-docker rm -f shu-frontend shu-frontend-dev shu-api-dev shu-api-dev-slim shu-worker shu-worker-dev shu-worker-ingestion shu-worker-llm shu-worker-maintenance 2>/dev/null || true
 
 logs:
 	docker compose -f $(COMPOSE_FILE) logs -f

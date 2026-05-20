@@ -30,7 +30,6 @@ Example usage:
 """
 
 import asyncio
-import logging
 import signal
 import time
 from collections.abc import Awaitable, Callable
@@ -41,11 +40,12 @@ from sqlalchemy import text
 
 from .config import DeploymentMode, get_settings_instance
 from .database import get_async_session_local
+from .logging import get_logger
 from .queue_backend import Job, QueueBackend
 from .tenant import MissingTenantContextError, tenant_context_for_tenant_id
 from .workload_routing import WorkloadType
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

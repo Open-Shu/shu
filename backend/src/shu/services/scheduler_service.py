@@ -14,7 +14,6 @@ The scheduler does no heavy work — all execution happens in workers.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import time
 from collections import deque
@@ -25,6 +24,8 @@ from typing import Any, Protocol
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from shu.core.logging import get_logger
 
 from ..auth.models import User
 from ..billing.config import get_billing_settings
@@ -41,7 +42,7 @@ from ..schemas.experience import ExperienceScope
 from .attachment_cleanup import AttachmentCleanupService
 from .policy_engine import POLICY_CACHE
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # In-memory per-process tick history for observability
 TICK_HISTORY: deque[dict[str, Any]] = deque(maxlen=500)

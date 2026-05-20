@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shu.core.logging import get_logger
 
 from ...core.database import get_db_session
 from ...core.ocr_modes import OcrMode
@@ -17,7 +18,7 @@ from ...services.knowledge_object_service import delete_kos_by_external_ids as _
 from ...services.knowledge_object_service import upsert_knowledge_object as _host_upsert_knowledge_object
 from .base import ImmutableCapabilityMixin
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Dispatch table for KB search operations.  Populated lazily on first call to
 # _with_search_service to avoid the circular import chain that arises when

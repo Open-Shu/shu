@@ -210,7 +210,7 @@ Any new table that captures billing, audit, or compliance-critical data should f
 - Test runner scripts use `run_` prefix
 
 ## **6. Error Handling & Logging**
-- Use Python's `logging` module consistently
+- **All loggers must route through `shu.core.logging.get_logger`** — `from shu.core.logging import get_logger; logger = get_logger(__name__)`. Direct calls to `logging.getLogger` and `structlog.get_logger` are banned by ruff (TID251). See Section 24.1 for the full pattern.
 - **Descriptive error messages** with context
 - Handle external service failures gracefully
 - Log at appropriate levels (INFO for progress, ERROR for failures)
@@ -642,25 +642,30 @@ class ShuApplication:
 ## **24. Monitoring & Observability Standards**
 
 ### **24.1. Logging Standards**
-- **Structured Logging**: Use structured JSON logging
-- **Correlation IDs**: Include correlation IDs for request tracing
-- **Privacy-Safe Logging**: Never log sensitive user data
-- **Log Levels**: Use appropriate log levels (DEBUG, INFO, WARN, ERROR, CRITICAL)
+- **Canonical entry point**: every logger in the backend must be obtained from `shu.core.logging.get_logger`. This is the single chokepoint for log format, handler configuration, and any future monitoring integrations.
+- **Structured context**: pass structured fields via `extra={...}` so the JSON formatter emits them as top-level keys.
+- **Correlation IDs**: include correlation IDs for request tracing
+- **Privacy-Safe Logging**: never log sensitive user data
+- **Log Levels**: use appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
 ```python
 # Standard Logging Pattern
-import structlog
+from shu.core.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 async def process_user_event(event: UserEvent):
     logger.info(
         "Processing user event",
-        event_id=event.event_id,
-        user_id=event.user_id,
-        event_type=event.event_type
+        extra={
+            "event_id": event.event_id,
+            "user_id": event.user_id,
+            "event_type": event.event_type,
+        },
     )
 ```
+
+Direct calls to `logging.getLogger` or `structlog.get_logger` are banned by ruff (TID251); the only exception is `shu/core/logging.py` itself, which configures the root, SQLAlchemy, and uvicorn loggers.
 
 ### **24.2. Metrics & Monitoring**
 - **Agent Health Metrics**: Monitor agent uptime and performance

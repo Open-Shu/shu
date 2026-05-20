@@ -10,7 +10,7 @@ This tests the middleware authentication flow in middleware.py that:
 3. Maps requests to user via SHU_API_KEY_USER_EMAIL
 """
 
-import logging
+from shu.core.logging import get_logger
 import os
 import sys
 import uuid
@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tests.base_integration_test import BaseIntegrationTestSuite
 from tests.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Test API key value used in tests

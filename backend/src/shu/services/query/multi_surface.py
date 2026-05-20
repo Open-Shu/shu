@@ -4,17 +4,18 @@ Orchestrates multiple retrieval surfaces with score fusion.
 """
 
 import hashlib
-import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
+
+from shu.core.logging import get_logger
 
 from ...core.exceptions import ShuException
 from ...schemas.query import QueryResponse, QueryResult, QueryType
 from ...services.retrieval.result_formatter import dedupe_contributing_chunks
 from .base import measure_execution_time
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _redact(text: str) -> str:

@@ -24,12 +24,12 @@ import asyncio
 import glob
 import importlib
 import importlib.util
-import logging
+from shu.core.logging import get_logger
 import sys
 
 from integ.base_integration_test import BaseIntegrationTestSuite
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MasterTestRunner:

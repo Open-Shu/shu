@@ -8,7 +8,7 @@ processing status.
 from __future__ import annotations
 
 import asyncio
-import logging
+from shu.core.logging import get_logger
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
@@ -20,7 +20,7 @@ from .beir_loader import BeirCorpusEntry
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Terminal statuses where a document is considered "done"
 TERMINAL_STATUSES = frozenset({"content_processed", "rag_processed", "profile_processed", "error"})

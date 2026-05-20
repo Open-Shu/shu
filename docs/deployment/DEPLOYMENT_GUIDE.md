@@ -6,11 +6,12 @@ This guide covers deployment patterns, worker modes, scaling strategies, and pro
 
 1. [Deployment Modes Overview](#deployment-modes-overview)
 2. [Worker Architecture](#worker-architecture)
-3. [Docker Compose Deployment](#docker-compose-deployment)
-4. [Kubernetes Deployment](#kubernetes-deployment)
-5. [Environment Variables Reference](#environment-variables-reference)
-6. [Scaling Patterns](#scaling-patterns)
-7. [Troubleshooting](#troubleshooting)
+3. [Container Images](#container-images)
+4. [Docker Compose Deployment](#docker-compose-deployment)
+5. [Kubernetes Deployment](#kubernetes-deployment)
+6. [Environment Variables Reference](#environment-variables-reference)
+7. [Scaling Patterns](#scaling-patterns)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -98,6 +99,57 @@ Shu routes jobs to queues based on workload type:
 | `MAINTENANCE` | `shu:maintenance` | Cleanup, scheduled maintenance tasks |
 
 Workers can consume all workload types or specific types for targeted scaling.
+
+---
+
+## Container Images
+
+`shu-api` ships in two variants:
+
+| Variant | Image tag | What's inside | Approx size |
+| --- | --- | --- | --- |
+| **Standard** | `shu-api:<version>` | Everything, including local text-embedding (`sentence-transformers`, `torch`, `transformers`) and local OCR engines (`easyocr`, `pytesseract`) | ~5 GB |
+| **Slim** | `shu-api:<version>-slim` | The standard image minus the local inference engines above. For deployments that route embedding and OCR through external APIs | ~1.5–2 GB |
+
+Both variants are functionally identical at the code level — the slim variant simply omits the Python packages that are only needed when running embedding or OCR inference locally. The runtime defers imports of those packages behind feature flags (`SHU_LOCAL_EMBEDDING_ENABLED`, OCR engine selection), so the slim image works as long as those flags route to external providers.
+
+### Building locally
+
+```bash
+# Standard image (default — includes local inference)
+make build-api
+
+# Slim image (skips sentence-transformers, torch, transformers, easyocr, pytesseract)
+make build-api-slim
+```
+
+`build-api` produces `shu-api:latest` and `shu-api:<version>`. `build-api-slim` adds the `-slim` suffix to both.
+
+### Publishing to a registry
+
+```bash
+# Standard variant — three tags pushed: :version, :version-gitsha, :latest
+make publish-api REGISTRY=<your-registry-prefix>
+
+# Slim variant — three tags with -slim suffix
+make publish-api-slim REGISTRY=<your-registry-prefix>
+
+# Frontend + runner (single variant each)
+make publish-fe     REGISTRY=<your-registry-prefix>
+make publish-runner REGISTRY=<your-registry-prefix>
+
+# Convenience: all three (api + fe + runner, standard variant)
+make publish-all    REGISTRY=<your-registry-prefix>
+```
+
+Authenticate to the registry (`docker login <registry>`) out-of-band before invoking these targets.
+
+### Dependency split
+
+- `requirements.txt` — core dependencies; installed in both variants.
+- `requirements-local-inference.txt` — `sentence-transformers`, `torch`, `transformers`, `easyocr`, `pytesseract`. Installed by default; skipped when the Dockerfile build arg `INCLUDE_LOCAL_INFERENCE=0` (set automatically by `build-api-slim`).
+
+`scipy` is pulled in transitively by `torch` / `transformers` and falls out of the slim image naturally.
 
 ---
 

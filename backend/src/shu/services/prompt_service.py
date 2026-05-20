@@ -4,12 +4,13 @@ This service provides comprehensive prompt management functionality
 for the unified prompt system supporting multiple entity types.
 """
 
-import logging
 import uuid
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from shu.core.logging import get_logger
 
 from ..core.exceptions import ConflictError, NotFoundError, ShuException, ValidationError
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
@@ -30,7 +31,7 @@ from ..utils.prompt_utils import (
     has_citation_instructions,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PromptNotFoundError(NotFoundError):

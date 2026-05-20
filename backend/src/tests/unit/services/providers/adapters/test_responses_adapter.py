@@ -21,6 +21,7 @@ from shu.services.providers import adapter_base
 from shu.services.providers.adapter_base import (
     ProviderAdapterContext,
     ProviderContentDeltaEventResult,
+    ProviderErrorEventResult,
     ProviderFinalEventResult,
     ProviderReasoningDeltaEventResult,
     ProviderToolCallEventResult,
@@ -63,6 +64,19 @@ def patch_plugin_calls(monkeypatch):
         adapter_base,
         "execute_plugin",
         AsyncMock(return_value=FAKE_PLUGIN_RESULT),
+    )
+    # SHU-759: _call_plugin now acquires its own session via
+    # get_async_session_local() at the point of use. Patch the factory
+    # to a do-nothing async context manager so this unit test doesn't
+    # try to construct a real async engine — that fails in environments
+    # where SHU_DATABASE_URL is configured for sync psycopg2 (CI).
+    fake_session_cm = AsyncMock()
+    fake_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    fake_session_cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        adapter_base,
+        "get_async_session_local",
+        lambda: lambda: fake_session_cm,
     )
 
 
@@ -249,3 +263,108 @@ async def test_inject_functions(responses_adapter):
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_assistant_string_content_is_sent_as_bare_string(responses_adapter):
+    """Prior-turn assistant text replays as a bare-string ``content`` value.
+
+    Verified empirically (scripts/responses_replay_probe.sh) against OpenAI,
+    OpenRouter, and DigitalOcean (non-Gemma) on /v1/responses, single- and
+    multi-turn, with prior-turn context preserved.
+
+    Wrapping the assistant text as an ``output_text`` content part with
+    ``annotations: []`` (the c4eeb0f shape) breaks OpenRouter on turn 2+ with
+    ``invalid_prompt``; wrapping as ``input_text`` breaks OpenAI on turn 2+
+    with "Supported values are: 'output_text' and 'refusal'." Bare string is
+    the only shape accepted across every conformant Responses provider.
+    """
+    messages = ChatContext.from_dicts(
+        [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "follow up"},
+        ],
+        system_prompt=None,
+    )
+
+    payload = await responses_adapter.set_messages_in_payload(messages, {})
+
+    assert payload["input"] == [
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "follow up"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_response_failed_event_emits_error(responses_adapter):
+    """A `response.failed` SSE chunk surfaces as a ProviderErrorEventResult with the cause.
+
+    Without this branch the chunk falls through to `return None`, the SSE
+    iteration ends with no terminal event, and the chat-streaming loop
+    raises a generic "NoFinalMessage" error that hides the real failure.
+    """
+    chunk = {
+        "type": "response.failed",
+        "response": {
+            "error": {"code": "server_error", "message": "Backend is having a bad day"},
+        },
+    }
+    result = await responses_adapter.handle_provider_event(chunk)
+    assert isinstance(result, ProviderErrorEventResult)
+    assert "Backend is having a bad day" in result.content
+
+
+@pytest.mark.asyncio
+async def test_top_level_error_event_emits_error(responses_adapter):
+    """A top-level `error` SSE chunk surfaces as a ProviderErrorEventResult."""
+    chunk = {
+        "type": "error",
+        "error": {"message": "rate limited", "type": "rate_limit"},
+    }
+    result = await responses_adapter.handle_provider_event(chunk)
+    assert isinstance(result, ProviderErrorEventResult)
+    assert "rate limited" in result.content
+
+
+@pytest.mark.asyncio
+async def test_response_completed_with_no_content_emits_error(responses_adapter):
+    """`response.completed` with no text item and no streamed deltas emits an error.
+
+    Previously this silently returned None and bubbled up as a generic
+    NoFinalMessage. If tool calls were captured in this stream the
+    follow-up path handles them, so this only fires when there's truly
+    nothing actionable.
+    """
+    chunk = {
+        "type": "response.completed",
+        "response": {"output": [], "usage": {"input_tokens": 1, "output_tokens": 0}},
+    }
+    result = await responses_adapter.handle_provider_event(chunk)
+    assert isinstance(result, ProviderErrorEventResult)
+    assert "no text content" in result.content
+
+
+@pytest.mark.asyncio
+async def test_response_completed_with_only_reasoning_emits_error(responses_adapter):
+    """`response.completed` with reasoning items but no function_call or text emits an error.
+
+    Reasoning-only completions have no path to a final answer — no text to
+    surface, and no function_call output for the follow-up cycle to bounce
+    off of. Without this, the chat-streaming loop sees zero events and
+    raises a generic NoFinalMessage that hides the real condition.
+    """
+    chunk = {
+        "type": "response.completed",
+        "response": {
+            "id": "resp_reasoning_only",
+            "output": [
+                {"id": "rs_only", "type": "reasoning", "summary": []},
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    }
+    result = await responses_adapter.handle_provider_event(chunk)
+    assert isinstance(result, ProviderErrorEventResult)
+    assert "no text content" in result.content

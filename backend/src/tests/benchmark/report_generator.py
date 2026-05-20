@@ -7,7 +7,7 @@ from benchmark results.
 from __future__ import annotations
 
 import json
-import logging
+from shu.core.logging import get_logger
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .benchmark_runner import BenchmarkResults
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ReportGenerator:

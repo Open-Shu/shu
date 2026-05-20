@@ -1,4 +1,4 @@
-import logging
+from shu.core.logging import get_logger
 import os
 
 # Set env BEFORE importing test runner/app so settings pick up test overrides
@@ -11,7 +11,7 @@ from integ.base_integration_test import (
     create_test_runner_script,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # --- Test functions ---

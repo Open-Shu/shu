@@ -404,6 +404,86 @@ class TestCreateUserPreflight:
         seat_service.confirm_upgrade.assert_not_awaited()
         db.rollback.assert_awaited()
 
+    @pytest.mark.asyncio
+    async def test_soft_at_limit_triggers_preflight_same_as_hard(self):
+        """SHU-784: admin-create under soft + at_limit must still 402.
+
+        Soft only changes self-registration leniency. Admin-initiated writes
+        are deliberate seat purchases and must remain informed actions —
+        the Stripe upgrade preview fires identically under hard and soft.
+        Without this, admin-creates under soft silently bypass Stripe and
+        the seat count desyncs from the active user count.
+        """
+        request = CreateUserRequest(
+            email="new@example.com", password="pw12345678", name="New", auth_method="password"
+        )
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service(preview=_make_preview())
+
+        with patch(
+            "shu.api.auth.check_user_limit",
+            return_value=UserLimitStatus(
+                enforcement="soft", at_limit=True, current_count=3, user_limit=3
+            ),
+        ):
+            response = await create_user(
+                request,
+                current_user=current_user,
+                db=db,
+                user_service=_make_user_service(),
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        assert response.status_code == 402
+        body = _parse_envelope(response)
+        assert body["error"]["code"] == "seat_limit_reached"
+        seat_service.confirm_upgrade.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_none_at_limit_skips_preflight(self):
+        """Enforcement `none` (self-hosted / unbilled) bypasses the preflight.
+
+        Counterpart to the soft+hard coverage above — `none` is the only
+        enforcement value that should NOT trigger the Stripe upgrade prompt.
+        """
+        request = CreateUserRequest(
+            email="self-hosted@example.com",
+            password="pw12345678",
+            name="SH",
+            auth_method="password",
+        )
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service()
+
+        mock_user = MagicMock()
+        mock_user.to_dict.return_value = {"email": "self-hosted@example.com"}
+
+        with (
+            patch(
+                "shu.api.auth.check_user_limit",
+                return_value=UserLimitStatus(
+                    enforcement="none", at_limit=True, current_count=99, user_limit=0
+                ),
+            ),
+            patch("shu.api.auth.password_auth_service") as mock_pw,
+        ):
+            mock_pw.create_user = AsyncMock(return_value=mock_user)
+            response = await create_user(
+                request,
+                current_user=current_user,
+                db=db,
+                user_service=_make_user_service(),
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        assert response.data["email"] == "self-hosted@example.com"
+        seat_service.confirm_upgrade.assert_not_awaited()
+        seat_service.preview_upgrade.assert_not_awaited()
+
 
 class TestActivateUserPreflight:
     @pytest.mark.asyncio
@@ -463,6 +543,44 @@ class TestActivateUserPreflight:
 
         seat_service.preview_upgrade.assert_not_awaited()
         seat_service.confirm_upgrade.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_activate_at_limit_under_soft_still_returns_402(self):
+        """SHU-784: admin-activate of a pending user under soft + at_limit
+        runs the same preflight as hard.
+
+        Self-registration over the limit lands inactive under soft (no
+        Stripe write). When the admin then activates that user, the user
+        is moving into a billable seat — Stripe must be consulted so the
+        admin sees the charge before confirming.
+        """
+        db = AsyncMock()
+        current_user = MagicMock()
+        seat_service = _make_seat_service(preview=_make_preview())
+
+        mock_user = MagicMock()
+        mock_user.is_active = False
+        user_service = MagicMock()
+        user_service.get_user_by_id = AsyncMock(return_value=mock_user)
+
+        with patch(
+            "shu.api.auth.check_user_limit",
+            return_value=UserLimitStatus(
+                enforcement="soft", at_limit=True, current_count=3, user_limit=3
+            ),
+        ):
+            response = await activate_user(
+                "42",
+                current_user=current_user,
+                db=db,
+                user_service=user_service,
+                seat_service=seat_service,
+                x_seat_charge_confirmed=None,
+            )
+
+        assert response.status_code == 402
+        body = _parse_envelope(response)
+        assert body["error"]["code"] == "seat_limit_reached"
 
 
 class TestUpdateUserPreflight:

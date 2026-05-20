@@ -4,18 +4,19 @@ Provides term-based matching with title weighting and document-level scoring.
 """
 
 import hashlib
-import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
 
+from shu.core.logging import get_logger
+
 from ...core.exceptions import ShuException
 from .base import measure_execution_time
 from .constants import TITLE_MATCH_STOP_WORDS
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _redact(text_val: str) -> str:
@@ -389,13 +390,16 @@ class KeywordSearchMixin:
             scored_chunks = []
 
             # Get query embedding for similarity scoring (reuse precomputed if available)
-            from scipy.spatial.distance import cosine
+            import numpy as np
 
             if query_embedding is None:
                 from ...core.embedding_service import get_embedding_service
 
                 embedding_service = await get_embedding_service()
                 query_embedding = await embedding_service.embed_query(query, user_id=user_id)
+
+            query_vec = np.asarray(query_embedding, dtype=np.float32)
+            query_norm = float(np.linalg.norm(query_vec))
 
             # Preprocess query and get weights once (loop-invariant)
             processed = self.preprocess_query(query)
@@ -411,7 +415,10 @@ class KeywordSearchMixin:
 
                     chunk_embedding = json.loads(chunk_embedding)
 
-                similarity_score = float(1 - cosine(query_embedding, chunk_embedding))
+                chunk_vec = np.asarray(chunk_embedding, dtype=np.float32)
+                chunk_norm = float(np.linalg.norm(chunk_vec))
+                denom = query_norm * chunk_norm
+                similarity_score = float(np.dot(query_vec, chunk_vec) / denom) if denom > 0 else 0.0
                 similarity_score = max(0, similarity_score)  # Ensure non-negative
 
                 keyword_score = self._calculate_keyword_score(chunk.content, keyword_terms)

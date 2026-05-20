@@ -28,7 +28,6 @@ Example usage:
 
 import asyncio
 import json
-import logging
 import threading
 import time
 import uuid
@@ -37,9 +36,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional, Protocol, runtime_checkable
 
+from .logging import get_logger
 from .tenant import resolve_redis_namespace, warn_tenant_without_redis
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================
