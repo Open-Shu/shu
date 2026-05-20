@@ -266,10 +266,13 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             from sqlalchemy import select
 
             from ..auth.models import User
-            from ..core.database import get_db
+            from ..core.database import get_async_session_local
 
-            # Get database session
-            async for db in get_db():
+            # Get database session — use async with to guarantee cleanup on every exit
+            # path (return, exception, anyio cancellation). The async-for/break idiom
+            # suspends the generator and defers cleanup to the asyncgen GC finalizer,
+            # which can orphan connections under load or cancellation pressure.
+            async with get_async_session_local()() as db:
                 # Determine lookup based on auth mode
                 if getattr(request.state, "api_key_authenticated", False):
                     settings = get_settings_instance()
@@ -367,7 +370,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                             "must_change_password": current_user.must_change_password,
                         }
                     )
-                break
 
         except Exception as e:
             logger.error(f"Database error during user validation: {e}")
