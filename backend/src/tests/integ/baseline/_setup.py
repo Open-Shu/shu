@@ -7,15 +7,15 @@ shared setup so the runners stay focused on their measurement logic.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import text
 
 from integ.response_utils import extract_data
+from shu.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def ensure_local_provider_type(db) -> None:

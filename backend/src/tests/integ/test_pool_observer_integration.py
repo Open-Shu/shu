@@ -8,7 +8,6 @@ production refactor begins.
 """
 
 import asyncio
-import logging
 import sys
 from collections.abc import Callable
 
@@ -17,8 +16,9 @@ from sqlalchemy import text
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.pool_observer import PoolObserver
 from shu.core.database import get_async_engine, get_async_session_local
+from shu.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def test_pool_observer_counts_query_checkout(client, db, auth_headers):
