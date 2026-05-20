@@ -222,9 +222,11 @@ def create_cycle_rollover_callback(db: AsyncSession, seat_service: SeatService):
 async def get_billing_config(db: AsyncSession) -> dict:
     """Get current billing configuration from billing_state.
 
-    Returns dict with keys matching the previous system_settings["billing"]
-    schema so all callers continue to work without change. Datetime fields
-    are serialised as ISO strings.
+    Returns only the columns that are still actively written to the local
+    row. SHU-774 lifted subscription/payment-status persistence to CP, so
+    `subscription_status`, `current_period_*`, `cancel_at_period_end`, and
+    `payment_failed_at` are no longer included — readers must source those
+    from `get_current_billing_state()` (the CP cache) instead.
     """
     from shu.billing.state_service import BillingStateService
 
@@ -235,10 +237,6 @@ async def get_billing_config(db: AsyncSession) -> dict:
         "stripe_customer_id": state.stripe_customer_id,
         "stripe_subscription_id": state.stripe_subscription_id,
         "billing_email": state.billing_email,
-        "subscription_status": state.subscription_status,
-        "current_period_start": state.current_period_start.isoformat() if state.current_period_start else None,
-        "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
-        "cancel_at_period_end": state.cancel_at_period_end,
         "last_reported_total": state.last_reported_total,
         "last_reported_period_start": state.last_reported_period_start.isoformat()
         if state.last_reported_period_start

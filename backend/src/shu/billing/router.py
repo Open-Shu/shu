@@ -388,11 +388,14 @@ async def get_current_usage(
     Otherwise returns total tokens used, breakdown by model, and estimated
     cost for the active subscription period.
     """
-    billing_config = await get_billing_config(db)
-    period_start_str = billing_config.get("current_period_start")
-    period_end_str = billing_config.get("current_period_end")
+    # Period bounds come from the CP-sourced BillingState (SHU-774); the
+    # local billing_state columns aren't written anymore after the webhook
+    # persistence callbacks were lifted.
+    state = await get_current_billing_state()
+    period_start = state.current_period_start
+    period_end = state.current_period_end
 
-    if not (period_start_str and period_end_str):
+    if not (period_start and period_end):
         return ShuResponse.success(
             {
                 "current_period_unknown": True,
@@ -405,8 +408,6 @@ async def get_current_usage(
             }
         )
 
-    period_start = datetime.fromisoformat(period_start_str)
-    period_end = datetime.fromisoformat(period_end_str)
     usage_provider = UsageProviderImpl(db)
     summary = await usage_provider.get_usage_summary(period_start, period_end)
 

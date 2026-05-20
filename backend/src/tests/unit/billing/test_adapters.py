@@ -37,23 +37,21 @@ class TestGetBillingConfig:
 
     @pytest.mark.asyncio
     async def test_returns_dict_built_from_billing_state(self):
-        """Should read from billing_state and return a dict with all expected keys."""
+        """Should read from billing_state and return a dict of only the
+        locally-owned fields (customer/subscription IDs, last-reported
+        bookkeeping, enforcement toggle).
+        """
         mock_db = AsyncMock()
-        state = _make_billing_state(
-            stripe_customer_id="cus_123",
-            subscription_status="active",
-        )
+        state = _make_billing_state(stripe_customer_id="cus_123")
 
         with patch("shu.billing.state_service.BillingStateService.get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = state
             result = await get_billing_config(mock_db)
 
         assert result["stripe_customer_id"] == "cus_123"
-        assert result["subscription_status"] == "active"
-        assert result["current_period_start"] == "2026-04-01T00:00:00+00:00"
-        assert result["current_period_end"] == "2026-05-01T00:00:00+00:00"
-        assert "quantity" not in result
-        assert "target_quantity" not in result
+        assert result["stripe_subscription_id"] == "sub_456"
+        assert result["billing_email"] == "billing@example.com"
+        assert result["user_limit_enforcement"] == "soft"
 
     @pytest.mark.asyncio
     async def test_returns_empty_dict_when_no_singleton(self):
@@ -67,22 +65,27 @@ class TestGetBillingConfig:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_serialises_none_datetimes_as_none(self):
-        """Datetime fields that are None should remain None in the dict."""
+    async def test_omits_cp_sourced_fields(self):
+        """SHU-774 lifted subscription/payment-status persistence to CP, so
+        `get_billing_config` no longer surfaces those fields — readers must
+        source them from `get_current_billing_state()` (the CP cache) to
+        avoid silently reading dead columns.
+        """
         mock_db = AsyncMock()
-        state = _make_billing_state(
-            current_period_start=None,
-            current_period_end=None,
-            last_reported_period_start=None,
-        )
+        state = _make_billing_state()
 
         with patch("shu.billing.state_service.BillingStateService.get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = state
             result = await get_billing_config(mock_db)
 
-        assert result["current_period_start"] is None
-        assert result["current_period_end"] is None
-        assert result["last_reported_period_start"] is None
+        for dead_field in (
+            "subscription_status",
+            "current_period_start",
+            "current_period_end",
+            "cancel_at_period_end",
+            "payment_failed_at",
+        ):
+            assert dead_field not in result, f"{dead_field} should be sourced from CP, not billing_config"
 
 
 class TestGetUserCount:

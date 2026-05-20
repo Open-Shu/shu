@@ -296,6 +296,18 @@ def _make_usage_summary(total_cost_usd=0.0, input_tokens=0, output_tokens=0):
     return summary
 
 
+def _patch_state(period_start_iso: str | None = "2026-04-01T00:00:00+00:00"):
+    """Patch `get_current_billing_state` to return a BillingState with
+    `current_period_start` set. SHU-774 routes period bounds through the
+    CP-sourced wire instead of the dead local billing_state columns.
+    """
+    from datetime import datetime
+
+    state = MagicMock()
+    state.current_period_start = datetime.fromisoformat(period_start_iso) if period_start_iso else None
+    return patch("shu.billing.enforcement.get_current_billing_state", AsyncMock(return_value=state))
+
+
 class TestReportAndReconcileUsage:
     """Tests for the compare-and-correct usage reconciliation algorithm."""
 
@@ -354,6 +366,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
@@ -393,6 +406,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),
         ):
             mock_config.return_value = billing_config
             mock_provider = MagicMock()
@@ -429,6 +443,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
@@ -464,6 +479,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
@@ -499,6 +515,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_billing_update,
         ):
             mock_config.return_value = billing_config
@@ -542,6 +559,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(period_start_iso="2026-05-01T00:00:00+00:00"),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
@@ -582,6 +600,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
         ):
             mock_config.return_value = billing_config
@@ -626,6 +645,7 @@ class TestReportAndReconcileUsage:
         with (
             patch("shu.billing.adapters.get_billing_config") as mock_config,
             patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(period_start_iso="2026-05-01T00:00:00+00:00"),
             patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock) as mock_bss_update,
         ):
             mock_config.return_value = billing_config
@@ -641,6 +661,47 @@ class TestReportAndReconcileUsage:
         assert result["action"] == "catchup_failed"
         # BillingStateService.update must NOT have been called (old period marker preserved)
         mock_bss_update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_period_bounds_sourced_from_cp_wire_not_billing_config(self):
+        """SHU-774 regression: scheduler must NOT read current_period_start
+        from billing_config (those columns are dead after the cleanup).
+        A billing_config without period_start MUST still allow reporting
+        as long as the CP cache has the value.
+        """
+        client = _make_client()
+        client.get_meter_event_summary.return_value = 0
+        client.report_usage.return_value = MagicMock()
+
+        settings = _make_settings()
+        settings.meter_id_cost = "meter_123"
+        service = BillingService(settings, stripe_client=client)
+        db = AsyncMock()
+
+        # billing_config deliberately OMITS current_period_start — the
+        # post-cleanup get_billing_config() doesn't ship it. If the scheduler
+        # falls back to reading it here we get a no_period skip.
+        billing_config = {"stripe_customer_id": "cus_123"}
+
+        with (
+            patch("shu.billing.adapters.get_billing_config") as mock_config,
+            patch("shu.billing.adapters.UsageProviderImpl") as mock_provider_cls,
+            _patch_state(),  # CP cache supplies period_start
+            patch("shu.billing.state_service.BillingStateService.update", new_callable=AsyncMock),
+        ):
+            mock_config.return_value = billing_config
+            mock_provider = MagicMock()
+            mock_provider.get_usage_summary = AsyncMock(
+                return_value=_make_usage_summary(total_cost_usd=0.001)
+            )
+            mock_provider_cls.return_value = mock_provider
+
+            result = await service.report_and_reconcile_usage(db)
+
+        # Reaches the reporting branch — proves period_start came from the
+        # CP wire (via _patch_state) not from billing_config.
+        assert result["action"] == "reported"
+        assert result["our_total"] == 1000
 
 
 class TestWebhookGuard:

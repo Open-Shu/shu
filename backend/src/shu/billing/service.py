@@ -206,6 +206,7 @@ class BillingService:
 
         """
         from shu.billing.adapters import UsageProviderImpl, get_billing_config
+        from shu.billing.enforcement import get_current_billing_state
 
         billing_config = await get_billing_config(db)
         customer_id = billing_config.get("stripe_customer_id")
@@ -215,11 +216,15 @@ class BillingService:
         if not self._settings.meter_id_cost:
             return {"action": "skipped", "reason": "no_meter"}
 
-        period_start_str = billing_config.get("current_period_start")
+        # Period bounds come from the CP-sourced BillingState (SHU-774); the
+        # local billing_state columns aren't written anymore after the webhook
+        # persistence callbacks were lifted.
+        state = await get_current_billing_state()
+        period_start = state.current_period_start
 
-        if not period_start_str:
+        if period_start is None:
             return {"action": "skipped", "reason": "no_period"}
-        period_start = datetime.fromisoformat(period_start_str)
+        period_start_str = period_start.isoformat()
 
         last_reported_total = billing_config.get("last_reported_total", 0)
         last_reported_period = billing_config.get("last_reported_period_start")
