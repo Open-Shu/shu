@@ -308,3 +308,83 @@ class TestStreamLifecycleEventWaitInterop:
         # event.wait() on an already-set event returns immediately.
         await asyncio.wait_for(lc.event.wait(), timeout=0.1)
         assert lc.resolved_reason() == "shutdown"
+
+
+# SHU-803: ``shutdown_signaled`` is a separate flag — independent of
+# ``reason`` — that the drain loop reads as the SIGTERM escape valve.
+# Because priority-based signal() treats ``user_terminated`` and
+# ``shutdown`` as the SAME priority tier (both intentional stops at
+# priority 2), a shutdown arriving after user_terminated does NOT
+# update ``reason``. Without a separate flag, an in-flight drain
+# (entered via user_terminated) would have no way to detect shutdown
+# and would only exit when the lifespan-drain cancellation propagated
+# — bypassing the shielded finalize since ``_call_provider`` itself
+# is not shielded.
+
+
+class TestStreamLifecycleShutdownSignaled:
+    """The ``shutdown_signaled`` flag is the SIGTERM escape valve for
+    the drain loop. The flag is INDEPENDENT of ``reason``: signal()
+    alone does not set it; the two helpers in chat_streaming.py
+    (``signal_shutdown_to_in_flight_streams``,
+    ``drain_in_flight_streams``) set it before calling signal()."""
+
+    def test_default_is_false(self):
+        """A freshly constructed lifecycle has shutdown_signaled=False —
+        the drain loop's between-events check must observe this as
+        "no shutdown yet" and continue draining normally.
+        """
+        lc = _build_lifecycle()
+        assert lc.shutdown_signaled is False
+
+    def test_signal_alone_does_not_set_shutdown_flag(self):
+        """``lifecycle.signal("shutdown")`` updates ``reason`` (when
+        priority allows) and fires the event but does NOT touch
+        ``shutdown_signaled``. The two helpers in chat_streaming.py
+        set the flag explicitly before signaling — so any code calling
+        ``signal()`` directly (e.g. unit tests, future callers) won't
+        accidentally trip the drain escape valve.
+        """
+        lc = _build_lifecycle()
+        lc.signal("shutdown")
+        assert lc.reason == "shutdown"
+        assert lc.shutdown_signaled is False, (
+            "signal() alone must not set shutdown_signaled — only the two "
+            "chat_streaming helpers do, so a unit-test call to signal('shutdown') "
+            "doesn't accidentally trip the drain escape valve."
+        )
+
+    def test_shutdown_after_user_terminated_preserves_user_terminated_reason(self):
+        """The load-bearing SHU-803 priority assertion: when
+        ``user_terminated`` was signaled first and ``shutdown`` arrives
+        later (the SIGTERM-during-drain case), ``reason`` stays
+        ``user_terminated`` because both signals are at priority tier 2.
+        This is by design — the user requested terminate; shutdown
+        shouldn't rewrite the audit trail. But the drain still needs
+        to detect the shutdown; that's what ``shutdown_signaled`` is
+        for, set separately by the two chat_streaming helpers (this
+        test only exercises the priority semantics, not the flag).
+        """
+        lc = _build_lifecycle()
+        first_accepted = lc.signal("user_terminated")
+        second_accepted = lc.signal("shutdown")
+        assert first_accepted is True
+        assert second_accepted is False, (
+            "shutdown after user_terminated must be rejected at the priority "
+            "level — both are tier 2, first-writer-wins. SHU-803 introduces "
+            "the separate ``shutdown_signaled`` flag exactly because of this "
+            "first-writer-wins semantics."
+        )
+        assert lc.reason == "user_terminated"
+
+    def test_flag_can_be_set_directly_without_signal(self):
+        """The two chat_streaming helpers set the flag directly via
+        ``lc.shutdown_signaled = True`` (then call ``lc.signal``).
+        Verifying the flag is writable as a plain attribute — no
+        property, no descriptor, no surprises.
+        """
+        lc = _build_lifecycle()
+        lc.shutdown_signaled = True
+        assert lc.shutdown_signaled is True
+        # Reason untouched by the flag.
+        assert lc.reason is None

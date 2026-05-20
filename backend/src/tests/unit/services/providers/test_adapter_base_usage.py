@@ -435,3 +435,187 @@ class TestAnthropicAdapterPartialUsageSnapshot:
         }
         snapshot = adapter.get_partial_usage_snapshot()
         assert snapshot == adapter.usage
+
+
+# SHU-803 AC9b: Anthropic's `message_start` event carries initial input_tokens
+# nested under `message.usage` rather than top-level. The pre-fix capture
+# clause (`if "usage" in chunk: self._latest_usage_event = chunk`) misses
+# that shape entirely, so a terminate fired before any `message_delta`
+# lands with `input_tokens=0` even though the provider had emitted them.
+# These tests pin both shapes through the actual `handle_provider_event`
+# code path (not just the snapshot) so a regression in the additive
+# branch can't be masked by the existing top-level test.
+
+
+def _make_anthropic_adapter_for_event_handling() -> AnthropicAdapter:
+    """Like ``_make_anthropic_adapter`` but also seeds the streaming-state
+    attributes (`_stream_content`, `_stream_tool_calls`) that
+    ``handle_provider_event`` reaches into.
+    """
+    adapter = AnthropicAdapter.__new__(AnthropicAdapter)
+    adapter.usage = {}
+    adapter._latest_usage_event = None
+    adapter._stream_content = []
+    adapter._stream_tool_calls = {}
+    return adapter
+
+
+class TestAnthropicHandleProviderEventUsageCapture:
+    """SHU-803 AC9b: `handle_provider_event` must stash both Anthropic
+    usage shapes (`message_start` nested + `message_delta` top-level) onto
+    `_latest_usage_event` so `get_partial_usage_snapshot()` can flush them
+    on terminate."""
+
+    @pytest.mark.asyncio
+    async def test_message_start_chunk_captures_nested_usage(self):
+        """The fix path: `message_start` carries `message.usage` (input_tokens
+        on the initial event). Pre-fix this was lost; post-fix it lands on
+        `_latest_usage_event` and the snapshot flushes it into `self.usage`.
+        """
+        adapter = _make_anthropic_adapter_for_event_handling()
+        await adapter.handle_provider_event(
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_test",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-haiku-4-5",
+                    "usage": {"input_tokens": 42, "output_tokens": 1},
+                },
+            }
+        )
+        # The normalized stash exposes the usage at the same top-level
+        # `usage` key that `_extract_usage` jmespath-searches for.
+        assert adapter._latest_usage_event == {
+            "usage": {"input_tokens": 42, "output_tokens": 1}
+        }
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 42
+        assert snapshot["output_tokens"] == 1
+
+    @pytest.mark.asyncio
+    async def test_message_delta_chunk_still_captures_top_level_usage(self):
+        """Regression guard for the existing path: `message_delta` carries
+        `usage` at top-level. The additive `elif` branch must not break this.
+        """
+        adapter = _make_anthropic_adapter_for_event_handling()
+        await adapter.handle_provider_event(
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": None, "stop_sequence": None},
+                "usage": {"output_tokens": 17},
+            }
+        )
+        # Existing behavior: the whole chunk is stashed.
+        assert adapter._latest_usage_event is not None
+        assert adapter._latest_usage_event["usage"] == {"output_tokens": 17}
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["output_tokens"] == 17
+
+    @pytest.mark.asyncio
+    async def test_message_start_then_message_delta_accumulates(self):
+        """End-to-end stream shape: ``message_start`` lands input_tokens,
+        then ``message_delta`` carries output_tokens. The capture branch
+        MERGES the message_delta's top-level usage with the prior
+        ``_latest_usage_event`` from ``message_start`` so BOTH axes
+        survive to the snapshot. Without the merge, message_delta would
+        overwrite ``_latest_usage_event`` with output-only and
+        input_tokens would land as 0 on the LLMUsage row — the bug that
+        SHU-803 AC9b closes.
+        """
+        adapter = _make_anthropic_adapter_for_event_handling()
+        await adapter.handle_provider_event(
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 100, "output_tokens": 1}},
+            }
+        )
+        await adapter.handle_provider_event(
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": None, "stop_sequence": None},
+                "usage": {"output_tokens": 45},
+            }
+        )
+        snapshot = adapter.get_partial_usage_snapshot()
+        # BOTH axes — input_tokens from message_start, output_tokens
+        # from message_delta — survive the merge.
+        assert snapshot["input_tokens"] == 100, (
+            "SHU-803 AC9b: message_start input_tokens must survive a later "
+            "message_delta. Pre-fix the delta overwrote _latest_usage_event."
+        )
+        assert snapshot["output_tokens"] == 45
+
+    @pytest.mark.asyncio
+    async def test_terminate_after_message_start_only_captures_input_tokens(self):
+        """The load-bearing scenario for the fix: terminate fires AFTER
+        `message_start` but BEFORE any `message_delta`. Pre-fix, input_tokens
+        were lost (`_latest_usage_event` stayed None). Post-fix, input_tokens
+        land on the snapshot.
+        """
+        adapter = _make_anthropic_adapter_for_event_handling()
+        await adapter.handle_provider_event(
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 250, "output_tokens": 0}},
+            }
+        )
+        # No message_delta arrives — terminate fires here.
+        snapshot = adapter.get_partial_usage_snapshot()
+        assert snapshot["input_tokens"] == 250, (
+            "SHU-803 AC9b: input_tokens from message_start must survive "
+            "a terminate before any message_delta lands. Pre-fix this was 0."
+        )
+
+    @pytest.mark.asyncio
+    async def test_content_block_delta_chunk_does_not_overwrite_usage(self):
+        """Content deltas are the bulk of the stream; they have no `usage`
+        field. The new branch must not fire and stomp on a previously
+        captured usage event.
+        """
+        adapter = _make_anthropic_adapter_for_event_handling()
+        # Seed via a message_start.
+        await adapter.handle_provider_event(
+            {"type": "message_start", "message": {"usage": {"input_tokens": 99}}}
+        )
+        # Now a content_block_delta — has no usage anywhere.
+        await adapter.handle_provider_event(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello"},
+            }
+        )
+        # The stash from message_start must survive.
+        assert adapter._latest_usage_event == {"usage": {"input_tokens": 99}}
+
+
+# SHU-803 AC9e: the base ``cancel()`` is a no-op default — adapters whose
+# providers don't expose a real cancel API inherit it and return False
+# immediately so the consumer loop falls through to drain.
+
+
+class TestBaseProviderAdapterCancel:
+    """The base ``cancel()`` returns False without doing any work.
+
+    Adapters that DO support cancel (currently only ResponsesAdapter)
+    override; the rest inherit this no-op so the consumer loop's
+    ``asyncio.gather(adapter.cancel(), _drain(...))`` call site stays
+    uniform across providers.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_returns_false(self):
+        adapter = _make_adapter()
+        result = await adapter.cancel()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_raise(self):
+        """The cancel contract says implementations MUST NOT raise. The
+        default trivially upholds this, but the test pins the invariant
+        so a future regression that adds a side-effect can't slip in."""
+        adapter = _make_adapter()
+        # If cancel raised, this would surface as a test failure.
+        await adapter.cancel()

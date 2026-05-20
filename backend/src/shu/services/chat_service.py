@@ -159,6 +159,22 @@ class VariantStreamResult:
     terminated: bool = False
     partial_usage_unavailable: bool = False
 
+    # SHU-803 AC9g: audit fields recorded on the LLMUsage row's
+    # `request_metadata` for terminated streams. Empty dict on the
+    # non-terminated paths; populated by `_call_provider` when drain
+    # runs (after a user_terminated or shutdown signal).
+    #
+    # Keys:
+    #   drain_outcome: Literal["final_event", "done", "exception",
+    #       "shutdown_aborted"] — how drain exited.
+    #   cancel_attempted: bool — whether `adapter.cancel()` was spawned.
+    #   cancel_succeeded: bool — whether it returned True (2xx response).
+    #
+    # Ops uses these to distinguish a clean drain (`final_event` /
+    # `done` — usage captured normally) from a shutdown-truncated drain
+    # (`shutdown_aborted`) or a stuck upstream (`exception`).
+    drain_audit: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class RegenLineageInfo:
