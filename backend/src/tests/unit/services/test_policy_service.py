@@ -519,3 +519,238 @@ class TestGetEffectivePolicies:
 
         assert response.user_id == "user-1"
         assert len(response.policies) == 1
+
+
+# ---------------------------------------------------------------------------
+# cp_replace_and_bind (SHU-785) — wipe-and-replace semantics, bindings,
+# cache invalidation.
+# ---------------------------------------------------------------------------
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+from shu.schemas.cp_provisioning import (  # noqa: E402
+    PolicyInput as CpPolicyInput,
+    PolicyStatementInput as CpPolicyStatementInput,
+    SetPoliciesRequest,
+)
+from shu.services.policy_service import PolicyService  # noqa: E402
+
+
+def _cp_payload(
+    *,
+    policies: list[CpPolicyInput] | None = None,
+    bind_to_all_users: bool = True,
+) -> SetPoliciesRequest:
+    if policies is None:
+        policies = [
+            CpPolicyInput(
+                name="readers",
+                effect="allow",
+                statements=[CpPolicyStatementInput(actions=["kb.read"], resources=["kb:*"])],
+            )
+        ]
+    return SetPoliciesRequest(
+        policies=policies,
+        bind_to_all_users=bind_to_all_users,
+        reason="cp set policies",
+    )
+
+
+def _cp_session_and_svc(
+    *,
+    first_user_id: str | None = "user-1",
+    replaced_count: int = 0,
+    all_user_ids: list[str] | None = None,
+    payload_has_policies: bool = True,
+) -> tuple[PolicyService, MagicMock, AsyncMock]:
+    session = MagicMock()
+    session.execute = AsyncMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+
+    def _scalar(v):
+        r = MagicMock()
+        r.scalar_one_or_none = MagicMock(return_value=v)
+        r.scalar = MagicMock(return_value=v)
+        r.scalars = MagicMock(
+            return_value=MagicMock(
+                all=MagicMock(return_value=v if isinstance(v, list) else [])
+            )
+        )
+        return r
+
+    # SELECT order the service makes:
+    # 1. first_user lex query
+    # 2. (if payload has policies) count(*) for replaced_count audit
+    # 3. (if payload has policies) delete(AccessPolicy) execute — no scalar usage
+    # 4. (if bind_to_all_users and policies were inserted) select all User.id
+    results = [_scalar(first_user_id)]
+    if payload_has_policies:
+        results.append(_scalar(replaced_count))
+        results.append(_scalar(None))
+    if all_user_ids is not None:
+        results.append(_scalar(all_user_ids))
+    session.execute.side_effect = results
+
+    @asynccontextmanager
+    async def _impersonate(tenant_id, actor, reason):
+        yield session
+
+    tenant_admin_svc = MagicMock()
+    tenant_admin_svc.impersonate_tenant = _impersonate
+
+    audit = AsyncMock()
+
+    svc = PolicyService(
+        db=MagicMock(),
+        tenant_admin_svc=tenant_admin_svc,
+        audit_logger=audit,
+    )
+    return svc, session, audit
+
+
+class TestCpReplaceAndBind:
+    @pytest.mark.asyncio
+    async def test_no_users_raises_404(self) -> None:
+        svc, _, _ = _cp_session_and_svc(first_user_id=None)
+        with pytest.raises(NotFoundError, match="no users"):
+            await svc.cp_replace_and_bind(
+                "tenant-1", _cp_payload(), reason="r"
+            )
+
+    @pytest.mark.asyncio
+    async def test_replace_named_policies_with_bindings(self) -> None:
+        svc, session, audit = _cp_session_and_svc(
+            first_user_id="user-1",
+            replaced_count=2,  # two policies with these names existed before
+            all_user_ids=["user-1", "user-2"],
+        )
+
+        flushed_ids = iter(["pol-new-1", "pol-new-2"])
+        added_rows: list = []
+        session.add.side_effect = lambda obj: added_rows.append(obj)
+
+        async def _flush_side_effect() -> None:
+            for obj in reversed(added_rows):
+                if obj.__class__.__name__ == "AccessPolicy" and getattr(obj, "id", None) is None:
+                    obj.id = next(flushed_ids)
+                    return
+
+        session.flush.side_effect = _flush_side_effect
+
+        with patch("shu.services.policy_service.POLICY_CACHE.invalidate") as inv:
+            resp = await svc.cp_replace_and_bind(
+                "tenant-1",
+                _cp_payload(
+                    policies=[
+                        CpPolicyInput(
+                            name="readers",
+                            effect="allow",
+                            statements=[
+                                CpPolicyStatementInput(actions=["kb.read"], resources=["kb:*"])
+                            ],
+                        ),
+                        CpPolicyInput(
+                            name="writers",
+                            effect="allow",
+                            statements=[
+                                CpPolicyStatementInput(actions=["kb.write"], resources=["kb:*"])
+                            ],
+                        ),
+                    ]
+                ),
+                reason="r",
+            )
+
+        assert resp.policy_ids_by_name == {"readers": "pol-new-1", "writers": "pol-new-2"}
+        assert resp.bindings_created == 4  # 2 policies × 2 users
+
+        policies_added = [o for o in added_rows if o.__class__.__name__ == "AccessPolicy"]
+        assert all(p.created_by == "user-1" for p in policies_added)
+
+        session.commit.assert_awaited_once()
+        inv.assert_called_once()
+
+        events = [c.kwargs.get("event") for c in audit.log.await_args_list]
+        # New event name: "replace_started" with replaced_count + new_count
+        # instead of the old "wiped" semantic.
+        assert "cp_policies_replace_started" in events
+        replace_event = next(
+            c for c in audit.log.await_args_list
+            if c.kwargs.get("event") == "cp_policies_replace_started"
+        )
+        assert replace_event.kwargs["replaced_count"] == 2
+        assert replace_event.kwargs["new_count"] == 2
+        assert events.count("cp_policy_inserted") == 2
+        assert "cp_policy_bindings_created" in events
+
+    @pytest.mark.asyncio
+    async def test_bind_to_all_users_false_skips_bindings(self) -> None:
+        svc, session, _ = _cp_session_and_svc(
+            first_user_id="user-1",
+            replaced_count=0,
+            all_user_ids=None,
+        )
+
+        added_rows: list = []
+        session.add.side_effect = lambda obj: added_rows.append(obj)
+
+        async def _flush_side_effect() -> None:
+            for obj in reversed(added_rows):
+                if obj.__class__.__name__ == "AccessPolicy" and getattr(obj, "id", None) is None:
+                    obj.id = "pol-1"
+                    return
+
+        session.flush.side_effect = _flush_side_effect
+
+        with patch("shu.services.policy_service.POLICY_CACHE.invalidate"):
+            resp = await svc.cp_replace_and_bind(
+                "tenant-1",
+                _cp_payload(bind_to_all_users=False),
+                reason="r",
+            )
+
+        assert resp.bindings_created == 0
+        binding_rows = [o for o in added_rows if o.__class__.__name__ == "AccessPolicyBinding"]
+        assert binding_rows == []
+
+    @pytest.mark.asyncio
+    async def test_empty_policy_set_is_noop_no_destructive_delete(self) -> None:
+        """Empty payload is a no-op — does NOT wipe the tenant's existing
+        policies. Critical safety invariant for silo deployments where the
+        tenant IS the database; an unfiltered wipe would erase the customer.
+        """
+        svc, session, audit = _cp_session_and_svc(
+            first_user_id="user-1",
+            payload_has_policies=False,  # no COUNT/DELETE expected
+            all_user_ids=None,
+        )
+        with patch("shu.services.policy_service.POLICY_CACHE.invalidate") as inv:
+            resp = await svc.cp_replace_and_bind(
+                "tenant-1",
+                _cp_payload(policies=[]),
+                reason="r",
+            )
+        assert resp.policy_ids_by_name == {}
+        assert resp.bindings_created == 0
+        # No COUNT or DELETE query fired — only the first_user lookup.
+        assert session.execute.call_count == 1
+
+        events = [c.kwargs.get("event") for c in audit.log.await_args_list]
+        # The replace_started audit STILL fires so the empty-payload call is
+        # auditable, but with replaced_count=0 and new_count=0.
+        assert events.count("cp_policies_replace_started") == 1
+        replace_event = next(
+            c for c in audit.log.await_args_list
+            if c.kwargs.get("event") == "cp_policies_replace_started"
+        )
+        assert replace_event.kwargs["replaced_count"] == 0
+        assert replace_event.kwargs["new_count"] == 0
+        inv.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_deps_raises_runtime_error(self) -> None:
+        svc = PolicyService(db=MagicMock())
+        with pytest.raises(RuntimeError, match="tenant_admin_svc and audit_logger"):
+            await svc.cp_replace_and_bind("tenant-1", _cp_payload(), reason="r")

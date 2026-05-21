@@ -5,6 +5,7 @@ for the unified prompt system supporting multiple entity types.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from shu.core.logging import get_logger
 from ..core.exceptions import ConflictError, NotFoundError, ShuException, ValidationError
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from ..models.prompt import EntityType, Prompt, PromptAssignment
+from ..schemas.cp_provisioning import SetPromptRequest, SetPromptResponse
 from ..schemas.prompt import (
     PromptAssignmentCreate,
     PromptAssignmentResponse,
@@ -25,11 +27,16 @@ from ..schemas.prompt import (
     PromptSystemStats,
     PromptUpdate,
 )
+from ..services.tenant_admin_service import CP_ACTOR
 from ..utils.prompt_utils import (
     get_citation_conflict_info,
     get_effective_reference_setting,
     has_citation_instructions,
 )
+
+if TYPE_CHECKING:
+    from ..services.audit_logger import AuditLogger
+    from ..services.tenant_admin_service import TenantAdminService
 
 logger = get_logger(__name__)
 
@@ -55,8 +62,17 @@ class PromptAlreadyExistsError(ConflictError):
 class PromptService:
     """Service for managing prompts and their assignments."""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_admin_svc: "TenantAdminService | None" = None,
+        audit_logger: "AuditLogger | None" = None,
+    ) -> None:
         self.db = db
+        # CP-only deps. Existing in-tenant callers pass `db` only.
+        self._tenant_admin_svc = tenant_admin_svc
+        self._audit = audit_logger
 
     async def create_prompt(self, prompt_data: PromptCreate) -> PromptResponse:
         """Create a new prompt.
@@ -582,3 +598,73 @@ class PromptService:
                 f"Failed to remove prompt from model config KB: {e!s}",
                 "REMOVE_MODEL_CONFIG_KB_PROMPT_ERROR",
             )
+
+    async def cp_upsert_by_name(
+        self,
+        tenant_id: str,
+        payload: SetPromptRequest,
+        reason: str,
+    ) -> SetPromptResponse:
+        """Upsert a single CP-supplied prompt by `(tenant_id, name)`.
+
+        On collision, the row's `id` is preserved so any downstream
+        `model_configurations.prompt_id` references stay valid. Writes
+        `is_system_default=True` on insert (it's the convention for
+        CP-shipped canonical prompts); we don't toggle it on subsequent
+        upserts. `entity_type` defaults to `EntityType.LLM_MODEL` when CP
+        leaves it unset — the column is NOT NULL on the DB, and llm_model
+        is the dominant CP use case.
+
+        Writes go through the model layer directly, not the in-tenant
+        `/prompts` router. The `is_system_default` 403 gate at
+        `api/prompts.py` is a tenant-admin guard against accidental edits
+        of CP-managed rows; CP itself is the writer that SETS the flag.
+        """
+        if self._tenant_admin_svc is None or self._audit is None:
+            raise RuntimeError(
+                "PromptService.cp_upsert_by_name requires tenant_admin_svc and audit_logger to be injected"
+            )
+
+        entity_type = payload.prompt.entity_type or EntityType.LLM_MODEL
+
+        async with self._tenant_admin_svc.impersonate_tenant(tenant_id, CP_ACTOR, reason) as session:
+            existing = (
+                await session.execute(
+                    select(Prompt)
+                    .where(
+                        and_(
+                            Prompt.name == payload.prompt.name,
+                            Prompt.entity_type == entity_type,
+                        )
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+            if existing is None:
+                prompt = Prompt(
+                    name=payload.prompt.name,
+                    content=payload.prompt.content,
+                    entity_type=entity_type,
+                    is_system_default=True,
+                    is_active=True,
+                )
+                session.add(prompt)
+                await session.flush()
+                event = "cp_prompt_inserted"
+            else:
+                existing.content = payload.prompt.content
+                # `entity_type` is part of the natural key, so a re-call that
+                # matches the existing row by name+entity_type leaves it as-is.
+                prompt = existing
+                event = "cp_prompt_updated"
+
+            await self._audit.log(
+                event=event,
+                actor=CP_ACTOR,
+                target=payload.prompt.name,
+                reason=reason,
+            )
+            await session.commit()
+
+        return SetPromptResponse(prompt_id=prompt.id)

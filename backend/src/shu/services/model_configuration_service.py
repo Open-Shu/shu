@@ -5,6 +5,7 @@ that combines base models + prompts + optional knowledge bases into user-facing
 configurations that users select for chat and other interactions.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import and_, func, or_, select
@@ -13,12 +14,14 @@ from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     from ..auth.models import User
+    from ..services.audit_logger import AuditLogger
+    from ..services.tenant_admin_service import TenantAdminService
 
 from shu.services.providers.adapter_base import get_adapter_from_provider
 from shu.services.providers.parameter_definitions import serialize_parameter_mapping
 
 from ..auth.models import User
-from ..core.exceptions import ShuException, ValidationError
+from ..core.exceptions import NotFoundError, ShuException, ValidationError
 from ..core.logging import get_logger
 from ..llm.param_mapping import build_provider_params
 from ..models.knowledge_base import KnowledgeBase
@@ -26,6 +29,11 @@ from ..models.llm_provider import LLMModel, LLMProvider, ModelType
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from ..models.prompt import Prompt
+from ..models.system_setting import SystemSetting
+from ..schemas.cp_provisioning import (
+    SetModelConfigsRequest,
+    SetModelConfigsResponse,
+)
 from ..schemas.model_configuration import (
     ModelConfigurationCreate,
     ModelConfigurationList,
@@ -33,6 +41,11 @@ from ..schemas.model_configuration import (
     ModelConfigurationUpdate,
 )
 from .knowledge_base_service import KnowledgeBaseService
+from .side_call_settings import (
+    PROFILING_MODEL_SETTING_KEY,
+    SIDE_CALL_MODEL_SETTING_KEY,
+)
+from .tenant_admin_service import CP_ACTOR
 
 logger = get_logger(__name__)
 
@@ -40,8 +53,19 @@ logger = get_logger(__name__)
 class ModelConfigurationService:
     """Service for managing model configurations."""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_admin_svc: "TenantAdminService | None" = None,
+        audit_logger: "AuditLogger | None" = None,
+    ) -> None:
         self.db = db
+        # `tenant_admin_svc` and `audit_logger` are only required by the
+        # CP provisioning path (cp_upsert_by_name). Existing in-tenant
+        # callers pass `db` only; the optional kwargs keep them working.
+        self._tenant_admin_svc = tenant_admin_svc
+        self._audit = audit_logger
 
     async def create_model_configuration(
         self, config_data: ModelConfigurationCreate, created_by: str
@@ -893,3 +917,195 @@ class ModelConfigurationService:
                 except ValidationError as ve:
                     raise ShuException(str(ve), "PARAM_VALIDATION_ERROR")
         return None
+
+    async def cp_upsert_by_name(
+        self,
+        tenant_id: str,
+        payload: SetModelConfigsRequest,
+        reason: str,
+    ) -> SetModelConfigsResponse:
+        """Upsert model configurations from a CP-driven set + write side-call /
+        profiling pointers in one call.
+
+        Runs inside `TenantAdminService.impersonate_tenant(...)` so the
+        tenant_id is set on `app.tenant_id` and RLS WITH CHECK / auto-stamp
+        cooperate. The whole batch shares one transaction — any resolution
+        failure (provider/prompt) rolls everything back so we never leave a
+        half-applied set.
+
+        Upsert key: (tenant_id, name). Existing MC rows keep their UUIDs on
+        re-call so downstream FKs in `conversations.model_configuration_id`
+        stay valid. Configs not in the payload are left alone.
+        """
+        if self._tenant_admin_svc is None or self._audit is None:
+            raise RuntimeError(
+                "ModelConfigurationService.cp_upsert_by_name requires "
+                "tenant_admin_svc and audit_logger to be injected"
+            )
+
+        config_ids_by_name: dict[str, str] = {}
+
+        async with self._tenant_admin_svc.impersonate_tenant(tenant_id, CP_ACTOR, reason) as session:
+            # CP isn't a tenant user; created_by is NOT NULL, so attribute
+            # the row to the lex-first user. Cosmetic; revisit when a real
+            # system-user concept lands.
+            first_user_row = (await session.execute(select(User.id).order_by(User.id).limit(1))).scalar_one_or_none()
+            if first_user_row is None and payload.configs:
+                raise NotFoundError("tenant has no users; create the tenant before pushing " "model_configurations")
+
+            for cfg in payload.configs:
+                provider = (
+                    await session.execute(
+                        select(LLMProvider)
+                        .where(
+                            and_(
+                                LLMProvider.name == cfg.provider_name,
+                                LLMProvider.is_active.is_(True),
+                            )
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if provider is None:
+                    raise NotFoundError(f"no active llm_provider matches name {cfg.provider_name!r}")
+
+                # Validate the model exists for the resolved provider —
+                # otherwise we'd insert a model_config that fails on first use.
+                model_row = (
+                    await session.execute(
+                        select(LLMModel.id).where(
+                            and_(
+                                LLMModel.provider_id == provider.id,
+                                LLMModel.model_name == cfg.model_name,
+                                LLMModel.is_active.is_(True),
+                            )
+                        )
+                    )
+                ).scalar_one_or_none()
+                if model_row is None:
+                    raise NotFoundError(f"model {cfg.model_name!r} not found for provider " f"{cfg.provider_name!r}")
+
+                prompt_id: str | None = None
+                if cfg.prompt_name is not None:
+                    prompt_id = (
+                        await session.execute(select(Prompt.id).where(Prompt.name == cfg.prompt_name).limit(1))
+                    ).scalar_one_or_none()
+                    if prompt_id is None:
+                        raise NotFoundError(f"prompt {cfg.prompt_name!r} not found in tenant")
+
+                existing_mc = (
+                    await session.execute(
+                        select(ModelConfiguration).where(ModelConfiguration.name == cfg.name).limit(1)
+                    )
+                ).scalar_one_or_none()
+
+                if existing_mc is None:
+                    mc = ModelConfiguration(
+                        name=cfg.name,
+                        llm_provider_id=provider.id,
+                        model_name=cfg.model_name,
+                        prompt_id=prompt_id,
+                        parameter_overrides=cfg.parameter_overrides,
+                        functionalities=cfg.functionalities,
+                        created_by=first_user_row,
+                    )
+                    session.add(mc)
+                    await session.flush()
+                    event = "cp_model_config_inserted"
+                else:
+                    existing_mc.llm_provider_id = provider.id
+                    existing_mc.model_name = cfg.model_name
+                    existing_mc.prompt_id = prompt_id
+                    existing_mc.parameter_overrides = cfg.parameter_overrides
+                    existing_mc.functionalities = cfg.functionalities
+                    mc = existing_mc
+                    event = "cp_model_config_updated"
+
+                config_ids_by_name[cfg.name] = mc.id
+                await self._audit.log(
+                    event=event,
+                    actor=CP_ACTOR,
+                    target=cfg.name,
+                    reason=reason,
+                )
+
+            # Side-call / profiling pointers come AFTER the MC batch so the
+            # IDs we want to point at exist. They can also reference an MC
+            # not in this payload (e.g., one created on a previous call).
+            side_call_id = await self._resolve_or_lookup_mc_id(
+                session, payload.side_call_model_config_name, config_ids_by_name
+            )
+            profiling_id = await self._resolve_or_lookup_mc_id(
+                session, payload.profiling_model_config_name, config_ids_by_name
+            )
+
+            if side_call_id is not None:
+                await self._upsert_pointer_setting(session, SIDE_CALL_MODEL_SETTING_KEY, side_call_id, reason)
+            if profiling_id is not None:
+                await self._upsert_pointer_setting(
+                    session,
+                    PROFILING_MODEL_SETTING_KEY,
+                    profiling_id,
+                    reason,
+                )
+
+            await session.commit()
+
+        return SetModelConfigsResponse(
+            config_ids_by_name=config_ids_by_name,
+            side_call_model_config_id=side_call_id,
+            profiling_model_config_id=profiling_id,
+        )
+
+    async def _resolve_or_lookup_mc_id(
+        self,
+        session: AsyncSession,
+        name: str | None,
+        just_upserted: dict[str, str],
+    ) -> str | None:
+        """Resolve an MC name to an id — first via the just-upserted set, then
+        by querying the tenant scope (so CP can re-point to an MC seeded on a
+        previous call without re-listing it).
+        """
+        if name is None:
+            return None
+        if name in just_upserted:
+            return just_upserted[name]
+        mc_id = (
+            await session.execute(select(ModelConfiguration.id).where(ModelConfiguration.name == name).limit(1))
+        ).scalar_one_or_none()
+        if mc_id is None:
+            raise NotFoundError(
+                f"model_configuration {name!r} not found in tenant; cannot "
+                f"point side-call/profiling at a non-existent config"
+            )
+        return mc_id
+
+    async def _upsert_pointer_setting(
+        self,
+        session: AsyncSession,
+        key: str,
+        model_config_id: str,
+        reason: str,
+    ) -> None:
+        """Write the side_call_model_config_id / profiling_model_config_id
+        pointer into system_settings. Shape matches what SideCallService reads
+        — `setting.value["model_config_id"]` is what `get_side_call_model`
+        looks at.
+        """
+        existing = (await session.execute(select(SystemSetting).where(SystemSetting.key == key))).scalar_one_or_none()
+        value = {
+            "model_config_id": model_config_id,
+            "updated_by": CP_ACTOR,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        if existing is None:
+            session.add(SystemSetting(key=key, value=value))
+        else:
+            existing.value = value
+        await self._audit.log(
+            event="cp_system_setting_upserted",
+            actor=CP_ACTOR,
+            target=key,
+            reason=reason,
+        )
