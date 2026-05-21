@@ -123,6 +123,8 @@ const useChatStreaming = ({
     shouldAutoFollowRef,
     focusMessageById,
     setError,
+    setStreamingConversationId,
+    setStreamingStarted,
   });
 
   const handleStreamingResponse = useCallback(

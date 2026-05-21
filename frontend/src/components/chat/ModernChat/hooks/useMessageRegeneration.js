@@ -17,6 +17,12 @@ const useMessageRegeneration = ({
   shouldAutoFollowRef,
   focusMessageById,
   setError,
+  // SHU-803 follow-up: regenerate runs its own SSE loop independent of
+  // `handleStreamingResponse`, so it needs these state setters wired in
+  // directly. Without them, `streamingConversationId` stays null during
+  // a regen and the InputBar never flips Send → Stop.
+  setStreamingConversationId,
+  setStreamingStarted,
 }) => {
   const isMountedRef = useRef(false);
   const abortControllerRef = useRef(null);
@@ -80,6 +86,14 @@ const useMessageRegeneration = ({
       }
 
       startRegeneration(messageId, parentId, tempId);
+
+      // SHU-803 follow-up: mark the conversation as streaming BEFORE
+      // the SSE request fires so the InputBar swaps Send → Stop
+      // immediately. The Stop button stays disabled (with
+      // "Initializing…" tooltip) until the stream_start SSE event
+      // lands and stamps the streamId on the placeholder.
+      setStreamingConversationId?.(conversationId);
+      setStreamingStarted?.(false);
 
       queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
         const existing = getMessagesFromCache(oldData);
@@ -179,6 +193,12 @@ const useMessageRegeneration = ({
         }
 
         completeRegeneration(messageId);
+        // SHU-803 follow-up: release the InputBar back to Send. Idempotent
+        // with the optimistic clear in handleStopStream — if the user
+        // clicked Stop, streamingConversationId was already null; the
+        // setter no-ops on identity equality in React.
+        setStreamingConversationId?.(null);
+        setStreamingStarted?.(false);
       };
 
       try {
@@ -236,6 +256,25 @@ const useMessageRegeneration = ({
           }
 
           const eventType = parsed?.event;
+
+          // SHU-803 follow-up: stamp the streamId from stream_start on
+          // the regen placeholder so InputBar's handleInputBarStop can
+          // pick it up via `flattenedMessages.find(...)`. Without this,
+          // the Stop button stays disabled even when streaming.
+          if (eventType === 'stream_start') {
+            const streamId = parsed?.content?.stream_id;
+            if (streamId) {
+              queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+                const existing = getMessagesFromCache(oldData);
+                const updated = existing.map((m) =>
+                  m.id === tempId && m.streamId !== streamId ? { ...m, streamId } : m
+                );
+                return rebuildCache(oldData, updated);
+              });
+            }
+            continue;
+          }
+
           if (eventType === 'final_message' && parsed?.content) {
             const created = {
               ...(parsed.content || {}),
@@ -284,6 +323,10 @@ const useMessageRegeneration = ({
             if (!hasContentStarted) {
               hasContentStarted = true;
               extra.reasoning_collapsed = true;
+              // SHU-803 follow-up: gate the InputBar's "Initializing…"
+              // → enabled transition on first content delta (matches
+              // the main streaming path's behavior).
+              setStreamingStarted?.(true);
             }
             updateTempRegenContent(conversationId, tempId, regenAccum, extra);
             continue;
@@ -388,6 +431,8 @@ const useMessageRegeneration = ({
       shouldAutoFollowRef,
       focusMessageById,
       conversationRef,
+      setStreamingConversationId,
+      setStreamingStarted,
     ]
   );
 
