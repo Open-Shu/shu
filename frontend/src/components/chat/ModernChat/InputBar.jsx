@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   ListItemIcon,
   Menu,
@@ -18,6 +19,7 @@ import {
   AttachFile as AttachmentIcon,
   SmartToy as BotIcon,
   Send as SendIcon,
+  Stop as StopIcon,
   Hub as EnsembleIcon,
   LibraryBooks as LibraryBooksIcon,
 } from '@mui/icons-material';
@@ -59,11 +61,37 @@ const InputBar = React.memo(function InputBar({
   onUploadToPersonalKB,
   onRetryPersonalKBFile,
   onDismissPersonalKBError,
+  // SHU-803: Send button morphs into Stop while the current conversation
+  // has an in-flight stream. `canStop` is false during the ~10-50ms
+  // window after Send before stream_start arrives — disabled state with
+  // "Initializing…" tooltip is more discoverable than no button at all.
+  isStreaming = false,
+  canStop = false,
+  onStop,
   isMobile = false,
 }) {
   const [brainAnchorEl, setBrainAnchorEl] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [toast, setToast] = useState(null);
+  const [stopping, setStopping] = useState(false);
+
+  const handleStopClick = useCallback(async () => {
+    if (!onStop || stopping) {
+      return;
+    }
+    setStopping(true);
+    try {
+      await onStop();
+    } finally {
+      setStopping(false);
+    }
+  }, [onStop, stopping]);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setStopping(false);
+    }
+  }, [isStreaming]);
 
   const dragCounterRef = useRef(0);
   const wasUploadingRef = useRef(false);
@@ -378,8 +406,62 @@ const InputBar = React.memo(function InputBar({
             },
           }}
         />
-        {/* On mobile: icon-only send button. On desktop: full button with text */}
-        {isMobile ? (
+        {/* SHU-803: while streaming, the Send button becomes a Stop
+            button anchored in the same spot. This keeps the control
+            within thumb reach on mobile and at a predictable location
+            on desktop (Send and Stop never coexist — streaming blocks
+            input). We use color="inherit" / a neutral grey background
+            so Stop reads as a secondary action — we don't want users
+            terminating streams as a reflex. */}
+        {isStreaming ? (
+          isMobile ? (
+            <Tooltip title={canStop ? 'Stop generating' : 'Initializing…'}>
+              <span>
+                <IconButton
+                  onClick={handleStopClick}
+                  disabled={!canStop || stopping || !onStop}
+                  sx={{
+                    bgcolor: 'action.selected',
+                    color: 'text.primary',
+                    width: 44,
+                    height: 44,
+                    flexShrink: 0,
+                    '&:hover': {
+                      bgcolor: 'action.hover',
+                    },
+                  }}
+                  aria-label="Stop generating"
+                >
+                  {stopping ? <CircularProgress size={20} color="inherit" /> : <StopIcon />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          ) : (
+            <Tooltip title={canStop ? 'Stop generating' : 'Initializing…'}>
+              <span>
+                <Button
+                  variant="contained"
+                  disableElevation
+                  startIcon={stopping ? <CircularProgress size={16} color="inherit" /> : <StopIcon />}
+                  onClick={handleStopClick}
+                  disabled={!canStop || stopping || !onStop}
+                  aria-label="Stop generating"
+                  sx={{
+                    minWidth: 100,
+                    flexShrink: 0,
+                    bgcolor: 'action.selected',
+                    color: 'text.primary',
+                    '&:hover': {
+                      bgcolor: 'action.hover',
+                    },
+                  }}
+                >
+                  Stop
+                </Button>
+              </span>
+            </Tooltip>
+          )
+        ) : isMobile ? (
           <Tooltip title="Send">
             <span>
               <IconButton
