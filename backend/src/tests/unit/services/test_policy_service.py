@@ -12,6 +12,7 @@ Tests cover:
 - get_effective_policies: resolves group memberships
 """
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +30,11 @@ from shu.schemas.access_policy import (
     EffectivePoliciesResponse,
     PolicyInput,
     StatementInput,
+)
+from shu.schemas.cp_provisioning import (
+    PolicyInput as CpPolicyInput,
+    PolicyStatementInput as CpPolicyStatementInput,
+    SetPoliciesRequest,
 )
 from shu.services.policy_service import PolicyService
 
@@ -522,18 +528,10 @@ class TestGetEffectivePolicies:
 
 
 # ---------------------------------------------------------------------------
-# cp_replace_and_bind (SHU-785) — wipe-and-replace semantics, bindings,
-# cache invalidation.
+# cp_replace_and_bind (SHU-785) — per-name surgical replace, bindings,
+# cache invalidation. Policies not in the payload are left untouched;
+# empty list is a no-op (silo-safety guard).
 # ---------------------------------------------------------------------------
-
-from contextlib import asynccontextmanager  # noqa: E402
-
-from shu.schemas.cp_provisioning import (  # noqa: E402
-    PolicyInput as CpPolicyInput,
-    PolicyStatementInput as CpPolicyStatementInput,
-    SetPoliciesRequest,
-)
-from shu.services.policy_service import PolicyService  # noqa: E402
 
 
 def _cp_payload(

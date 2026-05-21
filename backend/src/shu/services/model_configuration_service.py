@@ -28,7 +28,7 @@ from ..models.knowledge_base import KnowledgeBase
 from ..models.llm_provider import LLMModel, LLMProvider, ModelType
 from ..models.model_configuration import ModelConfiguration
 from ..models.model_configuration_kb_prompt import ModelConfigurationKBPrompt
-from ..models.prompt import Prompt
+from ..models.prompt import EntityType, Prompt
 from ..models.system_setting import SystemSetting
 from ..schemas.cp_provisioning import (
     SetModelConfigsRequest,
@@ -963,6 +963,7 @@ class ModelConfigurationService:
                                 LLMProvider.is_active.is_(True),
                             )
                         )
+                        .order_by(LLMProvider.id)
                         .limit(1)
                     )
                 ).scalar_one_or_none()
@@ -988,7 +989,16 @@ class ModelConfigurationService:
                 prompt_id: str | None = None
                 if cfg.prompt_name is not None:
                     prompt_id = (
-                        await session.execute(select(Prompt.id).where(Prompt.name == cfg.prompt_name).limit(1))
+                        await session.execute(
+                            select(Prompt.id)
+                            .where(
+                                and_(
+                                    Prompt.name == cfg.prompt_name,
+                                    Prompt.entity_type == EntityType.LLM_MODEL,
+                                )
+                            )
+                            .limit(1)
+                        )
                     ).scalar_one_or_none()
                     if prompt_id is None:
                         raise NotFoundError(f"prompt {cfg.prompt_name!r} not found in tenant")

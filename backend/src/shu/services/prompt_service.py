@@ -607,13 +607,15 @@ class PromptService:
     ) -> SetPromptResponse:
         """Upsert a single CP-supplied prompt by `(tenant_id, name)`.
 
+        Natural key is `(tenant_id, name)` and the row is always written with
+        `entity_type=llm_model`. CP-managed prompts are pinned to llm_model
+        so the model-config resolver (which filters on the same constant)
+        cannot bind to a different-entity-type row with a colliding name.
+
         On collision, the row's `id` is preserved so any downstream
-        `model_configurations.prompt_id` references stay valid. Writes
-        `is_system_default=True` on insert (it's the convention for
-        CP-shipped canonical prompts); we don't toggle it on subsequent
-        upserts. `entity_type` defaults to `EntityType.LLM_MODEL` when CP
-        leaves it unset — the column is NOT NULL on the DB, and llm_model
-        is the dominant CP use case.
+        `model_configurations.prompt_id` references stay valid; `content`
+        is overwritten; `is_system_default` is written on insert and left
+        untouched on update.
 
         Writes go through the model layer directly, not the in-tenant
         `/prompts` router. The `is_system_default` 403 gate at
@@ -625,8 +627,6 @@ class PromptService:
                 "PromptService.cp_upsert_by_name requires tenant_admin_svc and audit_logger to be injected"
             )
 
-        entity_type = payload.prompt.entity_type or EntityType.LLM_MODEL
-
         async with self._tenant_admin_svc.impersonate_tenant(tenant_id, CP_ACTOR, reason) as session:
             existing = (
                 await session.execute(
@@ -634,7 +634,7 @@ class PromptService:
                     .where(
                         and_(
                             Prompt.name == payload.prompt.name,
-                            Prompt.entity_type == entity_type,
+                            Prompt.entity_type == EntityType.LLM_MODEL,
                         )
                     )
                     .limit(1)
@@ -645,7 +645,7 @@ class PromptService:
                 prompt = Prompt(
                     name=payload.prompt.name,
                     content=payload.prompt.content,
-                    entity_type=entity_type,
+                    entity_type=EntityType.LLM_MODEL,
                     is_system_default=True,
                     is_active=True,
                 )
@@ -654,8 +654,6 @@ class PromptService:
                 event = "cp_prompt_inserted"
             else:
                 existing.content = payload.prompt.content
-                # `entity_type` is part of the natural key, so a re-call that
-                # matches the existing row by name+entity_type leaves it as-is.
                 prompt = existing
                 event = "cp_prompt_updated"
 

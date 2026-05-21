@@ -57,18 +57,44 @@ _AFFECTED_COLUMNS: tuple[tuple[str, str], ...] = (
 def upgrade() -> None:
     """Drop the legacy global-unique enforcement; keep a plain index."""
     for table, col in _AFFECTED_COLUMNS:
-        # SQLAlchemy's default name for column-level UNIQUE — 009 already
-        # tries to drop these, but the IF EXISTS guard makes this a no-op
-        # rather than an error if 009 succeeded.
-        op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_{col}_key")
-        # The stray unique index this migration is here to fix. CASCADE so
-        # any constraint that happens to be backed by this index goes too
-        # — without CASCADE, dropping a constraint-backing index raises.
-        op.execute(f"DROP INDEX IF EXISTS ix_{table}_{col} CASCADE")
+        index_name = f"ix_{table}_{col}"
+        legacy_constraint = f"{table}_{col}_key"
+        # Drop the known Postgres-default constraint name first. 009 already
+        # attempts this; IF EXISTS makes the second attempt a no-op.
+        op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {legacy_constraint}")
+
+        # Drop contraints
+        op.execute(
+            f"""
+            DO $$
+            DECLARE
+                con_name text;
+                con_table text;
+            BEGIN
+                SELECT c.conname, t.relname
+                  INTO con_name, con_table
+                  FROM pg_constraint c
+                  JOIN pg_class i ON c.conindid = i.oid
+                  JOIN pg_class t ON c.conrelid = t.oid
+                 WHERE i.relname = '{index_name}'
+                 LIMIT 1;
+                IF con_name IS NOT NULL THEN
+                    RAISE NOTICE 'r009_0002: dropping constraint % on % (backed by %)',
+                        con_name, con_table, '{index_name}';
+                    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I',
+                                   con_table, con_name);
+                END IF;
+            END
+            $$;
+            """
+        )
+        # Now the index can be dropped without CASCADE — any constraint
+        # owning it was removed by the block above.
+        op.execute(f"DROP INDEX IF EXISTS {index_name}")
         # Recreate as a plain (non-unique) index to keep query lookups on
         # the column cheap. The model declares `index=True` so this is the
         # shape the ORM expects on the live table.
-        op.execute(f"CREATE INDEX IF NOT EXISTS ix_{table}_{col} ON {table} ({col})")
+        op.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({col})")
 
 
 def downgrade() -> None:

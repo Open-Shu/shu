@@ -1,10 +1,12 @@
 """Unit tests for UserService.is_active() with auto_activate_users setting."""
 
-from unittest.mock import MagicMock
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from shu.auth.models import UserRole
+from shu.core.exceptions import ConflictError, NotFoundError
 from shu.services.user_service import UserService
 
 
@@ -50,11 +52,6 @@ class TestIsActive:
 # ---------------------------------------------------------------------------
 # cp_set_user_active (SHU-785) — the CP kill-switch.
 # ---------------------------------------------------------------------------
-
-from contextlib import asynccontextmanager  # noqa: E402
-from unittest.mock import AsyncMock  # noqa: E402
-
-from shu.core.exceptions import ConflictError, NotFoundError  # noqa: E402
 
 
 def _wire_cp(users: list[object]) -> tuple[MagicMock, AsyncMock]:

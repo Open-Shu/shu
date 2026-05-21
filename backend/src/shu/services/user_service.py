@@ -40,10 +40,10 @@ from ..auth import JWTManager, User, UserRole
 from ..core.config import get_settings_instance
 from ..core.exceptions import ConflictError, NotFoundError
 from ..models.provider_identity import ProviderIdentity
+from ..schemas.cp_provisioning import SetUserActiveResponse
 from ..services.tenant_admin_service import CP_ACTOR
 
 if TYPE_CHECKING:
-    from ..schemas.cp_provisioning import SetUserActiveResponse
     from ..services.audit_logger import AuditLogger
     from ..services.tenant_admin_service import TenantAdminService
 
@@ -409,7 +409,7 @@ class UserService:
         reason: str,
         tenant_admin_svc: "TenantAdminService",
         audit_logger: "AuditLogger",
-    ) -> "SetUserActiveResponse":
+    ) -> SetUserActiveResponse:
         """CP-driven `users.is_active` flip on the single user in a tenant.
 
         Multi-tenants are one-user-per-customer by construction, so the
@@ -422,16 +422,17 @@ class UserService:
           is broken; refuse to guess which user CP meant. A human resolves
           the upstream condition before the kill-switch can be used.
 
+        Audit emission and the `is_active` write live in the same
+        transaction so an audit failure (fail-closed contract) rolls the
+        flip back. The user row is loaded `FOR UPDATE` so a racing INSERT
+        can't sneak a second user in between our SELECT and our write.
+
         No Stripe interaction. CP owns seat quantities externally; a
         TOS-driven deactivation keeps the seat paid so re-activation is
         a free flip.
         """
-        # Imported lazily here to avoid an import-time cycle:
-        # user_service ← ... ← cp_provisioning schemas ← .
-        from ..schemas.cp_provisioning import SetUserActiveResponse
-
         async with tenant_admin_svc.impersonate_tenant(tenant_id, CP_ACTOR, reason) as session:
-            users = list((await session.execute(select(User))).scalars().all())
+            users = list((await session.execute(select(User).with_for_update())).scalars().all())
             if len(users) == 0:
                 raise NotFoundError(f"tenant {tenant_id} has no users to (de)activate")
             if len(users) > 1:
@@ -442,15 +443,15 @@ class UserService:
                 )
             user = users[0]
             user.is_active = is_active
-            await session.commit()
 
-        await audit_logger.log(
-            event="cp_user_active_set",
-            actor=CP_ACTOR,
-            target=user.id,
-            reason=reason,
-            is_active=is_active,
-        )
+            await audit_logger.log(
+                event="cp_user_active_set",
+                actor=CP_ACTOR,
+                target=user.id,
+                reason=reason,
+                is_active=is_active,
+            )
+            await session.commit()
 
         return SetUserActiveResponse(
             user_id=user.id,

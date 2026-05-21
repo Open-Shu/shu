@@ -14,20 +14,12 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import (
-    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
     StrictBool,
     StrictStr,
-    field_validator,
 )
-
-# CP must seed with a non-blocking status so the just-created tenant can serve
-# chat on the very next request. Rejecting terminal/blocked states at the API
-# boundary surfaces a CP-side bug here, not at first chat in
-# `enforcement.assert_subscription_active`.
-_ALLOWED_SEED_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset({"active", "trialing", "pending"})
 
 
 class _CpInboundBase(BaseModel):
@@ -41,24 +33,16 @@ class _CpInboundBase(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# `subscription_status` and the period bounds are intentionally NOT on this
+# payload. Per SHU-774 the tenant DB no longer reads those columns — CP is
+# the source of truth via the polling adapter (see billing/router.py:359 and
+# billing/cp_client.py). Sending them here would be silently dropped, so the
+# contract refuses them rather than pretending to accept them.
 class BillingInput(_CpInboundBase):
     stripe_customer_id: StrictStr | None = None
     stripe_subscription_id: StrictStr | None = None
     billing_email: StrictStr | None = None
-    subscription_status: StrictStr
-    current_period_start: AwareDatetime | None = None
-    current_period_end: AwareDatetime | None = None
     user_limit_enforcement: Literal["soft", "hard", "none"] = "hard"
-
-    @field_validator("subscription_status")
-    @classmethod
-    def _validate_seed_status(cls, v: str) -> str:
-        if v not in _ALLOWED_SEED_SUBSCRIPTION_STATUSES:
-            raise ValueError(
-                f"subscription_status {v!r} not allowed at seed time; "
-                f"must be one of {sorted(_ALLOWED_SEED_SUBSCRIPTION_STATUSES)}"
-            )
-        return v
 
 
 class UserInput(_CpInboundBase):
@@ -128,10 +112,12 @@ class PolicyInput(_CpInboundBase):
 
 
 class SetPoliciesRequest(_CpInboundBase):
-    # Wipe-and-replace semantics: the tenant's existing policy set is
-    # deleted (cascading through bindings and statements) and replaced with
-    # `policies`. CP is the source of truth for the policy set; partial
-    # diffs aren't supported.
+    # Per-name surgical replace: each policy in `policies` deletes any
+    # existing row with the same `(tenant_id, name)` (cascading through
+    # bindings and statements) and inserts the new version. Policies NOT
+    # in the payload are left untouched. An empty list is a no-op — the
+    # explicit safety guard against a malformed empty payload wiping the
+    # entire tenant's policy set in silo deployments.
     policies: list[PolicyInput]
     bind_to_all_users: StrictBool = True
     reason: StrictStr = Field(min_length=1)
@@ -147,10 +133,14 @@ class SetPoliciesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# CP-managed prompts are always `entity_type='llm_model'` for now. The
+# multi-entity-type concept exists in the model layer for in-tenant admin
+# tooling, but the CP surface intentionally pins one type so the natural
+# key stays `(tenant_id, name)` and the model-config prompt_name resolver
+# can't pick the wrong row.
 class PromptInput(_CpInboundBase):
     name: StrictStr
     content: StrictStr
-    entity_type: StrictStr | None = None
 
 
 class SetPromptRequest(_CpInboundBase):

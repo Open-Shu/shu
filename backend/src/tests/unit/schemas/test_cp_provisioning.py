@@ -1,9 +1,9 @@
 """Unit tests for CP provisioning schema validators.
 
 Per project policy "test our code, not the framework": only the bits we wrote
-get tests here — the `subscription_status` allowlist, the `effect` Literal
-narrowing, and the `extra="forbid"` config we set. Pydantic's StrictStr,
-default handling, and bool parsing are not retested.
+get tests here — the `effect` Literal narrowing, the `min_length=1` constraints
+on policy statements, and the `extra="forbid"` config we set. Pydantic's
+StrictStr, default handling, and bool parsing are not retested.
 """
 
 from __future__ import annotations
@@ -21,32 +21,6 @@ from shu.schemas.cp_provisioning import (
 
 def _valid_statement_kwargs() -> dict[str, object]:
     return {"actions": ["kb.read"], "resources": ["kb:*"]}
-
-
-def _valid_billing_kwargs(**overrides: object) -> dict[str, object]:
-    defaults: dict[str, object] = {"subscription_status": "active"}
-    defaults.update(overrides)
-    return defaults
-
-
-class TestBillingInputSubscriptionStatus:
-    """The custom allowlist enforced by `_validate_seed_status`."""
-
-    @pytest.mark.parametrize("status", ["active", "trialing", "pending"])
-    def test_allowed_statuses_pass(self, status: str) -> None:
-        billing = BillingInput(**_valid_billing_kwargs(subscription_status=status))
-        assert billing.subscription_status == status
-
-    @pytest.mark.parametrize("status", ["canceled", "unpaid", "past_due", "", "ACTIVE"])
-    def test_blocked_statuses_raise(self, status: str) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            BillingInput(**_valid_billing_kwargs(subscription_status=status))
-        # Surface the field name + supplied value so test failures point at
-        # the right place — guards against the validator silently widening
-        # its accepted set later.
-        msg = str(exc_info.value)
-        assert "subscription_status" in msg
-        assert status in msg or repr(status) in msg
 
 
 class TestPolicyEffectLiteral:
@@ -96,8 +70,11 @@ class TestExtraForbid:
         assert "unexpected_field" in str(exc_info.value)
 
     def test_unknown_nested_field_is_rejected(self) -> None:
+        # `subscription_status` was removed in the SHU-774 wake — sending it
+        # should now be rejected by `extra="forbid"` rather than silently
+        # accepted-then-dropped. This pins that contract.
         with pytest.raises(ValidationError) as exc_info:
             BillingInput(
-                **_valid_billing_kwargs(stripe_customer_id_typo="cus_x"),  # type: ignore[arg-type]
+                subscription_status="active",  # type: ignore[call-arg]
             )
-        assert "stripe_customer_id_typo" in str(exc_info.value)
+        assert "subscription_status" in str(exc_info.value)

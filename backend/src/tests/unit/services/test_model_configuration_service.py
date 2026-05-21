@@ -1,10 +1,17 @@
 """Unit tests for ModelConfigurationService."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.core.exceptions import NotFoundError
+from shu.schemas.cp_provisioning import ModelConfigInput, SetModelConfigsRequest
 from shu.services.model_configuration_service import ModelConfigurationService
+from shu.services.side_call_settings import (
+    PROFILING_MODEL_SETTING_KEY,
+    SIDE_CALL_MODEL_SETTING_KEY,
+)
 
 
 class TestGetModelConfigurationLogging:
@@ -46,18 +53,6 @@ class TestGetModelConfigurationLogging:
 # cp_upsert_by_name (SHU-785) — provider resolution, idempotent upsert,
 # side-call / profiling pointer writes, batch rollback on resolution failure.
 # ---------------------------------------------------------------------------
-
-from contextlib import asynccontextmanager  # noqa: E402
-
-from shu.core.exceptions import NotFoundError  # noqa: E402
-from shu.schemas.cp_provisioning import (  # noqa: E402
-    ModelConfigInput,
-    SetModelConfigsRequest,
-)
-from shu.services.side_call_settings import (  # noqa: E402
-    PROFILING_MODEL_SETTING_KEY,
-    SIDE_CALL_MODEL_SETTING_KEY,
-)
 
 
 def _make_cfg(

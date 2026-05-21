@@ -28,6 +28,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from shu.auth.models import User
@@ -71,15 +72,12 @@ class TenantAdminService:
         app_session_local: async_sessionmaker[AsyncSession],
         admin_session_local: async_sessionmaker[AsyncSession],
         audit_logger: AuditLogger,
-        password_auth: PasswordAuthService | None = None,
-        password_reset: PasswordResetService | None = None,
+        password_auth: PasswordAuthService,
+        password_reset: PasswordResetService,
     ) -> None:
         self._app_session_local = app_session_local
         self._admin_session_local = admin_session_local
         self._audit = audit_logger
-        # These two are only required by `create_tenant` (CP provisioning).
-        # Existing impersonate / cross_tenant_query callers don't touch them.
-        # Made keyword-only + optional so old wire-ups don't break.
         self._password_auth = password_auth
         self._password_reset = password_reset
 
@@ -206,29 +204,32 @@ class TenantAdminService:
     ) -> CreateTenantResponse:
         """Seed a brand-new tenant: tenants + billing_state + first regular user.
 
-        Two transaction boundaries by necessity. The `tenants` row is a
-        global write (admin role, no RLS context), and the per-tenant rows
-        need `app.tenant_id` set so RLS WITH CHECK and the auto-stamp
-        before_flush listener cooperate. Idempotency rides on the natural
-        unique keys (tenants.id PK, billing_state.tenant_id PK, users.email
-        UNIQUE), so a CP retry after a partial failure resumes cleanly.
+        Atomicity contract: user creation and the reset-token write live in a
+        single transaction. ``create_user`` is called with ``flush_only=True``
+        and ``request_reset`` only flushes — so an email-queue failure rolls
+        the just-flushed user back. CP's retry then re-fires the create+reset
+        path because the user row no longer exists.
+
+        Two session boundaries are still required: ``tenants`` is a global
+        write (admin role, no RLS context); the per-tenant rows need
+        ``app.tenant_id`` set so RLS WITH CHECK and the auto-stamp listener
+        cooperate. Idempotency rides on the natural unique keys (tenants.id
+        PK, billing_state.tenant_id PK, users.email UNIQUE).
 
         Stripe identity is immutable once set: re-call with a diverging
-        `stripe_customer_id` or `stripe_subscription_id` raises 409 *before*
-        `BillingStateService.update()` so we don't audit-log an overwrite we
-        then roll back.
+        ``stripe_customer_id`` or ``stripe_subscription_id`` raises 409
+        *before* ``BillingStateService.update()`` so we don't audit-log an
+        overwrite we then have to roll back.
 
         Welcome email is once-only: re-call against an existing user row
-        returns `welcome_email_sent=False` and skips `request_reset`.
-        """
-        if self._password_auth is None or self._password_reset is None:
-            # Misconfiguration; raise so the operator sees it during a smoke
-            # test rather than after a partial provision. Distinct from 503
-            # because this is a wire-up bug, not a transient outage.
-            raise RuntimeError(
-                "TenantAdminService.create_tenant requires password_auth and password_reset to be injected"
-            )
+        returns ``welcome_email_sent=False`` and skips ``request_reset``.
 
+        Personal-KB ensure runs *after* the user commit and unconditionally
+        (idempotent by owner). Running it after-commit keeps it outside the
+        user-flush rollback window, and running it on every call repairs the
+        rare case where a previous attempt committed the user but crashed
+        before the KB row was created.
+        """
         # --- Step 1: tenants row (admin/global write, no RLS context) ---
         async with self.cross_tenant_query(CP_ACTOR, reason) as admin_session:
             existing_tenant = (
@@ -310,42 +311,39 @@ class TenantAdminService:
                 # value so create_user's validate_password step is happy. We
                 # don't surface it — the user gets in via the reset email.
                 temp_password = self._password_auth.generate_temporary_password()
-                user = await self._password_auth.create_user(
-                    email=payload.user.email,
-                    password=temp_password,
-                    name=payload.user.name,
-                    role="regular_user",
-                    db=session,
-                    admin_created=True,
-                )
+                # flush_only=True keeps the user pending in this transaction
+                # so request_reset's failure rolls it back. The final commit
+                # below is the only place this user becomes durable.
+                try:
+                    user = await self._password_auth.create_user(
+                        email=payload.user.email,
+                        password=temp_password,
+                        name=payload.user.name,
+                        role="regular_user",
+                        db=session,
+                        admin_created=True,
+                        flush_only=True,
+                    )
+                except IntegrityError as exc:
+                    # users.email is globally unique. The same-tenant case was
+                    # caught by the existence check above, so reaching here
+                    # means the email belongs to a user in a different tenant
+                    # (invisible under RLS). Translate to 409 — leaking the
+                    # other tenant's user_id would be a privacy violation, so
+                    # the details echo only the email CP supplied.
+                    raise ConflictError(
+                        "user email already exists outside this tenant",
+                        details={"conflicting_fields": ["email"], "email": payload.user.email},
+                    ) from exc
                 await self._audit.log(
                     event="cp_user_inserted",
                     actor=CP_ACTOR,
                     target=user.id,
                     reason=reason,
                 )
-                # Provision the user's Personal Knowledge Base. The frontend
-                # assumes one exists on first chat; the in-tenant endpoint
-                # (POST /knowledge-bases/personal) auto-provisions on demand,
-                # but that costs a round trip before first message. Seeding
-                # here removes the gap — the user lands in chat with their
-                # KB already there. `ensure_personal_knowledge_base` is
-                # idempotent, so a retry on this whole flow is safe.
-                kb_svc = KnowledgeBaseService(session)
-                await kb_svc.ensure_personal_knowledge_base(
-                    owner_id=user.id,
-                    display_name=resolve_personal_kb_name(user),
-                    slug_token=resolve_personal_kb_slug_token(user),
-                )
-                await self._audit.log(
-                    event="cp_personal_kb_ensured",
-                    actor=CP_ACTOR,
-                    target=user.id,
-                    reason=reason,
-                )
-                # request_reset runs INSIDE the impersonate transaction so an
-                # email-queue failure rolls the just-flushed user back. CP's
-                # retry then re-attempts cleanly via the existing-user path.
+                # request_reset uses db.flush()-only (see service body); a
+                # failure here aborts the impersonate transaction and the
+                # user flush is rolled back with it.
                 await self._password_reset.request_reset(
                     email=payload.user.email,
                     ip=None,
@@ -354,6 +352,24 @@ class TenantAdminService:
                 welcome_email_sent = True
 
             await session.commit()
+
+            # KB ensure runs after the user/billing commit. It uses its own
+            # internal commit and is owner-idempotent — a retry after a
+            # crash that committed the user but never reached this point
+            # heals the missing KB. Lives inside the impersonate context so
+            # the RLS tenant scope is still active.
+            kb_svc = KnowledgeBaseService(session)
+            await kb_svc.ensure_personal_knowledge_base(
+                owner_id=user.id,
+                display_name=resolve_personal_kb_name(user),
+                slug_token=resolve_personal_kb_slug_token(user),
+            )
+            await self._audit.log(
+                event="cp_personal_kb_ensured",
+                actor=CP_ACTOR,
+                target=user.id,
+                reason=reason,
+            )
 
         return CreateTenantResponse(
             tenant_id=payload.tenant_id,

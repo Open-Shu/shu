@@ -10,12 +10,21 @@ Coverage focus:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shu.auth.password_auth import PasswordAuthService
+from shu.billing.state_service import BillingStateService
+from shu.core.exceptions import ConflictError
 from shu.core.tenant import tenant_context
+from shu.schemas.cp_provisioning import (
+    BillingInput,
+    CreateTenantRequest,
+    UserInput,
+)
 from shu.services.audit_logger import AuditLogEmitError
+from shu.services.password_reset_service import PasswordResetService
 from shu.services.tenant_admin_service import TenantAdminService
 
 
@@ -34,6 +43,29 @@ def _stub_session_factory() -> tuple[MagicMock, MagicMock]:
     return factory, session
 
 
+def _build_svc(
+    *,
+    app_factory: MagicMock,
+    admin_factory: MagicMock,
+    audit: AsyncMock,
+    password_auth: MagicMock | None = None,
+    password_reset: MagicMock | None = None,
+) -> TenantAdminService:
+    """Construct a TenantAdminService with all required deps.
+
+    The non-CP tests (impersonate_tenant / cross_tenant_query) don't exercise
+    the password collaborators but the constructor requires them — pass
+    plain ``MagicMock()`` placeholders when the test doesn't care.
+    """
+    return TenantAdminService(
+        app_session_local=app_factory,
+        admin_session_local=admin_factory,
+        audit_logger=audit,
+        password_auth=password_auth or MagicMock(spec=PasswordAuthService),
+        password_reset=password_reset or MagicMock(spec=PasswordResetService),
+    )
+
+
 @pytest.mark.asyncio
 async def test_impersonate_tenant_sets_context_during_session() -> None:
     """Inside the contextmanager the tenant_context ContextVar must be the target."""
@@ -41,11 +73,7 @@ async def test_impersonate_tenant_sets_context_during_session() -> None:
     admin_factory, _ = _stub_session_factory()
     audit = AsyncMock()
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     # The autouse conftest fixture pre-sets tenant_context to a default
     # value, so we snapshot it and assert restoration relative to that
@@ -70,11 +98,7 @@ async def test_impersonate_tenant_audits_open_before_session_opens() -> None:
     audit = AsyncMock()
     audit.log.side_effect = AuditLogEmitError("transport down")
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     pre_context = tenant_context.get(None)
     with pytest.raises(AuditLogEmitError):
@@ -93,11 +117,7 @@ async def test_impersonate_tenant_emits_open_and_close_records() -> None:
     admin_factory, _ = _stub_session_factory()
     audit = AsyncMock()
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     async with svc.impersonate_tenant("tenant-X", "actor-1", "ticket 7"):
         pass
@@ -121,11 +141,7 @@ async def test_cross_tenant_query_uses_admin_factory_and_no_context() -> None:
     admin_factory, admin_session = _stub_session_factory()
     audit = AsyncMock()
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     # The cross-tenant path must not *change* the context — whatever the
     # caller had set going in remains set throughout, because BYPASSRLS
@@ -148,11 +164,7 @@ async def test_cross_tenant_query_audits_open_before_session_opens() -> None:
     audit = AsyncMock()
     audit.log.side_effect = AuditLogEmitError("transport down")
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     with pytest.raises(AuditLogEmitError):
         async with svc.cross_tenant_query("actor-1", "usage report Q1"):
@@ -177,11 +189,7 @@ async def test_impersonate_tenant_emits_aborted_event_when_body_raises() -> None
     admin_factory, _ = _stub_session_factory()
     audit = AsyncMock()
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     class _CustomError(RuntimeError):
         pass
@@ -204,11 +212,7 @@ async def test_cross_tenant_query_emits_aborted_event_when_body_raises() -> None
     admin_factory, _ = _stub_session_factory()
     audit = AsyncMock()
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     class _CustomError(RuntimeError):
         pass
@@ -236,11 +240,7 @@ async def test_aborted_audit_failure_does_not_mask_original_exception() -> None:
     # First call (open) succeeds; second call (aborted) raises.
     audit.log.side_effect = [None, AuditLogEmitError("transport hiccup on close")]
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
-    )
+    svc = _build_svc(app_factory=app_factory, admin_factory=admin_factory, audit=audit)
 
     class _OriginalError(RuntimeError):
         pass
@@ -251,26 +251,13 @@ async def test_aborted_audit_failure_does_not_mask_original_exception() -> None:
 
 
 # ---------------------------------------------------------------------------
-# create_tenant (SHU-785) — covers happy path, idempotency, and the Stripe
-# identity-immutability 409 path.
+# create_tenant (SHU-785) — covers happy path, idempotency, the Stripe
+# identity-immutability 409 path, and the atomic-rollback contract.
 # ---------------------------------------------------------------------------
 
 
-from unittest.mock import patch  # noqa: E402
-
-from shu.auth.password_auth import PasswordAuthService  # noqa: E402
-from shu.billing.state_service import BillingStateService  # noqa: E402
-from shu.core.exceptions import ConflictError  # noqa: E402
-from shu.schemas.cp_provisioning import (  # noqa: E402
-    BillingInput,
-    CreateTenantRequest,
-    UserInput,
-)
-from shu.services.password_reset_service import PasswordResetService  # noqa: E402
-
-
 def _make_billing(**overrides: Any) -> BillingInput:
-    defaults: dict[str, Any] = {"subscription_status": "active"}
+    defaults: dict[str, Any] = {}
     defaults.update(overrides)
     return BillingInput(**defaults)
 
@@ -323,19 +310,36 @@ def _make_create_tenant_svc(
     password_reset = MagicMock(spec=PasswordResetService)
     password_reset.request_reset = AsyncMock()
 
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=audit,
+    svc = _build_svc(
+        app_factory=app_factory,
+        admin_factory=admin_factory,
+        audit=audit,
         password_auth=password_auth,
         password_reset=password_reset,
     )
     return svc, audit, admin_session, app_session, password_auth, password_reset
 
 
+def _patch_kb_ensure() -> Any:
+    """Patch the personal-KB ensure call inside create_tenant.
+
+    create_tenant invokes ``KnowledgeBaseService(...).ensure_personal_knowledge_base``
+    unconditionally after the user/billing commit (idempotent self-heal on
+    retry). Tests patch the class at the import site so the side-effects of
+    real KB creation (slug generation, defaults lookup, ORM flush) don't
+    leak into the unit test.
+    """
+    kb_svc_mock = MagicMock()
+    kb_svc_mock.ensure_personal_knowledge_base = AsyncMock()
+    return patch(
+        "shu.services.tenant_admin_service.KnowledgeBaseService",
+        return_value=kb_svc_mock,
+    ), kb_svc_mock
+
+
 @pytest.mark.asyncio
 async def test_create_tenant_happy_path() -> None:
-    """All three steps fire in order; response carries the right flags."""
+    """All four steps fire in order; response carries the right flags."""
     svc, audit, admin_session, app_session, password_auth, password_reset = (
         _make_create_tenant_svc()
     )
@@ -343,9 +347,11 @@ async def test_create_tenant_happy_path() -> None:
     fresh_state.stripe_customer_id = None
     fresh_state.stripe_subscription_id = None
 
+    kb_patcher, kb_svc_mock = _patch_kb_ensure()
     with (
         patch.object(BillingStateService, "ensure_exists", new_callable=AsyncMock) as ensure_exists,
         patch.object(BillingStateService, "update", new_callable=AsyncMock) as update,
+        kb_patcher,
     ):
         ensure_exists.return_value = (fresh_state, True)
 
@@ -372,14 +378,25 @@ async def test_create_tenant_happy_path() -> None:
     assert update_kwargs["source"] == "cp:provision"
 
     # User created with admin_created=True so the first-user auto-promote
-    # path can't fire.
+    # path can't fire. flush_only=True keeps user pending until commit so
+    # a request_reset failure rolls it back (atomicity contract).
     password_auth.create_user.assert_awaited_once()
     create_kwargs = password_auth.create_user.await_args.kwargs
     assert create_kwargs["admin_created"] is True
     assert create_kwargs["role"] == "regular_user"
+    assert create_kwargs["flush_only"] is True
 
-    # Welcome email queued.
+    # Welcome email queued, INSIDE the impersonate txn so a failure rolls
+    # the just-flushed user back.
     password_reset.request_reset.assert_awaited_once()
+
+    # Personal KB ensured AFTER the user commit, idempotent on retry.
+    kb_svc_mock.ensure_personal_knowledge_base.assert_awaited_once()
+
+    # The atomic-commit-then-KB-then-end ordering: app_session.commit must
+    # fire once (the user/reset commit). KB ensure runs after that — its
+    # own internal commit is the responsibility of the KB service.
+    app_session.commit.assert_awaited_once()
 
     # All emitted audit events must come from the CP actor.
     actors = {call.kwargs.get("actor") for call in audit.log.await_args_list}
@@ -390,6 +407,7 @@ async def test_create_tenant_happy_path() -> None:
     # exit close events should all have fired.
     assert "cp_tenant_inserted" in events
     assert "cp_user_inserted" in events
+    assert "cp_personal_kb_ensured" in events
     assert "impersonate_tenant_open" in events
     assert "cross_tenant_query_open" in events
 
@@ -420,9 +438,11 @@ async def test_create_tenant_idempotent_when_tenant_and_user_already_exist() -> 
     existing_state.stripe_customer_id = "cus_123"
     existing_state.stripe_subscription_id = None
 
+    kb_patcher, kb_svc_mock = _patch_kb_ensure()
     with (
         patch.object(BillingStateService, "ensure_exists", new_callable=AsyncMock) as ensure_exists,
         patch.object(BillingStateService, "update", new_callable=AsyncMock),
+        kb_patcher,
     ):
         ensure_exists.return_value = (existing_state, False)
 
@@ -440,6 +460,9 @@ async def test_create_tenant_idempotent_when_tenant_and_user_already_exist() -> 
     # New user NOT created and reset email NOT re-sent.
     password_auth.create_user.assert_not_awaited()
     password_reset.request_reset.assert_not_awaited()
+    # KB ensure DOES fire on the existing-user path — it's idempotent and
+    # repairs the rare crash-after-user-commit-before-KB case.
+    kb_svc_mock.ensure_personal_knowledge_base.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -476,9 +499,11 @@ async def test_create_tenant_first_time_fill_stripe_id_is_allowed() -> None:
     half_filled_state.stripe_customer_id = None
     half_filled_state.stripe_subscription_id = None
 
+    kb_patcher, _ = _patch_kb_ensure()
     with (
         patch.object(BillingStateService, "ensure_exists", new_callable=AsyncMock) as ensure_exists,
         patch.object(BillingStateService, "update", new_callable=AsyncMock) as update,
+        kb_patcher,
     ):
         ensure_exists.return_value = (half_filled_state, False)
 
@@ -492,34 +517,88 @@ async def test_create_tenant_first_time_fill_stripe_id_is_allowed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_tenant_request_reset_failure_propagates() -> None:
-    """If request_reset raises, the exception bubbles — the impersonate context's
-    transaction rollback happens via the session __aexit__ on the way out."""
-    svc, _, _, _, _, password_reset = _make_create_tenant_svc()
+async def test_create_tenant_request_reset_failure_rolls_back_user_and_skips_kb() -> None:
+    """request_reset failure rolls back the just-flushed user, never commits,
+    and never reaches the post-commit KB ensure.
+
+    This is the atomicity contract: a partial provision (user committed
+    without a reset email queued) is the failure mode we explicitly do not
+    want — the user would exist in the DB with no way to log in.
+    """
+    svc, _, _, app_session, password_auth, password_reset = _make_create_tenant_svc()
     password_reset.request_reset.side_effect = RuntimeError("email queue down")
     fresh_state = MagicMock()
     fresh_state.stripe_customer_id = None
     fresh_state.stripe_subscription_id = None
 
+    kb_patcher, kb_svc_mock = _patch_kb_ensure()
     with (
         patch.object(BillingStateService, "ensure_exists", new_callable=AsyncMock) as ensure_exists,
         patch.object(BillingStateService, "update", new_callable=AsyncMock),
+        kb_patcher,
     ):
         ensure_exists.return_value = (fresh_state, True)
 
         with pytest.raises(RuntimeError, match="email queue down"):
             await svc.create_tenant(_make_payload(), reason="seed test")
 
+    # create_user was called with flush_only=True — the user was never
+    # committed. The impersonate context closes without our final
+    # session.commit() running, so the flushed user rolls back.
+    password_auth.create_user.assert_awaited_once()
+    assert password_auth.create_user.await_args.kwargs["flush_only"] is True
+    app_session.commit.assert_not_awaited()
+
+    # KB ensure runs AFTER the user commit. Since the commit never
+    # happened, KB ensure must not have fired either.
+    kb_svc_mock.ensure_personal_knowledge_base.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_tenant_cross_tenant_email_collision_raises_conflict() -> None:
+    """If create_user's flush hits a UNIQUE violation (email exists in a
+    different tenant — invisible under RLS), translate to a 409 ConflictError
+    rather than letting the IntegrityError surface as a 500.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    svc, _, _, _, password_auth, _ = _make_create_tenant_svc()
+    password_auth.create_user.side_effect = IntegrityError(
+        statement="INSERT INTO users", params=None, orig=Exception("dup")
+    )
+    fresh_state = MagicMock()
+    fresh_state.stripe_customer_id = None
+    fresh_state.stripe_subscription_id = None
+
+    kb_patcher, _ = _patch_kb_ensure()
+    with (
+        patch.object(BillingStateService, "ensure_exists", new_callable=AsyncMock) as ensure_exists,
+        patch.object(BillingStateService, "update", new_callable=AsyncMock),
+        kb_patcher,
+    ):
+        ensure_exists.return_value = (fresh_state, True)
+
+        with pytest.raises(ConflictError) as exc_info:
+            await svc.create_tenant(_make_payload(), reason="cross-tenant email")
+
+    # The 409 body leaks only what CP supplied. Echoing the other tenant's
+    # user id here would be a privacy violation.
+    assert exc_info.value.details["conflicting_fields"] == ["email"]
+    assert exc_info.value.details["email"] == "user@example.com"
+
 
 @pytest.mark.asyncio
 async def test_create_tenant_without_injected_password_services_raises() -> None:
-    """Wire-up bug surfaces with RuntimeError, not a partial provision."""
+    """Wire-up bug surfaces at construction (TypeError), not at first call.
+
+    The CP collaborators are required kwargs on ``__init__`` so this
+    misconfiguration can never reach a request handler.
+    """
     app_factory, _ = _stub_session_factory()
     admin_factory, _ = _stub_session_factory()
-    svc = TenantAdminService(
-        app_session_local=app_factory,
-        admin_session_local=admin_factory,
-        audit_logger=AsyncMock(),
-    )
-    with pytest.raises(RuntimeError, match="password_auth and password_reset"):
-        await svc.create_tenant(_make_payload(), reason="seed test")
+    with pytest.raises(TypeError, match="password_auth"):
+        TenantAdminService(  # type: ignore[call-arg]
+            app_session_local=app_factory,
+            admin_session_local=admin_factory,
+            audit_logger=AsyncMock(),
+        )

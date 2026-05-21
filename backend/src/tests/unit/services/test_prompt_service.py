@@ -21,10 +21,9 @@ def _payload(
     *,
     name: str = "tenant-default",
     content: str = "You are a careful assistant.",
-    entity_type: str | None = None,
 ) -> SetPromptRequest:
     return SetPromptRequest(
-        prompt=PromptInput(name=name, content=content, entity_type=entity_type),
+        prompt=PromptInput(name=name, content=content),
         reason="cp set prompt",
     )
 
@@ -104,7 +103,12 @@ class TestCpUpsertByName:
         assert events == ["cp_prompt_updated"]
 
     @pytest.mark.asyncio
-    async def test_explicit_entity_type_is_respected(self) -> None:
+    async def test_existence_lookup_filters_by_llm_model_entity_type(self) -> None:
+        """The upsert lookup MUST filter on entity_type=llm_model so that a
+        prompt sharing the same name in a different entity_type can't be
+        accidentally targeted. Without this filter, the MC resolver's
+        prompt_name lookup would have the same ambiguity from the read side.
+        """
         svc, session, _ = _make_cp_service(existing_prompt=None)
         added: list = []
         session.add.side_effect = lambda obj: added.append(obj)
@@ -112,14 +116,13 @@ class TestCpUpsertByName:
         async def _flush() -> None:
             if added and added[-1].id is None:
                 added[-1].id = "prompt-1"
+
         session.flush.side_effect = _flush
 
-        await svc.cp_upsert_by_name(
-            "tenant-1",
-            _payload(entity_type=EntityType.KNOWLEDGE_BASE),
-            reason="r",
-        )
-        assert added[0].entity_type == EntityType.KNOWLEDGE_BASE
+        await svc.cp_upsert_by_name("tenant-1", _payload(), reason="r")
+
+        # Newly inserted prompt is pinned to LLM_MODEL.
+        assert added[0].entity_type == EntityType.LLM_MODEL
 
     @pytest.mark.asyncio
     async def test_missing_deps_raises_runtime_error(self) -> None:

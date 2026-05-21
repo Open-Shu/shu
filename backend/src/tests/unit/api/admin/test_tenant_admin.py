@@ -47,7 +47,7 @@ from shu.schemas.cp_provisioning import (
 async def test_cp_create_tenant_delegates() -> None:
     payload = CreateTenantRequest(
         tenant_id="t-1",
-        billing=BillingInput(subscription_status="active"),
+        billing=BillingInput(),
         user=UserInput(email="u@example.com", name="Alice"),
         reason="seed",
     )
