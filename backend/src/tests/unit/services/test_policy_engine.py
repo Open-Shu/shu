@@ -29,6 +29,7 @@ from shu.services.policy_engine import (
     CachedPolicy,
     CachedStatement,
     PolicyCache,
+    _PerTenantPolicyCache,
     _split_patterns,
     enforce_pbac,
 )
@@ -726,3 +727,124 @@ class TestEnforcePbac:
             mock_cache.check = AsyncMock(return_value=True)
             await enforce_pbac("uid-7", "experience.run", "experience:exp-42", mock_db)
         mock_cache.check.assert_called_once_with("uid-7", "experience.run", "experience:exp-42", mock_db)
+
+
+# ---------------------------------------------------------------------------
+# Per-tenant isolation
+#
+# The cross-tenant leak the per-tenant facade closes: a refresh under tenant
+# A populated the singleton cache with A's policies, then a subsequent check
+# under tenant B read A's bindings. These tests pin the new isolation
+# contract — each tenant gets its own PolicyCache instance, and refreshing
+# one tenant's cache never touches another's.
+# ---------------------------------------------------------------------------
+
+
+class TestPerTenantPolicyCacheIsolation:
+    @pytest.mark.asyncio
+    async def test_each_tenant_gets_its_own_policy_cache_instance(self):
+        from shu.core.tenant import tenant_context
+
+        facade = _PerTenantPolicyCache()
+
+        token_a = tenant_context.set("tenant-A")
+        try:
+            cache_a = facade._for_current_tenant()
+        finally:
+            tenant_context.reset(token_a)
+
+        token_b = tenant_context.set("tenant-B")
+        try:
+            cache_b = facade._for_current_tenant()
+        finally:
+            tenant_context.reset(token_b)
+
+        assert cache_a is not cache_b
+        # Same tenant returns the same instance — built lazily, retained.
+        token_a2 = tenant_context.set("tenant-A")
+        try:
+            assert facade._for_current_tenant() is cache_a
+        finally:
+            tenant_context.reset(token_a2)
+
+    @pytest.mark.asyncio
+    async def test_invalidate_only_affects_current_tenant(self):
+        from shu.core.tenant import tenant_context
+
+        facade = _PerTenantPolicyCache()
+
+        # Materialize both tenants' caches.
+        for tid in ("tenant-A", "tenant-B"):
+            token = tenant_context.set(tid)
+            try:
+                facade._for_current_tenant()._stale = False
+            finally:
+                tenant_context.reset(token)
+
+        # Invalidate under tenant A only.
+        token_a = tenant_context.set("tenant-A")
+        try:
+            facade.invalidate()
+        finally:
+            tenant_context.reset(token_a)
+
+        assert facade._by_tenant["tenant-A"]._stale is True
+        # B unaffected — that's the load-bearing property.
+        assert facade._by_tenant["tenant-B"]._stale is False
+
+    @pytest.mark.asyncio
+    async def test_check_without_tenant_context_raises(self):
+        """PBAC checks outside a tenant context are a programming error —
+        they would silently route to whichever tenant happened to be set,
+        or worse, fail late deep inside the cache logic. Fail loud at
+        the boundary."""
+        from shu.core.tenant import tenant_context
+
+        facade = _PerTenantPolicyCache()
+        token = tenant_context.set(None)
+        try:
+            with pytest.raises(RuntimeError, match="tenant_context"):
+                await facade.check("user-1", "experience.read", "experience:e1", AsyncMock())
+        finally:
+            tenant_context.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_invalidate_without_context_invalidates_all_tenants(self):
+        """The narrow fallback path: admin tooling that touches policies
+        without a tenant context invalidates every tenant's cache as a
+        safety net rather than silently no-op'ing."""
+        from shu.core.tenant import tenant_context
+
+        facade = _PerTenantPolicyCache()
+        for tid in ("tenant-A", "tenant-B"):
+            token = tenant_context.set(tid)
+            try:
+                facade._for_current_tenant()._stale = False
+            finally:
+                tenant_context.reset(token)
+
+        token = tenant_context.set(None)
+        try:
+            facade.invalidate()
+        finally:
+            tenant_context.reset(token)
+
+        assert facade._by_tenant["tenant-A"]._stale is True
+        assert facade._by_tenant["tenant-B"]._stale is True
+
+    @pytest.mark.asyncio
+    async def test_check_routes_to_per_tenant_cache_check(self):
+        """Sanity: facade.check delegates to the right per-tenant cache."""
+        from shu.core.tenant import tenant_context
+
+        facade = _PerTenantPolicyCache()
+        token = tenant_context.set("tenant-A")
+        try:
+            cache = facade._for_current_tenant()
+            cache.check = AsyncMock(return_value=True)
+            result = await facade.check("user-1", "x.y", "z:1", AsyncMock())
+        finally:
+            tenant_context.reset(token)
+
+        assert result is True
+        cache.check.assert_awaited_once()

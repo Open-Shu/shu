@@ -23,6 +23,7 @@ from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse, create_error_response, create_success_response
 from ..core.streaming import create_sse_stream_generator
+from ..core.tenant import tenant_context_for_tenant_id
 from ..models.attachment import Attachment
 from ..models.llm_provider import Conversation, Message
 from ..schemas.chat import ConversationFromExperienceRequest
@@ -889,9 +890,17 @@ async def send_message(
         # a no-op second close.
         await db.close()
 
+        # Capture the request's tenant_id eagerly — by the time the
+        # StreamingResponse generator runs, FastAPI has unwound the
+        # resolve_tenant yield-dependency and ``tenant_context`` is back
+        # to None. Re-bind it inside the generator so the chat service's
+        # stream/finalize phases see the right tenant.
+        tenant_id = current_user.tenant_id
+
         async def stream_generator():
-            async for data in create_sse_stream_generator(event_gen, "send_message"):
-                yield data
+            async with tenant_context_for_tenant_id(tenant_id):
+                async for data in create_sse_stream_generator(event_gen, "send_message"):
+                    yield data
 
         return StreamingResponse(
             stream_generator(),
@@ -1084,9 +1093,13 @@ async def regenerate_message(
         # StreamingResponse. See the matching comment in send_message above.
         await db.close()
 
+        # See ``send_message`` for the contextvar-capture rationale.
+        tenant_id = current_user.tenant_id
+
         async def stream_generator():
-            async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
-                yield data
+            async with tenant_context_for_tenant_id(tenant_id):
+                async for data in create_sse_stream_generator(event_gen, "regenerate_message"):
+                    yield data
 
         return StreamingResponse(
             stream_generator(),

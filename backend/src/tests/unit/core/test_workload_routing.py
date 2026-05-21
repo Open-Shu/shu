@@ -11,7 +11,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from shu.core.queue_backend import InMemoryQueueBackend
+from shu.core.queue_backend import EnqueueError, InMemoryQueueBackend
+from shu.core.tenant import tenant_context
 from shu.core.workload_routing import WorkloadType, enqueue_job
 
 # =============================================================================
@@ -281,3 +282,58 @@ class TestWorkloadTypeRouting:
         # Both queues should now be empty
         assert await backend.dequeue("shu:ingestion") is None
         assert await backend.dequeue("shu:profiling") is None
+
+
+# =============================================================================
+# SHU-761: enqueue_job tenant_id guarantees
+#
+# Every job ships with `tenant_id` so the worker dispatch wrapper can set
+# tenant_context before the handler runs. enqueue_job is the single place we
+# enforce that — missing tenant must raise loudly at the source rather than
+# silently default-deny at the handler's first DB query.
+# =============================================================================
+
+
+class TestEnqueueRefusesMissingTenant:
+    """Coverage for the EnqueueError fail-loud path."""
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_explicit_arg_and_no_context(self) -> None:
+        """The whole point: a job with no tenant_id can't reach a worker.
+        We pop the autouse fixture's tenant_context first so we exercise
+        the missing-both path the way a misconfigured caller would."""
+        backend = InMemoryQueueBackend()
+        token = tenant_context.set(None)
+        try:
+            with pytest.raises(EnqueueError, match="without tenant_id"):
+                await enqueue_job(backend, WorkloadType.INGESTION, payload={"x": 1})
+        finally:
+            tenant_context.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_explicit_tenant_id_overrides_unset_context(self) -> None:
+        """Cross-tenant callers (admin tools, per-tenant fan-out) supply
+        tenant_id explicitly even when their own context is unset."""
+        backend = InMemoryQueueBackend()
+        token = tenant_context.set(None)
+        try:
+            job = await enqueue_job(
+                backend, WorkloadType.INGESTION, payload={"x": 1}, tenant_id="tenant-X"
+            )
+        finally:
+            tenant_context.reset(token)
+
+        assert job.tenant_id == "tenant-X"
+
+    @pytest.mark.asyncio
+    async def test_implicit_tenant_id_comes_from_context(self) -> None:
+        """The common case: a request handler enqueues a job and the job
+        inherits the request's tenant from context."""
+        backend = InMemoryQueueBackend()
+        token = tenant_context.set("tenant-from-context")
+        try:
+            job = await enqueue_job(backend, WorkloadType.INGESTION, payload={"x": 1})
+        finally:
+            tenant_context.reset(token)
+
+        assert job.tenant_id == "tenant-from-context"

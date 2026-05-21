@@ -36,9 +36,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from shu.core.logging import get_logger
+from sqlalchemy import text
 
+from .config import DeploymentMode, get_settings_instance
+from .database import get_async_session_local
+from .logging import get_logger
 from .queue_backend import Job, QueueBackend
+from .tenant import MissingTenantContextError, tenant_context_for_tenant_id
 from .workload_routing import WorkloadType
 
 logger = get_logger(__name__)
@@ -90,8 +94,6 @@ class WorkloadCapacityLimiter:
             A configured WorkloadCapacityLimiter.
 
         """
-        from .config import get_settings_instance
-
         settings = get_settings_instance()
         limits: dict[WorkloadType, int] = {}
 
@@ -590,8 +592,15 @@ class Worker:
         start_time = time.time()
 
         try:
-            # Process the job using the provided handler
-            await self._handler(job)
+            # Set tenant_context from the job's tenant_id so the handler's DB
+            # queries run under the right RLS scope. A job arriving here
+            # without a resolvable tenant (multi-tenant mode + missing
+            # tenant_id on the payload) is a poison pill — retrying won't
+            # change the outcome — so we let MissingTenantContextError fall
+            # through to the except branch below, which short-circuits the
+            # retry policy with requeue=False.
+            async with tenant_context_for_tenant_id(job.tenant_id):
+                await self._handler(job)
 
             # Acknowledge successful processing
             await self._backend.acknowledge(job)
@@ -624,8 +633,11 @@ class Worker:
                 exc_info=True,
             )
 
-            # Requeue if under max attempts
-            should_requeue = job.attempts < job.max_attempts
+            # Missing tenant context is a poison pill — the next worker that
+            # picks it up will fail the same way, so retrying just churns
+            # the queue. Discard immediately and let the operator chase the
+            # enqueue site that produced the malformed job.
+            should_requeue = False if isinstance(e, MissingTenantContextError) else job.attempts < job.max_attempts
             await self._backend.reject(job, requeue=should_requeue)
 
             if should_requeue:
@@ -657,3 +669,47 @@ class Worker:
             if self._acquired_capacity is not None:
                 self._release_capacity(self._acquired_capacity)
                 self._acquired_capacity = None
+
+
+# =============================================================================
+# Per-tenant fan-out for scheduled / periodic work (SHU-761 task 11.3)
+# =============================================================================
+
+
+async def list_all_tenant_ids() -> list[str]:
+    """Return every tenant_id from the global tenants catalog.
+
+    Used by the fan-out and recovery patterns to drive per-tenant scoped
+    work. ``tenants`` is global (no RLS), so a regular shu_app session
+    sees every row — no admin engine needed. Iteration order matches
+    catalog insertion order, which is stable enough for the fan-out use
+    case (we don't depend on any particular ordering).
+
+    Load-bearing invariant: ``tenants`` must NOT have RLS enabled. If a
+    future migration ever turns RLS on for this table, every caller of
+    this function (scheduler tenant fan-out, re-embedding recovery,
+    cross-tenant admin queries) silently returns an empty list and the
+    affected machinery stops working — no error, no log. Changing the
+    isolation posture of ``tenants`` is the equivalent of breaking
+    catalog reads system-wide; treat with care.
+    """
+    session_factory = get_async_session_local()
+    async with session_factory() as session:
+        result = await session.execute(text("SELECT id FROM tenants"))
+        tenant_ids = [row[0] for row in result.all()]
+
+    # Self-hosted and silo always have at least the deployment's own row in
+    # the catalog (seeded by migration 009 from the deployment mode). An
+    # empty list there means either the seed didn't run, or RLS got
+    # accidentally enabled on tenants — surface either as a loud failure.
+    # Multi-tenant legitimately starts with an empty catalog before any
+    # tenant is provisioned, so no guard there.
+    settings = get_settings_instance()
+    if settings.deployment_mode in (DeploymentMode.SELF_HOSTED, DeploymentMode.SILO):
+        assert tenant_ids, (
+            "list_all_tenant_ids returned empty in self-hosted/silo — the "
+            "tenants catalog should always contain the deployment's seed row. "
+            "Check migration 009 ran cleanly and that RLS is NOT enabled on "
+            "the tenants table."
+        )
+    return tenant_ids

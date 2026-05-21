@@ -1454,13 +1454,13 @@ class TestRedisCacheBackendTenantPrefix:
     async def test_get_reads_prefixed_key(self) -> None:
         mock = MockRedisClient()
         mock._data["t1:foo"] = "v"
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         assert await backend.get("foo") == "v"
 
     @pytest.mark.asyncio
     async def test_set_writes_prefixed_key(self) -> None:
         mock = MockRedisClient()
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         await backend.set("foo", "v")
         assert mock._data == {"t1:foo": "v"}
 
@@ -1469,7 +1469,7 @@ class TestRedisCacheBackendTenantPrefix:
         mock = MockRedisClient()
         mock._data["t1:foo"] = "v"
         mock._data["foo"] = "other-tenant"
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         await backend.delete("foo")
         assert "t1:foo" not in mock._data
         assert mock._data["foo"] == "other-tenant"
@@ -1478,7 +1478,7 @@ class TestRedisCacheBackendTenantPrefix:
     async def test_exists_checks_prefixed_key(self) -> None:
         mock = MockRedisClient()
         mock._data["foo"] = "other-tenant"  # Unprefixed key must not be seen
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         assert await backend.exists("foo") is False
         mock._data["t1:foo"] = "v"
         assert await backend.exists("foo") is True
@@ -1487,21 +1487,21 @@ class TestRedisCacheBackendTenantPrefix:
     async def test_expire_targets_prefixed_key(self) -> None:
         mock = MockRedisClient()
         mock._data["t1:foo"] = "v"
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         assert await backend.expire("foo", 60) is True
         assert "t1:foo" in mock._expiry
 
     @pytest.mark.asyncio
     async def test_incr_writes_prefixed_key(self) -> None:
         mock = MockRedisClient()
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         await backend.incr("counter")
         assert mock._data == {"t1:counter": "1"}
 
     @pytest.mark.asyncio
     async def test_decr_writes_prefixed_key(self) -> None:
         mock = MockRedisClient()
-        backend = RedisCacheBackend(mock, tenant_prefix="t1")
+        backend = RedisCacheBackend(mock, namespace="t1")
         await backend.decr("counter")
         assert mock._data == {"t1:counter": "-1"}
 
@@ -1509,13 +1509,13 @@ class TestRedisCacheBackendTenantPrefix:
     async def test_get_bytes_reads_prefixed_key(self) -> None:
         binary = MockRedisClient(decode_responses=False)
         binary._data["t1:blob"] = b"bytes-val"
-        backend = RedisCacheBackend(MockRedisClient(), binary, tenant_prefix="t1")
+        backend = RedisCacheBackend(MockRedisClient(), binary, namespace="t1")
         assert await backend.get_bytes("blob") == b"bytes-val"
 
     @pytest.mark.asyncio
     async def test_set_bytes_writes_prefixed_key(self) -> None:
         binary = MockRedisClient(decode_responses=False)
-        backend = RedisCacheBackend(MockRedisClient(), binary, tenant_prefix="t1")
+        backend = RedisCacheBackend(MockRedisClient(), binary, namespace="t1")
         await backend.set_bytes("blob", b"bytes-val")
         assert binary._data == {"t1:blob": b"bytes-val"}
 
@@ -1529,8 +1529,8 @@ class TestRedisCacheBackendTenantPrefix:
     @pytest.mark.asyncio
     async def test_two_tenants_sharing_redis_have_isolated_keys(self) -> None:
         mock = MockRedisClient()
-        tenant_a = RedisCacheBackend(mock, tenant_prefix="a")
-        tenant_b = RedisCacheBackend(mock, tenant_prefix="b")
+        tenant_a = RedisCacheBackend(mock, namespace="a")
+        tenant_b = RedisCacheBackend(mock, namespace="b")
 
         await tenant_a.set("k", "v1")
         await tenant_b.set("k", "v2")
@@ -1540,11 +1540,18 @@ class TestRedisCacheBackendTenantPrefix:
         assert await tenant_b.get("k") == "v2"
 
 
-def _factory_settings(*, redis_url: str | None, tenant_id: str | None) -> SimpleNamespace:
+def _factory_settings(
+    *, redis_url: str | None, tenant_id: str | None, deployment_mode: Any = None
+) -> SimpleNamespace:
+    from shu.core.config import DeploymentMode
+
+    if deployment_mode is None:
+        deployment_mode = DeploymentMode.SILO if tenant_id else DeploymentMode.SELF_HOSTED
     return SimpleNamespace(
         redis_url=redis_url,
         redis_enabled=bool(redis_url),
         tenant_id=tenant_id,
+        deployment_mode=deployment_mode,
     )
 
 
@@ -1561,17 +1568,27 @@ class TestGetCacheBackendFactory:
     @pytest.mark.asyncio
     async def test_redis_enabled_with_tenant_id_propagates_prefix(self) -> None:
         settings = _factory_settings(redis_url="redis://localhost", tenant_id="t1")
+        # Silo deployment with tenant_id "t1" → resolve_redis_namespace() picks
+        # settings.tenant_id, so the backend prefix becomes "t1:".
+        settings.redis_namespace = None
         string_client = MockRedisClient(decode_responses=True)
         binary_client = MockRedisClient(decode_responses=False)
 
         with (
             patch("shu.core.config.get_settings_instance", return_value=settings),
+            # resolve_redis_namespace imported get_settings_instance into
+            # shu.core.tenant's namespace at module load time; patching the
+            # config-module attribute alone wouldn't intercept the lookup.
+            patch("shu.core.tenant.get_settings_instance", return_value=settings),
             patch.object(cache_backend_module, "_get_redis_client", return_value=string_client),
             patch.object(cache_backend_module, "_get_redis_binary_client", return_value=binary_client),
         ):
             backend = await get_cache_backend()
 
         assert isinstance(backend, RedisCacheBackend)
+        # The factory resolves the namespace once at construction (deployment-
+        # level, not per-tenant). For silo with tenant_id="t1" the prefix is
+        # "t1:" — verified by inspecting the static _prefix.
         assert backend._prefix == "t1:"
 
     @pytest.mark.asyncio

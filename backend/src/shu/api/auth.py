@@ -24,14 +24,28 @@ from ..billing.seat_service import (
     get_seat_service,
 )
 from ..billing.stripe_client import StripeClientError
-from ..core.rate_limiting import get_rate_limit_service
+from ..core.config import DeploymentMode, get_settings_instance
+from ..core.email.factory import get_effective_email_backend_name
+from ..core.rate_limiting import get_client_ip, get_rate_limit_service
 from ..core.response import ShuResponse
+from ..core.tenant import (
+    UserTenantNotFoundError,
+    tenant_context_for_email,
+    tenant_context_for_reset_token,
+    tenant_context_for_user_id,
+    tenant_context_for_verification_token,
+)
 from ..schemas.envelope import SuccessResponse
 from ..services.email_verification_service import (
     TokenExpiredError,
     TokenInvalidError,
     get_email_verification_service_dependency,
 )
+
+# password_reset_service exports its own TokenExpiredError / TokenInvalidError
+# that collide with the email_verification_service names above. The two
+# handlers that use them stay with inline imports so the local except
+# clauses unambiguously bind to the password-reset variants.
 from ..services.user_service import UserService, create_token_response, get_user_service
 
 logger = get_logger(__name__)
@@ -53,8 +67,6 @@ async def _check_auth_rate_limit(request: Request) -> None:
         HTTPException: with status 429 and a payload containing `retry_after` when the auth rate limit is exceeded.
 
     """
-    from ..core.rate_limiting import get_client_ip
-
     rate_limit_service = get_rate_limit_service()
 
     if not rate_limit_service.enabled:
@@ -230,8 +242,10 @@ async def login(
         # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(id_token=request.google_token, db=db)
 
-        # Authenticate or create user using unified SSO method
-        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        # Pre-auth tenant resolution from the verified email so the users
+        # read inside authenticate_or_create_sso_user happens under RLS.
+        async with tenant_context_for_email(provider_info["email"]):
+            user = await user_service.authenticate_or_create_sso_user(provider_info, db)
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -268,112 +282,128 @@ async def register_user(
         HTTPException: with status 400 when input validation or business rules fail, or 500 for unexpected server errors.
 
     """
+    # Multi-tenant deployments do not allow open self-registration. New users
+    # arrive via invitation tokens (sibling spec); CP creates the first admin
+    # for a new tenant out-of-band. Silo/self-hosted retain the original flow.
+    if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is invitation-only in multi-tenant mode",
+        )
+
     try:
-        is_first_user = await user_service.is_first_user(db)
+        # SHU-761: silo / self-hosted registration is a pre-auth path — no
+        # dependency in the chain has set tenant_context yet. After RLS,
+        # ``is_first_user`` reads zero rows under default-deny and the
+        # ``before_flush`` listener raises ``MissingTenantContextError`` on
+        # ``create_user``. The resolver short-circuits to the deployment
+        # constant/silo tenant_id by mode — the email is just the credential
+        # carrier (MT is already 403'd above; this lookup never actually
+        # touches the DB).
+        async with tenant_context_for_email(request.email):
+            is_first_user = await user_service.is_first_user(db)
 
-        # Enforce user limit (skip for the very first user bootstrapping the instance)
-        over_limit_soft = False
-        if not is_first_user:
-            limit_status = await check_user_limit(db)
-            if limit_status.at_limit and limit_status.enforcement == "hard":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"User limit ({limit_status.user_limit}) reached. Contact your administrator.",
+            # Enforce user limit (skip for the very first user bootstrapping the instance)
+            over_limit_soft = False
+            if not is_first_user:
+                limit_status = await check_user_limit(db)
+                if limit_status.at_limit and limit_status.enforcement == "hard":
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"User limit ({limit_status.user_limit}) reached. Contact your administrator.",
+                    )
+                if limit_status.at_limit and limit_status.enforcement == "soft":
+                    logger.warning(
+                        "User registered above subscription limit",
+                        extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
+                    )
+                    # SHU-784: force admin approval on the over-limit user even if
+                    # SHU_AUTO_ACTIVATE_USERS=true. Without this override, soft
+                    # enforcement degenerates to `none` whenever auto-activate is
+                    # on. Below the limit, operator policy still applies.
+                    over_limit_soft = True
+
+            user_role = user_service.determine_user_role(request.email, is_first_user)
+            is_admin = user_role == UserRole.ADMIN
+
+            # SHU-507: decide which gate the new user must clear before logging in.
+            # - Admin / first-user: no gate (admin path also applies to first-user bootstrap)
+            # - Email backend disabled (or downgraded to disabled by the factory
+            #   because the configured backend's required config is missing):
+            #   legacy admin-activation gate
+            # - Email backend effectively configured: email-verification gate
+            verification_required = not is_admin and get_effective_email_backend_name() != "disabled"
+
+            if verification_required:
+                # Flush the user row so the verification token write rides the
+                # same transaction. The endpoint commits at the end.
+                user = await password_auth_service.create_user(
+                    email=request.email,
+                    password=request.password,
+                    name=request.name,
+                    role=user_role.value,
+                    db=db,
+                    admin_created=False,
+                    requires_email_verification=True,
+                    flush_only=True,
+                    force_inactive=over_limit_soft,
                 )
-            if limit_status.at_limit and limit_status.enforcement == "soft":
-                logger.warning(
-                    "User registered above subscription limit",
-                    extra={"current_users": limit_status.current_count, "limit": limit_status.user_limit},
+                verification_service = get_email_verification_service_dependency()
+                await verification_service.issue_token(user, db)
+                await db.commit()
+                await db.refresh(user)
+
+                # Two gates may apply after registration:
+                #   1. Email verification (always, when the email backend is on)
+                #   2. Admin activation (when SHU_AUTO_ACTIVATE_USERS=false, the
+                #      default — so the admin still has to approve even after
+                #      the user verifies)
+                # Surface the combination so the frontend can describe exactly
+                # what is required of the user before login works.
+                both_gates_pending = not user.is_active
+                if both_gates_pending:
+                    message = (
+                        "Registration successful! Check your email for a verification link, "
+                        "and wait for an administrator to activate your account before you can log in."
+                    )
+                    status_value = "pending_verification_and_admin"
+                else:
+                    message = (
+                        "Registration successful! Check your email for a verification link " "to activate your account."
+                    )
+                    status_value = "pending_email_verification"
+
+                return SuccessResponse(
+                    data={
+                        "message": message,
+                        "email": user.email,
+                        "status": status_value,
+                    }
                 )
-                # SHU-784: force admin approval on the over-limit user even if
-                # SHU_AUTO_ACTIVATE_USERS=true. Without this override, soft
-                # enforcement degenerates to `none` whenever auto-activate is
-                # on. Below the limit, operator policy still applies.
-                over_limit_soft = True
 
-        user_role = user_service.determine_user_role(request.email, is_first_user)
-        is_admin = user_role == UserRole.ADMIN
-
-        # SHU-507: decide which gate the new user must clear before logging in.
-        # - Admin / first-user: no gate (admin path also applies to first-user bootstrap)
-        # - Email backend disabled (or downgraded to disabled by the factory
-        #   because the configured backend's required config is missing):
-        #   legacy admin-activation gate
-        # - Email backend effectively configured: email-verification gate
-        from ..core.email.factory import get_effective_email_backend_name
-
-        verification_required = not is_admin and get_effective_email_backend_name() != "disabled"
-
-        if verification_required:
-            # Flush the user row so the verification token write rides the
-            # same transaction. The endpoint commits at the end.
+            # Legacy paths: admin-created (instant) or email backend disabled
+            # (admin must activate manually).
             user = await password_auth_service.create_user(
                 email=request.email,
                 password=request.password,
                 name=request.name,
                 role=user_role.value,
                 db=db,
-                admin_created=False,
-                requires_email_verification=True,
-                flush_only=True,
-                force_inactive=over_limit_soft,
+                admin_created=is_admin,
             )
-            verification_service = get_email_verification_service_dependency()
-            await verification_service.issue_token(user, db)
-            await db.commit()
-            await db.refresh(user)
-
-            # Two gates may apply after registration:
-            #   1. Email verification (always, when the email backend is on)
-            #   2. Admin activation (when SHU_AUTO_ACTIVATE_USERS=false, the
-            #      default — so the admin still has to approve even after
-            #      the user verifies)
-            # Surface the combination so the frontend can describe exactly
-            # what is required of the user before login works.
-            both_gates_pending = not user.is_active
-            if both_gates_pending:
-                message = (
-                    "Registration successful! Check your email for a verification link, "
-                    "and wait for an administrator to activate your account before you can log in."
-                )
-                status_value = "pending_verification_and_admin"
-            else:
-                message = (
-                    "Registration successful! Check your email for a verification link " "to activate your account."
-                )
-                status_value = "pending_email_verification"
 
             return SuccessResponse(
                 data={
-                    "message": message,
+                    "message": "Registration successful!"
+                    + (
+                        " Your account has been created but requires administrator activation before you can log in."
+                        if not is_admin
+                        else ""
+                    ),
                     "email": user.email,
-                    "status": status_value,
+                    "status": "pending_admin_activation" if not is_admin else "activated",
                 }
             )
-
-        # Legacy paths: admin-created (instant) or email backend disabled
-        # (admin must activate manually).
-        user = await password_auth_service.create_user(
-            email=request.email,
-            password=request.password,
-            name=request.name,
-            role=user_role.value,
-            db=db,
-            admin_created=is_admin,
-        )
-
-        return SuccessResponse(
-            data={
-                "message": "Registration successful!"
-                + (
-                    " Your account has been created but requires administrator activation before you can log in."
-                    if not is_admin
-                    else ""
-                ),
-                "email": user.email,
-                "status": "pending_admin_activation" if not is_admin else "activated",
-            }
-        )
 
     except HTTPException:
         raise
@@ -407,9 +437,15 @@ async def verify_email(
     would strand them. The 503 gate lives only on issue/resend endpoints
     that actually attempt outbound delivery.
     """
+    import hashlib
+
     service = get_email_verification_service_dependency()
+    # Pre-auth tenant context — the service hashes the token and reads/writes
+    # users.email_verified, both under RLS.
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
     try:
-        user = await service.verify_token(request.token, db)
+        async with tenant_context_for_verification_token(token_hash):
+            user = await service.verify_token(request.token, db)
     except TokenExpiredError as e:
         # Expired branch: the hash matched a real row, so we know which
         # account this token belongs to. We do NOT need to send the email
@@ -454,9 +490,7 @@ async def resend_verification(
     verified, or hit the rate limit — no enumeration. The actual send happens
     only when there is a real pending verification.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -464,8 +498,14 @@ async def resend_verification(
         )
 
     service = get_email_verification_service_dependency()
-    await service.resend(request.email, db)
-    await db.commit()
+    # SHU-761: pre-auth tenant resolution. `service.resend` reads users by
+    # email and writes the new verification token row — both need RLS scope.
+    # In multi-tenant the email lookup either resolves (real user) or returns
+    # None (unknown email → tenant_context unset → service reads see 0 rows
+    # → silent no-op, preserving the enumeration-resistant 200 envelope).
+    async with tenant_context_for_email(request.email):
+        await service.resend(request.email, db)
+        await db.commit()
 
     # Generic envelope — does not leak whether the address exists or was sent.
     return SuccessResponse(
@@ -499,18 +539,26 @@ async def resend_verification_from_token(
     of whether the token matched a real user, was already verified, or
     hit the rate limit).
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Email backend is not configured; admin activation is the gate on this instance.",
         )
 
+    import hashlib
+
     service = get_email_verification_service_dependency()
-    await service.resend_from_token(request.token, db)
-    await db.commit()
+    # SHU-761: pre-auth tenant resolution from the token hash. After RLS,
+    # `service.resend_from_token` reads the users row keyed by
+    # `email_verification_token_hash` and issues a fresh token — both reads
+    # and writes need a tenant scope. The SD function returns NULL on an
+    # unknown hash, leaving tenant_context unset; the service then sees
+    # zero rows and silently no-ops, preserving the generic 200 envelope.
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
+    async with tenant_context_for_verification_token(token_hash):
+        await service.resend_from_token(request.token, db)
+        await db.commit()
 
     return SuccessResponse(
         data={
@@ -558,9 +606,7 @@ async def request_password_reset(
     they did before SHU-745). The frontend cannot distinguish from the
     other no-op branches.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         logger.warning(
             "Password reset requested for %s but SHU_EMAIL_BACKEND=disabled — operators must reset manually",
@@ -569,7 +615,6 @@ async def request_password_reset(
         )
         return SuccessResponse(data=_RESET_NEUTRAL_RESPONSE)
 
-    from ..core.rate_limiting import get_client_ip
     from ..services.password_reset_service import get_password_reset_service_dependency
 
     client_ip = get_client_ip(
@@ -578,8 +623,11 @@ async def request_password_reset(
     )
 
     service = get_password_reset_service_dependency()
-    await service.request_reset(request.email, client_ip, db)
-    await db.commit()
+    # Pre-auth tenant context — request_reset reads users by email and writes
+    # a password_reset_token row, both of which need to happen under RLS.
+    async with tenant_context_for_email(request.email):
+        await service.request_reset(request.email, client_ip, db)
+        await db.commit()
 
     return SuccessResponse(data=_RESET_NEUTRAL_RESPONSE)
 
@@ -610,6 +658,8 @@ async def reset_password(
     independent of whether the backend can currently send NEW emails.
     The 503 gate lives only on issue/resend endpoints.
     """
+    import hashlib
+
     from ..services.password_reset_service import (
         PasswordPolicyError,
         RateLimitedError,
@@ -619,8 +669,12 @@ async def reset_password(
     )
 
     service = get_password_reset_service_dependency()
+    # Pre-auth tenant context — the service hashes the token and reads the
+    # password_reset_token row + updates the users password, all under RLS.
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
     try:
-        await service.complete_reset(request.token, request.new_password, db)
+        async with tenant_context_for_reset_token(token_hash):
+            await service.complete_reset(request.token, request.new_password, db)
     except RateLimitedError:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -668,20 +722,28 @@ async def resend_password_reset_from_token(
     of whether the token matched a real user, was already used, ineligible,
     or rate-limited.
     """
-    from ..core.email.factory import get_effective_email_backend_name as _eff_backend
-
-    email_backend = _eff_backend()
+    email_backend = get_effective_email_backend_name()
     if email_backend == "disabled":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Email backend is not configured; password reset is unavailable on this instance.",
         )
 
+    import hashlib
+
     from ..services.password_reset_service import get_password_reset_service_dependency
 
     service = get_password_reset_service_dependency()
-    await service.resend_from_token(request.token, db)
-    await db.commit()
+    # SHU-761: pre-auth tenant resolution from the reset-token hash. After
+    # RLS, `service.resend_from_token` reads the `password_reset_token` row
+    # by hash and writes a fresh row — both need a tenant scope. The SD
+    # function returns NULL on unknown hash → tenant_context unset →
+    # service sees zero rows and silently no-ops, preserving the
+    # enumeration-resistant 200 envelope.
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
+    async with tenant_context_for_reset_token(token_hash):
+        await service.resend_from_token(request.token, db)
+        await db.commit()
 
     return SuccessResponse(data=_RESEND_RESET_NEUTRAL_RESPONSE)
 
@@ -714,24 +776,27 @@ async def login_with_password(
 
     """
     try:
-        auth_method = await user_service.get_user_auth_method(db, request.email)
-        if auth_method is not None and auth_method != "password":
-            if auth_method == "google":
+        # Pre-auth tenant context — every users read in this handler (auth-method
+        # lookup + password verification) needs to happen under RLS.
+        async with tenant_context_for_email(request.email):
+            auth_method = await user_service.get_user_auth_method(db, request.email)
+            if auth_method is not None and auth_method != "password":
+                if auth_method == "google":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="This account uses Google authentication. Please use the Google login flow.",
+                    )
+                if auth_method == "microsoft":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="This account uses Microsoft authentication. Please use the Microsoft login flow.",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Google authentication. Please use the Google login flow.",
+                    detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow.",
                 )
-            if auth_method == "microsoft":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This account uses Microsoft authentication. Please use the Microsoft login flow.",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"This account uses {auth_method} authentication. Please use the appropriate login flow.",
-            )
 
-        user = await password_auth_service.authenticate_user(request.email, request.password, db)
+            user = await password_auth_service.authenticate_user(request.email, request.password, db)
 
         # Create JWT token response using shared helper
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -835,76 +900,92 @@ async def refresh_token(
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-        # Get current user data from database
-        user = await user_service.get_user_by_id(user_id, db)
+        # SHU-761: pre-auth tenant resolution. The handler can't depend on
+        # ``fetch_user`` because the access token may be expired (refresh is
+        # exactly the recovery path for that). Without setting tenant_context
+        # here, every DB read in this handler runs default-deny under RLS and
+        # returns 0 rows → users get permanently kicked out at access-token
+        # expiry. The user_id from the refresh token is the credential we
+        # resolve against the SECURITY DEFINER tenant_for_user_id lookup.
+        #
+        # The whole body sits inside the context manager so any lazy ORM
+        # attribute access on ``user`` (relationships, deferred columns) stays
+        # under the right tenant scope; closing it early would risk a stray
+        # late-load running default-deny.
+        async with tenant_context_for_user_id(user_id):
+            # Get current user data from database
+            user = await user_service.get_user_by_id(user_id, db)
 
-        if not user or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+            if not user or not user.is_active:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
-        # SHU-745: refuse to mint a fresh access token for a refresh token
-        # issued before the user's most recent password change. JWT
-        # middleware applies the same gate to access tokens; this is the
-        # corresponding rejection for refresh tokens (which have a much
-        # longer TTL and would otherwise let a stolen pre-reset session
-        # keep working until natural expiry).
-        if user.password_changed_at is not None:
-            from jose import jwt as _jwt
+            # SHU-745: refuse to mint a fresh access token for a refresh token
+            # issued before the user's most recent password change. JWT
+            # middleware applies the same gate to access tokens; this is the
+            # corresponding rejection for refresh tokens (which have a much
+            # longer TTL and would otherwise let a stolen pre-reset session
+            # keep working until natural expiry).
+            if user.password_changed_at is not None:
+                from jose import jwt as _jwt
 
-            from ..auth.jwt_manager import is_token_revoked_by_password_change
+                from ..auth.jwt_manager import is_token_revoked_by_password_change
 
-            try:
-                refresh_payload = _jwt.decode(
-                    request.refresh_token,
-                    user_service.jwt_manager.secret_key,
-                    algorithms=[user_service.jwt_manager.algorithm],
-                )
-                token_iat = refresh_payload.get("iat")
-            except Exception:
-                token_iat = None
+                try:
+                    refresh_payload = _jwt.decode(
+                        request.refresh_token,
+                        user_service.jwt_manager.secret_key,
+                        algorithms=[user_service.jwt_manager.algorithm],
+                    )
+                    token_iat = refresh_payload.get("iat")
+                except Exception:
+                    token_iat = None
 
-            if is_token_revoked_by_password_change(token_iat, user.password_changed_at):
+                if is_token_revoked_by_password_change(token_iat, user.password_changed_at):
+                    logger.info(
+                        "Refresh blocked for %s (user %s): token predates password change",
+                        user.email,
+                        user.id,
+                        extra={
+                            "event": "refresh.blocked_password_changed",
+                            "user_id": user.id,
+                            "email": user.email,
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Session expired due to password change. Please sign in again.",
+                    )
+
+            # SHU-507 defense-in-depth: refuse to mint a fresh access token for an
+            # unverified password user when an email backend is configured. The
+            # login endpoint already gates on email_verified; this is a belt and
+            # suspenders so a regression in any login path can't leak through
+            # refresh and grant an unverified user continued access.
+            email_backend = get_effective_email_backend_name()
+            if email_backend != "disabled" and user.auth_method == "password" and not user.email_verified:
                 logger.info(
-                    "Refresh blocked for %s (user %s): token predates password change",
+                    "Refresh blocked for %s (user %s): email not verified",
                     user.email,
                     user.id,
                     extra={
-                        "event": "refresh.blocked_password_changed",
+                        "event": "refresh.blocked_unverified",
                         "user_id": user.id,
                         "email": user.email,
                     },
                 )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired due to password change. Please sign in again.",
+                    detail="Please verify your email address before continuing.",
                 )
 
-        # SHU-507 defense-in-depth: refuse to mint a fresh access token for an
-        # unverified password user when an email backend is configured. The
-        # login endpoint already gates on email_verified; this is a belt and
-        # suspenders so a regression in any login path can't leak through
-        # refresh and grant an unverified user continued access.
-        from ..core.email.factory import get_effective_email_backend_name as _eff_backend
+            # Create JWT token response using shared helper
+            return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
 
-        email_backend = _eff_backend()
-        if email_backend != "disabled" and user.auth_method == "password" and not user.email_verified:
-            logger.info(
-                "Refresh blocked for %s (user %s): email not verified",
-                user.email,
-                user.id,
-                extra={
-                    "event": "refresh.blocked_unverified",
-                    "user_id": user.id,
-                    "email": user.email,
-                },
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Please verify your email address before continuing.",
-            )
-
-        # Create JWT token response using shared helper
-        return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
-
+    except UserTenantNotFoundError:
+        # Refresh token references a user that's been deleted since the
+        # token was issued. Surface as 401 so the client clears the session;
+        # 500 would mask a normal "you're not authenticated anymore" path.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     except HTTPException:
         raise
     except Exception as e:
@@ -975,8 +1056,10 @@ async def google_exchange_login(
         # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(id_token=id_token, db=db)
 
-        # Authenticate or create user using unified SSO method
-        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        # Pre-auth tenant resolution from the verified email so the users
+        # read inside authenticate_or_create_sso_user happens under RLS.
+        async with tenant_context_for_email(provider_info["email"]):
+            user = await user_service.authenticate_or_create_sso_user(provider_info, db)
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))
@@ -1052,8 +1135,10 @@ async def microsoft_exchange_login(
         # Get normalized user info from adapter
         provider_info = await adapter.get_user_info(access_token=access_token)
 
-        # Authenticate or create user using unified SSO method
-        user = await user_service.authenticate_or_create_sso_user(provider_info, db)
+        # Pre-auth tenant resolution from the verified email so the users
+        # read inside authenticate_or_create_sso_user happens under RLS.
+        async with tenant_context_for_email(provider_info["email"]):
+            user = await user_service.authenticate_or_create_sso_user(provider_info, db)
 
         # Create JWT token response
         return SuccessResponse(data=TokenResponse(**create_token_response(user, user_service.jwt_manager)))

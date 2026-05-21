@@ -50,9 +50,9 @@ from shu.billing.seat_service import (
 from shu.billing.service import BillingService, CustomerMismatchError
 from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient, StripeClientError
-from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
+from shu.core.tenant import UnknownStripeCustomerError, tenant_context_for_stripe_customer
 
 logger = get_logger(__name__)
 
@@ -325,9 +325,12 @@ async def _post_trial_action(
     # Tenant doesn't have the Stripe subscription id at this layer — CP
     # holds it. Kept on the audit shape with None so future enrichment
     # (e.g., echoing the id back from CP's response) is additive.
+    # tenant_id comes from the (RLS-filtered) authenticated User row,
+    # not `settings.tenant_id` — the settings field is None in multi-
+    # tenant mode and would log a null tenant on every audit event.
     audit_extra = {
         "acting_user_id": user.id,
-        "tenant_id": get_settings_instance().tenant_id,
+        "tenant_id": user.tenant_id,
         "action": action,
         "stripe_subscription_id": None,
     }
@@ -336,8 +339,8 @@ async def _post_trial_action(
     # initialization (only one populated) still raises 503, which is the
     # correct posture: we can't safely invalidate without the cache, and
     # we can't make the call without the client.
-    cache = get_billing_state_cache()
-    cp_client = get_cp_client()
+    cache = await get_billing_state_cache()
+    cp_client = await get_cp_client()
     if cache is None or cp_client is None:
         logger.info(
             "billing.tier_change",
@@ -657,26 +660,48 @@ async def handle_webhook(
     # for any follow-up API calls made from the event context.
     event = stripe.Event.construct_from(event_payload, stripe.api_key)
 
-    try:
-        persist_subscription = await create_subscription_persistence_callback(db)
-        on_payment_failed = await create_payment_failed_callback(db)
-        on_payment_recovered = await create_payment_recovered_callback(db)
-        # seat_service is only None when billing isn't configured. Webhooks
-        # shouldn't reach an unconfigured tenant in practice, but guard so
-        # the type matches reality and we don't NPE if the router is
-        # ever wired to a half-provisioned instance.
-        on_cycle_rollover = create_cycle_rollover_callback(db, seat_service) if seat_service is not None else None
-        billing_config = await get_billing_config(db)
-        expected_customer_id = billing_config.get("stripe_customer_id")
+    # The event's data.object always carries a `customer` field for the events
+    # we handle (subscription.*, invoice.*, etc.); extract it so the pre-auth
+    # tenant resolver can map it to the right tenant before any billing_state
+    # read/write.
+    event_data_object = event_payload.get("data", {}).get("object", {})
+    customer_id = event_data_object.get("customer") if isinstance(event_data_object, dict) else None
 
-        _handled, event_type, event_id = await service.handle_webhook(
-            event=event,
-            persist_subscription=persist_subscription,
-            on_payment_failed=on_payment_failed,
-            on_payment_recovered=on_payment_recovered,
-            on_cycle_rollover=on_cycle_rollover,
-            expected_customer_id=expected_customer_id,
+    if not isinstance(customer_id, str) or not customer_id.strip():
+        # Malformed event — no customer means no way to resolve tenant. Returning
+        # 400 (not 500) is critical: Stripe retries 5xx with exponential backoff,
+        # so a single malformed event would create a sustained retry storm. 4xx
+        # signals "don't retry, the request was bad" and Stripe drops it.
+        logger.warning(
+            "Webhook event missing 'customer' field; cannot resolve tenant",
+            extra={"event_type": event_payload.get("type"), "event_id": event_payload.get("id")},
         )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "missing_customer"},
+        )
+
+    try:
+        async with tenant_context_for_stripe_customer(customer_id):
+            persist_subscription = await create_subscription_persistence_callback(db)
+            on_payment_failed = await create_payment_failed_callback(db)
+            on_payment_recovered = await create_payment_recovered_callback(db)
+            # seat_service is only None when billing isn't configured. Webhooks
+            # shouldn't reach an unconfigured tenant in practice, but guard so
+            # the type matches reality and we don't NPE if the router is
+            # ever wired to a half-provisioned instance.
+            on_cycle_rollover = create_cycle_rollover_callback(db, seat_service) if seat_service is not None else None
+            billing_config = await get_billing_config(db)
+            expected_customer_id = billing_config.get("stripe_customer_id")
+
+            _handled, event_type, event_id = await service.handle_webhook(
+                event=event,
+                persist_subscription=persist_subscription,
+                on_payment_failed=on_payment_failed,
+                on_payment_recovered=on_payment_recovered,
+                on_cycle_rollover=on_cycle_rollover,
+                expected_customer_id=expected_customer_id,
+            )
 
         return ShuResponse.success(
             WebhookEventResponse(
@@ -686,6 +711,21 @@ async def handle_webhook(
             ).model_dump()
         )
 
+    except UnknownStripeCustomerError:
+        # Webhook for a customer that doesn't exist in our billing_state.
+        # Returning 409 (not 200) is critical to prevent retry storms.
+        logger.warning(
+            "Webhook event for unknown stripe customer; cannot resolve tenant",
+            extra={
+                "stripe_customer_id": customer_id,
+                "event_type": event_payload.get("type"),
+                "event_id": event_payload.get("id"),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "unknown_customer"},
+        )
     except CustomerMismatchError as e:
         # Defense-in-depth surfaced a router registry misconfiguration. Return
         # a structured 409 so the router (once its forwarder parses error

@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 # Add the src directory to the path so we can import our models
 project_root = Path(__file__).parent.parent
@@ -34,31 +34,35 @@ def get_target_metadata():
 # ... etc.
 
 
-def get_database_url():
-    """Get database URL from environment or config."""
-    # First try to get the URL from the Alembic configuration
-    # This allows the setup script to override it directly
+def get_migration_database_url():
+    """Get database URL from environment or config.
+
+    SHU-761: migrations should run as ``shu_admin`` (BYPASSRLS), so this
+    prefers ``SHU_DB_ADMIN_URL``. ``SHU_DATABASE_URL`` is kept as a fallback
+    because it's the only URL that exists pre-Stage-C (before shu_admin is
+    created). The role guard in ``run_migrations_online`` then enforces that
+    the actually-connecting role is never ``shu_app``.
+    """
     alembic_url = config.get_main_option("sqlalchemy.url")
     if alembic_url:
         return alembic_url
 
-    # Fall back to the Settings class for normal operation
     try:
         from shu.core.config import get_settings_instance
 
         settings = get_settings_instance()
-        database_url = settings.database_url
+        database_url = settings.db_admin_url or settings.database_url
     except Exception:
-        # If Settings fails, try to get from environment directly
         import os
 
-        database_url = os.getenv("SHU_DATABASE_URL")
+        database_url = os.getenv("SHU_DB_ADMIN_URL") or os.getenv("SHU_DATABASE_URL")
         if not database_url:
             raise RuntimeError(
-                "Could not determine database URL. Please set SHU_DATABASE_URL environment variable or configure Alembic directly."
-            )
+                "Could not determine database URL. Set SHU_DB_ADMIN_URL (preferred) "
+                "or SHU_DATABASE_URL, or configure Alembic directly."
+            ) from None
 
-    # Convert async URL to sync URL for Alembic
+    # asyncpg dialect doesn't speak to Alembic; convert to the sync driver.
     if database_url.startswith("postgresql+asyncpg://"):
         database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
@@ -77,7 +81,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = get_database_url()
+    url = get_migration_database_url()
     context.configure(
         url=url,
         target_metadata=get_target_metadata(),
@@ -98,7 +102,7 @@ def run_migrations_online() -> None:
     """
     # Override the sqlalchemy.url from the config
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = get_database_url()
+    configuration["sqlalchemy.url"] = get_migration_database_url()
     configuration["sqlalchemy.echo"] = "True"
 
     connectable = engine_from_config(
@@ -108,15 +112,45 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # shu_app is the non-bypassing app role; migrations under it would be
+        # blocked by RLS or fail privilege checks. Refuse loudly rather than
+        # discovering it mid-upgrade. Other roles (shu_admin, superuser used
+        # pre-Stage-C) are allowed — we know the forbidden set, not the full
+        # allowed set, so this is an asymmetric check by design.
+        current_user = connection.execute(text("SELECT current_user")).scalar()
+        if current_user == "shu_app":
+            raise RuntimeError(
+                "Migrations must not run as the 'shu_app' role — that role lacks BYPASSRLS "
+                "and migration privileges. Point SHU_DB_ADMIN_URL at the 'shu_admin' role."
+            )
+
+        # SQLAlchemy 2.0 autobegin: the role-check ``execute`` above opened
+        # an implicit transaction on this connection. Alembic's
+        # MigrationContext.__init__ inspects ``connection.in_transaction()``;
+        # if True it sets ``_in_external_transaction=True`` and then
+        # ``begin_transaction()`` returns a no-op nullcontext, leaving
+        # ``_transaction`` as None — which makes ``autocommit_block()``
+        # assert. Rolling back the role-check tx (no writes to lose)
+        # leaves alembic to manage transactions itself.
+        connection.rollback()
+
         context.configure(
             connection=connection,
             target_metadata=get_target_metadata(),
-            transactional_ddl=False,
         )
 
-        # Run migrations without an explicit transaction block to avoid
-        # aborting the whole upgrade on benign cleanup differences.
-        context.run_migrations()
+        # Postgres supports transactional DDL, so the standard alembic
+        # pattern is the right one: one outer transaction wraps the run,
+        # and `op.get_context().autocommit_block()` (used by 009's
+        # CREATE INDEX CONCURRENTLY block) can interrupt it — commit
+        # the current tx, run the body in autocommit, open a fresh tx
+        # on exit. Note that `transactional_ddl=False` would defeat
+        # this: with the override, `begin_transaction()` returns a
+        # nullcontext and `_transaction` stays None, then
+        # `autocommit_block()` asserts on entry. The override has been
+        # removed.
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():

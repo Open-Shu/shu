@@ -6,19 +6,23 @@ and utilities for database operations.
 
 import ast
 import os
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import Session, declarative_base
 
+from .config import DeploymentMode
 from .exceptions import (
     DatabaseConnectionError,
     DatabaseSessionError,
 )
 from .logging import get_logger
+from .tenant import CrossTenantInsertError, MissingTenantContextError, tenant_context
 
 logger = get_logger(__name__)
 
@@ -69,6 +73,14 @@ def get_settings():
             database_pool_recycle = 3600
             debug = False
             use_pgbouncer = False
+            # Defaulting to self_hosted keeps the fallback path safe: callers that
+            # branch on deployment_mode get the most permissive non-tenant mode
+            # rather than crashing on a missing attribute.
+            deployment_mode = DeploymentMode.SELF_HOSTED
+            # db_admin_url has no sensible fallback — the admin engine is
+            # opt-in. Declared here so ``get_admin_engine`` can read the
+            # attribute directly without defensive getattr.
+            db_admin_url = None
 
         return MinimalSettings()
 
@@ -152,6 +164,192 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise DatabaseSessionError(f"session operation: {e!s}")
         finally:
             await session.close()
+
+
+# =============================================================================
+# Tenant-isolation event hooks (SHU-761 Stage D)
+#
+# Three listeners wire `tenant_context` into the SQLAlchemy machinery:
+#   - Engine "begin": stamps app.tenant_id on every new transaction via
+#     set_config(..., true). Bind-parameter-safe; PgBouncer-transaction-mode-safe.
+#   - Session "before_flush": auto-stamps tenant_id on new tenant-scoped
+#     objects from the session's context; raises on mismatch.
+#   - Engine "before_cursor_execute" (debug only): rejects raw SET on
+#     app.tenant_id — the only legitimate path is through set_config in the
+#     begin hook.
+# =============================================================================
+
+
+def _is_admin_connection(conn) -> bool:
+    """Evaluate, true iff this connection belongs to the lazy admin engine.
+
+    The begin listener below is registered class-level on ``Engine``, so it
+    matches both ``_async_engine`` (shu_app, RLS-enforced) and
+    ``_admin_engine`` (shu_admin, BYPASSRLS). For the admin path the
+    ``set_config`` would be a no-op (BYPASSRLS ignores the GUC) but the
+    round-trip still costs latency, and ``cross_tenant_query`` documents
+    ``app.tenant_id`` as intentionally not set on admin sessions — a
+    promise the code can actually keep by skipping the stamp here.
+
+    Lazy-check ``_admin_engine`` because at import time it doesn't exist
+    yet. ``AsyncEngine.sync_engine`` is what the listener's ``conn.engine``
+    matches against.
+    """
+    if _admin_engine is None:
+        return False
+    return conn.engine is _admin_engine.sync_engine
+
+
+@event.listens_for(Engine, "begin")
+def _set_tenant_on_begin(conn) -> None:
+    # set_config is Postgres-specific. SQLite-backed unit-test sessions hit
+    # this hook too and would fail with "no such function: set_config" —
+    # gate the whole hook on the dialect, not just the missing-context log.
+    if conn.dialect.name != "postgresql":
+        return
+    # Admin engine bypasses RLS — stamping the GUC there is wasted work.
+    if _is_admin_connection(conn):
+        return
+    tid = tenant_context.get(None)
+    if tid is None:
+        # Default-deny will kick in once RLS is active and the role lacks
+        # BYPASSRLS; log once at DEBUG so the missing-context site is greppable
+        # without spamming production logs.
+        logger.debug("transaction begun without tenant context")
+        return
+    conn.execute(
+        text("SELECT set_config('app.tenant_id', :tid, true)"),
+        {"tid": str(tid)},
+    )
+
+
+def _is_tenant_scoped(obj: object) -> bool:
+    """Check duck-typed: does this ORM object map to a tenant-scoped table.
+
+    Avoids importing ``models.base.TenantScopedMixin`` here — that would
+    close a circular import (models.base imports Base from this module).
+    Looking for the column instead is equivalent: every tenant-scoped table
+    has a ``tenant_id`` column by definition (the mixin declares it), and
+    no global table has one.
+    """
+    table = getattr(type(obj), "__table__", None)
+    return table is not None and "tenant_id" in table.columns
+
+
+@event.listens_for(Session, "before_flush")
+def _stamp_tenant_id(session, flush_context, instances) -> None:
+    tid = tenant_context.get(None)
+
+    # session.new — auto-stamp from context, or raise on mismatch / missing context.
+    for obj in session.new:
+        if not _is_tenant_scoped(obj):
+            continue
+        current = getattr(obj, "tenant_id", None)
+        cls_name = type(obj).__name__
+        if current is None:
+            if tid is None:
+                raise MissingTenantContextError(
+                    f"Cannot flush {cls_name}: tenant_id not set and tenant_context is empty. "
+                    "Ensure the route has a tenant-resolution dependency or the worker handler "
+                    "is wrapped to set tenant_context for the job."
+                )
+            obj.tenant_id = tid
+        elif tid is not None and current != tid:
+            raise CrossTenantInsertError(f"{cls_name}.tenant_id = {current!r} does not match session context {tid!r}")
+
+    # session.dirty — catch UPDATE-time cross-tenant mismatches the same way
+    # as inserts. Loading an object under tenant X then mutating its
+    # tenant_id to Y is almost always a bug; the RLS WITH CHECK policy would
+    # reject the UPDATE at the DB layer anyway, but raising here gives a
+    # stack trace pointing at the mutation site instead of a generic
+    # row-rejected error at flush. UPDATEs don't auto-stamp (we never
+    # silently change tenant_id on an existing row); they only validate.
+    for obj in session.dirty:
+        if not _is_tenant_scoped(obj):
+            continue
+        current = getattr(obj, "tenant_id", None)
+        # ``current is None`` on a dirty object means the row's tenant_id was
+        # explicitly cleared, which is also a write that RLS would reject —
+        # surface it as a mismatch with the session's context.
+        if tid is not None and current != tid:
+            raise CrossTenantInsertError(
+                f"{type(obj).__name__}.tenant_id = {current!r} does not match session context " f"{tid!r} (update path)"
+            )
+
+
+# Compiled once at import — cheap to match against every statement and the
+# guard is the only intended interceptor of `app.tenant_id` SETs anyway.
+_SET_TENANT_RE = re.compile(
+    r"^\s*SET\s+(?:SESSION\s+|LOCAL\s+)?app\.tenant_id\b",
+    re.IGNORECASE,
+)
+
+
+@event.listens_for(Engine, "before_cursor_execute")
+def _reject_unsafe_set(conn, cursor, statement, parameters, context, executemany) -> None:
+    # The check is dev/test/CI only — production runs with debug=False, so the
+    # function returns immediately. There is no legitimate use of raw SET on
+    # app.tenant_id; the begin hook is the single point of enforcement.
+    # get_settings() is already cached at the Settings layer, so no need for
+    # a separate module-level cache here (and a module global would make
+    # tests brittle without buying measurable perf).
+    if not get_settings().debug:
+        return
+    if _SET_TENANT_RE.match(statement):
+        raise RuntimeError(
+            f"Direct SET on app.tenant_id is forbidden — use set_config(..., true) via "
+            f"the engine begin hook. Got: {statement!r}"
+        )
+
+
+# =============================================================================
+# Admin engine + session factory (SHU-761 Stage D, task 8.5)
+#
+# Parallel to the app's lazy engine but bound to SHU_DB_ADMIN_URL (the
+# shu_admin role). Used only by TenantAdminService and (eventually) the
+# Alembic env.py rotation. shu_admin has BYPASSRLS, so this engine intentionally
+# does not participate in the per-request tenant context dance.
+# =============================================================================
+
+_admin_engine = None
+_AdminSessionLocal = None
+
+
+def get_admin_engine():
+    global _admin_engine  # noqa: PLW0603
+    if _admin_engine is None:
+        settings = get_settings()
+        admin_url = settings.db_admin_url
+        if not admin_url:
+            raise DatabaseConnectionError(
+                "SHU_DB_ADMIN_URL is not configured. The admin engine is only valid "
+                "after Stage C roles land and the operator populates the env var."
+            )
+        connect_args = {"statement_cache_size": 0} if settings.use_pgbouncer else {}
+        _admin_engine = create_async_engine(
+            admin_url,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            pool_timeout=settings.database_pool_timeout,
+            pool_recycle=settings.database_pool_recycle,
+            pool_pre_ping=True,
+            echo=False,
+            connect_args=connect_args,
+        )
+    return _admin_engine
+
+
+def get_admin_session_local():
+    global _AdminSessionLocal  # noqa: PLW0603
+    if _AdminSessionLocal is None:
+        _AdminSessionLocal = async_sessionmaker(
+            bind=get_admin_engine(),
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+            class_=AsyncSession,
+        )
+    return _AdminSessionLocal
 
 
 async def get_db_session() -> AsyncSession:
@@ -271,12 +469,28 @@ async def verify_schema_version() -> None:
 
 
 async def close_db() -> None:
+    # Two engines may have been lazily built: the app engine (every process)
+    # and the admin engine (only when an admin-tooling code path actually
+    # called get_admin_engine). Dispose whichever was built so neither pool
+    # outlives the process shutdown. Reading the module globals directly
+    # avoids accidentally building the admin engine just to tear it down.
+    global _admin_engine, _AdminSessionLocal  # noqa: PLW0603
+
     try:
         engine = get_async_engine()
         await engine.dispose()
-        logger.debug("Database connections closed")
     except Exception as e:
-        logger.error(f"Error closing database connections: {e!s}")
+        logger.error(f"Error closing app engine: {e!s}")
+
+    if _admin_engine is not None:
+        try:
+            await _admin_engine.dispose()
+        except Exception as e:
+            logger.error(f"Error closing admin engine: {e!s}")
+        _admin_engine = None
+        _AdminSessionLocal = None
+
+    logger.debug("Database connections closed")
 
 
 async def check_db_connection() -> bool:

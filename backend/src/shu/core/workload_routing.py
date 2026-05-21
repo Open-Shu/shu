@@ -28,7 +28,8 @@ Example usage:
 from enum import Enum
 from typing import Any
 
-from .queue_backend import Job, QueueBackend
+from .queue_backend import EnqueueError, Job, QueueBackend
+from .tenant import tenant_context
 
 
 class WorkloadType(Enum):
@@ -155,6 +156,8 @@ async def enqueue_job(
     backend: QueueBackend,
     workload_type: WorkloadType,
     payload: dict[str, Any],
+    *,
+    tenant_id: str | None = None,
     **job_kwargs: Any,
 ) -> Job:
     """Enqueue a job for the specified workload type.
@@ -167,6 +170,13 @@ async def enqueue_job(
         backend: The queue backend to use (typically from dependency injection).
         workload_type: The type of workload (e.g., WorkloadType.INGESTION).
         payload: Job payload data as a JSON-serializable dictionary.
+        tenant_id: Optional explicit tenant. When omitted, the helper reads
+            from ``tenant_context.get()`` — the right answer for jobs enqueued
+            from inside a request handler. Cross-tenant callers (fan-out,
+            admin tools) pass it explicitly. ``EnqueueError`` is raised if
+            both the arg and the context are unset; the worker dispatch
+            wrapper relies on every job having a tenant so the handler can
+            run under the right RLS scope.
         **job_kwargs: Additional Job constructor arguments (e.g., max_attempts,
             visibility_timeout). These are passed directly to the Job constructor.
 
@@ -174,6 +184,7 @@ async def enqueue_job(
         The enqueued Job instance with generated ID and timestamps.
 
     Raises:
+        EnqueueError: If no tenant_id is supplied and tenant_context is unset.
         QueueConnectionError: If the backend is unreachable.
         QueueOperationError: If the job cannot be serialized or enqueued.
 
@@ -199,6 +210,12 @@ async def enqueue_job(
             return {"job_id": job.id}
 
     """
-    job = Job(queue_name=workload_type.queue_name, payload=payload, **job_kwargs)
+    tid = tenant_id if tenant_id is not None else tenant_context.get(None)
+    if tid is None:
+        raise EnqueueError(
+            f"Cannot enqueue {workload_type.value} job without tenant_id: "
+            "neither the explicit argument nor tenant_context is set."
+        )
+    job = Job(queue_name=workload_type.queue_name, payload=payload, tenant_id=tid, **job_kwargs)
     await backend.enqueue(job)
     return job

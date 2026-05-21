@@ -12,31 +12,36 @@ Design Decision:
 
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Column, ForeignKey, Index, String, Table, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import BaseModel
+from .base import Base, BaseModel, TenantScopedMixin
 
-# Many-to-many association table for ModelConfiguration <-> KnowledgeBase
-model_configuration_knowledge_bases = Table(
-    "model_configuration_knowledge_bases",
-    BaseModel.metadata,
-    Column(
-        "model_configuration_id",
+
+class ModelConfigurationKnowledgeBase(TenantScopedMixin, Base):
+    """Association rows linking model_configurations to knowledge_bases.
+
+    Converted from a plain ``Table()`` so the row carries ``tenant_id`` (via
+    TenantScopedMixin) and participates in RLS like any other tenant-scoped
+    table. Inherits ``Base`` directly — no id/timestamp columns — to preserve
+    the original composite primary key on (model_configuration_id, knowledge_base_id).
+    """
+
+    __tablename__ = "model_configuration_knowledge_bases"
+
+    model_configuration_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("model_configurations.id", ondelete="CASCADE"),
         primary_key=True,
-    ),
-    Column(
-        "knowledge_base_id",
+    )
+    knowledge_base_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         primary_key=True,
-    ),
-)
+    )
 
 
-class ModelConfiguration(BaseModel):
+class ModelConfiguration(TenantScopedMixin, BaseModel):
     """Model Configuration entity - the user-facing abstraction for AI interactions.
 
     This combines:
@@ -76,7 +81,7 @@ class ModelConfiguration(BaseModel):
     prompt = relationship("Prompt")
     knowledge_bases = relationship(
         "KnowledgeBase",
-        secondary=model_configuration_knowledge_bases,
+        secondary=ModelConfigurationKnowledgeBase.__table__,
         back_populates="model_configurations",
     )
     conversations = relationship("Conversation", back_populates="model_configuration")

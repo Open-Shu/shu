@@ -13,18 +13,18 @@ Design Decision:
 
 from datetime import UTC
 
-from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSON, TIMESTAMP
 from sqlalchemy.orm import relationship
 
 from shu.core.logging import get_logger
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 logger = get_logger(__name__)
 
 
-class Experience(BaseModel):
+class Experience(TenantScopedMixin, BaseModel):
     """Configurable composition of data sources, prompts, and LLM synthesis.
 
     Examples:
@@ -36,9 +36,13 @@ class Experience(BaseModel):
 
     __tablename__ = "experiences"
 
+    # Per-tenant uniqueness on slug, not global — two tenants can both have
+    # an experience slug like "weekly-report" without colliding.
+    __table_args__ = (UniqueConstraint("tenant_id", "slug", name="uq_experiences_tenant_slug"),)
+
     # Basic information
     name = Column(String(100), nullable=False, index=True)
-    slug = Column(String(100), nullable=False, unique=True, index=True)
+    slug = Column(String(100), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
     # Ownership & visibility
@@ -180,7 +184,7 @@ class Experience(BaseModel):
         return f"<Experience(id={self.id}, name='{self.name}', visibility='{self.visibility}')>"
 
 
-class ExperienceStep(BaseModel):
+class ExperienceStep(TenantScopedMixin, BaseModel):
     """Single step in an Experience: plugin call, KB query, or future step types.
 
     Steps execute sequentially by order. Each step's output is available
@@ -231,7 +235,7 @@ class ExperienceStep(BaseModel):
         return f"<ExperienceStep(id={self.id}, step_key='{self.step_key}', type='{self.step_type}')>"
 
 
-class ExperienceRun(BaseModel):
+class ExperienceRun(TenantScopedMixin, BaseModel):
     """Execution record of an Experience.
 
     Stores the complete state of a run including:

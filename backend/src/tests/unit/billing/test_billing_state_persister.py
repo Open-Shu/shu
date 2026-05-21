@@ -87,6 +87,9 @@ async def test_save_then_load_round_trips_all_fields(monkeypatch: pytest.MonkeyP
     original = _state()
 
     await persister.save(original)
+    # Key is the single PERSIST_KEY constant — tenant scoping comes from
+    # the system_settings composite (tenant_id, key) PK + RLS, not a manual
+    # tenant-suffix in the key.
     assert PERSIST_KEY in stored
 
     restored = await persister.load()
@@ -137,12 +140,17 @@ async def test_load_returns_none_when_blob_fails_schema_validation(
 
 @pytest.mark.asyncio
 async def test_save_swallows_db_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Persistence is best-effort. A write failure shouldn't propagate —
-    the in-memory cache value is already correct.
-    """
+    """Persistence is best-effort against transient DB issues. A
+    ``SQLAlchemyError`` shouldn't propagate — the in-memory cache value is
+    already correct. The narrowing matters: programming errors (TypeError,
+    AttributeError) raised through the same path *should* surface as bugs
+    rather than be masked as cache misses."""
+    from sqlalchemy.exc import OperationalError
 
     async def boom(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("db blew up")
+        # OperationalError is the realistic transient shape: connection
+        # dropped, server gone away, deadlock. SQLAlchemyError subclass.
+        raise OperationalError("INSERT", {}, BaseException("db blew up"))
 
     monkeypatch.setattr(
         "shu.billing.billing_state_persister.SystemSettingsService.upsert", boom
@@ -151,3 +159,21 @@ async def test_save_swallows_db_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     persister = BillingStatePersister(session_factory=_session_factory_for({}))
     # Must not raise.
     await persister.save(_state())
+
+
+@pytest.mark.asyncio
+async def test_save_does_not_swallow_programming_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-SQLAlchemy errors are programming bugs (bad type, AttributeError,
+    KeyError) — let them propagate so they surface instead of disappearing
+    behind a 'cache miss' warning."""
+
+    async def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("programming bug")
+
+    monkeypatch.setattr(
+        "shu.billing.billing_state_persister.SystemSettingsService.upsert", boom
+    )
+
+    persister = BillingStatePersister(session_factory=_session_factory_for({}))
+    with pytest.raises(RuntimeError, match="programming bug"):
+        await persister.save(_state())

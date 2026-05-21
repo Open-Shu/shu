@@ -37,7 +37,7 @@ from .experience import Experience, ExperienceRun, ExperienceStep
 from .knowledge_base import KnowledgeBase
 from .llm_provider import Conversation, LLMModel, LLMProvider, LLMUsage, Message, ModelType
 from .mcp_server_connection import McpServerConnection
-from .model_configuration import ModelConfiguration
+from .model_configuration import ModelConfiguration, ModelConfigurationKnowledgeBase
 from .model_configuration_kb_prompt import ModelConfigurationKBPrompt
 from .password_reset_token import PasswordResetToken
 from .plugin_execution import PluginExecution
@@ -54,6 +54,7 @@ from .rbac import (
     UserGroupMembership,
 )
 from .system_setting import SystemSetting
+from .tenant import Tenant
 from .user_preferences import UserPreferences
 
 # Note: User model is in auth.models to avoid circular imports
@@ -95,6 +96,7 @@ __all__ = [
     "Message",
     "ModelConfiguration",
     "ModelConfigurationKBPrompt",
+    "ModelConfigurationKnowledgeBase",
     "ModelType",
     "ParticipantEntityType",
     "ParticipantRole",
@@ -107,6 +109,7 @@ __all__ = [
     "ProviderIdentity",
     "RelationalContext",
     "SystemSetting",
+    "Tenant",
     "UserGroup",
     "UserGroupMembership",
     "UserPreferences",

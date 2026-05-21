@@ -16,10 +16,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class AccessPolicy(BaseModel):
+class AccessPolicy(TenantScopedMixin, BaseModel):
     """Access control policy with allow/deny effect.
 
     Policies define named, reusable access rules that bind actors (users/groups)
@@ -29,9 +29,14 @@ class AccessPolicy(BaseModel):
 
     __tablename__ = "access_policies"
 
-    __table_args__ = (CheckConstraint("effect IN ('allow', 'deny')", name="chk_policy_effect"),)
+    __table_args__ = (
+        CheckConstraint("effect IN ('allow', 'deny')", name="chk_policy_effect"),
+        # Per-tenant uniqueness, not global. Two tenants can both have an
+        # "Engineering Read-Only" policy without colliding.
+        UniqueConstraint("tenant_id", "name", name="uq_access_policies_tenant_name"),
+    )
 
-    name = Column(String(255), nullable=False, unique=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     effect = Column(String(10), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
@@ -49,7 +54,7 @@ class AccessPolicy(BaseModel):
         return f"<AccessPolicy(id='{self.id}', name='{self.name}', effect='{self.effect}', active={self.is_active})>"
 
 
-class AccessPolicyBinding(BaseModel):
+class AccessPolicyBinding(TenantScopedMixin, BaseModel):
     """Binding that associates an actor (user or group) with a policy.
 
     Each binding links a policy to a specific actor by type and ID.
@@ -84,7 +89,7 @@ class AccessPolicyBinding(BaseModel):
         )
 
 
-class AccessPolicyStatement(BaseModel):
+class AccessPolicyStatement(TenantScopedMixin, BaseModel):
     """Statement defining actions and resources for a policy.
 
     Each statement contains a list of actions (e.g., 'experience.read',

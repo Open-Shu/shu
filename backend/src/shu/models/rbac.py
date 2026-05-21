@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from ..core.database import Base
-from .base import BaseModel, UUIDMixin
+from .base import BaseModel, TenantScopedMixin, UUIDMixin
 
 
 class RBACBaseModel(Base, UUIDMixin):
@@ -43,7 +43,7 @@ class GroupRole(str, Enum):
     ADMIN = "admin"  # Group administrator
 
 
-class UserGroup(BaseModel):
+class UserGroup(TenantScopedMixin, BaseModel):
     """User groups for team-based access control.
 
     Groups allow organizing users into teams (e.g., HR, Engineering, Marketing)
@@ -52,7 +52,11 @@ class UserGroup(BaseModel):
 
     __tablename__ = "user_groups"
 
-    name = Column(String(255), nullable=False, unique=True, index=True)
+    # Per-tenant uniqueness on name. Two tenants can both have an
+    # "Engineering" group without colliding.
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_user_groups_tenant_name"),)
+
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
@@ -68,7 +72,7 @@ class UserGroup(BaseModel):
         return f"<UserGroup(id='{self.id}', name='{self.name}', active={self.is_active})>"
 
 
-class UserGroupMembership(RBACBaseModel):
+class UserGroupMembership(TenantScopedMixin, RBACBaseModel):
     """User membership in groups with roles.
 
     This table tracks which users belong to which groups and their role

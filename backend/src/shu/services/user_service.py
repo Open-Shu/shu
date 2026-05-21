@@ -205,7 +205,18 @@ class UserService:
             )
             return existing_user
 
-        # Create new user
+        # Create new user. Multi-tenant deployments do not allow open
+        # self-registration via SSO either — first-time SSO logins for
+        # unknown emails must come through the invitation flow (sibling spec).
+        # Existing SSO users hit one of the earlier return paths above and
+        # are unaffected by this gate.
+        from ..core.config import DeploymentMode, get_settings_instance
+
+        if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Registration is invitation-only in multi-tenant mode",
+            )
         return await self._create_new_sso_user(provider_info, db)
 
     async def _get_user_by_identity(self, provider_key: str, provider_id: str, db: AsyncSession) -> User | None:

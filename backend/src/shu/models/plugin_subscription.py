@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from sqlalchemy import Column, ForeignKey, Index, String, UniqueConstraint
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class PluginSubscription(BaseModel):
+class PluginSubscription(TenantScopedMixin, BaseModel):
     __tablename__ = "plugin_subscriptions"
 
     # Owning user
