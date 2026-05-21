@@ -673,3 +673,73 @@ class TestGetConnectionSchema:
         assert "op" in schema["properties"]
         assert "search" in schema["properties"]["op"]["enum"]
         assert schema["properties"]["q"]["type"] == "string"
+
+
+class TestMultiTenantGate:
+    """The ``PluginRegistry`` caches MCP adapters globally (URL + auth
+    headers) and ``plugin_definitions`` rows are global. Allowing MT
+    tenants to register MCP connections would cross-leak credentials.
+    Until the registry is tenant-keyed, the service refuses MT writes so
+    those unsafe code paths stay structurally unreachable."""
+
+    @pytest.fixture
+    def _mt_settings(self):
+        from shu.core.config import DeploymentMode
+
+        return MagicMock(deployment_mode=DeploymentMode.MULTI_TENANT)
+
+    @pytest.mark.asyncio
+    async def test_create_rejected_in_multi_tenant(self, _mt_settings) -> None:
+        db = _mock_db()
+        with patch("shu.services.mcp_service.get_settings_instance", return_value=_mt_settings):
+            service = McpService(db)
+            with pytest.raises(ConflictError, match="multi-tenant"):
+                await service.create_connection(
+                    McpConnectionCreate(name="slack", url="https://example/mcp"),
+                    user_id="user-1",
+                )
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_rejected_in_multi_tenant(self, _mt_settings) -> None:
+        from shu.schemas.mcp_admin import McpConnectionUpdate
+
+        db = _mock_db()
+        with patch("shu.services.mcp_service.get_settings_instance", return_value=_mt_settings):
+            service = McpService(db)
+            with pytest.raises(ConflictError, match="multi-tenant"):
+                await service.update_connection("conn-id", McpConnectionUpdate(enabled=False), user_id="user-1")
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_rejected_in_multi_tenant(self, _mt_settings) -> None:
+        db = _mock_db()
+        with patch("shu.services.mcp_service.get_settings_instance", return_value=_mt_settings):
+            service = McpService(db)
+            with pytest.raises(ConflictError, match="multi-tenant"):
+                await service.delete_connection("conn-id", user_id="user-1")
+        db.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_rejected_in_multi_tenant(self, _mt_settings) -> None:
+        db = _mock_db()
+        with patch("shu.services.mcp_service.get_settings_instance", return_value=_mt_settings):
+            service = McpService(db)
+            with pytest.raises(ConflictError, match="multi-tenant"):
+                await service.sync_connection("conn-id", user_id="user-1")
+
+    @pytest.mark.asyncio
+    async def test_update_tool_config_rejected_in_multi_tenant(self, _mt_settings) -> None:
+        from shu.schemas.mcp_admin import McpToolConfigUpdate
+
+        db = _mock_db()
+        with patch("shu.services.mcp_service.get_settings_instance", return_value=_mt_settings):
+            service = McpService(db)
+            with pytest.raises(ConflictError, match="multi-tenant"):
+                await service.update_tool_config(
+                    "conn-id",
+                    "search",
+                    McpToolConfigUpdate(chat_callable=True, feed_eligible=False, enabled=True),
+                    user_id="user-1",
+                )

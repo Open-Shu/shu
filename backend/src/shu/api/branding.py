@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..api.dependencies import get_db
 from ..auth.models import User
 from ..auth.rbac import require_admin
+from ..core.config import DeploymentMode, get_settings_instance
+from ..core.tenant import tenant_context_for_tenant_id
 from ..schemas.branding import BrandingSettings, BrandingSettingsUpdate
 from ..schemas.envelope import SuccessResponse
 from ..services.branding_service import BrandingService
@@ -24,11 +26,33 @@ from ..services.branding_service import BrandingService
 router = APIRouter(prefix="/settings/branding", tags=["branding"])
 
 
+_MT_BRANDING_DETAIL = "Branding is not configurable in multi-tenant deployments."
+
+
+def _is_multi_tenant() -> bool:
+    return get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT
+
+
 @router.get("", response_model=SuccessResponse[BrandingSettings])
 async def get_branding(db: AsyncSession = Depends(get_db)):
-    """Retrieve branding configuration, including defaults when unset."""
-    service = BrandingService(db)
-    branding = await service.get_branding()
+    """Retrieve branding configuration, including defaults when unset.
+
+    Public route — auth middleware skips this path, so there's no
+    request-bound tenant_context. Two shapes:
+
+    * Multi-tenant: branding is a deployment-level concept (no per-tenant
+      customization), so return the operator-configured defaults without a
+      DB read. Reading ``system_settings`` here would hit RLS default-deny
+      (now that the table is tenant-scoped) and fall back to defaults
+      anyway — just skip the round-trip.
+    * Self-hosted / silo: wrap in the deployment's tenant_context so the
+      RLS-scoped SELECT on ``system_settings`` returns the operator's
+      saved overrides instead of empty.
+    """
+    if _is_multi_tenant():
+        return SuccessResponse(data=BrandingService.defaults())
+    async with tenant_context_for_tenant_id(None):  # falls through to deployment tenant
+        branding = await BrandingService(db).get_branding()
     return SuccessResponse(data=branding)
 
 
@@ -39,6 +63,11 @@ async def patch_branding(
     db: AsyncSession = Depends(get_db),
 ):
     """Update branding configuration, partially."""
+    if _is_multi_tenant():
+        # The public GET ignores per-tenant rows in MT; accepting writes
+        # here would surface a silent "Branding saved" / "still default"
+        # contradiction in the admin UI. Be explicit.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MT_BRANDING_DETAIL)
     service = BrandingService(db)
     try:
         branding = await service.update_branding(payload, user_id=current_user.id)
@@ -55,6 +84,8 @@ async def upload_favicon(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and apply a new favicon asset for the specified theme."""
+    if _is_multi_tenant():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MT_BRANDING_DETAIL)
     service = BrandingService(db)
     file_bytes = await _read_upload(file, service.settings.branding_max_asset_size_bytes)
     asset_type = "dark_favicon" if theme == "dark" else "favicon"

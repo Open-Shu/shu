@@ -20,7 +20,7 @@ from shu.models.billing_state import BillingState
 
 def _make_billing_state(**kwargs) -> BillingState:
     state = BillingState()
-    state.id = 1
+    state.tenant_id = kwargs.get("tenant_id", "test-tenant")
     state.stripe_customer_id = kwargs.get("stripe_customer_id", "cus_123")
     state.stripe_subscription_id = kwargs.get("stripe_subscription_id", "sub_456")
     state.billing_email = kwargs.get("billing_email", "billing@example.com")

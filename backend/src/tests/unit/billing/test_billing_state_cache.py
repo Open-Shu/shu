@@ -658,3 +658,96 @@ async def test_cp_supplied_markup_is_not_overwritten_by_fetcher() -> None:
 
     assert result.usage_markup_multiplier == Decimal("1.7")
     fetcher.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_billing_state_cache() factory — transient-failure retry policy
+#
+# A transient blip during cache build (DNS hiccup, httpx pool exhaustion,
+# etc.) must not poison the per-tenant slot — otherwise enforcement is
+# permanently disabled for that tenant until process restart and operators
+# can't distinguish "configured-off" from "stuck-after-blip". Only memoize
+# None for definitively-absent config; on exceptions, leave the slot empty
+# so the next caller retries.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_factory_does_not_memoize_none_on_build_exception(monkeypatch) -> None:
+    """A transient build failure must not poison the per-tenant slot.
+
+    Two requests in a row: first one's CpClient build raises (simulating an
+    httpx/DNS blip); second one should still trigger a fresh build, not
+    short-circuit on a cached None.
+    """
+    from shu.billing import billing_state_cache as module
+
+    # Tenant context is set by the autouse conftest fixture in this test
+    # suite; reuse that tenant_id rather than re-setting.
+    module._cache_by_tenant.clear()
+    module._cp_client_by_tenant.clear()
+
+    # Stub billing settings so the CP-configured branch runs (rather than the
+    # legitimate "no CP" memoize-None branch that should still memoize).
+    fake_settings = MagicMock(
+        router_shared_secret="secret",
+        cp_base_url="https://cp.example",
+        billing_state_cache_ttl_seconds=60,
+        secret_key=None,  # disable markup fetcher branch
+        subscription_id=None,
+    )
+    monkeypatch.setattr(module, "get_billing_settings", lambda: fake_settings)
+
+    # First call: CpClient construction raises.
+    call_count = {"n": 0}
+
+    def _failing_cp_client(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("simulated transient blip")
+        return MagicMock(spec=CpClient)
+
+    monkeypatch.setattr(module, "CpClient", _failing_cp_client)
+    monkeypatch.setattr(module, "get_http_client", AsyncMock(return_value=MagicMock()))
+
+    first = await module.get_billing_state_cache()
+    assert first is None
+    # The bug being fixed: a poisoned slot would have an explicit None entry
+    # here. With the fix, the slot stays empty so the next caller retries.
+    from shu.core.tenant import tenant_context
+
+    tid = tenant_context.get()
+    assert tid not in module._cache_by_tenant
+
+    second = await module.get_billing_state_cache()
+    assert second is not None
+    assert call_count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_factory_memoizes_none_when_cp_definitively_unconfigured(monkeypatch) -> None:
+    """Absence of `router_shared_secret` or `cp_base_url` is a steady-state
+    "no CP" — that's safe to memoize, since the operator would have to
+    redeploy with new settings for it to change, at which point the process
+    restarts and the cache is empty anyway.
+    """
+    from shu.billing import billing_state_cache as module
+
+    module._cache_by_tenant.clear()
+    module._cp_client_by_tenant.clear()
+
+    fake_settings = MagicMock(
+        router_shared_secret=None,  # ← unconfigured
+        cp_base_url=None,
+        billing_state_cache_ttl_seconds=60,
+    )
+    monkeypatch.setattr(module, "get_billing_settings", lambda: fake_settings)
+
+    result = await module.get_billing_state_cache()
+    assert result is None
+
+    from shu.core.tenant import tenant_context
+
+    tid = tenant_context.get()
+    assert tid in module._cache_by_tenant
+    assert module._cache_by_tenant[tid] is None

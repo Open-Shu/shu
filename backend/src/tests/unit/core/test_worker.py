@@ -11,18 +11,18 @@ import asyncio
 import logging
 import time
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from tests.unit.conftest import disabled_billing_state, healthy_billing_state
 
 from shu.billing.enforcement import SubscriptionInactiveError, TrialCapExhaustedError
-from tests.unit.conftest import disabled_billing_state, healthy_billing_state
 from shu.core.queue_backend import InMemoryQueueBackend, Job
 from shu.core.worker import Worker, WorkerConfig
 from shu.core.workload_routing import WorkloadType, enqueue_job
-from shu.models.document import DocumentStatus
 
 # =============================================================================
 # Test Fixtures
@@ -1031,3 +1031,117 @@ class TestHandlerPreCheckBeforeStateMutation:
                 await handler(job)
 
         blocked.assert_not_called()
+
+
+# =============================================================================
+# SHU-761: Worker dispatch sets/resets tenant_context per job
+#
+# The single point that translates Job.tenant_id into a tenant_context is
+# Worker._process_job. If that wrapper regresses, every handler runs with
+# the wrong tenant (or worse, the prior job's tenant) and RLS won't catch
+# it because handlers run under shu_app with valid context — just the
+# wrong one.
+# =============================================================================
+
+
+class TestWorkerDispatchTenantContext:
+    """Pin the per-job set/reset behavior of ``Worker._process_job``."""
+
+    @pytest.mark.asyncio
+    async def test_handler_observes_jobs_tenant_inside_dispatch(self) -> None:
+        from shu.core.tenant import tenant_context
+
+        observed: list[str | None] = []
+
+        async def handler(job: Job) -> None:
+            observed.append(tenant_context.get(None))
+
+        backend = InMemoryQueueBackend()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        job = Job(
+            queue_name="shu:ingestion", payload={"x": 1}, tenant_id="tenant-from-job"
+        )
+        await worker._process_job(job)
+
+        assert observed == ["tenant-from-job"]
+
+    @pytest.mark.asyncio
+    async def test_context_is_restored_to_prior_value_after_job(self) -> None:
+        """After _process_job returns, the surrounding (e.g. autouse-fixture)
+        tenant_context must be back to its pre-dispatch value. Forgetting
+        to reset would silently leak the job's tenant into anything that
+        runs on the same asyncio task afterwards."""
+        from shu.core.tenant import tenant_context
+
+        async def handler(job: Job) -> None:
+            pass
+
+        backend = InMemoryQueueBackend()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        prior = tenant_context.get(None)
+        job = Job(queue_name="shu:ingestion", payload={"x": 1}, tenant_id="tenant-X")
+        await worker._process_job(job)
+
+        assert tenant_context.get(None) == prior
+
+    @pytest.mark.asyncio
+    async def test_context_is_restored_even_when_handler_raises(self) -> None:
+        from shu.core.tenant import tenant_context
+
+        class BoomError(RuntimeError):
+            pass
+
+        async def handler(job: Job) -> None:
+            raise BoomError("simulate failure mid-job")
+
+        backend = InMemoryQueueBackend()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        prior = tenant_context.get(None)
+        job = Job(queue_name="shu:ingestion", payload={"x": 1}, tenant_id="tenant-X")
+        # _process_job catches handler exceptions and rejects the job —
+        # we don't expect a raise here; just verify context is reset.
+        await worker._process_job(job)
+
+        assert tenant_context.get(None) == prior
+
+    @pytest.mark.asyncio
+    async def test_missing_tenant_context_in_mt_is_rejected_no_requeue(self) -> None:
+        """A job lacking ``tenant_id`` in multi-tenant mode is a poison pill:
+        retrying it can't change the outcome — the next worker hits the same
+        ``MissingTenantContextError`` and burns a slot. Verify the dispatch
+        rejects with ``requeue=False`` so the queue isn't churned forever."""
+        from shu.core.config import DeploymentMode
+
+        handler_invoked: list[Job] = []
+
+        async def handler(job: Job) -> None:
+            handler_invoked.append(job)
+
+        backend = InMemoryQueueBackend()
+        backend.reject = AsyncMock()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        # Job has no tenant_id; in MT the dispatch wrap raises
+        # ``MissingTenantContextError`` before the handler runs.
+        job = Job(queue_name="shu:ingestion", payload={"x": 1}, tenant_id=None)
+        with patch(
+            "shu.core.tenant.get_settings_instance",
+            return_value=SimpleNamespace(
+                deployment_mode=DeploymentMode.MULTI_TENANT,
+                tenant_id=None,
+                redis_namespace=None,
+            ),
+        ):
+            await worker._process_job(job)
+
+        assert handler_invoked == [], "handler must not run with missing tenant_id"
+        backend.reject.assert_awaited_once()
+        _args, kwargs = backend.reject.call_args
+        assert kwargs.get("requeue") is False, "poison pill must not be requeued"

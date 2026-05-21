@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import DECIMAL, JSON, Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
 class ModelType(StrEnum):
@@ -176,7 +176,7 @@ class LLMModel(BaseModel):
         return f"<LLMModel(name='{self.model_name}', provider='{self.provider.name if self.provider else 'Unknown'}')>"
 
 
-class LLMUsage(BaseModel):
+class LLMUsage(TenantScopedMixin, BaseModel):
     """Database model for tracking LLM usage and costs."""
 
     __tablename__ = "llm_usage"
@@ -227,7 +227,7 @@ class LLMUsage(BaseModel):
         return f"<LLMUsage(model='{name}', tokens={self.total_tokens}, cost=${self.total_cost})>"
 
 
-class Conversation(BaseModel):
+class Conversation(TenantScopedMixin, BaseModel):
     """Database model for chat conversations."""
 
     __tablename__ = "conversations"
@@ -265,7 +265,7 @@ class Conversation(BaseModel):
         return f"<Conversation(title='{self.title}', user_id='{self.user_id}')>"
 
 
-class Message(BaseModel):
+class Message(TenantScopedMixin, BaseModel):
     """Database model for individual messages in conversations."""
 
     __tablename__ = "messages"

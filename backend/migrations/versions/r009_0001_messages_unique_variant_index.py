@@ -1,7 +1,7 @@
 """Dedupe colliding (parent_message_id, variant_index) rows and add UNIQUE constraint.
 
 Revision ID: r009_0001
-Revises: 008
+Revises: 009
 Create Date: 2026-05-11
 
 SHU-759 — closes a pre-existing race in regen variant_index computation
@@ -30,7 +30,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "r009_0001"
-down_revision = "008"
+down_revision = "009"
 branch_labels = None
 depends_on = None
 

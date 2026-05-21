@@ -7,16 +7,16 @@ and metadata for each knowledge base in the system.
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Column, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship
 
 from shu.core.config import get_settings_instance
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class KnowledgeBase(BaseModel):
+class KnowledgeBase(TenantScopedMixin, BaseModel):
     """Knowledge Base configuration and metadata.
 
     Each knowledge base represents a separate collection of documents
@@ -25,9 +25,13 @@ class KnowledgeBase(BaseModel):
 
     __tablename__ = "knowledge_bases"
 
+    # Per-tenant uniqueness on slug, not global — two tenants can both have
+    # a KB slug like "engineering" without colliding.
+    __table_args__ = (UniqueConstraint("tenant_id", "slug", name="uq_knowledge_bases_tenant_slug"),)
+
     # Basic information
     name = Column(String(255), nullable=False, index=True)
-    slug = Column(String(100), nullable=False, unique=True, index=True)
+    slug = Column(String(100), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
     # Sync configuration

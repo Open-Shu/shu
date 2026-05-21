@@ -33,10 +33,12 @@ from shu.billing.cp_client import (
     CpClient,
     CpClientError,
 )
+from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient, StripeClientError
-from shu.core.config import get_settings_instance
+from shu.core.database import get_async_session_local
 from shu.core.http_client import get_http_client
 from shu.core.logging import get_logger
+from shu.core.tenant import tenant_context
 
 _logger = get_logger(__name__)
 
@@ -186,95 +188,70 @@ class BillingStateCache:
         return HEALTHY_DEFAULT
 
 
-# Module-level singletons so both the FastAPI app and the worker process
-# read the same instances. Kept as module state rather than `app.state`
-# because the worker has no FastAPI app — gating OCR jobs at dequeue time
-# (SHU-703) needs reachability from a non-FastAPI context.
+# Per-tenant cache + CpClient maps. Each tenant_id gets its own
+# BillingStateCache (with its own CpClient, persister, and markup_fetcher),
+# lazy-populated on the first request that lands for a tenant we haven't
+# seen before; new tenants provisioned after process start are picked up
+# automatically.
+#
+# ``None`` is a valid value in ``_cache_by_tenant`` meaning "we determined
+# CP isn't configured / build failed for this tenant — don't keep retrying
+# every request".
 #
 # The cache and the CpClient are siblings: the cache owns state + freshness
 # policy; the client owns transport. The router uses the client directly
 # for trial-action POSTs (upgrade-now, cancel-subscription) rather than
 # reaching through the cache, so a future change to the cache's internals
-# can't accidentally break the trial-action wiring.
-_cache: BillingStateCache | None = None
-_cp_client: CpClient | None = None
+# can't accidentally break the trial-action wiring. Both maps are kept in
+# lock-step — when one tenant's cache lands, its CpClient lands too.
+#
+# Kept as module state rather than `app.state` because the worker has no
+# FastAPI app — gating OCR jobs at dequeue time (SHU-703) needs reachability
+# from a non-FastAPI context.
+_cache_by_tenant: dict[str, BillingStateCache | None] = {}
+_cp_client_by_tenant: dict[str, CpClient] = {}
 
 
-def get_billing_state_cache() -> BillingStateCache | None:
-    """Return the process-wide cache singleton, or None if CP is not configured.
+async def get_billing_state_cache() -> BillingStateCache | None:
+    """Return the cache for the current tenant_context, building lazily on first hit.
 
-    Callers must treat None as "self-hosted / dev — enforcement disabled."
+    Returns ``None`` when:
+    - ``tenant_context`` is not set (caller is outside a request handler and
+      outside the worker dispatch wrapper). Treat as "enforcement disabled".
+    - CP isn't configured for this deployment (``router_shared_secret`` or
+      ``cp_base_url`` missing). Also enforcement-disabled.
+
+    The shared envelope secret is intentional: all tenants on a deployment
+    sign with the same ``router_shared_secret``. See design note on
+    per-tenant secrets — a future change would add a per-tenant secret table
+    and an ``X-Shu-Tenant-Id`` envelope header for upfront verification.
     """
-    return _cache
-
-
-def get_cp_client() -> CpClient | None:
-    """Return the process-wide CpClient singleton, or None if CP is not configured.
-
-    Used by admin trial-action endpoints (upgrade-now, cancel-trial) that
-    POST to CP outside the billing-state poll path.
-    """
-    return _cp_client
-
-
-def reset_billing_state_cache() -> None:
-    """Reset both singletons. Test-only."""
-    global _cache, _cp_client  # noqa: PLW0603
-    _cache = None
-    _cp_client = None
-
-
-def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
-    """Build the closure BillingStateCache uses to enrich each refresh.
-
-    Returns None when Stripe isn't fully configured — the cache then leaves
-    `usage_markup_multiplier` as whatever CP sent (today: nothing), and
-    consumers fall back to the configured default. Constructing the
-    StripeClient once at init time avoids per-refresh setup cost and keeps
-    `stripe.api_key` stable across the process.
-    """
-    if not (billing_settings.secret_key and billing_settings.subscription_id):
+    tid = tenant_context.get(None)
+    if tid is None:
         return None
-    stripe_client = StripeClient(billing_settings)
-    subscription_id = billing_settings.subscription_id
+    if tid in _cache_by_tenant:
+        return _cache_by_tenant[tid]
 
-    async def fetch() -> Decimal | None:
-        return await stripe_client.get_subscription_markup_multiplier(subscription_id)
-
-    return fetch
-
-
-async def initialize_billing_state_cache() -> None:
-    """Eager-load the cache so SHU-703 enforcement sees a fresh value on the
-    first request rather than the cold-start fallback.
-
-    Skipped on self-hosted / dev deployments where CP isn't configured —
-    presence of all three of `tenant_id`, `router_shared_secret`, and
-    `cp_base_url` is the signal that the tenant is meant to talk to CP.
-
-    Idempotent: a second call is a no-op once the singleton is populated,
-    so FastAPI startup and worker startup can both invoke this safely.
-    """
-    global _cache, _cp_client  # noqa: PLW0603
-    if _cache is not None:
-        return
-
-    settings = get_settings_instance()
     billing_settings = get_billing_settings()
-    if not (settings.tenant_id and billing_settings.router_shared_secret and billing_settings.cp_base_url):
-        _logger.info(
-            "CP billing-state cache disabled — tenant_id, router secret, or "
-            "CP base URL not configured (self-hosted / dev)"
-        )
-        return
+    if not (billing_settings.router_shared_secret and billing_settings.cp_base_url):
+        # Definitively no CP configured for this deployment — memoize so future
+        # requests skip the recheck. Distinguished from the exception branch
+        # below: this is steady-state config, not a transient build error.
+        _cache_by_tenant[tid] = None
+        return None
 
+    # No lock: two concurrent first-requests for the same tenant might both
+    # build a cache, but they're equivalent — the second writer wins on the
+    # dict slot and the first cache is GC'd. Single wasted CP call in a rare
+    # case, vs. the loop-binding hazards of a module-level asyncio.Lock.
     try:
         http_client = await get_http_client()
-        # Build the CpClient once and share it with the cache. Both singletons
-        # publish together so callers that read one expect the other to be ready.
+        # Build the CpClient and the cache together; both maps publish in
+        # lock-step so trial-action callers reading get_cp_client() expect
+        # the matching cache to be ready too.
         cp_client = CpClient(
             base_url=billing_settings.cp_base_url,
-            tenant_id=UUID(settings.tenant_id),
+            tenant_id=UUID(tid),
             shared_secret=billing_settings.router_shared_secret,
             http_client=http_client,
             logger=get_logger("shu.billing.cp_client"),
@@ -285,12 +262,77 @@ async def initialize_billing_state_cache() -> None:
             persister=BillingStatePersister(),
             markup_fetcher=_build_markup_fetcher(billing_settings),
         )
-        # Publish the singletons before the eager fetch so a programmer
-        # error in get() still leaves them reachable. CpClientError is
-        # absorbed inside get(); only programmer errors (bad UUID, broken
-        # httpx, etc.) escape here.
-        _cp_client = cp_client
-        _cache = cache
-        _logger.info("CP billing-state cache initialized: %s", await cache.get())
+        _cp_client_by_tenant[tid] = cp_client
+        _cache_by_tenant[tid] = cache
+        return cache
     except Exception as e:
-        _logger.warning(f"CP billing-state cache initialization failed: {e}")
+        # A transient blip during build (DNS hiccup, httpx pool exhaustion,
+        # something flaky) used to write None into the slot and permanently
+        # disable enforcement for this tenant until process restart — operator
+        # had no way to tell "configured-off" from "stuck-after-blip". We now
+        # leave the slot empty so the next caller retries the build. Cost:
+        # subsequent failing requests during a sustained outage each do one
+        # CP-client construction attempt before failing closed; a circuit-
+        # breaker can be added later if benchmarks warrant.
+        _logger.warning("CP billing-state cache build failed for tenant %s: %s", tid, e)
+        return None
+
+
+async def get_cp_client() -> CpClient | None:
+    """Return the CpClient for the current tenant, building lazily.
+
+    Used by admin trial-action endpoints (upgrade-now, cancel-trial) that
+    POST to CP outside the billing-state poll path. Routes through
+    ``get_billing_state_cache`` so the cache and the client land together
+    in their respective per-tenant maps.
+    """
+    tid = tenant_context.get(None)
+    if tid is None:
+        return None
+    if tid in _cp_client_by_tenant:
+        return _cp_client_by_tenant[tid]
+    # Building the cache builds the client too.
+    await get_billing_state_cache()
+    return _cp_client_by_tenant.get(tid)
+
+
+def reset_billing_state_cache() -> None:
+    """Reset all per-tenant caches + CpClient maps. Test-only."""
+    global _cache_by_tenant, _cp_client_by_tenant  # noqa: PLW0603
+    _cache_by_tenant = {}
+    _cp_client_by_tenant = {}
+
+
+def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
+    """Build the closure BillingStateCache uses to enrich each refresh.
+
+    The closure reads ``stripe_subscription_id`` from this tenant's
+    ``billing_state`` row at fetch time — **not** from the env var that
+    historically held it. The env-var path predates multi-tenant and would
+    return the same subscription ID for every tenant in a multi-tenant
+    deployment, mis-billing every tenant against one customer's markup.
+    Reading from the row scopes correctly under RLS (the same per-tenant
+    cache that owns this fetcher already runs under the right tenant
+    context when ``get()`` is called).
+
+    Returns None when Stripe isn't configured — Stripe SDK initialization
+    needs at least ``secret_key``. The cache then leaves
+    ``usage_markup_multiplier`` as whatever CP sent (today: nothing), and
+    consumers fall back to the configured default.
+    """
+    if not billing_settings.secret_key:
+        return None
+
+    async def fetch() -> Decimal | None:
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            row = await BillingStateService.get(session)
+        if row is None or not row.stripe_subscription_id:
+            # No tenant-scoped subscription yet (pre-onboarding, or CP hasn't
+            # synced the customer to Stripe). Fall through to the default
+            # multiplier rather than blowing up the whole CP poll.
+            return None
+        stripe_client = StripeClient(billing_settings)
+        return await stripe_client.get_subscription_markup_multiplier(row.stripe_subscription_id)
+
+    return fetch

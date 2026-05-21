@@ -1,5 +1,11 @@
 """Plugins registry: resolve enabled plugins from DB and load the plugin instance.
 Caches loaded plugins in-process.
+
+TODO(multi-tenant MCP): ``_manifest`` and ``_cache`` are keyed by plugin
+name with no tenant key. Cached ``mcp:*`` adapters hold tenant-specific
+URL + auth headers, so enabling MT MCP requires re-keying both to
+``(tenant_id, plugin_name)`` for ``mcp:*`` entries. Safe today because
+``mcp_service._reject_in_multi_tenant`` blocks all MCP writes in MT.
 """
 
 from __future__ import annotations

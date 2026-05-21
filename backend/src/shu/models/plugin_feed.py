@@ -10,10 +10,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import JSON, Boolean, Column, Index, Integer, String
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class PluginFeed(BaseModel):
+class PluginFeed(TenantScopedMixin, BaseModel):
     __tablename__ = "plugin_feeds"
 
     name = Column(String(120), nullable=False, index=True)

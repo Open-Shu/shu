@@ -7,7 +7,7 @@ from sqlalchemy import Boolean, Column, Index, String, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import relationship, validates
 
-from ..models.base import BaseModel
+from ..models.base import BaseModel, TenantScopedMixin
 
 
 class UserRole(Enum):
@@ -18,7 +18,7 @@ class UserRole(Enum):
     REGULAR_USER = "regular_user"  # Access to personal KB and assigned team KBs
 
 
-class User(BaseModel):
+class User(TenantScopedMixin, BaseModel):
     """User model with SSO integration via ProviderIdentity."""
 
     __tablename__ = "users"

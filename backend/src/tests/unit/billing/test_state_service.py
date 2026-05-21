@@ -19,7 +19,7 @@ from shu.models.billing_state import BillingState, BillingStateAudit
 def _make_state(**kwargs) -> BillingState:
     """Build a BillingState instance with test defaults."""
     state = BillingState()
-    state.id = 1
+    state.tenant_id = kwargs.get("tenant_id", "test-tenant")
     state.stripe_customer_id = kwargs.get("stripe_customer_id", None)
     state.stripe_subscription_id = kwargs.get("stripe_subscription_id", None)
     state.billing_email = kwargs.get("billing_email", None)
@@ -101,7 +101,7 @@ class TestGet:
 
 
 # ---------------------------------------------------------------------------
-# BillingStateService.ensure_singleton
+# BillingStateService.ensure_exists
 # ---------------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ class TestEnsureSingleton:
         state = _make_state()
         db = _make_db(state)
 
-        result, inserted = await BillingStateService.ensure_singleton(db)
+        result, inserted = await BillingStateService.ensure_exists(db)
 
         assert result is state
         assert inserted is False
@@ -119,13 +119,17 @@ class TestEnsureSingleton:
         db.flush.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_creates_singleton_when_missing(self):
+    async def test_creates_row_when_missing(self):
+        """When no row exists for the current tenant, INSERT a fresh one.
+
+        ``tenant_id`` is auto-stamped by the ``before_flush`` listener from
+        the active ``tenant_context``; the service never sets it directly.
+        """
         db = _make_db(None)
 
-        result, inserted = await BillingStateService.ensure_singleton(db)
+        result, inserted = await BillingStateService.ensure_exists(db)
 
         assert isinstance(result, BillingState)
-        assert result.id == 1
         assert inserted is True
         db.add.assert_called_once_with(result)
         db.flush.assert_awaited_once()
@@ -141,8 +145,8 @@ class TestEnsureSingleton:
         state = _make_state(user_limit_enforcement="hard")
         db = _make_db(state)
 
-        _, inserted_first = await BillingStateService.ensure_singleton(db)
-        _, inserted_second = await BillingStateService.ensure_singleton(db)
+        _, inserted_first = await BillingStateService.ensure_exists(db)
+        _, inserted_second = await BillingStateService.ensure_exists(db)
 
         assert inserted_first is False
         assert inserted_second is False
@@ -257,7 +261,7 @@ class TestUpdate:
         """Should raise RuntimeError when the billing_state row doesn't exist."""
         db = _make_db(None)
 
-        with pytest.raises(RuntimeError, match="billing_state singleton row missing"):
+        with pytest.raises(RuntimeError, match="billing_state row missing for current tenant"):
             await BillingStateService.update(
                 db,
                 updates={"subscription_status": "active"},

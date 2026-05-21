@@ -98,7 +98,7 @@ async def get_current_billing_state() -> BillingState:
       transient outage. The OpenRouter side gates chat/embed cost
       independently, so the leak surface is bounded.
     """
-    cache = get_billing_state_cache()
+    cache = await get_billing_state_cache()
     if cache is None:
         return HEALTHY_DEFAULT
     return await cache.get()
@@ -117,7 +117,7 @@ async def assert_subscription_active() -> None:
     happens to be trialing should see the payment-failure surface (it's
     the binding gate), not the trial-exhausted one.
     """
-    cache = get_billing_state_cache()
+    cache = await get_billing_state_cache()
 
     # Self-hosted / dev: cache singleton missing → no enforcement at all.
     # Without this guard, `HEALTHY_DEFAULT.is_trial=True` (the cold-start
@@ -293,7 +293,7 @@ async def assert_entitlement(key: str) -> None:
     False, defending against route declarations that reference a key
     not on the `EntitlementSet`.
     """
-    cache = get_billing_state_cache()
+    cache = await get_billing_state_cache()
     if cache is None:
         return
     state = await cache.get()

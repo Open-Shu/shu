@@ -7,7 +7,7 @@ for all database models.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import String
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.orm import Mapped, declarative_mixin, mapped_column
@@ -36,6 +36,27 @@ class UUIDMixin:
     """Mixin for adding UUID primary key to models."""
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+
+@declarative_mixin
+class TenantScopedMixin:
+    """Mixin that marks a model as tenant-scoped and stamps its rows with a tenant id.
+
+    Presence of this mixin is the inventory signal used by the RLS enforcement tests
+    and by the auto-stamping ``before_flush`` listener; opting in is per-model since
+    some catalogs (tiers, plugin manifests, etc.) are intentionally global.
+    """
+
+    # ondelete=RESTRICT: tenant deletion must be a deliberate, explicit operation —
+    # an accidental cascade would silently destroy customer data across every table.
+    # index=True: every query under RLS filters on tenant_id, so the index is what
+    # keeps that mandatory predicate cheap.
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
 
 
 class BaseModel(Base, TimestampMixin, UUIDMixin):

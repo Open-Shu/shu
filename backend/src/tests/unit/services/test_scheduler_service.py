@@ -606,7 +606,7 @@ class TestAttachmentCleanupSource:
         assert source.name == "attachment_cleanup"
 
     @pytest.mark.asyncio
-    @patch("shu.services.attachment_cleanup.AttachmentCleanupService")
+    @patch("shu.services.scheduler_service.AttachmentCleanupService")
     async def test_cleanup_stale_delegates(self, mock_svc_class):
         """cleanup_stale delegates to AttachmentCleanupService.cleanup_expired_attachments."""
         mock_svc = MagicMock()
@@ -687,3 +687,8 @@ class TestUnifiedSchedulerService:
 
         assert "error" in results["failing"]
         assert results["working"]["enqueued"] == 1
+
+
+# Per-tenant tick iteration is now provided by
+# ``shu.core.tenant.for_each_tenant_in_deployment``. Its semantics are
+# tested in ``tests/unit/core/test_tenant.py``.

@@ -20,6 +20,11 @@ from shu.core.logging import get_logger
 
 from ..auth.jwt_manager import JWTManager
 from ..core.config import get_settings_instance
+from ..core.tenant import (
+    UserTenantNotFoundError,
+    tenant_context_for_email,
+    tenant_context_for_user_id,
+)
 
 if TYPE_CHECKING:
     from .rate_limiting import RateLimitService
@@ -262,31 +267,57 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # SECURITY FIX: Check current user status in database
         # JWT tokens contain user data from when they were created, but we need to verify
         # the user is still active in the database
+        #
+        # SHU-761: every DB read below runs under RLS once Stage F cuts over,
+        # so a tenant_context must be set BEFORE the SELECT or the query
+        # default-denies and every authenticated request 401s. The credential
+        # we have at this point — user_id from the verified JWT, or the
+        # configured email from the API-key mapping — is what the SECURITY
+        # DEFINER lookup resolves the tenant from.
+        #
+        # TODO(SHU-761-followup): this middleware does DB-backed user
+        # validation because three downstream middlewares
+        # (MustChangePassword, RateLimit, RequestID logging) read
+        # ``request.state.user`` and need the resolved dict before the
+        # FastAPI dependency tree runs. A cleaner split — middleware
+        # JWT-decode only; ``fetch_user`` dep owns the row + checks — is
+        # a multi-middleware refactor parked as a follow-up.
         try:
             from sqlalchemy import select
 
             from ..auth.models import User
             from ..core.database import get_async_session_local
 
-            # Get database session — use async with to guarantee cleanup on every exit
-            # path (return, exception, anyio cancellation). The async-for/break idiom
-            # suspends the generator and defers cleanup to the asyncgen GC finalizer,
-            # which can orphan connections under load or cancellation pressure.
-            async with get_async_session_local()() as db:
-                # Determine lookup based on auth mode
-                if getattr(request.state, "api_key_authenticated", False):
-                    settings = get_settings_instance()
-                    if not settings.api_key_user_email:
-                        logger.warning("API key user mapping not configured (SHU_API_KEY_USER_EMAIL missing)")
-                        return JSONResponse(
-                            status_code=401,
-                            content={"detail": "API key user mapping not configured"},
-                        )
-                    stmt = select(User).where(User.email == settings.api_key_user_email)
-                else:
-                    stmt = select(User).where(User.id == user_data["user_id"])
+            # Pick the tenant-resolution context shape that matches the auth
+            # mode. The contextmanagers reset tenant_context on exit so the
+            # downstream FastAPI dep tree (which sets its own context via
+            # ``resolve_tenant``) sees a clean slate.
+            if getattr(request.state, "api_key_authenticated", False):
+                settings = get_settings_instance()
+                if not settings.api_key_user_email:
+                    logger.warning("API key user mapping not configured (SHU_API_KEY_USER_EMAIL missing)")
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "API key user mapping not configured"},
+                    )
+                _tenant_ctx = tenant_context_for_email(settings.api_key_user_email)
+                _lookup_stmt = select(User).where(User.email == settings.api_key_user_email)
+            else:
+                _tenant_ctx = tenant_context_for_user_id(user_data["user_id"])
+                _lookup_stmt = select(User).where(User.id == user_data["user_id"])
 
-                result = await db.execute(stmt)
+            # Get database session — use async with to guarantee synchronous
+            # close on every exit path. The previous `async for db in get_db():
+            # ... break` idiom suspended the generator and deferred close() to
+            # the asyncgen GC finalizer, which under load orphaned connections
+            # (main commit 76e9a28; pinned by test_auth_middleware_session_lifecycle).
+            #
+            # The tenant_ctx wraps every DB op inside — the SELECT above, plus
+            # the last_login UPDATE below — so both run under the right RLS
+            # scope. Resetting on exit lets the FastAPI dep tree later set its
+            # own context cleanly.
+            async with get_async_session_local()() as db, _tenant_ctx:
+                result = await db.execute(_lookup_stmt)
                 current_user = result.scalar_one_or_none()
 
                 if not current_user:
@@ -371,6 +402,15 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         }
                     )
 
+        except UserTenantNotFoundError:
+            # Verified JWT but the user has since been deleted. Match the
+            # "user not found" 401 that the in-context lookup branch returns
+            # so a missing user looks the same to the client regardless of
+            # whether the resolver or RLS-default-deny path surfaces it.
+            logger.warning(
+                f"JWT references deleted user for {request.method} {request.url.path}: {user_data.get('user_id')}"
+            )
+            return JSONResponse(status_code=401, content={"detail": "User account not found"})
         except Exception as e:
             logger.error(f"Database error during user validation: {e}")
             return JSONResponse(status_code=500, content={"detail": "Authentication validation failed"})
