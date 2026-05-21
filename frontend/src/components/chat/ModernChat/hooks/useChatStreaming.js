@@ -670,8 +670,21 @@ const useChatStreaming = ({
         });
         return mutated ? rebuildCache(oldData, updated) : oldData;
       });
+
+      // SHU-803 follow-up (Bug 1): release the InputBar back to Send
+      // immediately. Without this, the input bar would keep showing Stop
+      // until the SSE channel emits `[DONE]`, which only fires after the
+      // backend drain finishes — up to ~90s on OpenRouter. The SSE
+      // channel keeps consuming in the background so the persisted
+      // `final_message` still lands when drain completes (the existing
+      // [DONE] handler is a no-op for streamingConversationId since we
+      // already cleared it here). The user can type and send a new
+      // message right away; the backend persisted the partial Message
+      // at signal time so chronological ordering is preserved.
+      setStreamingConversationId(null);
+      setStreamingStarted(false);
     },
-    [queryClient, setError]
+    [queryClient, setError, setStreamingConversationId, setStreamingStarted]
   );
 
   return {

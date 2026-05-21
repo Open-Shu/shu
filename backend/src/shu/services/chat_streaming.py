@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -548,6 +548,7 @@ class EnsembleStreamingHelper:
         tools_enabled: bool,
         lifecycle: "StreamLifecycle",
         content_accumulator: list[str],
+        on_terminate_signal: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool, dict[str, Any]]:
         """Stream provider responses for a single model variant and enqueue interim events to the provided queue.
 
@@ -570,6 +571,14 @@ class EnsembleStreamingHelper:
                 content-delta strings are appended in order. The list is the source of truth
                 for partial content on early termination — `"".join(content_accumulator)` gives
                 whatever the provider had emitted before the break.
+            on_terminate_signal (Optional[Callable[[], Awaitable[None]]]): SHU-803 follow-up.
+                One-shot callback invoked when a ``user_terminated`` signal is detected and
+                BEFORE the silent drain begins. Caller closes over ``content_accumulator`` and
+                the variant context, writes the partial Message row in its own session, and
+                stores the assigned id back via a caller-managed holder. Any exception is
+                caught and swallowed — drain proceeds normally and finalize falls back to its
+                existing INSERT-at-drain-finish path. Not invoked on ``shutdown`` (the lifespan
+                drain budget is too tight to pay for an extra DB round-trip per stream).
 
         Returns
         -------
@@ -650,6 +659,38 @@ class EnsembleStreamingHelper:
                     drain_start_ts = datetime.now(UTC)
                     heartbeat_last_emit = drain_start_ts
                     cancel_task = asyncio.create_task(client.provider_adapter.cancel())
+
+                    # SHU-803 follow-up: fire the early-persist callback
+                    # BEFORE the drain starts consuming silently. The callback
+                    # writes the partial Message row to DB at signal time so
+                    # (a) a navigation refetch during the (possibly minute-
+                    # long) drain sees the persisted partial, and (b) a
+                    # follow-up user message sent before drain finishes orders
+                    # correctly by `created_at`. The callback owns its own
+                    # session (no entanglement with the stream task), captures
+                    # `content_accumulator` from the caller scope, and stores
+                    # the assigned id back via a caller-managed holder.
+                    #
+                    # Defensive: ANY exception in the callback is logged and
+                    # swallowed. On callback failure, `early_persisted_message_id`
+                    # stays None on the result, finalize falls through to its
+                    # existing INSERT path at drain-finish, and the user
+                    # observes today's behavior (vanishing-content + ordering
+                    # race during drain). The drain itself is unaffected, so
+                    # billing fidelity is preserved.
+                    if on_terminate_signal is not None:
+                        try:
+                            await on_terminate_signal()
+                        except Exception:
+                            logger.warning(
+                                "Early-persist callback raised; finalize will INSERT at drain-finish",
+                                extra={
+                                    "model": inputs.model.model_name,
+                                    "variant_index": variant_index,
+                                },
+                                exc_info=True,
+                            )
+
                     logger.info(
                         "drain_started",
                         extra={
@@ -857,6 +898,9 @@ class EnsembleStreamingHelper:
         inputs: "ModelExecutionInputs",
         queue: asyncio.Queue,
         conversation_id: str,
+        parent_message_id: str,
+        use_parent_as_message_id: bool,
+        regen_lineage: "RegenLineageInfo | None",
         force_no_streaming: bool,
         start_time: datetime,
         lifecycle: "StreamLifecycle",
@@ -982,6 +1026,156 @@ class EnsembleStreamingHelper:
             # `_call_provider` only when terminated; empty dict otherwise.
             drain_audit: dict[str, Any] = {}
 
+            # SHU-803 follow-up: terminate-time early-persist holder. The
+            # `on_terminate_signal` callback below stamps the assigned
+            # message_id + variant_index here when it commits successfully.
+            # `_finalize_variant_phase` reads these via the returned
+            # VariantStreamResult to decide UPDATE-existing vs. INSERT-new.
+            # Empty dict on (a) natural completion (callback never fires) or
+            # (b) callback failure (callback returns cleanly without stamping).
+            early_state: dict[str, Any] = {}
+
+            async def on_terminate_signal() -> None:
+                """SHU-803 follow-up: write the partial assistant Message at terminate-signal time.
+
+                Lifted from the regen-aware INSERT block in
+                `_finalize_variant_phase` (lines that handle assigned_message_id /
+                variant_index assignment + regen lineage backfill + IntegrityError
+                retry). Runs in its own fresh session — completely independent of
+                the stream task's session lifecycle. Captures `content_accumulator`,
+                `client`, lifecycle, regen_lineage, and the variant context from
+                the enclosing scope.
+
+                Side effect on success: ``early_state["message_id"]`` and
+                ``early_state["variant_index"]`` are set. On any failure
+                (regen retry exhaustion, transient DB error), returns cleanly
+                without stamping so `_finalize_variant_phase` falls through to
+                its existing INSERT-at-drain-finish path.
+
+                Does NOT write LLMUsage — that stays with finalize after drain
+                exits, so usage tokens reflect drain's final snapshot.
+                """
+                partial_content = "".join(content_accumulator).strip()
+                try:
+                    partial_usage_at_signal = client.provider_adapter.get_partial_usage_snapshot()
+                except Exception:
+                    partial_usage_at_signal = {}
+                partial_usage_unavailable_at_signal = not partial_usage_at_signal
+
+                base_metadata: dict[str, Any] = dict(config_metadata)
+                base_metadata["response_time_ms"] = (datetime.now(UTC) - start_time).total_seconds() * 1000
+                base_metadata["streamed"] = True
+                base_metadata["has_citations"] = False
+                base_metadata["stream_state"] = lifecycle.resolved_reason()
+                if partial_usage_unavailable_at_signal:
+                    base_metadata["partial_usage_unavailable"] = True
+
+                session_factory = get_async_session_local()
+                attempt = 0
+                while True:
+                    attempt += 1
+                    now_signal = datetime.now(UTC)
+                    try:
+                        async with session_factory() as session:
+                            # Regen-only: legacy backfill of original target's
+                            # lineage + compute new variant_index from sibling-max.
+                            # Mirrors the same block in `_finalize_variant_phase`.
+                            if regen_lineage:
+                                target_row = (
+                                    await session.execute(
+                                        select(Message).where(Message.id == regen_lineage.target_message_id)
+                                    )
+                                ).scalar_one_or_none()
+                                if target_row and target_row.parent_message_id is None:
+                                    target_row.parent_message_id = regen_lineage.root_id
+                                    if target_row.id == regen_lineage.root_id:
+                                        target_row.variant_index = 0
+                                sibling_rows = (
+                                    await session.execute(
+                                        select(Message.variant_index).where(
+                                            Message.parent_message_id == regen_lineage.root_id
+                                        )
+                                    )
+                                ).all()
+                                existing_indices = [vi for (vi,) in sibling_rows if vi is not None]
+                                assigned_variant_index = (max(existing_indices) + 1) if existing_indices else 1
+                                assigned_parent_message_id = regen_lineage.root_id
+                                assigned_message_id = str(uuid.uuid4())
+                                metadata_dict = {
+                                    **base_metadata,
+                                    "regenerated": True,
+                                    "regenerated_from_message_id": regen_lineage.target_message_id,
+                                }
+                            else:
+                                assigned_variant_index = variant_index
+                                assigned_parent_message_id = parent_message_id
+                                assigned_message_id = (
+                                    parent_message_id
+                                    if use_parent_as_message_id and variant_index == 0
+                                    else str(uuid.uuid4())
+                                )
+                                metadata_dict = dict(base_metadata)
+
+                            assistant_msg = Message(
+                                id=assigned_message_id,
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=partial_content,
+                                model_id=inputs.model.id,
+                                message_metadata=metadata_dict,
+                                parent_message_id=assigned_parent_message_id,
+                                variant_index=assigned_variant_index,
+                            )
+                            session.add(assistant_msg)
+                            await session.flush()
+
+                            # Bump conversation.updated_at at signal time so the
+                            # conversation sorts to top of "recently updated"
+                            # immediately. Finalize's UPDATE branch SKIPS this
+                            # bump to avoid double-write (the cosmetic ordering
+                            # is already correct after this commit).
+                            await session.execute(
+                                update(Conversation)
+                                .where(Conversation.id == conversation_id)
+                                .values(updated_at=now_signal)
+                            )
+
+                            await session.commit()
+                            early_state["message_id"] = assigned_message_id
+                            early_state["variant_index"] = assigned_variant_index
+                            logger.info(
+                                "Early-persist of terminated variant succeeded",
+                                extra={
+                                    "phase": "early_persist_terminated",
+                                    "conversation_id": conversation_id,
+                                    "variant_index": assigned_variant_index,
+                                    "message_id": assigned_message_id,
+                                    "attempt": attempt,
+                                    "regen": regen_lineage is not None,
+                                },
+                            )
+                        # success — exit retry loop
+                        return
+                    except IntegrityError as ie:
+                        # Same retry semantics as `_finalize_variant_phase`:
+                        # regen races on (parent_message_id, variant_index)
+                        # UNIQUE; non-regen path should never trip this.
+                        # Exhausting the budget here returns cleanly (no
+                        # stamping) so finalize falls through to its INSERT
+                        # path at drain-finish.
+                        if not regen_lineage or attempt >= REGEN_MAX_ATTEMPTS:
+                            logger.error(
+                                "Early-persist IntegrityError after %d attempts (regen=%s): %s",
+                                attempt,
+                                regen_lineage is not None,
+                                ie,
+                            )
+                            return
+                        logger.info(
+                            "Early-persist regen variant_index conflict on attempt %d; retrying",
+                            attempt,
+                        )
+
             # We loop until the agents are done pulling what they need to pull.
             while True:
                 (
@@ -1002,6 +1196,7 @@ class EnsembleStreamingHelper:
                     tools_enabled=tools_enabled,
                     lifecycle=lifecycle,
                     content_accumulator=content_accumulator,
+                    on_terminate_signal=on_terminate_signal,
                 )
                 # SHU-802: user_terminated / shutdown short-circuits the tool
                 # loop too — once the lifecycle is signalled we stop calling
@@ -1063,6 +1258,11 @@ class EnsembleStreamingHelper:
                     model_name_for_event=model_display_name,
                     final_event_type="final_message",
                     drain_audit=drain_audit,
+                    # SHU-803 follow-up: hand off the early-persisted ids
+                    # (if the callback committed successfully) so finalize
+                    # takes the UPDATE-existing branch instead of INSERT.
+                    early_persisted_message_id=early_state.get("message_id"),
+                    early_persisted_variant_index=early_state.get("variant_index"),
                 )
 
             if final_message_event is None:
@@ -1239,6 +1439,172 @@ class EnsembleStreamingHelper:
 
         if result.success:
             assert result.full_content is not None, "VariantStreamResult.success requires full_content"
+
+            # SHU-803 follow-up: UPDATE-existing branch. When the
+            # terminate-time `on_terminate_signal` callback in
+            # `_stream_variant_phase` committed the partial Message at
+            # signal time, this branch only needs to refine the
+            # `partial_usage_unavailable` flag (drain may have captured
+            # usage that wasn't available at signal time) and INSERT
+            # the LLMUsage row. No Message INSERT, no retry loop (the
+            # UNIQUE-constrained columns don't change on UPDATE), and
+            # no `conversation.updated_at` bump (already done at signal
+            # time — bumping again would be cosmetic noise).
+            if result.early_persisted_message_id is not None:
+                early_msg_id = result.early_persisted_message_id
+                early_variant_index = (
+                    result.early_persisted_variant_index
+                    if result.early_persisted_variant_index is not None
+                    else variant_index
+                )
+                early_assistant_msg_loaded: Message | None = None
+                try:
+                    async with session_factory() as session:
+                        # Refine partial_usage_unavailable based on drain-
+                        # final state. At signal time we may not have had
+                        # usage yet (flag=True); drain might have captured
+                        # the end-of-stream usage chunk between then and
+                        # now (flag should flip to False).
+                        existing_msg = (
+                            await session.execute(select(Message).where(Message.id == early_msg_id))
+                        ).scalar_one_or_none()
+                        if existing_msg is not None:
+                            metadata_now = dict(existing_msg.message_metadata or {})
+                            if result.partial_usage_unavailable:
+                                metadata_now["partial_usage_unavailable"] = True
+                            else:
+                                metadata_now.pop("partial_usage_unavailable", None)
+                            existing_msg.message_metadata = metadata_now
+                            # SQLAlchemy doesn't deep-diff JSON columns by
+                            # default; flag the attribute as modified so the
+                            # UPDATE actually emits.
+                            from sqlalchemy.orm.attributes import flag_modified
+
+                            flag_modified(existing_msg, "message_metadata")
+
+                        # Insert LLMUsage with drain-final state.
+                        # Terminated streams record success=False with the
+                        # interrupted error message (matches the existing
+                        # INSERT branch). Drain audit goes on
+                        # request_metadata for ops grep.
+                        early_request_metadata: dict[str, Any] | None = (
+                            dict(result.drain_audit) if result.drain_audit else None
+                        )
+                        await get_usage_recorder().record(
+                            provider_id=inputs.model.provider_id,
+                            model_id=inputs.model.id,
+                            request_type="chat",
+                            input_tokens=result.usage.get("input_tokens", 0),
+                            output_tokens=result.usage.get("output_tokens", 0),
+                            total_cost=safe_decimal(result.usage.get("cost")),
+                            user_id=str(conversation_owner_id) if conversation_owner_id else None,
+                            response_time_ms=result.metadata.get("response_time_ms"),
+                            success=False,
+                            error_message=f"Stream interrupted: {lifecycle.resolved_reason()}",
+                            request_metadata=early_request_metadata,
+                            session=session,
+                        )
+
+                        await session.commit()
+
+                        # Post-commit reload with relationships for SSE.
+                        try:
+                            stmt = (
+                                select(Message)
+                                .where(Message.id == early_msg_id)
+                                .options(
+                                    selectinload(Message.model),
+                                    selectinload(Message.conversation),
+                                    selectinload(Message.attachments),
+                                )
+                            )
+                            early_assistant_msg_loaded = (await session.execute(stmt)).scalar_one()
+                        except Exception as reload_exc:
+                            logger.warning(
+                                "Post-commit reload failed on early-persist UPDATE; "
+                                "emitting final_message with degraded relationship metadata.",
+                                extra={
+                                    "phase": "finalize_post_commit_reload_failed",
+                                    "conversation_id": conversation_id,
+                                    "variant_index": early_variant_index,
+                                    "error_type": type(reload_exc).__name__,
+                                },
+                                exc_info=True,
+                            )
+                            early_assistant_msg_loaded = existing_msg
+                except Exception as exc:
+                    # LLMUsage INSERT or session commit failed. The Message
+                    # row from early-persist is already committed — user
+                    # content is preserved; we have a billing-data gap.
+                    # Log ERROR for ops grep and best-effort reload the
+                    # Message for the SSE event so the consumer doesn't
+                    # hang waiting for a terminal event.
+                    logger.error(
+                        "Variant finalize UPDATE-on-early-persist rolled back; " "Message persists, LLMUsage missing",
+                        extra={
+                            "phase": "finalize_rollback",
+                            "conversation_id": conversation_id,
+                            "variant_index": early_variant_index,
+                            "error_type": type(exc).__name__,
+                            "early_persisted": True,
+                            "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+                        },
+                        exc_info=True,
+                    )
+                    try:
+                        async with session_factory() as session_reload:
+                            stmt = (
+                                select(Message)
+                                .where(Message.id == early_msg_id)
+                                .options(
+                                    selectinload(Message.model),
+                                    selectinload(Message.conversation),
+                                    selectinload(Message.attachments),
+                                )
+                            )
+                            early_assistant_msg_loaded = (await session_reload.execute(stmt)).scalar_one_or_none()
+                    except Exception:
+                        early_assistant_msg_loaded = None
+
+                if early_assistant_msg_loaded is None:
+                    # Catastrophic: can't load the early-persisted row.
+                    # Emit a terminal error event so the SSE consumer
+                    # exits its `queue.get()` loop.
+                    await queue.put(
+                        self._create_error_event(
+                            "An internal error prevented loading your response. Please try again.",
+                            early_variant_index,
+                            inputs,
+                            model_snapshot,
+                            model_display_name,
+                        )
+                    )
+                else:
+                    await queue.put(
+                        ProviderResponseEvent(
+                            type=result.final_event_type or "final_message",
+                            content=serialize_message_for_sse(early_assistant_msg_loaded),
+                            variant_index=early_variant_index,
+                            model_configuration_id=getattr(inputs.model_configuration, "id", None),
+                            model_configuration=model_snapshot or None,
+                            model_name=result.model_name_for_event,
+                            model_display_name=model_display_name,
+                        )
+                    )
+                logger.info(
+                    "Variant finalize phase complete",
+                    extra={
+                        "phase": "finalize_complete",
+                        "conversation_id": conversation_id,
+                        "variant_index": early_variant_index,
+                        "success": early_assistant_msg_loaded is not None,
+                        "lifecycle_reason": lifecycle.resolved_reason(),
+                        "terminated": True,
+                        "early_persisted": True,
+                        "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+                    },
+                )
+                return
 
             # Retry loop only matters for the regen path; for the non-regen
             # path the variant_index is fixed by the ensemble loop counter
@@ -1693,6 +2059,9 @@ class EnsembleStreamingHelper:
                     inputs=inputs,
                     queue=queue,
                     conversation_id=conversation_id,
+                    parent_message_id=parent_message_id,
+                    use_parent_as_message_id=use_parent_as_message_id,
+                    regen_lineage=regen_lineage,
                     force_no_streaming=force_no_streaming,
                     start_time=start_time,
                     lifecycle=lifecycle,
