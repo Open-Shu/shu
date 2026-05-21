@@ -518,37 +518,76 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Failed to start in_flight_streams size log: {e}")
 
-    # SHU-802: SIGTERM/SIGINT signal handler. Uvicorn defers the ASGI
-    # lifespan.shutdown event until in-flight connections close — but the
-    # SSE stream IS the in-flight connection, so the lifespan drain block
-    # below never runs before SIGKILL hits at Docker's grace timeout.
-    # Installing a signal handler at startup lets us fire the shutdown
-    # signal on every registered StreamLifecycle BEFORE uvicorn starts
-    # its connection-close wait. Variants observe the signal at their
-    # next provider chunk, short-circuit to the shielded finalize, and
-    # the SSE generators close naturally — which unblocks uvicorn, and
-    # the lifespan drain then runs as a backstop to await stragglers.
+    # SHU-802: SIGTERM/SIGINT signal handler, CHAINED to uvicorn's. Uvicorn
+    # defers the ASGI lifespan.shutdown event until in-flight connections
+    # close — but the SSE stream IS the in-flight connection, so the lifespan
+    # drain block below never runs before SIGKILL hits at Docker's grace
+    # timeout. Installing our signal handler at startup lets us fire the
+    # shutdown signal on every registered StreamLifecycle the moment the
+    # signal arrives. Variants observe the signal at their next provider
+    # chunk, short-circuit to the shielded finalize, and the SSE generators
+    # close naturally — which unblocks uvicorn, lets it set should_exit,
+    # and the lifespan drain then runs as a backstop to await stragglers.
+    #
+    # Chaining is load-bearing: uvicorn registers Server.handle_exit via
+    # `signal.signal(...)` in its `capture_signals()` context manager BEFORE
+    # the ASGI lifespan startup runs (uvicorn/server.py:capture_signals →
+    # _serve → lifespan.startup). Our subsequent `loop.add_signal_handler`
+    # call internally invokes `signal.signal(sig, _sighandler_noop)` and
+    # stores our callback in `loop._signal_handlers[sig]`, fully REPLACING
+    # uvicorn's entry point. Without chaining, SIGTERM would drain streams
+    # here but never set uvicorn's `should_exit` flag — the process would
+    # consume the signal, keep running, and race the orchestrator grace
+    # period to SIGKILL, skipping ALL graceful shutdown (lifespan teardown,
+    # the drain backstop, DB pool close, scheduler cancel, etc.).
+    #
+    # We capture uvicorn's bound `handle_exit` via `signal.getsignal(sig)`
+    # BEFORE installing ours (uvicorn used `signal.signal()`, so getsignal
+    # returns the bound method directly), then re-invoke it from our drain
+    # callback. `handle_exit` only flips `should_exit`/`force_exit` bools
+    # (uvicorn/server.py:333-338), so calling it inline from the asyncio
+    # callback is safe.
     try:
         from .services.chat_streaming import signal_shutdown_to_in_flight_streams
 
         signal_loop = asyncio.get_running_loop()
 
-        def _drain_signal_handler() -> None:
-            try:
-                count = signal_shutdown_to_in_flight_streams(app.state.in_flight_streams)
-                logger.info(
-                    "SIGTERM/SIGINT handler fired shutdown signal to in-flight streams",
-                    extra={"streams_count": count},
-                )
-            except Exception as e:
-                # Signal handlers must NOT raise — asyncio swallows the
-                # exception but logs a noisy warning, and a failing
-                # handler would mask the real shutdown reason.
-                logger.warning(f"In-flight stream signal handler error: {e}")
+        # Snapshot uvicorn's handlers BEFORE our add_signal_handler call
+        # overwrites them. If uvicorn isn't the runner (tests, direct ASGI
+        # tooling), getsignal returns SIG_DFL / SIG_IGN — non-callable, so
+        # the chain becomes a no-op below, which is correct.
+        prev_sigterm_handler = _signal.getsignal(_signal.SIGTERM)
+        prev_sigint_handler = _signal.getsignal(_signal.SIGINT)
 
-        signal_loop.add_signal_handler(_signal.SIGTERM, _drain_signal_handler)
-        signal_loop.add_signal_handler(_signal.SIGINT, _drain_signal_handler)
-        logger.info("SIGTERM/SIGINT drain signal handlers installed")
+        def _make_drain_handler(sig: int, prev_handler: Any) -> Any:
+            def _drain_signal_handler() -> None:
+                try:
+                    count = signal_shutdown_to_in_flight_streams(app.state.in_flight_streams)
+                    logger.info(
+                        "SIGTERM/SIGINT handler fired shutdown signal to in-flight streams",
+                        extra={"streams_count": count, "signal": sig},
+                    )
+                except Exception as e:
+                    # Signal handlers must NOT raise — asyncio swallows the
+                    # exception but logs a noisy warning, and a failing
+                    # handler would mask the real shutdown reason.
+                    logger.warning(f"In-flight stream signal handler error: {e}")
+                # Chain to uvicorn's handle_exit so its `should_exit` flag
+                # is set and graceful shutdown proceeds normally — uvicorn's
+                # main loop polls should_exit, closes connections, runs
+                # lifespan.shutdown (firing the drain backstop block below),
+                # then exits cleanly. handle_exit only flips bools, no I/O.
+                if callable(prev_handler):
+                    try:
+                        prev_handler(sig, None)
+                    except Exception as e:
+                        logger.warning(f"Chained uvicorn signal handler error: {e}")
+
+            return _drain_signal_handler
+
+        signal_loop.add_signal_handler(_signal.SIGTERM, _make_drain_handler(_signal.SIGTERM, prev_sigterm_handler))
+        signal_loop.add_signal_handler(_signal.SIGINT, _make_drain_handler(_signal.SIGINT, prev_sigint_handler))
+        logger.info("SIGTERM/SIGINT drain signal handlers installed (chained to uvicorn)")
     except NotImplementedError:
         # Windows dev environment (asyncio's add_signal_handler is Unix-only).
         # Lifespan drain still runs as the backstop on clean shutdowns.
