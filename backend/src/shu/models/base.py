@@ -7,7 +7,7 @@ for all database models.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, Uuid
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.orm import Mapped, declarative_mixin, mapped_column
@@ -52,7 +52,7 @@ class TenantScopedMixin:
     # index=True: every query under RLS filters on tenant_id, so the index is what
     # keeps that mandatory predicate cheap.
     tenant_id: Mapped[str] = mapped_column(
-        String,
+        Uuid(as_uuid=False),
         ForeignKey("tenants.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,

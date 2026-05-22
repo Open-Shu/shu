@@ -8,7 +8,7 @@ infrastructure that every tenant-scoped FK references.
 
 from datetime import datetime
 
-from sqlalchemy import String, func
+from sqlalchemy import Uuid, func
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,7 +31,7 @@ class Tenant(Base):
 
     __tablename__ = "tenants"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
