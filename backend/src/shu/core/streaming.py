@@ -6,6 +6,7 @@ correlation ID support. It is used by both the chat and experience streaming
 endpoints.
 """
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator, Callable
@@ -57,6 +58,7 @@ async def create_sse_stream_generator(
     error_sanitizer: Callable[[str | None], str] | None = sanitize_stream_error_message,
     include_correlation_id: bool = False,
     error_code: str = "STREAM_ERROR",
+    on_close: Callable[[], None] | None = None,
 ) -> AsyncGenerator[str, None]:
     r"""Wrap an async event generator with robust error handling for SSE streaming.
 
@@ -77,7 +79,10 @@ async def create_sse_stream_generator(
     If the underlying generator raises an unexpected exception, a generic error
     payload is constructed and yielded.  A ``correlation_id`` is included in both
     the log output and the client payload when ``include_correlation_id`` is
-    ``True``.  ``GeneratorExit`` (client disconnect) is handled gracefully.
+    ``True``.  ``GeneratorExit`` and ``CancelledError`` (both forms of client
+    disconnect / task teardown) are handled gracefully and re-raised so the
+    enclosing framework (Starlette / FastAPI) keeps its cancellation contract
+    intact — never swallow either, just log them and let unwinding continue.
 
     A ``data: [DONE]\\n\\n`` marker is always emitted as the final event.
 
@@ -94,6 +99,16 @@ async def create_sse_stream_generator(
         include_correlation_id: When ``True``, generates a UUID correlation ID
             and includes it in catch-all error payloads and log messages.
         error_code: Error code string included in catch-all error payloads.
+        on_close: SHU-802. Optional cleanup callback invoked from the wrapper's
+            ``finally`` block regardless of how the stream ended (normal
+            completion, client disconnect, internal error). Chat passes a
+            closure that fires the stream's ``StreamLifecycle`` with
+            ``reason="client_disconnected"``; experience / side-call callers
+            pass ``None`` and are unaffected. The callback runs synchronously
+            (``asyncio.Event.set`` and a dict mutation are sync), so it does
+            not block the cleanup path. Exceptions from the callback are
+            logged and swallowed — a bookkeeping failure must not stop the
+            stream from closing.
 
     Yields:
         SSE-formatted ``data: {json}\\n\\n`` strings.
@@ -118,8 +133,28 @@ async def create_sse_stream_generator(
                 # Continue to next event rather than breaking the stream
                 continue
     except GeneratorExit:
-        # Client disconnected - log but don't treat as error
-        logger.info(f"Client disconnected from {error_context} stream")
+        # Client disconnected (aclose() form). Pre-SHU-802 behavior: log
+        # and fall through to the finally block so the DONE marker still
+        # has a chance to emit. We deliberately do NOT re-raise here —
+        # re-raising would prevent the finally's `yield "[DONE]"` from
+        # reaching the consumer, which is the load-bearing assertion in
+        # `test_done_marker_always_emitted_after_generator_exit`. The
+        # production disconnect path uses CancelledError (handled below),
+        # not in-band GeneratorExit from the inner generator, so this
+        # branch is in practice only exercised by tests and any caller
+        # that explicitly raises GeneratorExit from its inner generator.
+        logger.info(f"Client disconnected from {error_context} stream (GeneratorExit)")
+    except asyncio.CancelledError:
+        # Client disconnected (task-cancel form). Starlette cancels the
+        # streaming task when the underlying TCP connection closes. We
+        # re-raise to honor the cancellation contract — the enclosing
+        # framework relies on CancelledError propagating up. SHU-802:
+        # without this branch, CancelledError fell through to the
+        # `except Exception` catch-all below and was logged as a streaming
+        # error, which polluted the error-rate metrics for what is in fact
+        # a normal client-disconnect event.
+        logger.info(f"Stream cancelled during {error_context} (client disconnect)")
+        raise
     except Exception:
         # Point B: catch-all exception handler for stream-level failures
         correlation_id = str(uuid.uuid4()) if include_correlation_id else None
@@ -146,6 +181,15 @@ async def create_sse_stream_generator(
         except Exception:
             logger.exception(f"Failed to send error event to client during {error_context}")
     finally:
+        # SHU-802: fire the on_close hook regardless of how we got here —
+        # normal completion, client disconnect (either form), or internal
+        # error. Wrapped in try/except so a misbehaving callback doesn't
+        # block the [DONE] emit or surface as a confusing secondary error.
+        if on_close is not None:
+            try:
+                on_close()
+            except Exception:
+                logger.exception(f"on_close hook failed during {error_context}")
         # Always send DONE marker to properly close the stream
         try:
             yield "data: [DONE]\n\n"

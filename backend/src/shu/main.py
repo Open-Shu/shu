@@ -4,6 +4,7 @@ This module creates and configures the FastAPI application for Shu.
 """
 
 import asyncio
+import signal as _signal
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -530,6 +531,110 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     except Exception as e:
         logger.warning(f"Failed to start memory trim task: {e}")
 
+    # SHU-802: in-flight SSE chat stream registry. Keyed by stream_id,
+    # values are StreamLifecycle instances. Mutated only on the single
+    # event loop — never from threadpool / worker contexts. See
+    # `services/chat_streaming.py:StreamLifecycle` for the contract.
+    # Sanity check guards against accidental fork inheritance or a
+    # test-harness restart that left state behind.
+    existing_in_flight = getattr(app.state, "in_flight_streams", None)
+    if existing_in_flight:
+        logger.warning(
+            "app.state.in_flight_streams non-empty at startup (size=%d); clearing",
+            len(existing_in_flight),
+        )
+    app.state.in_flight_streams = {}
+
+    # Periodic size log so a leak (variant task crashing without removing
+    # its entry) is visible without waiting for memory pressure.
+    try:
+        from .services.chat_streaming import periodic_in_flight_streams_size_log
+
+        app.state.in_flight_streams_size_log_task = asyncio.create_task(
+            periodic_in_flight_streams_size_log(app.state.in_flight_streams, interval_seconds=300.0)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to start in_flight_streams size log: {e}")
+
+    # SHU-802: SIGTERM/SIGINT signal handler, CHAINED to uvicorn's. Uvicorn
+    # defers the ASGI lifespan.shutdown event until in-flight connections
+    # close — but the SSE stream IS the in-flight connection, so the lifespan
+    # drain block below never runs before SIGKILL hits at Docker's grace
+    # timeout. Installing our signal handler at startup lets us fire the
+    # shutdown signal on every registered StreamLifecycle the moment the
+    # signal arrives. Variants observe the signal at their next provider
+    # chunk, short-circuit to the shielded finalize, and the SSE generators
+    # close naturally — which unblocks uvicorn, lets it set should_exit,
+    # and the lifespan drain then runs as a backstop to await stragglers.
+    #
+    # Chaining is load-bearing: uvicorn registers Server.handle_exit via
+    # `signal.signal(...)` in its `capture_signals()` context manager BEFORE
+    # the ASGI lifespan startup runs (uvicorn/server.py:capture_signals →
+    # _serve → lifespan.startup). Our subsequent `loop.add_signal_handler`
+    # call internally invokes `signal.signal(sig, _sighandler_noop)` and
+    # stores our callback in `loop._signal_handlers[sig]`, fully REPLACING
+    # uvicorn's entry point. Without chaining, SIGTERM would drain streams
+    # here but never set uvicorn's `should_exit` flag — the process would
+    # consume the signal, keep running, and race the orchestrator grace
+    # period to SIGKILL, skipping ALL graceful shutdown (lifespan teardown,
+    # the drain backstop, DB pool close, scheduler cancel, etc.).
+    #
+    # We capture uvicorn's bound `handle_exit` via `signal.getsignal(sig)`
+    # BEFORE installing ours (uvicorn used `signal.signal()`, so getsignal
+    # returns the bound method directly), then re-invoke it from our drain
+    # callback. `handle_exit` only flips `should_exit`/`force_exit` bools
+    # (uvicorn/server.py:333-338), so calling it inline from the asyncio
+    # callback is safe.
+    try:
+        from .services.chat_streaming import signal_shutdown_to_in_flight_streams
+
+        signal_loop = asyncio.get_running_loop()
+
+        # Snapshot uvicorn's handlers BEFORE our add_signal_handler call
+        # overwrites them. If uvicorn isn't the runner (tests, direct ASGI
+        # tooling), getsignal returns SIG_DFL / SIG_IGN — non-callable, so
+        # the chain becomes a no-op below, which is correct.
+        prev_sigterm_handler = _signal.getsignal(_signal.SIGTERM)
+        prev_sigint_handler = _signal.getsignal(_signal.SIGINT)
+
+        def _make_drain_handler(sig: int, prev_handler: Any) -> Any:
+            def _drain_signal_handler() -> None:
+                try:
+                    count = signal_shutdown_to_in_flight_streams(app.state.in_flight_streams)
+                    logger.info(
+                        "SIGTERM/SIGINT handler fired shutdown signal to in-flight streams",
+                        extra={"streams_count": count, "signal": sig},
+                    )
+                except Exception as e:
+                    # Signal handlers must NOT raise — asyncio swallows the
+                    # exception but logs a noisy warning, and a failing
+                    # handler would mask the real shutdown reason.
+                    logger.warning(f"In-flight stream signal handler error: {e}")
+                # Chain to uvicorn's handle_exit so its `should_exit` flag
+                # is set and graceful shutdown proceeds normally — uvicorn's
+                # main loop polls should_exit, closes connections, runs
+                # lifespan.shutdown (firing the drain backstop block below),
+                # then exits cleanly. handle_exit only flips bools, no I/O.
+                if callable(prev_handler):
+                    try:
+                        prev_handler(sig, None)
+                    except Exception as e:
+                        logger.warning(f"Chained uvicorn signal handler error: {e}")
+
+            return _drain_signal_handler
+
+        signal_loop.add_signal_handler(_signal.SIGTERM, _make_drain_handler(_signal.SIGTERM, prev_sigterm_handler))
+        signal_loop.add_signal_handler(_signal.SIGINT, _make_drain_handler(_signal.SIGINT, prev_sigint_handler))
+        logger.info("SIGTERM/SIGINT drain signal handlers installed (chained to uvicorn)")
+    except NotImplementedError:
+        # Windows dev environment (asyncio's add_signal_handler is Unix-only).
+        # Lifespan drain still runs as the backstop on clean shutdowns.
+        # Production runs in Linux containers where the handlers install
+        # normally.
+        logger.info("Drain signal handlers unavailable on this platform; using lifespan-only drain")
+    except Exception as e:
+        logger.warning(f"Failed to install drain signal handlers: {e}")
+
     logger.info("Shu startup complete")
 
     yield
@@ -538,6 +643,10 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     task_attrs = [
         ("scheduler", "scheduler_task"),
         ("memory_trim", "memory_trim_task"),
+        # SHU-802: size-log task is a long-running asyncio.sleep loop; cancel
+        # it cleanly so the cancellation doesn't surface as a noisy warning
+        # during the in-flight-streams drain (added in step 10 of this ticket).
+        ("in_flight_streams_size_log", "in_flight_streams_size_log_task"),
     ]
     tasks_to_cancel = []
     for name, attr in task_attrs:
@@ -564,6 +673,45 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
                 logger.debug(f"Background task '{name}' cancelled successfully")
             except Exception as e:
                 logger.warning(f"Error while cancelling background task '{name}': {e}")
+
+    # SHU-802: drain in-flight chat streams. Signal `reason="shutdown"` on
+    # every registered StreamLifecycle; the variants' consumer loops observe
+    # the signal at their next provider event and short-circuit to the
+    # shielded finalize. We then await each stream's supervise_task (which
+    # gathers its variant tasks and fires registry cleanup) up to the
+    # configured drain timeout. Runs BEFORE the OCR / embedding / DB cleanup
+    # below because the shielded finalizes need a live pool to commit on.
+    # The signal-and-wait core is in `chat_streaming.drain_in_flight_streams`
+    # so it can be unit-tested with mocked supervisor tasks; this block owns
+    # the lifecycle-level logging policy (info vs error).
+    in_flight_streams = getattr(app.state, "in_flight_streams", None) or {}
+    if in_flight_streams:
+        from .services.chat_streaming import drain_in_flight_streams
+
+        drain_timeout = float(getattr(settings, "stream_drain_timeout_s", 5))
+        streams_count = len(in_flight_streams)
+        logger.info(
+            "Draining in-flight chat streams",
+            extra={"streams_count": streams_count, "drain_timeout_s": drain_timeout},
+        )
+        tasks_killed = await drain_in_flight_streams(in_flight_streams, drain_timeout)
+        if tasks_killed == 0:
+            logger.info("In-flight chat streams drained cleanly")
+        else:
+            # Tail-case tasks get killed when the process exits. Their
+            # shielded finalize transactions roll back; the Messages those
+            # streams were about to persist are lost. Scenario S2 / decision
+            # option (c): we accept this trade-off and surface it loudly so
+            # ops can tune `SHU_STREAM_DRAIN_TIMEOUT_S` up if it fires.
+            logger.error(
+                "stream drain timeout exceeded: %d tasks killed",
+                tasks_killed,
+                extra={
+                    "drain_timeout_s": drain_timeout,
+                    "tasks_killed": tasks_killed,
+                    "streams_count": streams_count,
+                },
+            )
 
     # Shutdown
     logger.info("Shutting down Shu...")

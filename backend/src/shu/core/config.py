@@ -568,6 +568,18 @@ class Settings(BaseSettings):
     # startup. A startup WARNING is logged in any environment when non-zero.
     local_stream_test_chunk_delay_ms: int = Field(0, alias="SHU_LOCAL_STREAM_TEST_CHUNK_DELAY_MS")
 
+    # SHU-802: budget for the lifespan shutdown drain of in-flight chat streams.
+    # When the FastAPI process receives SIGTERM (rolling deploy, k8s eviction),
+    # the shutdown hook signals every registered StreamLifecycle with
+    # `reason="shutdown"`. Each variant's consumer loop observes the signal,
+    # breaks the provider loop, and runs its shielded finalize transaction. The
+    # drain awaits the supervisor tasks up to this many seconds before logging
+    # an ERROR and letting the process exit. Tune up for self-hosted deployments
+    # with no SIGKILL pressure; default matches typical k8s
+    # `terminationGracePeriodSeconds=30` minus a margin for the rest of
+    # shutdown cleanup (scheduler cancel, OCR teardown, embedding cache, etc.).
+    stream_drain_timeout_s: int = Field(5, alias="SHU_STREAM_DRAIN_TIMEOUT_S")
+
     # RAG Configuration Defaults (global fallbacks)
     rag_search_threshold_default: float = Field(0.3, alias="SHU_RAG_SEARCH_THRESHOLD_DEFAULT")
     rag_max_chunks_default: int = Field(10, alias="SHU_RAG_MAX_CHUNKS_DEFAULT")
@@ -811,6 +823,25 @@ class Settings(BaseSettings):
                 f"(got {self.local_stream_test_chunk_delay_ms}). This setting is test-only."
             )
         return self
+
+    @field_validator("stream_drain_timeout_s")
+    @classmethod
+    def validate_stream_drain_timeout_s(cls, v: int) -> int:
+        """SHU-802: drain budget must be at least one second.
+
+        A zero or negative drain means in-flight finalizes get cancelled
+        immediately on shutdown, which reintroduces the disconnect-loss bug
+        class at every deploy. A drain shorter than ~1s isn't long enough
+        to commit even a successful finalize (~200ms) under realistic load
+        and would mean shutdown almost always sheds work. We refuse rather
+        than silently produce that behavior.
+        """
+        if v < 1:
+            raise ValueError(
+                f"SHU_STREAM_DRAIN_TIMEOUT_S must be >= 1 second (got {v}); "
+                "lower values silently lose in-flight chat messages at every deploy."
+            )
+        return v
 
     @field_validator("password_policy")
     @classmethod

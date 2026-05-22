@@ -408,6 +408,32 @@ class BaseProviderAdapter:
         else:
             self.usage = self._aggregate_usage(self.usage, usage_dict)
 
+    def get_partial_usage_snapshot(self) -> UsageDict:
+        """SHU-802: return cumulative usage seen so far on a partial stream.
+
+        Used by force-terminate / shutdown to capture whatever provider-
+        reported usage has accumulated up to the break point, so the
+        ``LLMUsage`` row for an interrupted stream carries real token
+        counts when available instead of always being zeroed.
+
+        Default implementation returns the current ``self.usage`` —
+        correct for adapters that update usage eagerly inside
+        ``handle_provider_event`` (e.g. responses_adapter via
+        ``response.usage`` chunks). Adapters that defer extraction
+        until ``finalize_provider_events`` (completions, gemini,
+        anthropic — they stash the latest usage chunk in
+        ``latest_usage_event`` / ``_latest_usage_event``) MUST
+        override to flush that pending chunk into ``self.usage``
+        before returning, otherwise the most recent provider-emitted
+        usage is silently dropped on terminate.
+
+        Safe to call multiple times — overrides should make the flush
+        idempotent (clear the pending event after extracting). Never
+        called by the natural-completion path; ``finalize_provider_events``
+        handles that case.
+        """
+        return dict(self.usage)
+
     def get_field_with_override(self, field_name):
         cfg = self.provider.config if isinstance(getattr(self.provider, "config", None), dict) else {}
         if field_name in cfg:

@@ -104,6 +104,17 @@ class CompletionsAdapter(BaseProviderAdapter):
             metadata={"tool_calls": messages},
         )
 
+    def get_partial_usage_snapshot(self):
+        """SHU-802: flush any pending ``latest_usage_event`` into ``self.usage``
+        before returning the snapshot. Without this override, a stream that
+        terminates between the provider's usage chunk and ``finalize_provider_events``
+        would lose the current cycle's tokens.
+        """
+        if self.latest_usage_event is not None:
+            self._extract_usage("usage", self.latest_usage_event)
+            self.latest_usage_event = None
+        return dict(self.usage)
+
     def _extract_usage(self, path: str, chunk) -> None:
         usage = jmespath.search(path, chunk) or {}
         if not usage:

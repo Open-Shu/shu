@@ -143,10 +143,18 @@ class ChatFinalizeErrorIntegrationTest(BaseIntegrationTestSuite):
         try:
             conv_id = await self._create_broken_conversation(client, admin_headers, user_headers)
 
-            # llm_usage.created_at is `timestamp without time zone` — pass naive.
+            # Both `llm_usage.created_at` and `conversations.updated_at` are
+            # `timestamp WITHOUT time zone` in the actual DB schema (verified
+            # via information_schema). The original SHU-759 comment claimed
+            # `updated_at` was tz-aware, which would have made the
+            # `conv_updated_at >= conv_bump_start` assertion below compare an
+            # aware Python datetime against a naive one fetched from the DB —
+            # that's the `TypeError: can't compare offset-naive and
+            # offset-aware datetimes` failure mode. Both anchors are naive
+            # here so the comparison stays well-defined regardless of how
+            # SQLAlchemy / asyncpg surface the column.
             start_at = datetime.now(UTC).replace(tzinfo=None)
-            # conversations.updated_at is `timestamp with time zone` — keep aware.
-            conv_bump_start = datetime.now(UTC)
+            conv_bump_start = datetime.now(UTC).replace(tzinfo=None)
 
             send_response = await client.post(
                 f"/api/v1/chat/conversations/{conv_id}/send",
