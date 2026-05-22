@@ -456,10 +456,14 @@ async def test_response_created_event_captures_response_id(cancellable_adapter):
 
 
 @pytest.mark.asyncio
-async def test_response_created_second_event_does_not_overwrite_id(cancellable_adapter):
-    """A second `response.created` (shouldn't normally happen but worth
-    pinning) must NOT replace the id we already have — once captured,
-    the id we'd cancel is locked.
+async def test_response_created_second_event_overwrites_id(cancellable_adapter):
+    """A second ``response.created`` MUST refresh ``_response_id`` to the
+    new id. The adapter instance is reused across tool-call follow-up
+    turns in ``_stream_variant_phase`` — each turn opens a fresh stream
+    and emits a new ``response.created``. If we kept the first id,
+    ``cancel()`` on Stop during the second turn would POST to a stale
+    /responses/{id}/cancel endpoint and the live stream would keep
+    billing.
     """
     await cancellable_adapter.handle_provider_event(
         {"type": "response.created", "response": {"id": "resp_first"}}
@@ -467,7 +471,7 @@ async def test_response_created_second_event_does_not_overwrite_id(cancellable_a
     await cancellable_adapter.handle_provider_event(
         {"type": "response.created", "response": {"id": "resp_second"}}
     )
-    assert cancellable_adapter._response_id == "resp_first"
+    assert cancellable_adapter._response_id == "resp_second"
 
 
 @pytest.mark.asyncio

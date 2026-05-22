@@ -278,14 +278,19 @@ class ResponsesAdapter(BaseProviderAdapter):
         return parts
 
     async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:  # noqa: PLR0912
-        # SHU-803 AC9e: capture response.id from the first `response.created`
-        # event so a subsequent `cancel()` call can address the right
-        # in-flight run. The OpenAI Responses API emits this as the first
-        # event in the stream, so a terminate firing AFTER any content
-        # delta is guaranteed to have an id available. If terminate fires
-        # BEFORE `response.created` lands (extremely tight race window),
-        # `cancel()` no-ops and drain still captures the eventual usage.
-        if chunk.get("type") == "response.created" and self._response_id is None:
+        # SHU-803 AC9e: capture response.id on every `response.created`
+        # event so `cancel()` targets the currently in-flight run. The
+        # adapter instance is reused across tool-call follow-up turns in
+        # ``_stream_variant_phase`` — each turn opens a fresh stream and
+        # emits a NEW ``response.created`` with a new id. A first-wins
+        # guard here would leave ``_response_id`` pointing at the long-
+        # completed first-turn id, so a user clicking Stop on a tool-
+        # using assistant's final answer would POST to the wrong
+        # /responses/{id}/cancel endpoint and the live stream would keep
+        # billing. If terminate fires BEFORE `response.created` lands
+        # (extremely tight race window), `cancel()` no-ops and drain
+        # still captures the eventual usage.
+        if chunk.get("type") == "response.created":
             response_id = jmespath.search("response.id", chunk)
             if isinstance(response_id, str) and response_id:
                 self._response_id = response_id
