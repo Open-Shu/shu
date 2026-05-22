@@ -15,6 +15,17 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
 os.environ.setdefault("SHU_LLM_ENCRYPTION_KEY", "5n7s4FR2ctJo5EBLUIgx_cKuX-ydpE5jg-xSMlKz5zQ=")
 os.environ.setdefault("SHU_OAUTH_ENCRYPTION_KEY", "Ngyzgo3L2B3D_b6MXEffwnS68hPMGS_4YwWRrtNSwQs=")
 
+# Default deployment mode for tests. Developer .env files commonly set
+# SHU_TENANT_ID (a UUID), which would clash with the default self_hosted
+# mode under the tenant-isolation cross-field model validator. Forcing
+# `silo` here keeps the env+.env combo valid at import time (when
+# modules like http_client.py instantiate Settings). SHU_DEPLOYMENT_MODE
+# is not present in .env, so this os.environ assignment survives any
+# later `load_dotenv(override=True)` calls inside shu.core.config.
+# Tests that need a different mode override via monkeypatch.
+os.environ["SHU_DEPLOYMENT_MODE"] = "silo"
+os.environ.setdefault("SHU_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+
 # Add backend/src to sys.path so shu.* imports work when running pytest from repo root.
 PROJECT_SRC = Path(__file__).resolve().parents[2]
 if str(PROJECT_SRC) not in sys.path:
@@ -32,6 +43,35 @@ if str(MIGRATIONS_ROOT) not in sys.path:
     sys.path.insert(0, str(MIGRATIONS_ROOT))
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _default_tenant_context():
+    """Set a fixed tenant_context for every unit test.
+
+    The SHU-761 before_flush listener refuses to flush tenant-scoped objects
+    without a context — that's correct in production, but unit tests rarely
+    construct a tenant context explicitly. A fixed UUID matching the silo
+    SHU_TENANT_ID above keeps existing tests passing while preserving the
+    listener's protection: anything that tries to insert a *different* tenant
+    still raises CrossTenantInsertError.
+
+    Tests that need to exercise the missing-context path should pop the
+    context with ``tenant_context.reset(token)``.
+    """
+    from shu.core.tenant import _lookup_tenant_for_user, tenant_context
+
+    # Clear the process-local async-LRU on _lookup_tenant_for_user before
+    # every test. The cache is sized at 4096 and persists across tests, so a
+    # test that patches the underlying lookup (or the SD function) to return
+    # one tenant_id for a given user_id will see the stale earlier value if a
+    # prior test mocked it differently. Clearing per-test gives us
+    # isolation; production still benefits from cross-request caching.
+    _lookup_tenant_for_user.cache_clear()
+
+    token = tenant_context.set("00000000-0000-0000-0000-000000000001")
+    yield
+    tenant_context.reset(token)
 
 
 @pytest.fixture(autouse=True)
@@ -60,18 +100,26 @@ def _clear_active_check_cache_between_tests():
 
 @pytest.fixture(autouse=True)
 def _reset_billing_state_cache_between_tests():
-    """Always reset the module-level `_cache` between tests.
+    """Reset per-tenant billing caches between tests, with a None-sentinel default.
 
-    Tests that drive the FastAPI lifespan (test_worker_mode.py) call
-    `initialize_billing_state_cache()`, which leaves `_cache` pointing at a
-    real `BillingStateCache` backed by an httpx client. The lifespan's
-    shutdown closes that client, but `_cache` stays set — so the next test
-    that hits `assert_subscription_active()` (e.g. via the embedding-service
-    gate) calls `cache.get()` on the stale cache and gets
-    'Cannot send a request, as the client has been closed.'
-    Belt-and-suspenders cleanup; cheap (just sets `_cache = None`).
+    SHU-761 moved the cache from a single ``_cache`` singleton to
+    ``_cache_by_tenant`` keyed by tenant_id. Tests should default to
+    "no CP / enforcement disabled" — pre-populate the test tenant's slot
+    with ``None`` so ``get_billing_state_cache()`` short-circuits without
+    attempting a real CpClient build (which would invoke the http_client
+    singleton and trip on cross-test event-loop binding).
+
+    Tests that need a real-looking cache use ``install_stub_cache`` which
+    overwrites the slot with a StubBillingStateCache.
     """
+    from shu.billing import billing_state_cache as billing_state_cache_module
     from shu.billing.billing_state_cache import reset_billing_state_cache
+    from shu.core.tenant import tenant_context
+
+    reset_billing_state_cache()
+    test_tid = tenant_context.get(None)
+    if test_tid is not None:
+        billing_state_cache_module._cache_by_tenant[test_tid] = None
 
     yield
     reset_billing_state_cache()
@@ -100,13 +148,24 @@ def disabled_billing_state(
 
     Default `payment_failed_at` is a fixed 2026-01-01 — tests asserting on
     grace_deadline values get a stable input without each one inventing one.
+    Trial/grant fields default to inert values; tests that target trial
+    behavior construct dedicated states inline.
     """
+    from decimal import Decimal
+
     from shu.billing.cp_client import BillingState
+    from shu.billing.entitlements import EntitlementSet
 
     return BillingState(
         openrouter_key_disabled=True,
         payment_failed_at=payment_failed_at or datetime(2026, 1, 1, tzinfo=UTC),
         payment_grace_days=grace_days,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
     )
 
 
@@ -119,30 +178,34 @@ def healthy_billing_state():
 
 @pytest.fixture
 def install_stub_cache():
-    """Install a stub billing-state cache singleton, restore None on teardown.
+    """Install a stub billing-state cache for the test's current tenant_context.
 
     Returns a callable `_install(state) -> StubBillingStateCache` so a single
     test can replace the cache value mid-flight (e.g. simulating a CP poll
-    that flips the gate). Patches the module-level `_cache` directly — the
-    helper only consumes the singleton via `get_billing_state_cache()`, so
-    the stub's surface is enough.
+    that flips the gate). Writes the stub into ``_cache_by_tenant`` keyed by
+    the autouse-fixture's tenant_id so ``get_billing_state_cache()`` finds it.
 
     Resets on both setup and teardown so a test that requests this fixture
-    but never calls `_install` sees `_cache=None` (the self-hosted bypass
-    path) regardless of test execution order.
+    but never calls `_install` sees an empty cache dict (the unconfigured-CP
+    bypass path) regardless of test execution order.
     """
     from shu.billing import billing_state_cache as billing_state_cache_module
-    from shu.billing.billing_state_cache import reset_billing_state_cache
+    from shu.core.tenant import tenant_context
 
-    reset_billing_state_cache()
+    # No reset at setup/teardown — the autouse ``_reset_billing_state_cache_between_tests``
+    # fixture handles that (and pre-populates the test tenant's slot with None
+    # so an un-installed test sees "cache disabled"). Doing it here too would
+    # clobber that pre-population and trigger the lazy real-CP build path.
 
     def _install(value) -> StubBillingStateCache:
         stub = StubBillingStateCache(value)
-        billing_state_cache_module._cache = stub
+        # The autouse _default_tenant_context fixture sets tenant_context to a
+        # fixed test UUID; install for that tenant so the lookup finds us.
+        tid = tenant_context.get()
+        billing_state_cache_module._cache_by_tenant[tid] = stub
         return stub
 
     yield _install
-    reset_billing_state_cache()
 
 
 @pytest.fixture

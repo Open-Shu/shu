@@ -15,7 +15,6 @@ Per TESTING.md, negative tests log the
 doesn't flag the expected LLM-call errors as real failures.
 """
 
-import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -24,8 +23,9 @@ from sqlalchemy import text
 from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.auth import cleanup_framework_test_admin, cleanup_test_user, create_active_user_with_id
 from integ.response_utils import extract_data
+from shu.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # An OpenAI-compatible provider pointed at a port that's never listening.

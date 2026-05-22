@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Column, Integer, String
+from sqlalchemy import JSON, Boolean, Column, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 
-from .base import BaseModel
+from .base import BaseModel, TenantScopedMixin
 
 
-class McpServerConnection(BaseModel):
+class McpServerConnection(TenantScopedMixin, BaseModel):
     __tablename__ = "mcp_server_connections"
 
-    name = Column(String(96), nullable=False, unique=True)
+    # Per-tenant uniqueness, not global. Tenant A picking a connection name
+    # like "github" must not block tenant B from using the same. The composite
+    # UniqueConstraint below enforces the per-tenant scope.
+    name = Column(String(96), nullable=False)
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_mcp_server_connections_tenant_name"),)
     url = Column(String(500), nullable=False)
     tool_configs = Column(JSON, nullable=True)
     discovered_tools = Column(JSON, nullable=True)

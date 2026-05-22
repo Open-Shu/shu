@@ -36,9 +36,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional, Protocol, runtime_checkable
 
-from shu.core.logging import get_logger
-
-from .tenant import warn_tenant_without_redis
+from .logging import get_logger
+from .tenant import resolve_redis_namespace, warn_tenant_without_redis
 
 logger = get_logger(__name__)
 
@@ -122,6 +121,18 @@ class JobSerializationError(QueueError):
     pass
 
 
+class EnqueueError(QueueError):
+    """Raised by the high-level enqueue helper when the job can't be tenant-stamped.
+
+    The worker pipeline relies on every job carrying a ``tenant_id`` so the
+    dispatch wrapper can set tenant_context before the handler runs. Refusing
+    to enqueue without one is loud-fail-at-the-source rather than silent
+    default-deny later when the handler queries return zero rows under RLS.
+    """
+
+    pass
+
+
 # =============================================================================
 # Job Dataclass
 # =============================================================================
@@ -171,6 +182,21 @@ class Job:
     attempts: int = 0
     max_attempts: int = 3
     visibility_timeout: int = 300  # 5 minutes default
+    # Tenant that owns this job. The worker dispatch wrapper sets
+    # tenant_context to this value before invoking the handler, so any DB
+    # query the handler runs is scoped to the right tenant under RLS.
+    #
+    # The field defaults to None for two reasons: (1) keeps the dataclass
+    # ergonomic for tests that build ``Job`` objects in-process, and (2)
+    # lets ``from_json`` deserialize legacy jobs left in the queue from
+    # before this field was added. Production ENQUEUE always supplies one
+    # — ``enqueue_job`` raises EnqueueError otherwise. Production DEQUEUE
+    # of a tenant_id-less job is treated as a poison pill: the worker
+    # dispatcher catches the resulting MissingTenantContextError in MT
+    # and rejects without requeue. Silo/self-hosted callers resolve a
+    # None tenant_id to the deployment constant, so legacy in-flight
+    # jobs drain cleanly there.
+    tenant_id: str | None = None
 
     def to_json(self) -> str:
         """Serialize job to JSON string.
@@ -200,6 +226,7 @@ class Job:
                     "attempts": self.attempts,
                     "max_attempts": self.max_attempts,
                     "visibility_timeout": self.visibility_timeout,
+                    "tenant_id": self.tenant_id,
                 }
             )
         except (TypeError, ValueError) as e:
@@ -239,6 +266,7 @@ class Job:
                 attempts=obj.get("attempts", 0),
                 max_attempts=obj.get("max_attempts", 3),
                 visibility_timeout=obj.get("visibility_timeout", 300),
+                tenant_id=obj.get("tenant_id"),
             )
         except json.JSONDecodeError as e:
             raise JobSerializationError(
@@ -1163,7 +1191,12 @@ class RedisQueueBackend:
 
     """
 
-    def __init__(self, redis_client: Any, *, tenant_prefix: str | None = None) -> None:
+    def __init__(
+        self,
+        redis_client: Any,
+        *,
+        namespace: str | None = None,
+    ) -> None:
         """Initialize with an existing Redis client.
 
         Args:
@@ -1171,19 +1204,20 @@ class RedisQueueBackend:
                 created internally by `get_queue_backend()`. External code
                 should use the factory function instead of constructing
                 this class directly.
-            tenant_prefix: Optional tenant identifier prepended as `{prefix}:` to
-                every Redis key for shared-deployment isolation. None = no prefix.
-
-        Raises:
-            ValueError: If ``tenant_prefix`` is provided but empty/whitespace.
-                Empty would silently disable prefixing — dangerous in a hosted
-                context where callers expect structural isolation.
+            namespace: Static prefix applied to every Redis key built by this
+                backend (queue / processing / scheduled / job-data). Resolved
+                once at construction — **not** a per-call lookup, so the
+                worker poll loop (dequeue / ack / reject), which runs without
+                a tenant context, builds the same keys as the request path.
+                Passing ``None`` leaves keys unprefixed; production wires this
+                via ``resolve_redis_namespace()``. The namespace's only job
+                is collision avoidance between **deployments** sharing one
+                Redis; tenant isolation comes from RLS and the dispatch
+                wrapper's per-job ``tenant_context.set``.
 
         """
-        if tenant_prefix is not None and not tenant_prefix.strip():
-            raise ValueError("tenant_prefix must be None or a non-empty string")
         self._client = redis_client
-        self._prefix = f"{tenant_prefix}:" if tenant_prefix else ""
+        self._prefix = f"{namespace}:" if namespace else ""
 
     def _queue_key(self, queue_name: str) -> str:
         """Get the Redis key for the main queue list."""
@@ -1843,25 +1877,39 @@ async def get_queue_backend() -> QueueBackend:
     if _queue_backend is not None:
         return _queue_backend
 
-    from .config import get_settings_instance
+    from .config import DeploymentMode, get_settings_instance
 
     settings = get_settings_instance()
-    tenant_id = settings.tenant_id
 
     if not settings.redis_enabled:
-        if tenant_id:
-            # Tenant-scoped without Redis means per-pod in-memory jobs no other
-            # pod can see — almost certainly a misconfigured hosted deploy. We
-            # warn loudly but continue so local dev (tenant_id set, no Redis)
-            # still works; raising here would break that workflow.
-            warn_tenant_without_redis(logger, "queue", tenant_id)
+        # Multi-tenant without Redis is structurally broken: every pod has its
+        # own InMemoryQueueBackend, so a job enqueued on one pod is invisible
+        # to a worker on another, and tenant isolation is moot because every
+        # tenant shares one process's memory anyway. Refuse to start rather
+        # than silently degrade.
+        if settings.deployment_mode == DeploymentMode.MULTI_TENANT:
+            raise RuntimeError(
+                "SHU_REDIS_URL is required when SHU_DEPLOYMENT_MODE=multi_tenant. "
+                "Without Redis, queues fragment across pods and the worker pipeline "
+                "loses cross-pod job delivery — the deployment cannot function correctly."
+            )
+        # Silo: a tenant is configured but Redis is missing — in-memory queues
+        # mean each pod's queue is invisible to the others, almost certainly a
+        # misconfigured hosted deploy. Warn loudly but continue so local dev
+        # still works; self_hosted has no shared-state expectation.
+        if settings.deployment_mode == DeploymentMode.SILO:
+            warn_tenant_without_redis(logger, "queue", settings.tenant_id)  # noqa: STRAY-TENANT-ID — silo-only warn helper
         logger.info("SHU_REDIS_URL not configured, using InMemoryQueueBackend")
         _queue_backend = InMemoryQueueBackend()
         return _queue_backend
 
-    # Redis is enabled — connection failure is fatal
+    # Redis is enabled — connection failure is fatal. The namespace is a
+    # deployment-level prefix (NOT per-tenant) so dequeue/ack/reject can run
+    # without a tenant context. Per-tenant isolation comes from RLS at the DB
+    # layer and tenant_context.set(job.tenant_id) at dispatch — the namespace
+    # only prevents collisions between **deployments** sharing one Redis.
     redis_client = await _get_shared_redis_client()
-    _queue_backend = RedisQueueBackend(redis_client, tenant_prefix=tenant_id)
+    _queue_backend = RedisQueueBackend(redis_client, namespace=resolve_redis_namespace())
     logger.info("Using RedisQueueBackend")
     return _queue_backend
 

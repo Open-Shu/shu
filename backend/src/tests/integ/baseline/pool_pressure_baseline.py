@@ -48,7 +48,6 @@ Defaults: N=10 iterations. Override via ``BASELINE_N=20`` env var.
 from __future__ import annotations
 
 import json
-import logging
 import math
 import os
 import sys
@@ -61,8 +60,9 @@ from integ.baseline._setup import create_local_chat_setup
 from integ.helpers.auth import cleanup_framework_test_admin
 from integ.helpers.pool_observer import PoolObserver, WindowStats
 from shu.core.database import get_async_engine
+from shu.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_N = 10
 # Override iteration count via env var; the integration framework's own

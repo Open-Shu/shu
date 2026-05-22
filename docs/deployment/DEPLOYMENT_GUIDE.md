@@ -405,13 +405,51 @@ For more sophisticated health checks, consider adding a sidecar that monitors qu
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SHU_DATABASE_URL` | *required* | PostgreSQL connection string (asyncpg driver) |
+| `SHU_DATABASE_URL` | *required* | PostgreSQL connection string (asyncpg driver). Connects as the `shu_app` role (RLS-enforced) — used by the API and worker processes. |
+| `SHU_DB_ADMIN_URL` | *required* | PostgreSQL admin connection string. Connects as the `shu_admin` role (BYPASSRLS), targets the same database as `SHU_DATABASE_URL`. Used **only** by Alembic migrations and the cross-tenant admin service — never by request-serving code. |
+| `SHU_ADMIN_DB_PASSWORD` | *required at migration time* | Password the migration assigns to the `shu_admin` role at `CREATE ROLE` time. Required — no fallback. Source from the deploy secret store; absence fails the migration loudly rather than producing a LOGIN role with a well-known credential. |
+| `SHU_APP_DB_PASSWORD` | *required at migration time* | Password the migration assigns to the `shu_app` role at `CREATE ROLE` time. Same required-no-fallback contract as `SHU_ADMIN_DB_PASSWORD`. |
 | `SHU_USE_PGBOUNCER` | `false` | Set `true` when Postgres sits behind PgBouncer in transaction-pooling mode (e.g. DigitalOcean Managed Postgres). Disables asyncpg's prepared-statement cache (`statement_cache_size=0`), which is incompatible with transaction pooling. Hosted deployments set `true`; dev/self-hosted omit it. |
-| `SHU_REDIS_URL` | *none* | Redis URL; if unset, uses in-memory backends |
-| `SHU_TENANT_ID` | *unset* | Tenant identifier. When set, every Redis key is namespaced `{tenant_id}:{key}` so multiple tenants can safely share a Redis instance. Required for hosted deployments; omit for dev/self-hosted single-tenant runs. Empty-string values are rejected at startup. |
+| `SHU_REDIS_URL` | *none* | Redis URL; if unset, uses in-memory backends. **Required** in `multi_tenant` mode — without it, queues fragment across pods and the deployment cannot function. |
+| `SHU_REDIS_NAMESPACE` | *per-mode default* | Override the Redis key namespace. Defaults: `self_hosted` → the hardcoded self-hosted tenant UUID; `silo` → `SHU_TENANT_ID`; `multi_tenant` → literal `"multitenant"`. Set explicitly only when two deployments share one Redis instance and would collide on the default (e.g., two MT clusters on managed Redis). Tenant isolation does **not** depend on this — RLS at the DB layer is the tenant fence; the namespace just prevents per-deployment Redis key collisions. |
+| `SHU_DEPLOYMENT_MODE` | `self_hosted` | Deployment-mode selector. One of `self_hosted`, `silo`, `multi_tenant`. Controls how tenant identity is resolved per request. See [Tenant Isolation Mode](#tenant-isolation-mode) below for the cross-field rules with `SHU_TENANT_ID`. |
+| `SHU_TENANT_ID` | *unset* | Tenant identifier. In `silo` mode this is **required and must be UUID-shaped** — it identifies the single tenant a silo deployment serves and is the default Redis namespace source for that mode (override via `SHU_REDIS_NAMESPACE`). In `self_hosted` and `multi_tenant` modes it must be **unset** — those modes resolve tenant at request time (the hardcoded self-hosted UUID and the per-request resolver respectively), and Redis namespacing falls through to `SHU_REDIS_NAMESPACE` or the per-mode default. Empty-string values are rejected at startup. **Breaking change (SHU-761):** prior to SHU-761 this field accepted any non-empty string AND was used directly as the Redis key prefix; both behaviors changed. See [Tenant Isolation Mode](#tenant-isolation-mode) for the cross-field rules with `SHU_DEPLOYMENT_MODE` and `SHU_REDIS_NAMESPACE`. |
 | `SHU_ENVIRONMENT` | `production` | Environment name (production, development, staging) |
 | `SHU_LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 | `SHU_LOG_FORMAT` | `json` | Log format (json, text) |
+
+### Tenant Isolation Mode
+
+`SHU_DEPLOYMENT_MODE` selects how the application resolves tenant identity. The three values map to distinct operational profiles, each with a strict rule on `SHU_TENANT_ID`:
+
+| Mode | Meaning | `SHU_TENANT_ID` |
+|------|---------|-----------------|
+| `self_hosted` (default) | Single tenant, run on the operator's own infrastructure. The deployment uses a hardcoded constant tenant UUID baked into the application. | Must be **unset**. |
+| `silo` | Single tenant per deployment, but the tenant UUID is configured per-deployment (e.g., hosted single-tenant instances). | **Required**, must parse as a valid UUID. |
+| `multi_tenant` | Many tenants share one deployment. Tenant is resolved per-request from the caller's credentials. | Must be **unset**. |
+
+Cross-field validation runs at startup; misconfiguration fails fast rather than silently mis-routing data.
+
+#### Migration note: UUID-shaped `SHU_TENANT_ID` (SHU-761)
+
+Prior to SHU-761, `SHU_TENANT_ID` accepted **any non-empty string**. As of SHU-761, `silo` deployments must set it to a UUID-shaped value; non-UUID values now fail at startup.
+
+If you operate an existing silo deployment with a non-UUID tenant ID, generate a fresh UUID before upgrading:
+
+```bash
+uuidgen | tr 'A-Z' 'a-z'
+```
+
+then set `SHU_TENANT_ID` to that value. Coordinate this with any control-plane registry entry that references the old value, since the control plane keys tenants by this ID.
+
+### Database Roles (SHU-761)
+
+Shu connects to Postgres as two different roles depending on the operation:
+
+- **`shu_app`** — the standard application role. Row-Level Security policies are enforced for this role; queries can only see rows belonging to the current `session.tenant_id`. Used by everything that serves user requests (API, workers). Driven by `SHU_DATABASE_URL`.
+- **`shu_admin`** — a `BYPASSRLS` role. Used **only** by Alembic migrations (which need to mutate schema and seed data across all tenants) and by the cross-tenant admin service (operator/control-plane surfaces that intentionally read across tenants). Driven by `SHU_DB_ADMIN_URL`.
+
+Both URLs point at the **same database**; only the role differs. Do not point `SHU_DB_ADMIN_URL` at request-serving code paths — doing so disables tenant isolation.
 
 ### API Configuration
 

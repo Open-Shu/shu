@@ -10,18 +10,19 @@ Feature: queue-backend-interface
 import asyncio
 import logging
 import time
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
-from shu.billing.enforcement import SubscriptionInactiveError
 from tests.unit.conftest import disabled_billing_state, healthy_billing_state
+
+from shu.billing.enforcement import SubscriptionInactiveError, TrialCapExhaustedError
 from shu.core.queue_backend import InMemoryQueueBackend, Job
 from shu.core.worker import Worker, WorkerConfig
 from shu.core.workload_routing import WorkloadType, enqueue_job
-from shu.models.document import DocumentStatus
 
 # =============================================================================
 # Test Fixtures
@@ -812,12 +813,14 @@ class TestWorkloadCapacityLimiter:
 
 
 # =============================================================================
-# Subscription Gate Tests (SHU-703)
+# Billing Gate Tests (SHU-703 / SHU-757)
 #
-# When the service-layer gate inside `ExternalOCRService` /
-# `ExternalEmbeddingService` raises `SubscriptionInactiveError`, the worker
-# handler must drop the job cleanly — propagating would log a stack trace
-# and requeue, neither of which is correct for a known billing state.
+# When the service-layer gate raises `SubscriptionInactiveError` (post-grace
+# OR-key disable) OR `TrialCapExhaustedError` (trial grant pool exhausted),
+# the worker handler must drop the job cleanly — propagating would log a
+# stack trace and requeue, neither of which is correct for a known billing
+# state. Both errors share the same drop path so new billing-gated failure
+# modes added later inherit the behavior.
 # =============================================================================
 
 
@@ -880,15 +883,17 @@ def _make_embed_payload(action: str = "embed_document") -> dict:
     }
 
 
-class TestProcessJobSubscriptionGate:
-    """`SubscriptionInactiveError` raised anywhere in a handler chain must be
+class TestProcessJobBillingGate:
+    """Either billing-gate error raised anywhere in a handler chain must be
     caught at the dispatch level (`process_job`) and turned into a clean drop
     — no stack trace, no retry. Catching here (not in each handler) means new
     workload types inherit the drop behavior automatically.
 
     The `RE_EMBEDDING` case is the load-bearing one: it wasn't covered by the
     earlier per-handler catches and surfaced as 3-attempt retry storms in
-    production logs.
+    production logs. The `TrialCapExhaustedError` matrix is the SHU-757
+    counterpart — without explicit coverage in dispatch, a trial tenant who
+    exhausts their grant mid-ingestion sees the same retry-storm shape.
     """
 
     @pytest.fixture
@@ -911,9 +916,29 @@ class TestProcessJobSubscriptionGate:
             ("RE_EMBEDDING", "shu.worker._handle_re_embedding_job"),
         ],
     )
+    @pytest.mark.parametrize(
+        "error_factory,error_cls_name",
+        [
+            (
+                lambda: SubscriptionInactiveError(payment_failed_at=None, grace_deadline=None),
+                "SubscriptionInactiveError",
+            ),
+            (
+                lambda: TrialCapExhaustedError(trial_deadline=None, total_grant_amount=Decimal("0")),
+                "TrialCapExhaustedError",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_subscription_inactive_drops_without_retry(
-        self, install_stub_cache, caplog, _MockJob, queue_attr, handler_path
+    async def test_billing_gate_drops_without_retry(
+        self,
+        install_stub_cache,
+        caplog,
+        _MockJob,
+        queue_attr,
+        handler_path,
+        error_factory,
+        error_cls_name,
     ):
         install_stub_cache(healthy_billing_state())
 
@@ -921,9 +946,7 @@ class TestProcessJobSubscriptionGate:
         from shu.worker import process_job
 
         job = _MockJob(queue_name=getattr(WorkloadType, queue_attr).queue_name)
-        raising = AsyncMock(
-            side_effect=SubscriptionInactiveError(payment_failed_at=None, grace_deadline=None)
-        )
+        raising = AsyncMock(side_effect=error_factory())
 
         with patch(handler_path, new=raising), caplog.at_level(logging.INFO, logger="shu.worker"):
             # Must NOT raise — the dispatch-level catch handles it.
@@ -932,10 +955,13 @@ class TestProcessJobSubscriptionGate:
         drop_records = [
             r
             for r in caplog.records
-            if r.name == "shu.worker" and "Subscription inactive" in r.getMessage()
+            if r.name == "shu.worker"
+            and "Billing gate active" in r.getMessage()
+            and error_cls_name in r.getMessage()
         ]
         assert len(drop_records) == 1, (
-            f"Expected exactly one drop log; got {[r.getMessage() for r in caplog.records]}"
+            f"Expected exactly one drop log for {error_cls_name}; "
+            f"got {[r.getMessage() for r in caplog.records]}"
         )
         record = drop_records[0]
         assert record.levelno == logging.INFO
@@ -1005,3 +1031,117 @@ class TestHandlerPreCheckBeforeStateMutation:
                 await handler(job)
 
         blocked.assert_not_called()
+
+
+# =============================================================================
+# SHU-761: Worker dispatch sets/resets tenant_context per job
+#
+# The single point that translates Job.tenant_id into a tenant_context is
+# Worker._process_job. If that wrapper regresses, every handler runs with
+# the wrong tenant (or worse, the prior job's tenant) and RLS won't catch
+# it because handlers run under shu_app with valid context — just the
+# wrong one.
+# =============================================================================
+
+
+class TestWorkerDispatchTenantContext:
+    """Pin the per-job set/reset behavior of ``Worker._process_job``."""
+
+    @pytest.mark.asyncio
+    async def test_handler_observes_jobs_tenant_inside_dispatch(self) -> None:
+        from shu.core.tenant import tenant_context
+
+        observed: list[str | None] = []
+
+        async def handler(job: Job) -> None:
+            observed.append(tenant_context.get(None))
+
+        backend = InMemoryQueueBackend()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        job = Job(
+            queue_name="shu:ingestion", payload={"x": 1}, tenant_id="tenant-from-job"
+        )
+        await worker._process_job(job)
+
+        assert observed == ["tenant-from-job"]
+
+    @pytest.mark.asyncio
+    async def test_context_is_restored_to_prior_value_after_job(self) -> None:
+        """After _process_job returns, the surrounding (e.g. autouse-fixture)
+        tenant_context must be back to its pre-dispatch value. Forgetting
+        to reset would silently leak the job's tenant into anything that
+        runs on the same asyncio task afterwards."""
+        from shu.core.tenant import tenant_context
+
+        async def handler(job: Job) -> None:
+            pass
+
+        backend = InMemoryQueueBackend()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        prior = tenant_context.get(None)
+        job = Job(queue_name="shu:ingestion", payload={"x": 1}, tenant_id="tenant-X")
+        await worker._process_job(job)
+
+        assert tenant_context.get(None) == prior
+
+    @pytest.mark.asyncio
+    async def test_context_is_restored_even_when_handler_raises(self) -> None:
+        from shu.core.tenant import tenant_context
+
+        class BoomError(RuntimeError):
+            pass
+
+        async def handler(job: Job) -> None:
+            raise BoomError("simulate failure mid-job")
+
+        backend = InMemoryQueueBackend()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        prior = tenant_context.get(None)
+        job = Job(queue_name="shu:ingestion", payload={"x": 1}, tenant_id="tenant-X")
+        # _process_job catches handler exceptions and rejects the job —
+        # we don't expect a raise here; just verify context is reset.
+        await worker._process_job(job)
+
+        assert tenant_context.get(None) == prior
+
+    @pytest.mark.asyncio
+    async def test_missing_tenant_context_in_mt_is_rejected_no_requeue(self) -> None:
+        """A job lacking ``tenant_id`` in multi-tenant mode is a poison pill:
+        retrying it can't change the outcome — the next worker hits the same
+        ``MissingTenantContextError`` and burns a slot. Verify the dispatch
+        rejects with ``requeue=False`` so the queue isn't churned forever."""
+        from shu.core.config import DeploymentMode
+
+        handler_invoked: list[Job] = []
+
+        async def handler(job: Job) -> None:
+            handler_invoked.append(job)
+
+        backend = InMemoryQueueBackend()
+        backend.reject = AsyncMock()
+        config = WorkerConfig(workload_types={WorkloadType.INGESTION}, poll_interval=0.1)
+        worker = Worker(backend, config, handler)
+
+        # Job has no tenant_id; in MT the dispatch wrap raises
+        # ``MissingTenantContextError`` before the handler runs.
+        job = Job(queue_name="shu:ingestion", payload={"x": 1}, tenant_id=None)
+        with patch(
+            "shu.core.tenant.get_settings_instance",
+            return_value=SimpleNamespace(
+                deployment_mode=DeploymentMode.MULTI_TENANT,
+                tenant_id=None,
+                redis_namespace=None,
+            ),
+        ):
+            await worker._process_job(job)
+
+        assert handler_invoked == [], "handler must not run with missing tenant_id"
+        backend.reject.assert_awaited_once()
+        _args, kwargs = backend.reject.call_args
+        assert kwargs.get("requeue") is False, "poison pill must not be requeued"

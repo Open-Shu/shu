@@ -13,6 +13,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,6 +26,7 @@ from shu.billing.cp_client import (
     CpClient,
     CpUnreachable,
 )
+from shu.billing.entitlements import EntitlementSet
 
 # Module logger name used by BillingStateCache — caplog filters target this.
 _CACHE_LOGGER = "shu.billing.billing_state_cache"
@@ -34,10 +36,18 @@ _TTL = 60
 
 
 def _state(disabled: bool = False) -> BillingState:
+    # Trial/grant fields default to inert values; tests targeting trial
+    # behavior construct dedicated states inline.
     return BillingState(
         openrouter_key_disabled=disabled,
         payment_failed_at=None,
         payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
     )
 
 
@@ -90,11 +100,15 @@ def _make_cache(
     *,
     ttl: int = _TTL,
     clock: Callable[[], datetime] | None = None,
+    persister: MagicMock | None = None,
+    markup_fetcher: Callable[[], object] | None = None,
 ) -> BillingStateCache:
     return BillingStateCache(
         client=client,
         ttl_seconds=ttl,
         clock=clock if clock is not None else lambda: _T0,
+        persister=persister,
+        markup_fetcher=markup_fetcher,
     )
 
 
@@ -315,3 +329,425 @@ async def test_cp_auth_failed_is_treated_identically_to_unreachable() -> None:
     clock.advance(timedelta(seconds=_TTL // 2))
     assert await cache.get() == seeded  # within backoff, no fetch
     assert client.fetch_billing_state.await_count == 2
+
+
+# Conservative cold-start contract: HEALTHY_DEFAULT must not silently
+# expand the feature surface during a CP outage. Pinning the shape here
+# keeps a future "default to standard tier" change from quietly leaking
+# paid features to free tenants when CP is down.
+
+
+def test_healthy_default_blocks_llm_via_trial_cap_and_keeps_or_key_open() -> None:
+    # Cold-start CP-down posture: chat entitlement on so OCR/embeddings keep
+    # working (those don't go through the trial-cap), but is_trial=True with
+    # zero grant so the LLM-side trial-cap blocks. A trial tenant whose
+    # process restarts during a CP outage cannot rack up unbounded LLM cost
+    # before we get a real value back.
+    assert HEALTHY_DEFAULT.entitlements == EntitlementSet()
+    assert HEALTHY_DEFAULT.entitlements.chat is True
+    assert HEALTHY_DEFAULT.entitlements.plugins is False
+    assert HEALTHY_DEFAULT.entitlements.experiences is False
+    assert HEALTHY_DEFAULT.entitlements.provider_management is False
+    assert HEALTHY_DEFAULT.entitlements.model_config_management is False
+    assert HEALTHY_DEFAULT.entitlements.mcp_servers is False
+    assert HEALTHY_DEFAULT.openrouter_key_disabled is False
+    assert HEALTHY_DEFAULT.is_trial is True
+    assert HEALTHY_DEFAULT.total_grant_amount == Decimal(0)
+    # `None` matches the trial wire shape post-Task 26 — tenant router
+    # computes the displayed remaining from local usage. With total=0,
+    # the computation returns 0, consistent with the fail-closed posture.
+    assert HEALTHY_DEFAULT.remaining_grant_amount is None
+    assert HEALTHY_DEFAULT.trial_deadline is None
+    assert HEALTHY_DEFAULT.seat_price_usd == Decimal(0)
+
+
+# Persister integration: on cold-start CP failure we restore the
+# last-known good state from disk before falling back to HEALTHY_DEFAULT.
+# Closes the "deploy coincides with CP blip" gap that would otherwise
+# block paying customers on the trial-cap fail-closed default.
+
+
+@pytest.mark.asyncio
+async def test_cold_start_failure_with_persisted_value_serves_it_not_default() -> None:
+    seeded = BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(plugins=True),
+        is_trial=False,  # paying customer state we don't want to lose
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal("20.00"),
+    )
+    persister = MagicMock()
+    persister.load = AsyncMock(return_value=seeded)
+    persister.save = AsyncMock()
+    client = _stub_client(side_effects=[CpUnreachable("down")])
+
+    result = await _make_cache(client, persister=persister).get()
+
+    assert result == seeded
+    persister.load.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cold_start_failure_with_no_persisted_value_serves_healthy_default() -> None:
+    persister = MagicMock()
+    persister.load = AsyncMock(return_value=None)
+    persister.save = AsyncMock()
+    client = _stub_client(side_effects=[CpUnreachable("down")])
+
+    result = await _make_cache(client, persister=persister).get()
+
+    assert result == HEALTHY_DEFAULT
+    persister.load.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_successful_fetch_persists_value_to_disk() -> None:
+    seeded = _state(disabled=True)
+    persister = MagicMock()
+    persister.save = AsyncMock()
+    persister.load = AsyncMock()
+    client = _stub_client(return_values=[seeded])
+
+    await _make_cache(client, persister=persister).get()
+
+    persister.save.assert_awaited_once_with(seeded)
+    # Load is only consulted on the cold-start failure path.
+    persister.load.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warm_cache_failure_preserves_trial_and_grant_fields() -> None:
+    """Stale-while-error must hand back the *whole* prior state, not a
+    partially-reconstructed one — the trial banner and entitlement gating
+    rely on these fields being present on every served value.
+    """
+    seeded = BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(plugins=True, experiences=True),
+        is_trial=True,
+        trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+        total_grant_amount=Decimal("50.00"),
+        remaining_grant_amount=Decimal("12.34"),
+        seat_price_usd=Decimal("20.00"),
+    )
+    client = _stub_client(side_effects=[seeded, CpUnreachable("down")])
+    cache = _make_cache(client, clock=_stepping_clock(_T0, timedelta(seconds=_TTL + 1)))
+
+    await cache.get()  # cold-start success
+    stale = await cache.get()  # past TTL, CP failing
+
+    assert stale == seeded
+    assert stale.is_trial is True
+    assert stale.entitlements.plugins is True
+    assert stale.remaining_grant_amount == Decimal("12.34")
+
+
+# invalidate() — admin force-refresh hook used by upgrade-now / cancel-trial.
+# The lock interaction is the load-bearing invariant: a concurrent in-flight
+# fetch must not silently restore the value invalidate just cleared.
+
+
+@pytest.mark.asyncio
+async def test_invalidate_clears_value_and_metadata() -> None:
+    seeded = _state(disabled=True)
+    client = _stub_client(return_values=[seeded])
+    cache = _make_cache(client)
+    await cache.get()  # populate
+
+    await cache.invalidate()
+
+    assert cache._value is None
+    assert cache._last_success_at is None
+    assert cache._next_retry_after is None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_forces_refetch_on_next_get() -> None:
+    """Without invalidate, a fresh-TTL hit serves from memory. After
+    invalidate, the next get must re-poll CP regardless of TTL state.
+    """
+    s1, s2 = _state(disabled=False), _state(disabled=True)
+    client = _stub_client(return_values=[s1, s2])
+    cache = _make_cache(client)
+
+    assert await cache.get() == s1
+    await cache.invalidate()
+    assert await cache.get() == s2
+
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_clears_failure_backoff_window() -> None:
+    """An admin upgrade-now landing right after a CP blip should re-poll
+    on the next read, not get stuck in the (now-irrelevant) backoff.
+    """
+    client = _stub_client(side_effects=[CpUnreachable("blip"), _state(disabled=True)])
+    clock = _ManualClock(_T0)
+    cache = _make_cache(client, clock=clock)
+
+    await cache.get()  # cold-start fetch fails, arms backoff
+    assert cache._next_retry_after is not None  # sanity
+
+    await cache.invalidate()
+    clock.advance(timedelta(seconds=1))  # well within what would have been the backoff
+    assert await cache.get() == _state(disabled=True)
+    assert client.fetch_billing_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_serializes_with_in_flight_fetch() -> None:
+    """A get() in mid-fetch holds the lock through fetch+write. Invalidate
+    must wait for that to finish, then clear — so a concurrent invalidate
+    cannot return before the in-flight fetch's write happens, and the next
+    get sees a cleared cache (not the now-stale write).
+
+    Sequence pinned: in-flight get holds lock → invalidate queues → fetch
+    finishes and writes → lock releases → invalidate clears → next get
+    triggers a NEW fetch.
+    """
+    s_inflight = _state(disabled=False)
+    s_after_invalidate = _state(disabled=True)
+    fetch_started = asyncio.Event()
+    fetch_unblock = asyncio.Event()
+    fetch_count = 0
+
+    async def slow_then_fast() -> BillingState:
+        nonlocal fetch_count
+        fetch_count += 1
+        if fetch_count == 1:
+            fetch_started.set()
+            await fetch_unblock.wait()
+            return s_inflight
+        return s_after_invalidate
+
+    client = MagicMock(spec=CpClient)
+    client.fetch_billing_state = AsyncMock(side_effect=slow_then_fast)
+    cache = _make_cache(client)
+
+    inflight_task = asyncio.create_task(cache.get())
+    await fetch_started.wait()  # lock is held by inflight_task here
+
+    invalidate_task = asyncio.create_task(cache.invalidate())
+    # The invalidate cannot complete while the lock is held — give the
+    # event loop a tick to confirm it's blocked rather than running.
+    await asyncio.sleep(0)
+    assert not invalidate_task.done()
+
+    fetch_unblock.set()
+    await inflight_task
+    await invalidate_task
+
+    # Cache cleared — the next read must fetch fresh, not return s_inflight.
+    assert await cache.get() == s_after_invalidate
+    assert fetch_count == 2
+
+
+# Markup attachment — CP doesn't ship `usage_markup_multiplier` yet, so the
+# cache fetches it from Stripe on each refresh and stitches it onto the
+# returned BillingState. The CP-shipped-value branch is forward-compat for
+# the eventual migration: if CP starts sending a value, the cache leaves
+# it alone.
+
+
+@pytest.mark.asyncio
+async def test_markup_fetcher_value_is_attached_to_state() -> None:
+    raw = _state()  # usage_markup_multiplier defaults to None
+    client = _stub_client(return_values=[raw])
+    fetcher = AsyncMock(return_value=Decimal("1.5"))
+
+    result = await _make_cache(client, markup_fetcher=fetcher).get()
+
+    assert result.usage_markup_multiplier == Decimal("1.5")
+    fetcher.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_markup_fetcher_none_falls_back_to_configured_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No metered item / tiered pricing → fetcher returns None. The cache
+    resolves to the configured default so consumers reading off cached
+    state never see None; the consumer-side helper is reserved for the
+    HEALTHY_DEFAULT paths the cache doesn't touch.
+    """
+    from shu.billing.config import get_billing_settings
+
+    monkeypatch.setattr(
+        get_billing_settings(), "usage_markup_multiplier_default", Decimal("1.4")
+    )
+    raw = _state()
+    client = _stub_client(return_values=[raw])
+    fetcher = AsyncMock(return_value=None)
+
+    result = await _make_cache(client, markup_fetcher=fetcher).get()
+
+    assert result.usage_markup_multiplier == Decimal("1.4")
+
+
+@pytest.mark.asyncio
+async def test_markup_fetcher_stripe_error_falls_back_to_configured_default(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stripe blip shouldn't take down the whole billing-state refresh —
+    the CP payload is still authoritative for everything else, and the
+    markup field is filled with the configured default.
+    """
+    from shu.billing.config import get_billing_settings
+    from shu.billing.stripe_client import StripeClientError
+
+    monkeypatch.setattr(
+        get_billing_settings(), "usage_markup_multiplier_default", Decimal("1.4")
+    )
+    raw = _state(disabled=True)
+    client = _stub_client(return_values=[raw])
+    fetcher = AsyncMock(side_effect=StripeClientError("stripe down"))
+
+    with caplog.at_level(logging.WARNING, logger=_CACHE_LOGGER):
+        result = await _make_cache(client, markup_fetcher=fetcher).get()
+
+    assert result.openrouter_key_disabled is True
+    assert result.usage_markup_multiplier == Decimal("1.4")
+    assert any("markup fetch failed" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_no_markup_fetcher_preserves_state_unchanged() -> None:
+    """Self-hosted / dev path: no Stripe configured → no fetcher passed in.
+    State flows through untouched (no default substituted) — preserving the
+    cold-start wire shape so the consumer-side helper can apply the default
+    consistently across both no-cache and no-fetcher paths.
+    """
+    raw = _state()
+    client = _stub_client(return_values=[raw])
+
+    result = await _make_cache(client, markup_fetcher=None).get()
+
+    assert result == raw
+
+
+@pytest.mark.asyncio
+async def test_cp_supplied_markup_is_not_overwritten_by_fetcher() -> None:
+    """Forward-compat with the eventual CP migration: once CP sends the
+    markup on the wire, the fetcher path should become a no-op rather
+    than clobbering the CP value.
+    """
+    cp_value = BillingState(
+        openrouter_key_disabled=False,
+        payment_failed_at=None,
+        payment_grace_days=0,
+        entitlements=EntitlementSet(),
+        is_trial=False,
+        trial_deadline=None,
+        total_grant_amount=Decimal(0),
+        remaining_grant_amount=Decimal(0),
+        seat_price_usd=Decimal(0),
+        usage_markup_multiplier=Decimal("1.7"),
+    )
+    client = _stub_client(return_values=[cp_value])
+    fetcher = AsyncMock(return_value=Decimal("1.5"))
+
+    result = await _make_cache(client, markup_fetcher=fetcher).get()
+
+    assert result.usage_markup_multiplier == Decimal("1.7")
+    fetcher.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_billing_state_cache() factory — transient-failure retry policy
+#
+# A transient blip during cache build (DNS hiccup, httpx pool exhaustion,
+# etc.) must not poison the per-tenant slot — otherwise enforcement is
+# permanently disabled for that tenant until process restart and operators
+# can't distinguish "configured-off" from "stuck-after-blip". Only memoize
+# None for definitively-absent config; on exceptions, leave the slot empty
+# so the next caller retries.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_factory_does_not_memoize_none_on_build_exception(monkeypatch) -> None:
+    """A transient build failure must not poison the per-tenant slot.
+
+    Two requests in a row: first one's CpClient build raises (simulating an
+    httpx/DNS blip); second one should still trigger a fresh build, not
+    short-circuit on a cached None.
+    """
+    from shu.billing import billing_state_cache as module
+
+    # Tenant context is set by the autouse conftest fixture in this test
+    # suite; reuse that tenant_id rather than re-setting.
+    module._cache_by_tenant.clear()
+    module._cp_client_by_tenant.clear()
+
+    # Stub billing settings so the CP-configured branch runs (rather than the
+    # legitimate "no CP" memoize-None branch that should still memoize).
+    fake_settings = MagicMock(
+        router_shared_secret="secret",
+        cp_base_url="https://cp.example",
+        billing_state_cache_ttl_seconds=60,
+        secret_key=None,  # disable markup fetcher branch
+        subscription_id=None,
+    )
+    monkeypatch.setattr(module, "get_billing_settings", lambda: fake_settings)
+
+    # First call: CpClient construction raises.
+    call_count = {"n": 0}
+
+    def _failing_cp_client(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("simulated transient blip")
+        return MagicMock(spec=CpClient)
+
+    monkeypatch.setattr(module, "CpClient", _failing_cp_client)
+    monkeypatch.setattr(module, "get_http_client", AsyncMock(return_value=MagicMock()))
+
+    first = await module.get_billing_state_cache()
+    assert first is None
+    # The bug being fixed: a poisoned slot would have an explicit None entry
+    # here. With the fix, the slot stays empty so the next caller retries.
+    from shu.core.tenant import tenant_context
+
+    tid = tenant_context.get()
+    assert tid not in module._cache_by_tenant
+
+    second = await module.get_billing_state_cache()
+    assert second is not None
+    assert call_count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_factory_memoizes_none_when_cp_definitively_unconfigured(monkeypatch) -> None:
+    """Absence of `router_shared_secret` or `cp_base_url` is a steady-state
+    "no CP" — that's safe to memoize, since the operator would have to
+    redeploy with new settings for it to change, at which point the process
+    restarts and the cache is empty anyway.
+    """
+    from shu.billing import billing_state_cache as module
+
+    module._cache_by_tenant.clear()
+    module._cp_client_by_tenant.clear()
+
+    fake_settings = MagicMock(
+        router_shared_secret=None,  # ← unconfigured
+        cp_base_url=None,
+        billing_state_cache_ttl_seconds=60,
+    )
+    monkeypatch.setattr(module, "get_billing_settings", lambda: fake_settings)
+
+    result = await module.get_billing_state_cache()
+    assert result is None
+
+    from shu.core.tenant import tenant_context
+
+    tid = tenant_context.get()
+    assert tid in module._cache_by_tenant
+    assert module._cache_by_tenant[tid] is None

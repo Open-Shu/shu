@@ -35,53 +35,61 @@ def _to_json(value: Any) -> Any:
 
 
 class BillingStateService:
-    """Read and mutate the billing_state singleton with locking and auditing.
+    """Read and mutate the current tenant's billing_state row with locking and auditing.
 
     All methods are static — there's no per-instance state; the database
     session is passed explicitly so callers can share their existing session.
+
+    Every query relies on RLS to scope to the active tenant_context.
+    ``tenant_id`` is the primary key (one row per tenant), so a bare
+    ``SELECT * FROM billing_state`` under an active tenant context returns
+    at most one row.
     """
 
     @staticmethod
     async def get(db: AsyncSession) -> BillingState | None:
-        """Return the singleton billing state row, or None if not yet created."""
-        result = await db.execute(select(BillingState).where(BillingState.id == 1))
+        """Return the current tenant's billing state row, or None if not yet created."""
+        result = await db.execute(select(BillingState).limit(1))
         return result.scalar_one_or_none()
 
     @staticmethod
     async def get_for_update(db: AsyncSession) -> BillingState | None:
-        """Acquire a row-level write lock on the singleton, then return it.
+        """Acquire a row-level write lock on the current tenant's row, then return it.
 
         Use this to serialise operations that must check-then-write atomically
         (e.g., user-limit enforcement + user INSERT). The lock is held until
         the caller's transaction commits or rolls back.
         """
-        result = await db.execute(select(BillingState).where(BillingState.id == 1).with_for_update())
+        result = await db.execute(select(BillingState).limit(1).with_for_update())
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def ensure_singleton(db: AsyncSession) -> tuple[BillingState, bool]:
-        """Create the singleton row if it doesn't exist, then return it.
+    async def ensure_exists(db: AsyncSession) -> tuple[BillingState, bool]:
+        """Create the current tenant's row if it doesn't exist, then return it.
 
         Safe to call on every startup, including concurrent multi-worker
-        deployments. If two processes race to INSERT the same row, the loser
-        catches the IntegrityError via a SAVEPOINT, rolls back just that
-        nested write, and fetches the row the winner already inserted.
+        deployments. If two processes race to INSERT for the same tenant,
+        the loser catches the IntegrityError via a SAVEPOINT, rolls back just
+        that nested write, and fetches the row the winner already inserted.
         The outer session transaction is never aborted.
 
         Returns ``(state, inserted)`` where ``inserted`` is True only for the
         caller that actually wrote the row. Startup code uses the flag to
         seed defaults (e.g. ``user_limit_enforcement``) exactly once per
         deployment without overwriting operator edits on later boots.
+
+        Requires an active ``tenant_context`` — the row's ``tenant_id`` is
+        auto-stamped by the ``before_flush`` listener.
         """
         state = await BillingStateService.get(db)
         if state is not None:
             return state, False
         try:
             async with db.begin_nested():
-                state = BillingState(id=1)
+                state = BillingState()
                 db.add(state)
                 await db.flush()
-            logger.info("billing_state singleton created")
+            logger.info("billing_state row created for current tenant")
             return state, True
         except IntegrityError:
             # Another worker won the race — fetch the row it inserted.
@@ -92,7 +100,7 @@ class BillingStateService:
     async def seed_from_config(db: AsyncSession, settings: Any) -> None:
         """Seed billing_state from deploy-time env vars if fields are not yet set.
 
-        Called once at startup after ``ensure_singleton()``. Only writes fields
+        Called once at startup after ``ensure_exists()``. Only writes fields
         that are currently NULL — never overwrites values already set by webhooks
         or a previous seed. Safe to call on every restart.
 
@@ -107,7 +115,7 @@ class BillingStateService:
         if not customer_id and not subscription_id:
             return
 
-        result = await db.execute(select(BillingState).where(BillingState.id == 1))
+        result = await db.execute(select(BillingState).limit(1))
         state = result.scalar_one_or_none()
         if state is None:
             return
@@ -129,7 +137,7 @@ class BillingStateService:
         source: str,
         stripe_event_id: str | None = None,
     ) -> BillingState:
-        """Apply ``updates`` to the singleton row under a row-level lock.
+        """Apply ``updates`` to the current tenant's row under a row-level lock.
 
         Acquires ``SELECT ... FOR UPDATE`` so concurrent callers serialise.
         Writes one ``BillingStateAudit`` row per changed field.
@@ -147,14 +155,15 @@ class BillingStateService:
             The updated ``BillingState`` instance.
 
         Raises:
-            RuntimeError: If the singleton row doesn't exist (startup sequencing
-                error — ensure_singleton() must be called before any updates).
+            RuntimeError: If the row doesn't exist for the current tenant
+                (startup sequencing error — ensure_exists() must be called
+                before any updates).
 
         """
-        result = await db.execute(select(BillingState).where(BillingState.id == 1).with_for_update())
+        result = await db.execute(select(BillingState).limit(1).with_for_update())
         state = result.scalar_one_or_none()
         if state is None:
-            raise RuntimeError("billing_state singleton row missing — " "call ensure_singleton() at startup")
+            raise RuntimeError("billing_state row missing for current tenant — call ensure_exists() at startup")
 
         now = datetime.now(UTC)
 

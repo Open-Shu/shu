@@ -62,23 +62,31 @@ async def _re_embedding_heartbeat(job, knowledge_base_id: str, interval: int = 6
         pass
 
 
-async def recover_interrupted_re_embedding_jobs(queue_backend) -> int:
-    """Re-enqueue re-embedding jobs lost due to queue backend restart.
+async def _recover_stuck_kbs_for_current_tenant(queue_backend) -> int:
+    """Re-enqueue jobs for stuck KBs within the current tenant_context scope.
 
-    With a persistent Redis backend the job is still in the queue or
-    processing set and will be redelivered automatically, so we only
-    re-enqueue KBs whose heartbeat appears stale (no updated_at touch
-    within ``STALE_AFTER``).
-
-    Returns the number of KBs whose jobs were re-enqueued.
+    Caller must have set ``tenant_context`` first; the ``knowledge_bases``
+    SELECT is RLS-filtered to that tenant.
     """
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import select
 
     from .core.database import get_async_session_local
+    from .core.tenant import tenant_context
     from .core.workload_routing import WorkloadType, enqueue_job
     from .models.knowledge_base import KnowledgeBase
+
+    # Enforce the precondition the function name promises. Without
+    # tenant_context, the KB SELECT below would default-deny under RLS
+    # (silent zero-row recovery) and any re-enqueued job would also lack
+    # a tenant — fail loud so the caller fixes the invocation site.
+    # Explicit check (not ``assert``) so the guard survives ``python -O``.
+    if tenant_context.get(None) is None:
+        raise RuntimeError(
+            "_recover_stuck_kbs_for_current_tenant requires tenant_context to be set; "
+            "wrap the call site in `async with tenant_context_for_tenant_id(...)`."
+        )
 
     stale_after = timedelta(minutes=3)
     resumed_count = 0
@@ -163,6 +171,31 @@ async def recover_interrupted_re_embedding_jobs(queue_backend) -> int:
                 await session.commit()
             resumed_count += 1
 
+    return resumed_count
+
+
+async def recover_interrupted_re_embedding_jobs(queue_backend) -> int:
+    """Re-enqueue re-embedding jobs lost due to queue backend restart.
+
+    With a persistent Redis backend the job is still in the queue or
+    processing set and will be redelivered automatically, so we only
+    re-enqueue KBs whose heartbeat appears stale (no updated_at touch
+    within ``STALE_AFTER``).
+
+    SHU-761: runs once per tenant. The knowledge_bases SELECT is RLS-filtered
+    to the current tenant, so we iterate the global tenants catalog and set
+    ``tenant_context`` for each. Silo / self-hosted have one tenant → one
+    iteration → same effective behavior as before SHU-761.
+
+    Returns the number of KBs whose jobs were re-enqueued across all tenants.
+    """
+    from .core.tenant import tenant_context_for_tenant_id
+    from .core.worker import list_all_tenant_ids
+
+    resumed_count = 0
+    for tenant_id in await list_all_tenant_ids():
+        async with tenant_context_for_tenant_id(tenant_id):
+            resumed_count += await _recover_stuck_kbs_for_current_tenant(queue_backend)
     return resumed_count
 
 

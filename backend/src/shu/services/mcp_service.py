@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shu.core.config import DeploymentMode, get_settings_instance
 from shu.core.exceptions import ConflictError, NotFoundError
 from shu.core.logging import get_logger
 from shu.models.mcp_server_connection import McpServerConnection
@@ -35,6 +36,20 @@ logger = get_logger(__name__)
 DEGRADED_THRESHOLD = 5
 
 
+def _reject_in_multi_tenant() -> None:
+    """Forbid MCP-connection writes in multi-tenant deployments.
+
+    The ``PluginRegistry`` caches MCP adapters (URL + auth headers) by
+    plugin name with no tenant key, and ``plugin_definitions`` rows are
+    global. Allowing two MT tenants to register connections with the same
+    ``name`` would cross-leak credentials and schemas. Until we lift those
+    constraints, refuse the write at the service boundary so the unsafe
+    code paths are structurally unreachable in MT.
+    """
+    if get_settings_instance().deployment_mode == DeploymentMode.MULTI_TENANT:
+        raise ConflictError("MCP connections are not configurable in multi-tenant deployments.")
+
+
 class McpService:
     """Business logic for MCP server connection management."""
 
@@ -46,6 +61,7 @@ class McpService:
 
         Validates the URL, encrypts auth headers, and persists the connection.
         """
+        _reject_in_multi_tenant()
         await enforce_pbac(
             user_id,
             "plugin.create",
@@ -81,6 +97,7 @@ class McpService:
 
         Re-encrypts headers if changed.
         """
+        _reject_in_multi_tenant()
         connection = await self._get_connection_or_404(connection_id, user_id, "plugin.update")
         provided = data.model_fields_set
 
@@ -112,6 +129,7 @@ class McpService:
 
         Blocks deletion if active feeds reference this connection's plugin name.
         """
+        _reject_in_multi_tenant()
         connection = await self._get_connection_or_404(connection_id, user_id, "plugin.delete")
 
         plugin_name = f"mcp:{connection.name}"
@@ -165,6 +183,7 @@ class McpService:
 
         Also serves as the connectivity test — latency is tracked in the result.
         """
+        _reject_in_multi_tenant()
         connection = await self._get_connection_or_404(connection_id, user_id, "plugin.update")
         client = await self.make_client(connection)
 
@@ -213,6 +232,7 @@ class McpService:
         user_id: str,
     ) -> McpServerConnection:
         """Update the configuration for a single tool on a connection."""
+        _reject_in_multi_tenant()
         connection = await self._get_connection_or_404(connection_id, user_id, "plugin.update")
 
         configs = dict(connection.tool_configs or {})

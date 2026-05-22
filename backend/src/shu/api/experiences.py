@@ -14,6 +14,7 @@ from ..core.exceptions import ConflictError, NotFoundError, ShuException, Valida
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
 from ..core.streaming import create_sse_stream_generator
+from ..core.tenant import tenant_context_for_tenant_id
 from ..schemas.experience import (
     ExperienceCreate,
     ExperienceRunRequest,
@@ -337,15 +338,25 @@ async def run_experience(
         logger.exception("Unexpected error in run_experience", extra={"experience_id": experience_id})
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
-    sse_generator = create_sse_stream_generator(
-        event_gen,
-        error_context="experience_execution",
-        include_correlation_id=True,
-        error_code="EXPERIENCE_EXECUTION_FAILED",
-    )
+    # ``event_gen`` is an async generator returned by service.run, but its
+    # body only executes when Starlette iterates the StreamingResponse —
+    # by which point FastAPI has unwound resolve_tenant and tenant_context
+    # is None. Re-bind it inside the wrap so the generator's DB ops (run
+    # progress writes, step results) see the right tenant under RLS.
+    tenant_id = current_user.tenant_id
+
+    async def tenant_scoped_sse_generator():
+        async with tenant_context_for_tenant_id(tenant_id):
+            async for data in create_sse_stream_generator(
+                event_gen,
+                error_context="experience_execution",
+                include_correlation_id=True,
+                error_code="EXPERIENCE_EXECUTION_FAILED",
+            ):
+                yield data
 
     return StreamingResponse(
-        sse_generator,
+        tenant_scoped_sse_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

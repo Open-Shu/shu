@@ -3,6 +3,8 @@
 Uses Pydantic Settings for type-safe, environment-based configuration.
 """
 
+import uuid
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,19 @@ from ..ingestion.filetypes import DEFAULT_KB_FILE_TYPES
 # Load environment variables from .env file
 # Use override=True to ensure .env changes take effect immediately
 load_dotenv(override=True)
+
+
+class DeploymentMode(str, Enum):
+    """How this Shu instance is deployed, which determines tenant isolation strategy."""
+
+    SELF_HOSTED = "self_hosted"
+    SILO = "silo"
+    MULTI_TENANT = "multi_tenant"
+
+
+# Once shipped, this value must never change: it is the literal text stored in every
+# self-hosted row's tenant_id column. Changing it would orphan all existing data.
+SELF_HOSTED_TENANT_UUID: str = "a9c8d3e2-1f4b-4c7e-9a0d-5b6e7f8a9b0c"
 
 
 class Settings(BaseSettings):
@@ -37,7 +52,11 @@ class Settings(BaseSettings):
     reload: bool = Field(False, alias="SHU_RELOAD")
 
     # Database configuration
+    # database_url is the `shu_app` (RLS-restricted) URL used by request-path code.
     database_url: str = Field(alias="SHU_DATABASE_URL")
+    # db_admin_url is the `shu_admin` (BYPASSRLS) URL used by Alembic and the admin service.
+    # Both URLs target the same database; only the Postgres role differs.
+    db_admin_url: str | None = Field(None, alias="SHU_DB_ADMIN_URL")
     database_pool_size: int = 20
     database_max_overflow: int = 30
     database_pool_timeout: int = 30
@@ -46,6 +65,19 @@ class Settings(BaseSettings):
     # Managed Postgres on port 6543). Disables asyncpg's prepared statement
     # cache, which is incompatible with transaction-level connection reuse.
     use_pgbouncer: bool = Field(False, alias="SHU_USE_PGBOUNCER")
+
+    # Deployment mode determines tenant isolation strategy at startup.
+    # See DeploymentMode enum; cross-field constraints with tenant_id are enforced
+    # by the model validator at the bottom of this class.
+    deployment_mode: DeploymentMode = Field(DeploymentMode.SELF_HOSTED, alias="SHU_DEPLOYMENT_MODE")
+
+    # Redis key namespace for queue / cache / job-data keys. Optional override;
+    # defaults are resolved by ``resolve_redis_namespace()`` below (self-hosted
+    # → SELF_HOSTED_TENANT_UUID; silo → settings.tenant_id; multi-tenant →
+    # literal "multitenant"). Set explicitly only when multiple deployments
+    # share one Redis instance and would otherwise collide on the default —
+    # the most common case is two MT clusters sharing managed Redis.
+    redis_namespace: str | None = Field(None, alias="SHU_REDIS_NAMESPACE")
 
     # Redis configuration
     # Set SHU_REDIS_URL to enable Redis-backed caching/queues; omit for in-memory.
@@ -393,6 +425,10 @@ class Settings(BaseSettings):
     @field_validator("log_dir", mode="before")
     @classmethod
     def _resolve_log_dir(cls, v: str) -> str:
+        # Empty string is a valid value meaning "no file handler — stdout only".
+        # Used by the hosted profile where kubelet + log aggregation handle capture.
+        if v == "" or v is None:
+            return ""
         try:
             p = Path(v)
             if p.is_absolute():
@@ -708,7 +744,41 @@ class Settings(BaseSettings):
         stripped = v.strip()
         if not stripped:
             raise ValueError("SHU_TENANT_ID must not be empty or whitespace")
-        return stripped
+        # Tenant IDs are stringified UUIDs throughout the system; rejecting non-UUID
+        # values at config load surfaces deployment misconfigurations early and
+        # ensures the value is safe to use in SQL and Redis keys without further
+        # sanitization.
+        #
+        # Return the canonical hyphenated-lowercase form (``str(UUID)``) rather
+        # than the operator-typed string. The SECURITY DEFINER lookups compare
+        # tenant_id via exact text equality, so an env var of
+        # ``{AAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}`` or uppercase would parse fine
+        # here but mismatch against the lowercase ``str(uuid.uuid4())`` form
+        # used elsewhere. Normalizing closes that gap.
+        try:
+            parsed = uuid.UUID(stripped)
+        except ValueError as exc:
+            raise ValueError("SHU_TENANT_ID must be a valid UUID") from exc
+        return str(parsed)
+
+    @model_validator(mode="after")
+    def validate_deployment_mode_tenant_combo(self) -> "Settings":
+        # Each deployment mode has a fixed expectation for SHU_TENANT_ID; a mismatch
+        # at startup means tenant isolation cannot be enforced safely, so fail loudly.
+        if self.deployment_mode == DeploymentMode.SELF_HOSTED and self.tenant_id is not None:
+            raise ValueError("SHU_TENANT_ID must not be set when SHU_DEPLOYMENT_MODE is self_hosted")
+        if self.deployment_mode == DeploymentMode.SILO:
+            if self.tenant_id is None:
+                raise ValueError("SHU_TENANT_ID is required when SHU_DEPLOYMENT_MODE is silo")
+            # Defensive: task 1.3 makes the field validator authoritative for UUID shape,
+            # but enforce it here too so this validator stands on its own.
+            try:
+                uuid.UUID(self.tenant_id)
+            except ValueError as exc:
+                raise ValueError("SHU_TENANT_ID must be a valid UUID when SHU_DEPLOYMENT_MODE is silo") from exc
+        if self.deployment_mode == DeploymentMode.MULTI_TENANT and self.tenant_id is not None:
+            raise ValueError("SHU_TENANT_ID must not be set when SHU_DEPLOYMENT_MODE is multi_tenant")
+        return self
 
     @field_validator("log_level")
     @classmethod

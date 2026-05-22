@@ -25,6 +25,7 @@ from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse, create_error_response, create_success_response
 from ..core.streaming import create_sse_stream_generator
+from ..core.tenant import tenant_context_for_tenant_id
 from ..models.attachment import Attachment
 from ..models.llm_provider import Conversation, Message
 from ..schemas.chat import ConversationFromExperienceRequest
@@ -939,6 +940,13 @@ async def send_message(
         # a no-op second close.
         await db.close()
 
+        # SHU-761: capture the request's tenant_id eagerly — by the time the
+        # StreamingResponse generator runs, FastAPI has unwound the
+        # resolve_tenant yield-dependency and ``tenant_context`` is back
+        # to None. Re-bind it inside the generator so the chat service's
+        # stream/finalize phases see the right tenant.
+        tenant_id = current_user.tenant_id
+
         # SHU-802: SSE wrapper's on_close hook. The wrapper fires this in
         # its `finally` block on every close path — normal completion,
         # GeneratorExit, and CancelledError (the actual disconnect path).
@@ -963,11 +971,15 @@ async def send_message(
             # registration succeeded but the supervisor never spawned (e.g.
             # the inner _gen() raised before reaching stream_ensemble_responses);
             # once the supervisor exists, its own fire_on_complete handles
-            # cleanup and the pop here is an idempotent no-op.
+            # cleanup and the pop here is an idempotent no-op. The
+            # tenant_context wrap goes INSIDE this try so variant tasks
+            # spawned during iteration inherit the contextvar (RLS); the
+            # registry register/pop are tenant-agnostic dict ops.
             in_flight_streams[lifecycle.stream_id] = lifecycle
             try:
-                async for data in create_sse_stream_generator(event_gen, "send_message", on_close=_on_stream_close):
-                    yield data
+                async with tenant_context_for_tenant_id(tenant_id):
+                    async for data in create_sse_stream_generator(event_gen, "send_message", on_close=_on_stream_close):
+                        yield data
             finally:
                 if lifecycle.supervise_task is None:
                     in_flight_streams.pop(lifecycle.stream_id, None)
@@ -1262,6 +1274,9 @@ async def regenerate_message(
         # StreamingResponse. See the matching comment in send_message above.
         await db.close()
 
+        # SHU-761: see send_message for the contextvar-capture rationale.
+        tenant_id = current_user.tenant_id
+
         # SHU-802: see matching on_close hook in send_message for the
         # full rationale (fires on every close path; priority semantics
         # make the unconditional client_disconnected signal correct).
@@ -1272,10 +1287,11 @@ async def regenerate_message(
             # SHU-802: see matching pattern in send_message.
             in_flight_streams[lifecycle.stream_id] = lifecycle
             try:
-                async for data in create_sse_stream_generator(
-                    event_gen, "regenerate_message", on_close=_on_stream_close
-                ):
-                    yield data
+                async with tenant_context_for_tenant_id(tenant_id):
+                    async for data in create_sse_stream_generator(
+                        event_gen, "regenerate_message", on_close=_on_stream_close
+                    ):
+                        yield data
             finally:
                 if lifecycle.supervise_task is None:
                     in_flight_streams.pop(lifecycle.stream_id, None)

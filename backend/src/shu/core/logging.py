@@ -4,11 +4,15 @@ This module sets up structured logging with better readability, color coding,
 proper alignment, and appropriate log levels for different environments.
 
 Log file management:
-- Each process startup archives the previous log file with a timestamp suffix.
-- A plain FileHandler writes to a fresh file (no TimedRotatingFileHandler).
-- The unified scheduler's LogMaintenanceSource handles midnight rotation and
-  retention cleanup on every tick, so old archives are pruned continuously
-  rather than only at startup.
+- When ``SHU_LOG_DIR`` is set to a non-empty path, a ``ManagedFileHandler``
+  writes to ``${SHU_LOG_DIR}/shu_${hostname}.log``. Each process startup
+  archives the previous log file with a timestamp suffix. The unified
+  scheduler's ``LogMaintenanceSource`` handles midnight rotation and
+  retention cleanup on every tick.
+- When ``SHU_LOG_DIR`` is empty, only the stdout ``StreamHandler`` is
+  installed. This is the hosted profile: kubelet captures stdout and a
+  log-aggregation agent ships it onward, so a disk-backed handler would
+  duplicate writes and pin logs to a single-writer volume.
 """
 
 import json
@@ -347,35 +351,41 @@ def setup_logging() -> None:  # noqa: PLR0915
     # Create file handler using configurable log directory and our ManagedFileHandler.
     # Startup archiving gives each app cycle a clean file. Midnight rotation and
     # retention cleanup are handled by the scheduler's LogMaintenanceSource.
+    # When SHU_LOG_DIR is empty (hosted profile with log aggregation), skip the
+    # file handler entirely — kubelet captures stdout and Fluent Bit ships it.
     global _managed_file_handler  # noqa: PLW0603
-    log_dir = Path(settings.log_dir)
-    os.makedirs(log_dir, exist_ok=True)
+    file_handler: ManagedFileHandler | None = None
+    if settings.log_dir:
+        log_dir = Path(settings.log_dir)
+        os.makedirs(log_dir, exist_ok=True)
 
-    # Include hostname in filename so horizontally scaled replicas don't clobber each other
-    hostname = socket.gethostname()
-    log_file_path = os.path.join(log_dir, f"shu_{hostname}.log")
+        # Include hostname in filename so horizontally scaled replicas don't clobber each other
+        hostname = socket.gethostname()
+        log_file_path = os.path.join(log_dir, f"shu_{hostname}.log")
 
-    # Archive the previous run's log file before the handler opens it.
-    # Each restart gets a unique timestamp suffix so same-day restarts
-    # never collide.
-    log_path = Path(log_file_path)
-    if log_path.exists() and log_path.stat().st_size > 0:
-        ts = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
-        archive_path = f"{log_file_path}.{ts}"
-        try:
-            log_path.rename(archive_path)
-        except OSError:
-            pass  # worst case we append; not worth crashing over
+        # Archive the previous run's log file before the handler opens it.
+        # Each restart gets a unique timestamp suffix so same-day restarts
+        # never collide.
+        log_path = Path(log_file_path)
+        if log_path.exists() and log_path.stat().st_size > 0:
+            ts = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
+            archive_path = f"{log_file_path}.{ts}"
+            try:
+                log_path.rename(archive_path)
+            except OSError:
+                pass  # worst case we append; not worth crashing over
 
-    file_handler = ManagedFileHandler(
-        log_file_path,
-        retention_days=settings.log_retention_days,
-    )
-    file_handler.setFormatter(formatter)
-    _managed_file_handler = file_handler
+        file_handler = ManagedFileHandler(
+            log_file_path,
+            retention_days=settings.log_retention_days,
+        )
+        file_handler.setFormatter(formatter)
+        _managed_file_handler = file_handler
 
-    # Run an initial cleanup of old archives at startup
-    _cleanup_old_log_archives(log_dir, settings.log_retention_days)
+        # Run an initial cleanup of old archives at startup
+        _cleanup_old_log_archives(log_dir, settings.log_retention_days)
+    else:
+        _managed_file_handler = None
 
     # Immediately configure SQLAlchemy loggers to use our formatter
     # This prevents SQLAlchemy from setting up its own logging
@@ -399,7 +409,8 @@ def setup_logging() -> None:  # noqa: PLR0915
     # Clear existing handlers and add our handlers
     root_logger.handlers.clear()
     root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+    if file_handler is not None:
+        root_logger.addHandler(file_handler)
 
     # Set specific logger levels based on config
     # Uvicorn logs - use config level but cap at WARNING to reduce noise
@@ -424,7 +435,8 @@ def setup_logging() -> None:  # noqa: PLR0915
         log.handlers.clear()
         # Add our handlers with our formatter for consistent styling
         log.addHandler(console_handler)
-        log.addHandler(file_handler)
+        if file_handler is not None:
+            log.addHandler(file_handler)
         # Disable propagation to prevent double logging
         log.propagate = False
 
@@ -479,7 +491,8 @@ def setup_logging() -> None:  # noqa: PLR0915
     for uvicorn_log in [uvicorn_logger, uvicorn_access_logger, uvicorn_error_logger]:
         uvicorn_log.handlers.clear()
         uvicorn_log.addHandler(console_handler)
-        uvicorn_log.addHandler(file_handler)
+        if file_handler is not None:
+            uvicorn_log.addHandler(file_handler)
         uvicorn_log.propagate = False
 
     logger.info(

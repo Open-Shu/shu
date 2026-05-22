@@ -24,7 +24,6 @@ Defaults: N=10 sequential chats. Override via ``BASELINE_N=20`` env var.
 from __future__ import annotations
 
 import json
-import logging
 import math
 import os
 import sys
@@ -35,8 +34,9 @@ from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.baseline._setup import create_local_chat_setup
 from integ.helpers.api_helpers import process_streaming_result
 from integ.helpers.auth import cleanup_framework_test_admin
+from shu.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Knob: number of sequential chats per run. Override via env var
 # (the integration framework's own argparse owns the CLI).

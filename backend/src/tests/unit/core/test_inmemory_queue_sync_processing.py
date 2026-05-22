@@ -181,7 +181,7 @@ class TestInMemoryQueueSynchronousProcessing:
 
         # Measure enqueue time
         start = time.perf_counter()
-        job = Job(queue_name=queue_name, payload={"test": "data"})
+        job = Job(queue_name=queue_name, payload={"test": "data"}, tenant_id="test-tenant")
         await backend.enqueue(job)
         enqueue_time = time.perf_counter() - start
 

@@ -1,9 +1,10 @@
-import logging
 import uuid
 
 from integ.response_utils import extract_data
 
-logger = logging.getLogger(__name__)
+from shu.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 async def create_active_user_headers(client, admin_headers, role="regular_user"):
