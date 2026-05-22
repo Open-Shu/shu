@@ -397,6 +397,11 @@ const useMessageRegeneration = ({
           if (!hasContentStarted) {
             hasContentStarted = true;
             extra.reasoning_collapsed = true;
+            // SHU-803 follow-up: mirror the content_delta branch so the
+            // InputBar's "Initializing…" → enabled transition fires when
+            // an upstream emits raw ``parsed.content`` strings instead
+            // of typed ``content_delta`` events.
+            setStreamingStarted?.(true);
           }
           updateTempRegenContent(conversationId, tempId, regenAccum, extra);
         }

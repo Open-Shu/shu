@@ -180,7 +180,12 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
     """
     from shu.models.llm_provider import LLMModel
 
-    result = await db.execute(select(LLMModel.model_name))
+    # DISTINCT: model_name has no unique constraint — the same name can be
+    # registered under multiple providers (e.g. ``gpt-4`` on OpenAI direct
+    # and via an Azure proxy). Without DISTINCT the loop would run twice for
+    # the same name, double-counting ``updated``/``cleared`` and producing a
+    # bogus AC9i collision WARN that lists the same name twice.
+    result = await db.execute(select(LLMModel.model_name).distinct())
     db_model_names = [row[0] for row in result.all()]
 
     updated = 0

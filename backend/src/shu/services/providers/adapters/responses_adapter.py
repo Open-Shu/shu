@@ -59,14 +59,13 @@ class ResponsesAdapter(BaseProviderAdapter):
         # in-flight run. Stays None until that event lands; `cancel()`
         # returns False (no-op) if invoked before the id is known.
         self._response_id: str | None = None
-        # SHU-803 AC9e: lazily-initialized httpx client for the cancel
-        # POST. Created on first `cancel()` call rather than in __init__
-        # so streams that never get user-terminated don't pay the cost
-        # of an httpx instance they never use. Lifetime is bounded by
-        # the adapter instance (which is per-stream per-variant), so we
-        # don't explicitly close it — GC handles cleanup when the
-        # variant task ends.
-        self._cancel_client: httpx.AsyncClient | None = None
+        # SHU-803 AC9e: optional transport injection for the cancel POST.
+        # Production code leaves this None; ``cancel()`` constructs an
+        # ``httpx.AsyncClient`` inside an ``async with`` so the client is
+        # deterministically closed (no GC-time "Unclosed AsyncClient"
+        # warning). Tests pre-install an ``httpx.MockTransport`` here to
+        # intercept the cancel POST without patching ``httpx`` globally.
+        self._cancel_transport: httpx.AsyncBaseTransport | None = None
 
     # General provider information
     def get_provider_information(self) -> ProviderInformation:
@@ -129,8 +128,11 @@ class ResponsesAdapter(BaseProviderAdapter):
           (terminate fired before ``response.created`` landed — extremely
           rare race). The drain path still captures usage if the
           provider eventually emits ``response.completed``.
-        - Lazily creates ``self._cancel_client`` on first call to avoid
-          paying for an httpx instance on streams that never terminate.
+        - Constructs the httpx client inside ``async with`` so it is
+          deterministically closed when the POST completes (no GC-time
+          "Unclosed AsyncClient" warnings). The adapter is per-stream
+          per-variant and cancel() runs at most once per stream — there
+          is no reuse to optimize for.
         - 2-second timeout — the cancel POST should be quick or fall
           through to drain. The consumer loop races this with drain
           via ``asyncio.gather`` so a slow cancel does not block the
@@ -148,9 +150,6 @@ class ResponsesAdapter(BaseProviderAdapter):
             # Drain still runs and captures usage if it eventually lands.
             return False
 
-        if self._cancel_client is None:
-            self._cancel_client = httpx.AsyncClient(timeout=2.0)
-
         base_url = self.get_field_with_override("get_api_base_url")
         if not base_url:
             # Mis-configured adapter — without a base URL we can't
@@ -162,8 +161,16 @@ class ResponsesAdapter(BaseProviderAdapter):
         auth_def = self.get_authorization_header() or {}
         headers = auth_def.get("headers") or {}
 
+        # SHU-803 AC9e: ``async with`` so the client (and its connection
+        # pool) is closed before this coroutine returns. The adapter is
+        # short-lived (one stream / variant) and cancel() runs at most
+        # once per stream, so there is no client reuse to optimize for.
         try:
-            response = await self._cancel_client.post(cancel_url, headers=headers)
+            async with httpx.AsyncClient(
+                transport=self._cancel_transport,
+                timeout=2.0,
+            ) as client:
+                response = await client.post(cancel_url, headers=headers)
         except Exception as exc:
             # Network failure, DNS, TLS, whatever — fall through to drain.
             # Log to telemetry; consumer loop doesn't care which side failed.

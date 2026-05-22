@@ -255,14 +255,44 @@ async def _ensure_local_provider_type(db) -> None:
     await db.commit()
 
 
-async def _latest_llm_usage_for_model(db, model_id: str) -> LLMUsage | None:
-    """Fetch the most-recent LLMUsage row for a given model_id. Used to
-    assert on the row finalize wrote after the terminate signal landed.
+async def _latest_llm_usage_for_model(
+    db,
+    model_id: str,
+    *,
+    timeout_seconds: float = 5.0,
+    interval_seconds: float = 0.05,
+) -> LLMUsage | None:
+    """Poll for the most-recent LLMUsage row for a given model_id.
+
+    Synchronization rationale: the early-persist Message row lands at
+    terminate-signal time, but the LLMUsage row is written later when
+    finalize runs after drain captures provider usage. Callers that
+    sequence ``wait_for_message_persisted`` → ``_latest_llm_usage_for_model``
+    would otherwise race that gap (50ms+ on the slow-drain fixtures) and
+    flake. The poll-and-rollback pattern mirrors ``wait_for_message_persisted``:
+    each iteration drops the session's read view so a row committed on
+    the finalize task's connection becomes visible.
+
+    Returns the row when it lands, or ``None`` if no row appears within
+    ``timeout_seconds``. All callers in this file assert ``usage is not None``
+    immediately after the call, so the default budget is generous enough
+    to absorb fixture drain delays.
     """
-    result = await db.execute(
-        select(LLMUsage).where(LLMUsage.model_id == model_id).order_by(LLMUsage.created_at.desc()).limit(1)
-    )
-    return result.scalar_one_or_none()
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        # Drop the implicit transaction's read view so a row committed on
+        # the finalize task's connection becomes visible to the next SELECT.
+        # Same rationale as wait_for_message_persisted.
+        await db.rollback()
+        result = await db.execute(
+            select(LLMUsage).where(LLMUsage.model_id == model_id).order_by(LLMUsage.created_at.desc()).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is not None:
+            return row
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(interval_seconds)
 
 
 class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):

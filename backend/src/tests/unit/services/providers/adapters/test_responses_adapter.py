@@ -439,8 +439,8 @@ async def test_cancel_returns_false_when_response_id_not_yet_seen(cancellable_ad
     assert cancellable_adapter._response_id is None
     result = await cancellable_adapter.cancel()
     assert result is False
-    # No httpx client should be instantiated for the no-op path.
-    assert cancellable_adapter._cancel_client is None
+    # No transport should be installed for the no-op path.
+    assert cancellable_adapter._cancel_transport is None
 
 
 @pytest.mark.asyncio
@@ -484,10 +484,11 @@ async def test_cancel_posts_to_responses_cancel_endpoint_on_2xx(
         captured_requests.append(request)
         return httpx.Response(200, json={"cancelled": True})
 
-    # Seed response_id and pre-install the mock transport so the lazy
-    # init in cancel() doesn't replace it.
+    # Seed response_id and inject the mock transport — cancel() builds
+    # its own ``httpx.AsyncClient`` inside an ``async with``, passing
+    # ``self._cancel_transport`` as the client's transport.
     cancellable_adapter._response_id = "resp_xyz"
-    cancellable_adapter._cancel_client = httpx.AsyncClient(transport=_make_mock_transport(handler))
+    cancellable_adapter._cancel_transport = _make_mock_transport(handler)
 
     result = await cancellable_adapter.cancel()
 
@@ -511,7 +512,7 @@ async def test_cancel_returns_false_on_4xx_response(cancellable_adapter, _reset_
         return httpx.Response(404)
 
     cancellable_adapter._response_id = "resp_xyz"
-    cancellable_adapter._cancel_client = httpx.AsyncClient(transport=_make_mock_transport(handler))
+    cancellable_adapter._cancel_transport = _make_mock_transport(handler)
 
     result = await cancellable_adapter.cancel()
     assert result is False
@@ -524,7 +525,7 @@ async def test_cancel_returns_false_on_5xx_response(cancellable_adapter, _reset_
         return httpx.Response(500)
 
     cancellable_adapter._response_id = "resp_xyz"
-    cancellable_adapter._cancel_client = httpx.AsyncClient(transport=_make_mock_transport(handler))
+    cancellable_adapter._cancel_transport = _make_mock_transport(handler)
 
     result = await cancellable_adapter.cancel()
     assert result is False
@@ -543,7 +544,7 @@ async def test_cancel_swallows_network_exceptions_and_returns_false(
         raise httpx.ConnectError("simulated network failure")
 
     cancellable_adapter._response_id = "resp_xyz"
-    cancellable_adapter._cancel_client = httpx.AsyncClient(transport=_make_mock_transport(handler))
+    cancellable_adapter._cancel_transport = _make_mock_transport(handler)
 
     result = await cancellable_adapter.cancel()
     assert result is False
@@ -574,7 +575,7 @@ async def test_ac9j_first_cancel_failure_logs_info_then_warn(
         return httpx.Response(404)
 
     cancellable_adapter._response_id = "resp_xyz"
-    cancellable_adapter._cancel_client = httpx.AsyncClient(transport=_make_mock_transport(handler))
+    cancellable_adapter._cancel_transport = _make_mock_transport(handler)
 
     with caplog.at_level(logging.INFO, logger="shu.services.providers.adapters.responses_adapter"):
         await cancellable_adapter.cancel()  # First failure → INFO
@@ -614,7 +615,7 @@ async def test_ac9j_two_different_providers_each_get_one_info(_reset_cancel_logg
         )
     )
     adapter_a._response_id = "resp_a"
-    adapter_a._cancel_client = httpx.AsyncClient(transport=transport)
+    adapter_a._cancel_transport = transport
 
     adapter_b = ResponsesAdapter(
         ProviderAdapterContext(
@@ -627,7 +628,7 @@ async def test_ac9j_two_different_providers_each_get_one_info(_reset_cancel_logg
         )
     )
     adapter_b._response_id = "resp_b"
-    adapter_b._cancel_client = httpx.AsyncClient(transport=transport)
+    adapter_b._cancel_transport = transport
 
     with caplog.at_level(logging.INFO, logger="shu.services.providers.adapters.responses_adapter"):
         await adapter_a.cancel()

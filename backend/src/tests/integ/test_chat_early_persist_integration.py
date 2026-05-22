@@ -127,6 +127,12 @@ async def _capture_regen_stream_id_and_terminate(  # noqa: C901  # mirrors the p
 
         deadline = asyncio.get_running_loop().time() + 5.0
         while True:
+            # Bail immediately if _consume_regen already resolved the
+            # future (e.g. set an exception on a non-200 response) so we
+            # don't keep the task alive until the 5s deadline — that
+            # delays the join in the finally block.
+            if stream_id_future.done():
+                return
             registry = getattr(_app.state, "in_flight_streams", {}) or {}
             matching = sorted(
                 stream_id

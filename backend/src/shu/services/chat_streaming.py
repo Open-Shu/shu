@@ -730,7 +730,7 @@ class EnsembleStreamingHelper:
         lifecycle: "StreamLifecycle",
         content_accumulator: list[str],
         on_terminate_signal: Callable[[], Awaitable[None]] | None = None,
-    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool, dict[str, Any]]:
+    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool, dict[str, Any], dict[str, Any]]:
         """Stream provider responses for a single model variant and enqueue interim events to the provided queue.
 
         Parameters

@@ -173,6 +173,19 @@ const useChatStreaming = ({
       // `streamIdByConversationRef` if the map still holds OUR id —
       // a newer same-conv stream might have overwritten the entry.
       let capturedStreamId = null;
+      // SHU-803 follow-up: cleanup helper used by every exit path
+      // ([DONE], abort, error) so the captured stream_id is removed from
+      // the per-conversation map symmetrically. Guarded against the
+      // newer-stream-overwrote-us case so we don't orphan another
+      // stream's Stop-button lookup.
+      const releaseCapturedStreamId = () => {
+        if (
+          capturedStreamId !== null &&
+          streamIdByConversationRef.current.get(String(conversationId)) === capturedStreamId
+        ) {
+          streamIdByConversationRef.current.delete(String(conversationId));
+        }
+      };
       try {
         abortController = new AbortController();
         const conversationIdKey = String(conversationId);
@@ -334,16 +347,8 @@ const useChatStreaming = ({
             }
             // SHU-803: stream completed — clear OUR captured stream_id
             // from the per-conversation map so a future stream gets a
-            // fresh capture from its own stream_start event. Guarded
-            // because the entry may have been overwritten by a newer
-            // same-conversation stream; deleting blindly would orphan
-            // that newer stream's Stop-button lookup.
-            if (
-              capturedStreamId !== null &&
-              streamIdByConversationRef.current.get(String(conversationId)) === capturedStreamId
-            ) {
-              streamIdByConversationRef.current.delete(String(conversationId));
-            }
+            // fresh capture from its own stream_start event.
+            releaseCapturedStreamId();
 
             if (!isMountedRef.current) {
               return;
@@ -582,6 +587,10 @@ const useChatStreaming = ({
         }
       } catch (error) {
         if (error?.name === 'AbortError' || error?.content === 'The user aborted a request.') {
+          // Mirror the [DONE] handler: every stream-exit path releases
+          // our captured stream_id so a future same-conversation stream
+          // doesn't see a stale entry.
+          releaseCapturedStreamId();
           if (!isMountedRef.current) {
             return;
           }
@@ -609,6 +618,10 @@ const useChatStreaming = ({
           return;
         }
         log.error('Streaming error:', error);
+        // Mirror the [DONE] handler: every stream-exit path releases
+        // our captured stream_id so a future same-conversation stream
+        // doesn't see a stale entry.
+        releaseCapturedStreamId();
         if (!isMountedRef.current) {
           return;
         }

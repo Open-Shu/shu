@@ -356,8 +356,8 @@ def openai_completions_end_usage_fixture(
 
 @contextmanager
 def stub_responses_cancel_transport(handler):
-    """Pre-install an ``httpx.MockTransport``-backed ``_cancel_client`` on
-    every ``ResponsesAdapter`` instance constructed inside the with-block.
+    """Inject an ``httpx.MockTransport`` into every ``ResponsesAdapter``
+    instance constructed inside the with-block via ``_cancel_transport``.
 
     Used by the AC10 ``test_terminate_responses_cancel_called_via_mock_transport``
     integration test to assert the cancel POST URL ends in
@@ -376,9 +376,9 @@ def stub_responses_cancel_transport(handler):
 
     def patched_init(self, context):
         original_init(self, context)
-        # Pre-install — cancel() short-circuits the lazy init when
-        # self._cancel_client is already set.
-        self._cancel_client = _httpx.AsyncClient(transport=transport, timeout=2.0)
+        # Injected on the adapter — cancel() reads this when constructing
+        # its short-lived httpx.AsyncClient inside an ``async with``.
+        self._cancel_transport = transport
 
     with patch.object(ResponsesAdapter, "__init__", patched_init):
         yield
