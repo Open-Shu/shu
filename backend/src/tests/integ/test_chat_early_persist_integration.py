@@ -44,6 +44,7 @@ from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.helpers.auth import cleanup_framework_test_admin, cleanup_test_user, create_active_user_with_id
 from integ.helpers.stub_provider_stream import (
     anthropic_message_start_then_delta_fixture,
+    anthropic_pre_delta_fixture,
     stub_provider_stream,
 )
 from integ.helpers.wait_for_message import wait_for_message_persisted
@@ -222,6 +223,7 @@ class ChatEarlyPersistIntegrationTest(BaseIntegrationTestSuite):
             self.test_terminate_then_followup_preserves_chronological_ordering,
             self.test_terminate_during_regenerate_assigns_correct_variant_index,
             self.test_natural_completion_does_not_take_early_persist_path,
+            self.test_terminate_during_silent_provider_gap_fires_early_persist_immediately,
             self.test_zz_teardown_test_admin,
         ]
 
@@ -539,6 +541,88 @@ class ChatEarlyPersistIntegrationTest(BaseIntegrationTestSuite):
             assert persisted is not None
             assert (persisted.message_metadata or {}).get("stream_state") == "complete"
             assert (persisted.message_metadata or {}).get("partial_usage_unavailable") is None
+        finally:
+            await cleanup_test_user(client, auth_headers, ctx["user_id"])
+            await _cleanup_provider_resources(
+                client,
+                auth_headers,
+                model_config_id=ctx["model_config_id"],
+                provider_id=ctx["provider_id"],
+            )
+
+    # ------------------------------------------------------------------
+    # 4. Silent-provider gap — Codex review follow-up
+    # ------------------------------------------------------------------
+    async def test_terminate_during_silent_provider_gap_fires_early_persist_immediately(
+        self, client, db, auth_headers
+    ):
+        """End-to-end coverage for ``_iter_with_signal_break``.
+
+        Codex code review (May 2026) flagged that the base SHU-803
+        early-persist callback was chunk-gated: the consumer loop's
+        terminate-detection check only ran between provider chunks,
+        so a silent provider after Stop delayed the partial-row commit
+        until the next chunk arrived. In that gap a refetch returned
+        no row and a follow-up message landed first — the same
+        races early-persist was supposed to close.
+
+        The fix wraps the provider stream in ``_iter_with_signal_break``,
+        which yields a sentinel the moment ``lifecycle.event`` fires
+        even if no chunk has arrived. This test exercises that path
+        live: the stub fixture sits silent for 2.5 seconds between
+        ``message_start`` and the first content delta, terminate fires
+        ~50ms into that gap, and we assert the early-persist log lands
+        well before the gap would have ended on its own.
+
+        Without the wrapper, the log lands at ~2.5s elapsed
+        (the next-chunk arrival). With the wrapper, it lands at
+        ~100ms elapsed (terminate POST latency + asyncio scheduling).
+        We pick a 1.0s threshold — well clear of both the
+        with-wrapper expected timing AND the without-wrapper failure
+        timing — so the assertion is decisive in either direction.
+        """
+        ctx = await self._setup(client, db, auth_headers)
+        try:
+            silent_gap_seconds = 2.5
+            fixture = anthropic_pre_delta_fixture(
+                input_tokens=11,
+                delay_before_first_content_s=silent_gap_seconds,
+            )
+
+            # Use the same wall clock that `logging.LogRecord.created`
+            # uses, so the elapsed-time math below is apples-to-apples.
+            import time
+
+            test_start_wall = time.time()
+            with _EarlyPersistLogCapture() as log_capture, stub_provider_stream(fixture):
+                stream_id, terminate_resp = await _capture_stream_id_and_terminate(
+                    client, conv_id=ctx["conv_id"], user_headers=ctx["user_headers"]
+                )
+            assert stream_id is not None
+            assert terminate_resp is not None
+            assert terminate_resp.status_code == 202
+
+            # Exactly one early-persist record (no double-fire).
+            assert len(log_capture.records) == 1, (
+                f"expected exactly one early_persist_terminated record, got {len(log_capture.records)}"
+            )
+            record = log_capture.records[0]
+
+            # Load-bearing: the record landed well before the silent
+            # gap would have ended naturally.
+            wall_elapsed_at_persist = record.created - test_start_wall
+            assert wall_elapsed_at_persist < (silent_gap_seconds * 0.5), (
+                f"early-persist landed {wall_elapsed_at_persist:.3f}s into the {silent_gap_seconds}s silent gap; "
+                f"expected sub-{silent_gap_seconds * 0.5:.1f}s. Without the wrapper, the chunk-gated check "
+                f"would have delayed this to ~{silent_gap_seconds:.1f}s — the regression Codex flagged."
+            )
+
+            # Sanity: the persisted row landed with the expected state.
+            persisted = await wait_for_message_persisted(
+                db, conversation_id=ctx["conv_id"], role="assistant", timeout_seconds=5.0
+            )
+            assert persisted is not None
+            assert (persisted.message_metadata or {}).get("stream_state") == "user_terminated"
         finally:
             await cleanup_test_user(client, auth_headers, ctx["user_id"])
             await _cleanup_provider_resources(

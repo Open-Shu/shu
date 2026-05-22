@@ -1,16 +1,20 @@
 /**
- * SHU-803 Vitest coverage for MessageItem — "Stopped by user" caption.
+ * SHU-803 Vitest coverage for MessageItem — stopped-state caption.
  *
  * The Stop button itself lives in the input bar (see InputBar.test.jsx)
- * so it stays visible regardless of scroll position. MessageItem only
- * owns the persisted "Stopped by user" caption that surfaces once the
- * placeholder flips out of isStreaming.
+ * so it stays visible regardless of scroll position. MessageItem owns
+ * the persisted stopped-state caption that surfaces once the placeholder
+ * flips out of isStreaming.
  *
  * The interesting cases here:
  * - The caption renders for non-streaming messages whose
  *   ``message_metadata.stream_state`` is ``user_terminated`` or
- *   ``shutdown`` (AC6), and is ABSENT for ``complete`` /
+ *   ``shutdown`` (AC6/AC8), and is ABSENT for ``complete`` /
  *   ``client_disconnected`` (AC7).
+ * - Caption text branches by attribution: ``user_terminated`` reads
+ *   "Stopped by user" (true cause); ``shutdown`` reads "Response
+ *   stopped" since the user didn't trigger it and "by user" would
+ *   mislead (AC8).
  */
 
 import { render, screen } from '@testing-library/react';
@@ -72,7 +76,7 @@ const makeAssistantMessage = (overrides = {}) => ({
   ...overrides,
 });
 
-describe('MessageItem — SHU-803 "Stopped by user" caption (AC6/AC7)', () => {
+describe('MessageItem — SHU-803 stopped-state caption (AC6/AC7/AC8)', () => {
   it('AC6: renders the caption for stream_state="user_terminated"', () => {
     const message = makeAssistantMessage({
       isStreaming: false,
@@ -87,9 +91,11 @@ describe('MessageItem — SHU-803 "Stopped by user" caption (AC6/AC7)', () => {
     expect(screen.getByText('Stopped by user')).toBeInTheDocument();
   });
 
-  it('AC6: renders the caption for stream_state="shutdown" (server-initiated)', () => {
-    // Per AC6: server-initiated stop looks identical to user-initiated
-    // from the reader's perspective — partial content, here's what we got.
+  it('AC8: renders "Response stopped" (NOT "Stopped by user") for stream_state="shutdown"', () => {
+    // Per AC8 — server-initiated stop has the same partial-content
+    // outcome from the reader's perspective, but the user didn't
+    // trigger it. Attributing "by user" would mislead. Caption reads
+    // "Response stopped" so attribution stays accurate.
     const message = makeAssistantMessage({
       isStreaming: false,
       content: 'partial answer cut by shutdown',
@@ -100,7 +106,10 @@ describe('MessageItem — SHU-803 "Stopped by user" caption (AC6/AC7)', () => {
         <MessageItem message={message} {...baseProps()} />
       </TestWrapper>
     );
-    expect(screen.getByText('Stopped by user')).toBeInTheDocument();
+    expect(screen.getByText('Response stopped')).toBeInTheDocument();
+    // Critical attribution guard: must NOT show the user-attributed copy
+    // for a server-initiated stop.
+    expect(screen.queryByText('Stopped by user')).toBeNull();
   });
 
   it('AC7: no caption for stream_state="complete"', () => {

@@ -32,7 +32,6 @@ OpenAI Responses ``response.completed``.
 """
 
 import asyncio
-import logging
 import uuid
 from decimal import Decimal
 
@@ -52,17 +51,15 @@ from integ.helpers.stub_provider_stream import (
 from integ.helpers.wait_for_message import wait_for_message_persisted
 from integ.response_utils import extract_data
 from integ.test_chat_force_terminate_integration import _capture_stream_id_and_terminate
-from shu.core.config import get_settings_instance
 from shu.core.logging import get_logger
 from shu.models.llm_provider import LLMModel, LLMUsage
-from shu.services.chat_streaming import StreamLifecycle
 
 logger = get_logger(__name__)
 
 # Per-chunk default delay used inside the stub generator. The terminate
 # POST in `_capture_stream_id_and_terminate` polls the registry every
 # 5ms and fires HTTP POST ~50ms after the variant registers. Most chunks
-# in the per-protocol fixtures pause 0–300ms; the test-specific delays
+# in the per-protocol fixtures pause 0-300ms; the test-specific delays
 # are tuned so the terminate-fire window lands between the chunks
 # documented in each test's docstring.
 
@@ -236,7 +233,8 @@ async def _ensure_local_provider_type(db) -> None:
     )
     if existing.first():
         return
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
     now = _dt.now(UTC)
     await db.execute(
         text(
@@ -673,7 +671,7 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
                     if not shutdown_task.done():
                         try:
                             await asyncio.wait_for(shutdown_task, timeout=2.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             shutdown_task.cancel()
 
             assert stream_id is not None
@@ -884,8 +882,8 @@ class ChatForceTerminateRealUsageIntegrationTest(BaseIntegrationTestSuite):
         contract.
 
         Asserts the LLMUsage row's
-        ``total_cost = input_tokens × cost_per_input_unit
-                     + output_tokens × cost_per_output_unit``
+        ``total_cost = input_tokens * cost_per_input_unit
+                     + output_tokens * cost_per_output_unit``
         and is non-zero. Pre-SHU-803 (or pre-fix MODEL_PRICING lookup),
         this row's ``total_cost`` was zero — the abuse vector.
         """

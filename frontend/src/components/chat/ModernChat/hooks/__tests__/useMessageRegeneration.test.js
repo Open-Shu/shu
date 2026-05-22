@@ -111,6 +111,11 @@ function renderUseRegeneration(queryClient, overrides = {}) {
   const setVariantSelection = vi.fn();
   const scheduleScrollToBottom = vi.fn();
   const focusMessageById = vi.fn();
+  // SHU-803 follow-up: ownership ref. In production this is owned by
+  // useChatStreaming and shared with useMessageRegeneration so both
+  // hooks coordinate on the "who currently owns the global streaming
+  // state" check before any clear.
+  const streamingOwnerRef = { current: null };
 
   const result = renderHook(
     () =>
@@ -128,6 +133,7 @@ function renderUseRegeneration(queryClient, overrides = {}) {
         setError,
         setStreamingConversationId,
         setStreamingStarted,
+        streamingOwnerRef,
         ...overrides,
       }),
     { wrapper: makeWrapper(queryClient) }
@@ -139,6 +145,7 @@ function renderUseRegeneration(queryClient, overrides = {}) {
     setError,
     startRegeneration,
     completeRegeneration,
+    streamingOwnerRef,
   };
 }
 

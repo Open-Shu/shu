@@ -119,6 +119,27 @@ class StreamLifecycle:
     user_id: str
     conversation_id: str
     event: asyncio.Event = field(default_factory=asyncio.Event)
+    # SHU-803 follow-up: dedicated event that fires ONLY when the
+    # lifecycle reason resolves to an intentional stop
+    # (``user_terminated`` or ``shutdown``). ``client_disconnected``
+    # leaves this event unset.
+    #
+    # Rationale: ``_iter_with_signal_break`` races provider chunks
+    # against an event so the consumer loop wakes on a stop signal
+    # without waiting for the next provider chunk. Racing against
+    # ``self.event`` (which fires on ANY signal) breaks for the
+    # disconnect-then-stop sequence: ``client_disconnected`` sets
+    # ``self.event``, the wrapper yields its one-shot sentinel,
+    # ``_call_provider`` ignores it because the reason isn't intentional,
+    # and the wrapper switches to plain chunk-yielding. A later
+    # ``user_terminated`` / ``shutdown`` upgrades ``self.reason`` but
+    # ``self.event`` is already set — so the wrapper is no longer
+    # racing and a silent provider can block until the next chunk
+    # (or the httpx 120s read timeout). Racing against this dedicated
+    # event closes that window: ``client_disconnected`` doesn't fire
+    # it, and the eventual intentional-stop signal sets it for the
+    # first time, waking the wrapper.
+    intentional_stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     reason: StreamLifecycleReason | None = None
     # SHU-803: separate flag tracking whether shutdown was signaled. Cannot
     # be derived from `reason` alone because the priority-based `signal()`
@@ -176,6 +197,15 @@ class StreamLifecycle:
         # Always set the event so consumers blocked on `await event.wait()`
         # wake up even when this call didn't change the reason.
         self.event.set()
+        # SHU-803 follow-up: separately fire the intentional-stop event
+        # iff the RESOLVED reason (after priority resolution) is an
+        # intentional stop. Disconnect-only paths leave this event
+        # unset. A later user_terminate / shutdown upgrade fires it
+        # for the first time even when the main event is already set
+        # from the prior disconnect — that's the load-bearing property
+        # this event was added for. Idempotent like ``event.set()``.
+        if self.reason in ("user_terminated", "shutdown"):
+            self.intentional_stop_event.set()
         return accepted
 
     def resolved_reason(self) -> StreamLifecycleReason:
@@ -344,6 +374,157 @@ async def periodic_in_flight_streams_size_log(
             )
         except Exception as e:
             logger.warning(f"in_flight_streams size log error: {e}")
+
+
+# SHU-803 follow-up: sentinel yielded by ``_iter_with_signal_break`` exactly
+# once when ``lifecycle.event`` fires before the next provider chunk
+# arrives. Identity-checked via ``is`` so it can never collide with any
+# real provider event value. Module-level so callers can import for
+# pattern matching.
+_SIGNAL_SENTINEL: object = object()
+
+
+async def _iter_with_signal_break(  # noqa: PLR0912
+    stream: Any, signal_event: asyncio.Event
+) -> AsyncGenerator[Any, None]:
+    """Async-iterator wrapper that races provider chunks against a signal.
+
+    Wraps the provider stream so the consumer loop observes a
+    ``user_terminated`` / ``shutdown`` signal WITHOUT having to wait
+    for the next provider chunk to arrive. The base SHU-803 design
+    checked ``lifecycle.event.is_set()`` at the top of each
+    ``async for`` iteration — fine when the provider streams steadily,
+    but if the provider goes quiet after the user clicks Stop (slow
+    network, rate-limit pause, reasoning model thinking, hung HTTP
+    read), the signal isn't observed until the next chunk arrives.
+    In that gap the early-persist callback hasn't fired, so a refetch
+    or follow-up message during the gap reintroduces the
+    vanishing-content + temporal-ordering races SHU-803's early-persist
+    guarantee is meant to prevent.
+
+    Behavior:
+
+    - Until the signal fires: each next-chunk read races
+      ``signal_event.wait()``. If the chunk wins, yield it normally.
+    - The MOMENT the signal fires (with no chunk pending or before the
+      pending chunk arrives): yield ``_SIGNAL_SENTINEL`` exactly once.
+      The caller's loop body inspects this and triggers its existing
+      terminate path (which then fires the early-persist callback,
+      sets ``draining=True``, etc.) BEFORE the next provider chunk
+      arrives.
+    - After the sentinel: continue yielding provider chunks normally
+      (the drain consumes them silently). A pending chunk task
+      started before the signal is preserved across the sentinel
+      yield, so we don't drop the next provider event.
+
+    Robustness: pending tasks (next-chunk + signal-wait) are tracked
+    and cancelled in a ``finally`` block so an early consumer exit
+    (the for-loop ``break``s out of drain mode on ``ProviderFinalEventResult``,
+    for example) doesn't leak orphaned asyncio tasks. Cancellation
+    exceptions on the awaited cleanup are absorbed since cleanup is
+    best-effort.
+
+    Args:
+        stream: The provider-side async iterator (return value of
+            ``await client.chat_completion(...)``).
+        signal_event: Typically ``lifecycle.event`` — the
+            ``asyncio.Event`` the terminate POST / shutdown drain
+            sets when the signal lands.
+
+    Yields:
+        Provider chunks (passed through unchanged), plus exactly one
+        ``_SIGNAL_SENTINEL`` if the signal fires before stream
+        completion.
+
+    """
+    aiter = stream.__aiter__()
+    pending_chunk: asyncio.Task | None = None
+    signal_task: asyncio.Task | None = None
+    signal_yielded = False
+    try:
+        while True:
+            # Case A: we've already yielded the sentinel once. Resume
+            # normal chunk-yielding so drain consumes whatever the
+            # provider emits next.
+            if signal_yielded:
+                if pending_chunk is None:
+                    pending_chunk = asyncio.create_task(aiter.__anext__())
+                try:
+                    chunk = await pending_chunk
+                except StopAsyncIteration:
+                    pending_chunk = None
+                    return
+                pending_chunk = None
+                yield chunk
+                continue
+
+            # Case B: signal is set BEFORE we have a chance to race
+            # chunk-vs-signal. This happens when the terminate POST
+            # lands in the brief window between handleStreamingResponse
+            # starting and the wrapper's first iteration — e.g., the
+            # user clicked Stop immediately after `stream_start`
+            # arrived but before the provider emitted its first content
+            # chunk. Yield the sentinel right now: blocking on
+            # ``await pending_chunk`` would defeat the wrapper's whole
+            # point (it'd wait for a chunk that may never arrive while
+            # the caller's lifecycle check sits unreachable).
+            if signal_event.is_set():
+                signal_yielded = True
+                yield _SIGNAL_SENTINEL
+                continue
+
+            # Case C: race chunk-vs-signal. The normal hot path.
+            if pending_chunk is None:
+                pending_chunk = asyncio.create_task(aiter.__anext__())
+            if signal_task is None:
+                signal_task = asyncio.create_task(signal_event.wait())
+
+            done, _pending = await asyncio.wait(
+                {pending_chunk, signal_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if pending_chunk in done:
+                # Chunk arrived first (the normal hot path). The signal
+                # may also be done if it fired in the same tick — we
+                # don't yield the sentinel in that case because the
+                # caller's existing lifecycle.event.is_set() check
+                # will fire on this iteration anyway.
+                try:
+                    chunk = pending_chunk.result()
+                except StopAsyncIteration:
+                    pending_chunk = None
+                    return
+                pending_chunk = None
+                yield chunk
+            else:
+                # Signal fired without a chunk. Yield the sentinel exactly
+                # once. ``pending_chunk`` stays alive; we'll resolve it
+                # on the next iteration via the signal_yielded branch.
+                signal_yielded = True
+                yield _SIGNAL_SENTINEL
+    finally:
+        # Best-effort cleanup of orphaned tasks. Cancelling and absorbing
+        # is necessary because (a) consumers may break out of the for-loop
+        # mid-iteration (e.g., drain breaks on ``ProviderFinalEventResult``),
+        # leaving these tasks alive and producing "Task exception was
+        # never retrieved" warnings; (b) the next-chunk task wraps an
+        # HTTP read so cancellation closes the underlying connection,
+        # which is the right behavior on consumer abort anyway.
+        for task in (pending_chunk, signal_task):
+            if task is not None and not task.done():
+                task.cancel()
+        for task in (pending_chunk, signal_task):
+            if task is not None:
+                try:
+                    await task
+                except (StopAsyncIteration, asyncio.CancelledError):
+                    pass
+                except Exception:
+                    # Cleanup is best-effort; provider HTTP errors during
+                    # the cancellation of a pending chunk read are noise
+                    # at this point — the caller has already moved on.
+                    pass
 
 
 @dataclass
@@ -625,7 +806,16 @@ class EnsembleStreamingHelper:
         heartbeat_last_emit: datetime | None = None
 
         try:
-            async for stream_event in await client.chat_completion(
+            # SHU-803 follow-up: wrap the provider stream so the terminate
+            # signal is observed without waiting for the next chunk to
+            # arrive. The wrapper yields _SIGNAL_SENTINEL exactly once
+            # when ``lifecycle.event`` fires before a pending chunk
+            # resolves — that drives the existing terminate-detection
+            # block below to fire immediately (and run early-persist),
+            # rather than blocking inside ``await __anext__()`` for the
+            # provider to emit again. See ``_iter_with_signal_break``
+            # docstring for the full rationale.
+            provider_stream = await client.chat_completion(
                 messages=messages,
                 model=inputs.model.model_name,
                 stream=allowed_to_stream,
@@ -633,11 +823,25 @@ class EnsembleStreamingHelper:
                 llm_params=llm_params,
                 return_as_stream=True,  # We always stream to our frontends
                 tools_enabled=tools_enabled,
-            ):
+            )
+            # SHU-803 follow-up: race against the INTENTIONAL-stop event,
+            # not the omnibus ``lifecycle.event``. A ``client_disconnected``
+            # sets the omnibus event but does NOT signal we should drain
+            # (disconnect-survival lets the stream finish naturally). If
+            # the wrapper raced the omnibus event, a disconnect would
+            # consume its one-shot sentinel and a LATER user_terminate /
+            # shutdown couldn't wake the silent-provider race anymore.
+            # The dedicated event fires only on user_terminated /
+            # shutdown — including the case where an earlier disconnect
+            # already set the omnibus event.
+            async for stream_event in _iter_with_signal_break(provider_stream, lifecycle.intentional_stop_event):
                 # ===== SHU-803: terminate-signal state transition =====
                 # Between-events check. Only intentional stops short-circuit —
                 # ``client_disconnected`` lets the LLM run to its natural end
                 # so the full response lands (the SHU-802 headline behavior).
+                # When ``stream_event is _SIGNAL_SENTINEL`` this branch is the
+                # ENTIRE handling — we then ``continue`` past chunk-processing
+                # since the sentinel is not a real provider event.
                 if not draining and lifecycle.event.is_set() and lifecycle.reason in ("user_terminated", "shutdown"):
                     terminated = True
                     if lifecycle.reason == "shutdown" or lifecycle.shutdown_signaled:
@@ -701,6 +905,15 @@ class EnsembleStreamingHelper:
                     )
                     # Fall through to silent-consume branch — this very event
                     # might be a Final (provider was about to finish anyway).
+
+                # SHU-803 follow-up: skip the rest of the loop body when this
+                # iteration was driven by the signal sentinel (no actual
+                # provider event to process). The terminate-detection block
+                # above already handled the state transition; falling through
+                # to drain-mode or normal-mode handling would treat the
+                # sentinel object as a provider event and crash.
+                if stream_event is _SIGNAL_SENTINEL:
+                    continue
 
                 # ===== SHU-803: drain mode silent-consume =====
                 if draining:

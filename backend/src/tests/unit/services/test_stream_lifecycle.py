@@ -388,3 +388,103 @@ class TestStreamLifecycleShutdownSignaled:
         assert lc.shutdown_signaled is True
         # Reason untouched by the flag.
         assert lc.reason is None
+
+
+class TestStreamLifecycleIntentionalStopEvent:
+    """SHU-803 follow-up: the dedicated ``intentional_stop_event``
+    drives ``_iter_with_signal_break``'s race so a ``client_disconnected``
+    does not consume the wrapper's one-shot sentinel and leave a later
+    ``user_terminated`` / ``shutdown`` unable to wake a silent provider.
+
+    The invariant the wrapper relies on:
+    - ``client_disconnected`` alone NEVER sets this event.
+    - Any signal that resolves ``self.reason`` to an intentional stop
+      (``user_terminated`` or ``shutdown``) sets it.
+    - Set is idempotent — subsequent intentional signals are no-ops on
+      the already-set event (matches asyncio.Event semantics).
+    """
+
+    def test_default_is_unset(self):
+        lc = _build_lifecycle()
+        assert lc.intentional_stop_event.is_set() is False
+
+    def test_client_disconnected_does_not_set_intentional_stop_event(self):
+        """The load-bearing assertion. If ``client_disconnected`` set
+        this event, the wrapper would consume its sentinel and a later
+        upgrade to ``user_terminated`` / ``shutdown`` could not wake a
+        silent provider — exactly the Codex-flagged regression.
+        """
+        lc = _build_lifecycle()
+        lc.signal("client_disconnected")
+        assert lc.reason == "client_disconnected"
+        assert lc.event.is_set() is True
+        assert lc.intentional_stop_event.is_set() is False
+
+    def test_user_terminated_sets_intentional_stop_event(self):
+        lc = _build_lifecycle()
+        lc.signal("user_terminated")
+        assert lc.reason == "user_terminated"
+        assert lc.intentional_stop_event.is_set() is True
+
+    def test_shutdown_sets_intentional_stop_event(self):
+        lc = _build_lifecycle()
+        lc.signal("shutdown")
+        assert lc.reason == "shutdown"
+        assert lc.intentional_stop_event.is_set() is True
+
+    def test_disconnect_then_user_terminated_sets_intentional_stop_event(self):
+        """The Codex-flagged disconnect-then-stop sequence. The omnibus
+        ``event`` is already set from the disconnect; the dedicated
+        ``intentional_stop_event`` must fire on the LATER
+        ``user_terminated`` so the wrapper's race wakes up.
+        """
+        lc = _build_lifecycle()
+        lc.signal("client_disconnected")
+        assert lc.event.is_set() is True
+        assert lc.intentional_stop_event.is_set() is False
+        # Later intentional stop upgrades reason AND sets the event,
+        # even though the omnibus event was already set from the
+        # disconnect.
+        lc.signal("user_terminated")
+        assert lc.reason == "user_terminated"
+        assert lc.intentional_stop_event.is_set() is True
+
+    def test_disconnect_then_shutdown_sets_intentional_stop_event(self):
+        """Variant of the above — same property, but the intentional
+        stop is the shutdown one (deploy-during-disconnect). The
+        wrapper must wake so the shielded finalize commits before
+        lifespan-drain cancellation propagates.
+        """
+        lc = _build_lifecycle()
+        lc.signal("client_disconnected")
+        assert lc.intentional_stop_event.is_set() is False
+        lc.signal("shutdown")
+        assert lc.reason == "shutdown"
+        assert lc.intentional_stop_event.is_set() is True
+
+    def test_user_terminated_then_shutdown_keeps_event_set(self):
+        """Same-priority signals are first-writer-wins on ``reason``,
+        but the event must remain set regardless. The wrapper's race
+        already consumed its sentinel on the first signal; a later
+        signal of the same priority is informational at this layer.
+        """
+        lc = _build_lifecycle()
+        lc.signal("user_terminated")
+        assert lc.intentional_stop_event.is_set() is True
+        lc.signal("shutdown")
+        # First-writer-wins: reason stays user_terminated.
+        assert lc.reason == "user_terminated"
+        # Event stays set; idempotent set is fine.
+        assert lc.intentional_stop_event.is_set() is True
+
+    def test_signal_returns_accepted_status_unchanged(self):
+        """Adding the intentional_stop_event mechanism MUST NOT change
+        the existing ``signal()`` return contract: True if the reason
+        was accepted (priority higher than current), False otherwise.
+        Existing callers rely on this for log filtering and metrics.
+        """
+        lc = _build_lifecycle()
+        assert lc.signal("client_disconnected") is True  # was None
+        assert lc.signal("user_terminated") is True  # priority upgrade
+        assert lc.signal("shutdown") is False  # same priority, first-wins
+        assert lc.signal("client_disconnected") is False  # priority downgrade
