@@ -19,10 +19,8 @@ is gated at OpenRouter, so the leak window is OCR-only.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from uuid import UUID
 
 from shu.billing.billing_state_persister import BillingStatePersister
@@ -33,9 +31,6 @@ from shu.billing.cp_client import (
     CpClient,
     CpClientError,
 )
-from shu.billing.state_service import BillingStateService
-from shu.billing.stripe_client import StripeClient, StripeClientError
-from shu.core.database import get_async_session_local
 from shu.core.http_client import get_http_client
 from shu.core.logging import get_logger
 from shu.core.tenant import tenant_context
@@ -47,9 +42,6 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-MarkupFetcher = Callable[[], Awaitable[Decimal | None]]
-
-
 class BillingStateCache:
     def __init__(
         self,
@@ -57,7 +49,6 @@ class BillingStateCache:
         ttl_seconds: int,
         clock: Callable[[], datetime] = _utc_now,
         persister: BillingStatePersister | None = None,
-        markup_fetcher: MarkupFetcher | None = None,
     ) -> None:
         self._client = client
         self._ttl_seconds = ttl_seconds
@@ -67,12 +58,6 @@ class BillingStateCache:
         # to restore from there before falling back to HEALTHY_DEFAULT.
         # Tests pass None to stay DB-free.
         self._persister = persister
-        # Markup is not on the CP wire yet — the tenant attaches it here from
-        # Stripe so consumers (trial-cap enforcement, remaining-grant display)
-        # see a single BillingState object with everything pre-resolved. When
-        # CP starts shipping `usage_markup_multiplier`, drop this fetcher and
-        # let the CP value flow through unmodified. See `resolve_markup`.
-        self._markup_fetcher = markup_fetcher
         self._value: BillingState | None = None
         self._last_success_at: datetime | None = None
         # Set on every failed fetch attempt to `now + ttl`. While the clock
@@ -101,35 +86,11 @@ class BillingStateCache:
                 self._next_retry_after = self._clock() + timedelta(seconds=self._ttl_seconds)
                 return await self._serve_stale_or_default(exc)
 
-            # TODO: Change this logic to have CP return the tenant markup.
-            value = await self._attach_markup(value)
             self._value = value
             self._last_success_at = self._clock()
             if self._persister is not None:
                 await self._persister.save(value)
             return value
-
-    async def _attach_markup(self, value: BillingState) -> BillingState:
-        # CP doesn't ship the markup multiplier today, so any value already on
-        # the wire is preserved. Skipping the fetch on that branch lets the CP
-        # migration land without a coordinated tenant deploy.
-        if value.usage_markup_multiplier is not None or self._markup_fetcher is None:
-            return value
-        try:
-            markup = await self._markup_fetcher()
-        except StripeClientError as exc:
-            # A Stripe blip shouldn't fail the whole refresh — the rest of
-            # BillingState is still authoritative. Fall through to the
-            # configured default so consumers never see None on a path that
-            # otherwise produced a valid CP poll.
-            _logger.warning(
-                "Stripe markup fetch failed during billing-state refresh; applying configured default",
-                extra={"exc_type": type(exc).__name__},
-            )
-            markup = None
-        if markup is None:
-            markup = get_billing_settings().usage_markup_multiplier_default
-        return dataclasses.replace(value, usage_markup_multiplier=markup)
 
     async def invalidate(self) -> None:
         # Acquired under the same lock as get() so an in-flight fetch can't
@@ -147,7 +108,16 @@ class BillingStateCache:
         if self._value is None or self._last_success_at is None:
             return False
         age = (self._clock() - self._last_success_at).total_seconds()
-        return age < self._ttl_seconds
+        if age >= self._ttl_seconds:
+            return False
+        # Once we cross the wire's stated current_period_end, the cached value
+        # is stale by definition — Stripe has rolled (period rollover, trial
+        # conversion, etc.). Force ONE refresh past the boundary; the guard
+        # (last_success_at < period_end) prevents a tight loop if CP hasn't
+        # yet processed Stripe's rollover webhook when we refetch.
+        period_end = self._value.current_period_end
+        crossed_period_boundary = period_end is not None and self._last_success_at < period_end <= self._clock()
+        return not crossed_period_boundary
 
     def _is_in_failure_backoff(self) -> bool:
         return self._next_retry_after is not None and self._clock() < self._next_retry_after
@@ -189,10 +159,9 @@ class BillingStateCache:
 
 
 # Per-tenant cache + CpClient maps. Each tenant_id gets its own
-# BillingStateCache (with its own CpClient, persister, and markup_fetcher),
-# lazy-populated on the first request that lands for a tenant we haven't
-# seen before; new tenants provisioned after process start are picked up
-# automatically.
+# BillingStateCache (with its own CpClient and persister), lazy-populated
+# on the first request that lands for a tenant we haven't seen before;
+# new tenants provisioned after process start are picked up automatically.
 #
 # ``None`` is a valid value in ``_cache_by_tenant`` meaning "we determined
 # CP isn't configured / build failed for this tenant — don't keep retrying
@@ -260,7 +229,6 @@ async def get_billing_state_cache() -> BillingStateCache | None:
             client=cp_client,
             ttl_seconds=billing_settings.billing_state_cache_ttl_seconds,
             persister=BillingStatePersister(),
-            markup_fetcher=_build_markup_fetcher(billing_settings),
         )
         _cp_client_by_tenant[tid] = cp_client
         _cache_by_tenant[tid] = cache
@@ -301,38 +269,3 @@ def reset_billing_state_cache() -> None:
     global _cache_by_tenant, _cp_client_by_tenant  # noqa: PLW0603
     _cache_by_tenant = {}
     _cp_client_by_tenant = {}
-
-
-def _build_markup_fetcher(billing_settings) -> MarkupFetcher | None:
-    """Build the closure BillingStateCache uses to enrich each refresh.
-
-    The closure reads ``stripe_subscription_id`` from this tenant's
-    ``billing_state`` row at fetch time — **not** from the env var that
-    historically held it. The env-var path predates multi-tenant and would
-    return the same subscription ID for every tenant in a multi-tenant
-    deployment, mis-billing every tenant against one customer's markup.
-    Reading from the row scopes correctly under RLS (the same per-tenant
-    cache that owns this fetcher already runs under the right tenant
-    context when ``get()`` is called).
-
-    Returns None when Stripe isn't configured — Stripe SDK initialization
-    needs at least ``secret_key``. The cache then leaves
-    ``usage_markup_multiplier`` as whatever CP sent (today: nothing), and
-    consumers fall back to the configured default.
-    """
-    if not billing_settings.secret_key:
-        return None
-
-    async def fetch() -> Decimal | None:
-        session_factory = get_async_session_local()
-        async with session_factory() as session:
-            row = await BillingStateService.get(session)
-        if row is None or not row.stripe_subscription_id:
-            # No tenant-scoped subscription yet (pre-onboarding, or CP hasn't
-            # synced the customer to Stripe). Fall through to the default
-            # multiplier rather than blowing up the whole CP poll.
-            return None
-        stripe_client = StripeClient(billing_settings)
-        return await stripe_client.get_subscription_markup_multiplier(row.stripe_subscription_id)
-
-    return fetch

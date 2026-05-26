@@ -8,7 +8,6 @@ This service coordinates between:
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.billing.config import BillingSettings, get_billing_settings
 from shu.billing.schemas import (
     PortalSessionResponse,
-    SubscriptionUpdate,
     UsageMeterEvent,
 )
 from shu.billing.stripe_client import StripeClient, StripeClientError
@@ -26,9 +24,6 @@ from shu.billing.webhook_handlers import WebhookDispatcher
 from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-PersistSubscriptionFn = Callable[..., Coroutine[Any, Any, None]]
 
 
 class CustomerMismatchError(Exception):
@@ -60,7 +55,7 @@ class BillingService:
     ) -> None:
         self._settings = settings or get_billing_settings()
         self._client = stripe_client or StripeClient(self._settings)
-        self._dispatcher = WebhookDispatcher(self._client)
+        self._dispatcher = WebhookDispatcher()
 
     @property
     def is_configured(self) -> bool:
@@ -211,6 +206,7 @@ class BillingService:
 
         """
         from shu.billing.adapters import UsageProviderImpl, get_billing_config
+        from shu.billing.enforcement import get_current_billing_state
 
         billing_config = await get_billing_config(db)
         customer_id = billing_config.get("stripe_customer_id")
@@ -220,11 +216,15 @@ class BillingService:
         if not self._settings.meter_id_cost:
             return {"action": "skipped", "reason": "no_meter"}
 
-        period_start_str = billing_config.get("current_period_start")
+        # Period bounds come from the CP-sourced BillingState (SHU-774); the
+        # local billing_state columns aren't written anymore after the webhook
+        # persistence callbacks were lifted.
+        state = await get_current_billing_state()
+        period_start = state.current_period_start
 
-        if not period_start_str:
+        if period_start is None:
             return {"action": "skipped", "reason": "no_period"}
-        period_start = datetime.fromisoformat(period_start_str)
+        period_start_str = period_start.isoformat()
 
         last_reported_total = billing_config.get("last_reported_total", 0)
         last_reported_period = billing_config.get("last_reported_period_start")
@@ -380,9 +380,6 @@ class BillingService:
     async def handle_webhook(
         self,
         event: stripe.Event,
-        persist_subscription: PersistSubscriptionFn | None = None,
-        on_payment_failed: Any | None = None,
-        on_payment_recovered: Any | None = None,
         on_cycle_rollover: Any | None = None,
         expected_customer_id: str | None = None,
     ) -> tuple[bool, str, str | None]:
@@ -394,13 +391,14 @@ class BillingService:
         fully-parsed stripe.Event. Responsibility here is customer-scoping
         and dispatch.
 
+        Subscription / payment status persistence was lifted to CP in
+        SHU-774, so only `on_cycle_rollover` remains — it triggers the
+        SeatService rollover side-effect on cycle-rollover `invoice.paid`.
+
         Args:
             event: Pre-parsed stripe.Event. Route handler should build this
                 via stripe.Event.construct_from(json.loads(body), stripe.api_key)
                 after the router envelope has been verified.
-            persist_subscription: Callback to save subscription changes
-            on_payment_failed: Callback to set payment_failed_at on invoice failure
-            on_payment_recovered: Callback to clear payment_failed_at on invoice paid
             on_cycle_rollover: Callback to reconcile seats on cycle-rollover invoice.paid
             expected_customer_id: Customer ID from billing_state. When None the
                 instance is misconfigured (SHU_STRIPE_CUSTOMER_ID unset) — events
@@ -451,20 +449,6 @@ class BillingService:
             raise CustomerMismatchError(expected=expected_customer_id, received=event_customer)
 
         callbacks: dict[str, Any] = {}
-
-        if persist_subscription:
-
-            async def on_subscription_update(update: SubscriptionUpdate) -> None:
-                await persist_subscription(update, stripe_event_id=event.id)
-
-            callbacks["on_subscription_update"] = on_subscription_update
-
-        if on_payment_failed:
-            callbacks["on_payment_failed"] = on_payment_failed
-
-        if on_payment_recovered:
-            callbacks["on_payment_recovered"] = on_payment_recovered
-
         if on_cycle_rollover:
             callbacks["on_cycle_rollover"] = on_cycle_rollover
 

@@ -6,8 +6,6 @@ and internal data transfer objects.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import BaseModel, Field
 
 # =============================================================================
@@ -61,15 +59,3 @@ class UsageMeterEvent(BaseModel):
 
     # Additional context
     payload: dict[str, str] = Field(default_factory=dict)
-
-
-class SubscriptionUpdate(BaseModel):
-    """Internal DTO for subscription state changes from webhooks."""
-
-    stripe_subscription_id: str
-    stripe_customer_id: str
-    status: str
-    current_period_start: datetime
-    current_period_end: datetime
-    cancel_at_period_end: bool = False
-    canceled_at: datetime | None = None

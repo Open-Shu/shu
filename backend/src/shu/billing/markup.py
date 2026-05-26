@@ -1,4 +1,4 @@
-"""Per-tenant resolution of the customer-billed markup multiplier.
+"""Resolve the customer-billed markup multiplier on a `BillingState`.
 
 The markup converts raw provider cost (`LLMUsage.total_cost`, in raw USD) to
 customer-billed cost — the same unit as `BillingState.total_grant_amount`.
@@ -6,16 +6,10 @@ Trial-cap enforcement and the trial-banner remaining-grant display both need
 to compare local raw cost against the customer-billed grant; without markup
 they'd silently under-count usage by a constant factor.
 
-`BillingStateCache` already attaches the value to BillingState on each
-refresh (see `_attach_markup`), so consumers read it straight off `state` —
-this helper just folds in the fallback when the field is None.
-
-TODO: Migrate to CP. When the control plane starts shipping
-`usage_markup_multiplier` on the BillingState wire (it already owns the
-Stripe relationship and the metered Price), drop `BillingStateCache._attach_markup`
-and this helper becomes trivial — every populated state will already carry
-the right value. The fallback path still matters for `HEALTHY_DEFAULT`
-(cold-start CP outage) and self-hosted deployments without Stripe.
+CP ships `usage_markup_multiplier` on the BillingState wire (SHU-774), so
+in steady-state the value is already on `state` and this helper is a direct
+read. The fallback path still matters for `HEALTHY_DEFAULT` (cold-start CP
+outage) and self-hosted deployments where CP isn't configured.
 """
 
 from __future__ import annotations

@@ -2,7 +2,9 @@
 
 Provides:
 - UsageProviderImpl: queries llm_usage table for billing
-- Persistence callbacks for webhooks (update billing_state)
+- create_cycle_rollover_callback: invokes SeatService.rollover on
+  cycle-rollover invoice.paid webhooks (subscription / payment status
+  persistence lifted to CP in SHU-774).
 """
 
 from __future__ import annotations
@@ -195,97 +197,6 @@ class UsageProviderImpl:
 # =============================================================================
 
 
-async def create_subscription_persistence_callback(
-    db: AsyncSession,
-):
-    """Create callback for persisting subscription updates from Stripe webhooks.
-
-    Stores subscription state in billing_state under a row-level lock.
-
-    Usage in webhook handler:
-        persist_fn = await create_subscription_persistence_callback(db)
-        await persist_fn(update)
-    """
-    from shu.billing.schemas import SubscriptionUpdate
-    from shu.billing.state_service import BillingStateService
-
-    async def persist_subscription(
-        update: SubscriptionUpdate,
-        stripe_event_id: str | None = None,
-    ) -> None:
-        await BillingStateService.update(
-            db,
-            updates={
-                "stripe_subscription_id": update.stripe_subscription_id,
-                "stripe_customer_id": update.stripe_customer_id,
-                "subscription_status": update.status,
-                "current_period_start": update.current_period_start,
-                "current_period_end": update.current_period_end,
-                "cancel_at_period_end": update.cancel_at_period_end,
-            },
-            source="webhook:subscription_update",
-            stripe_event_id=stripe_event_id,
-        )
-
-    return persist_subscription
-
-
-async def create_payment_failed_callback(db: AsyncSession):
-    """Create callback for persisting invoice.payment_failed events.
-
-    Sets payment_failed_at to now so grace-period enforcement can compute
-    whether the payment window has elapsed. The timestamp is only written
-    when the field is currently NULL — Stripe emits multiple
-    invoice.payment_failed events per delinquency cycle (dunning retries),
-    and each retry must not reset the countdown start.
-    """
-    from datetime import UTC, datetime
-
-    from shu.billing.state_service import BillingStateService
-
-    async def on_payment_failed(
-        stripe_customer_id: str,
-        subscription_id: str,
-        invoice_id: str,
-        stripe_event_id: str | None = None,
-    ) -> None:
-        state = await BillingStateService.get(db)
-        if state is None or state.payment_failed_at is not None:
-            # Grace period already started; preserve the first failure timestamp.
-            return
-        await BillingStateService.update(
-            db,
-            updates={"payment_failed_at": datetime.now(UTC)},
-            source="webhook:invoice.payment_failed",
-            stripe_event_id=stripe_event_id,
-        )
-
-    return on_payment_failed
-
-
-async def create_payment_recovered_callback(db: AsyncSession):
-    """Create callback for persisting invoice.paid events.
-
-    Clears payment_failed_at, confirming the customer's account is current.
-    """
-    from shu.billing.state_service import BillingStateService
-
-    async def on_payment_recovered(
-        stripe_customer_id: str,
-        subscription_id: str,
-        invoice_id: str,
-        stripe_event_id: str | None = None,
-    ) -> None:
-        await BillingStateService.update(
-            db,
-            updates={"payment_failed_at": None},
-            source="webhook:invoice.paid",
-            stripe_event_id=stripe_event_id,
-        )
-
-    return on_payment_recovered
-
-
 def create_cycle_rollover_callback(db: AsyncSession, seat_service: SeatService):
     """Create callback that invokes `SeatService.rollover` on cycle-rollover invoices.
 
@@ -311,9 +222,11 @@ def create_cycle_rollover_callback(db: AsyncSession, seat_service: SeatService):
 async def get_billing_config(db: AsyncSession) -> dict:
     """Get current billing configuration from billing_state.
 
-    Returns dict with keys matching the previous system_settings["billing"]
-    schema so all callers continue to work without change. Datetime fields
-    are serialised as ISO strings.
+    Returns only the columns that are still actively written to the local
+    row. SHU-774 lifted subscription/payment-status persistence to CP, so
+    `subscription_status`, `current_period_*`, `cancel_at_period_end`, and
+    `payment_failed_at` are no longer included — readers must source those
+    from `get_current_billing_state()` (the CP cache) instead.
     """
     from shu.billing.state_service import BillingStateService
 
@@ -324,10 +237,6 @@ async def get_billing_config(db: AsyncSession) -> dict:
         "stripe_customer_id": state.stripe_customer_id,
         "stripe_subscription_id": state.stripe_subscription_id,
         "billing_email": state.billing_email,
-        "subscription_status": state.subscription_status,
-        "current_period_start": state.current_period_start.isoformat() if state.current_period_start else None,
-        "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
-        "cancel_at_period_end": state.cancel_at_period_end,
         "last_reported_total": state.last_reported_total,
         "last_reported_period_start": state.last_reported_period_start.isoformat()
         if state.last_reported_period_start

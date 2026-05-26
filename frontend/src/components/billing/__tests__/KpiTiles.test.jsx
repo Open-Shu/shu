@@ -106,13 +106,14 @@ describe('KpiTiles', () => {
       expect(screen.getByText('1 seat × $50.00')).toBeInTheDocument();
     });
 
-    it('prefers included_usd_per_period from the API over the seats fallback', () => {
+    it('prefers total_grant_amount from the API over the seats fallback', () => {
       renderTiles(
         okQuery({ total_cost_usd: 0, by_model: [] }),
         okQuery({
           subscription_status: 'active',
           user_limit: 5,
-          included_usd_per_period: 300,
+          // CP serializes Decimal as a string; the component parses it.
+          total_grant_amount: '300.00',
         })
       );
       expect(screen.getByLabelText('Included allowance: $300.00')).toBeInTheDocument();
@@ -120,19 +121,19 @@ describe('KpiTiles', () => {
       expect(screen.queryByText(/seats × \$50/)).not.toBeInTheDocument();
     });
 
-    it('falls back to seats × $50 when included_usd_per_period is null', () => {
+    it('falls back to seats × $50 when total_grant_amount is missing', () => {
       renderTiles(
         okQuery({ total_cost_usd: 0, by_model: [] }),
-        okQuery({ subscription_status: 'active', user_limit: 5, included_usd_per_period: null })
+        okQuery({ subscription_status: 'active', user_limit: 5 })
       );
       expect(screen.getByLabelText('Included allowance: $250.00')).toBeInTheDocument();
       expect(screen.getByText('5 seats × $50.00')).toBeInTheDocument();
     });
 
-    it('falls back to seats × $50 when included_usd_per_period is zero', () => {
+    it('falls back to seats × $50 when total_grant_amount is zero', () => {
       renderTiles(
         okQuery({ total_cost_usd: 0, by_model: [] }),
-        okQuery({ subscription_status: 'active', user_limit: 5, included_usd_per_period: 0 })
+        okQuery({ subscription_status: 'active', user_limit: 5, total_grant_amount: '0.00' })
       );
       expect(screen.getByLabelText('Included allowance: $250.00')).toBeInTheDocument();
       expect(screen.getByText('5 seats × $50.00')).toBeInTheDocument();

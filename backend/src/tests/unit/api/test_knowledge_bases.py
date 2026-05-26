@@ -25,7 +25,7 @@ from shu.api.knowledge_bases import (
 )
 from shu.auth.rbac import require_kb_write_access
 from shu.billing.cp_client import BillingState
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementSet, LimitSet
 from shu.schemas.knowledge_base import KnowledgeBaseCreate
 from tests.unit.api.conftest import make_app_with_router
 
@@ -195,6 +195,13 @@ class TestUploadDocumentsSubscriptionGate:
                 total_grant_amount=Decimal(0),
                 remaining_grant_amount=Decimal(0),
                 seat_price_usd=Decimal(0),
+                limits=LimitSet(),
+                subscription_status=None,
+                current_period_start=None,
+                current_period_end=None,
+                cancel_at_period_end=False,
+                canceled_at=None,
+                usage_markup_multiplier=None,
             )
         )
 
