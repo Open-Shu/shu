@@ -158,11 +158,18 @@ const useChatComposer = ({
     const placeholderIds = {};
     const placeholderMeta = {};
 
+    const hasKbSelected = Array.isArray(selectedKBIds) && selectedKBIds.some(Boolean);
+    const placeholderThinkingPool = selectedPlugin ? 'plugin' : hasKbSelected ? 'rag' : 'default';
+
     queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
       const existing = getMessagesFromCache(oldData);
       const placeholders = [];
       for (let idx = 0; idx < totalVariants; idx += 1) {
         const placeholderId = `${placeholderRootId}-variant-${idx}`;
+        // streamSlotId stays constant across the placeholder→finalMessage
+        // id swap so MessageItem's Paper key keeps the same React identity
+        // and the StreamingFeather settle-down animation has a chance to play.
+        const streamSlotId = `${placeholderRootId}-slot-${idx}`;
         placeholderIds[idx] = placeholderId;
         placeholderMeta[idx] = { id: placeholderId, created_at: nowIso };
         placeholders.push({
@@ -175,6 +182,8 @@ const useChatComposer = ({
           isPlaceholder: true,
           parent_message_id: placeholderRootId,
           variant_index: idx,
+          thinkingPool: placeholderThinkingPool,
+          streamSlotId,
         });
       }
       return rebuildCache(oldData, [...existing, ...placeholders]);

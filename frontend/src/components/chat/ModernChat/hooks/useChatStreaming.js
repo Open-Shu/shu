@@ -166,6 +166,8 @@ const useChatStreaming = ({
               conversation_id: conversationId,
               isStreaming: true,
               isPlaceholder: true,
+              thinkingPool: 'default',
+              streamSlotId: tempMessageId,
             };
             return rebuildCache(oldData, [...existing, streamingMessage]);
           });
@@ -317,6 +319,10 @@ const useChatStreaming = ({
                       placeholderMsg.reasoning_collapsed ?? (placeholderMsg.reasoning_stream ? true : undefined),
                   }
                 : {};
+              // Preserve streamSlotId across the placeholder→finalMessage id
+              // swap so MessageItem's Paper key stays stable and the
+              // StreamingFeather settle-down animation has a chance to play.
+              const preservedSlotId = placeholderMsg?.streamSlotId || placeholderId;
               const updated = existing.map((m) => {
                 if (m.id === placeholderId) {
                   return {
@@ -324,6 +330,7 @@ const useChatStreaming = ({
                     ...reasoningProps,
                     isPlaceholder: false,
                     isStreaming: false,
+                    streamSlotId: preservedSlotId,
                   };
                 }
                 return m;
@@ -336,6 +343,7 @@ const useChatStreaming = ({
                   ...reasoningProps,
                   isPlaceholder: false,
                   isStreaming: false,
+                  streamSlotId: preservedSlotId,
                 });
               }
               return rebuildCache(oldData, updated);
