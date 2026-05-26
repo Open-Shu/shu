@@ -614,8 +614,9 @@ class PromptService:
 
         On collision, the row's `id` is preserved so any downstream
         `model_configurations.prompt_id` references stay valid; `content`
-        is overwritten; `is_system_default` is written on insert and left
-        untouched on update.
+        is overwritten; `is_system_default` and `is_active` are re-asserted
+        to True so a row a tenant admin had deactivated or had its flag
+        flipped gets self-healed back to the CP-managed state.
 
         Writes go through the model layer directly, not the in-tenant
         `/prompts` router. The `is_system_default` 403 gate at
@@ -654,6 +655,11 @@ class PromptService:
                 event = "cp_prompt_inserted"
             else:
                 existing.content = payload.prompt.content
+                # Re-assert the CP-managed invariants on update so a row a
+                # tenant admin had deactivated (or had its system-default
+                # flag flipped) gets self-healed back to the state CP claims.
+                existing.is_active = True
+                existing.is_system_default = True
                 prompt = existing
                 event = "cp_prompt_updated"
 

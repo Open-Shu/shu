@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from shu.models.prompt import EntityType
 from shu.schemas.cp_provisioning import PromptInput, SetPromptRequest
@@ -123,6 +124,20 @@ class TestCpUpsertByName:
 
         # Newly inserted prompt is pinned to LLM_MODEL.
         assert added[0].entity_type == EntityType.LLM_MODEL
+
+        # Inspect the lookup query itself — the mock returns existing_prompt
+        # unconditionally, so we can't rely on it to apply the filter. Compile
+        # the captured Select and verify the entity_type=llm_model predicate
+        # is actually present in the WHERE clause.
+        executed = session.execute.await_args.args[0]
+        compiled_sql = str(
+            executed.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert "entity_type" in compiled_sql
+        assert "'llm_model'" in compiled_sql
 
     @pytest.mark.asyncio
     async def test_missing_deps_raises_runtime_error(self) -> None:

@@ -127,6 +127,11 @@ def _make_cp_service() -> tuple[
         tenant_admin_svc=tenant_admin_svc,
         audit_logger=audit,
     )
+    # Bypass adapter-aware override normalization by default — these tests
+    # use MagicMock providers without real `provider_definition` rows, so a
+    # real adapter lookup would KeyError. Tests that exercise normalization
+    # itself override this stub.
+    svc._normalize_parameter_overrides = MagicMock(return_value={})
     return svc, session, tenant_admin_svc, audit, session.execute
 
 

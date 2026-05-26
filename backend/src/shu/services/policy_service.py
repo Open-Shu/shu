@@ -369,6 +369,14 @@ class PolicyService:
         bindings_created = 0
         policy_names = [p.name for p in payload.policies]
 
+        # Reject duplicate names up front. The per-name delete+insert would
+        # otherwise persist multiple rows for the same name while only the
+        # last id survives in policy_ids_by_name, leaving the response and
+        # downstream bindings inconsistent with the database.
+        duplicates = sorted({n for n in policy_names if policy_names.count(n) > 1})
+        if duplicates:
+            raise ValidationError(f"duplicate policy names in payload: {duplicates}")
+
         async with self._tenant_admin_svc.impersonate_tenant(tenant_id, CP_ACTOR, reason) as session:
             first_user_id = (await session.execute(select(User.id).order_by(User.id).limit(1))).scalar_one_or_none()
             if first_user_id is None:

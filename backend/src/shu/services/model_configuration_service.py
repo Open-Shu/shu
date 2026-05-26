@@ -818,11 +818,22 @@ class ModelConfigurationService:
         self, config_data: ModelConfigurationCreate, provider: LLMProvider | None
     ) -> dict[str, Any]:
         raw_overrides = getattr(config_data, "parameter_overrides", None) or {}
+        return self._normalize_parameter_overrides(raw_overrides, provider, self.db)
+
+    def _normalize_parameter_overrides(
+        self,
+        raw_overrides: dict[str, Any] | None,
+        provider: LLMProvider | None,
+        db_session: AsyncSession | None,
+    ) -> dict[str, Any]:
+        # Strip unknown keys and coerce types so a payload that the adapter
+        # would later reject at first use can't be persisted in the first
+        # place. Shared by the tenant-admin CRUD paths and CP provisioning.
         try:
-            adapter = get_adapter_from_provider(self.db, provider)
+            adapter = get_adapter_from_provider(db_session, provider)
             return build_provider_params(
                 serialize_parameter_mapping(adapter.get_parameter_mapping()) or {},
-                raw_overrides,
+                raw_overrides or {},
                 None,
             )
         except ValidationError as ve:
@@ -907,15 +918,7 @@ class ModelConfigurationService:
         if "parameter_overrides" in update_dict:
             overrides_candidate = update_dict.pop("parameter_overrides")
             if overrides_candidate is not None:
-                try:
-                    adapter = get_adapter_from_provider(self.db, provider)
-                    return build_provider_params(
-                        serialize_parameter_mapping(adapter.get_parameter_mapping()) or {},
-                        overrides_candidate or {},
-                        None,
-                    )
-                except ValidationError as ve:
-                    raise ShuException(str(ve), "PARAM_VALIDATION_ERROR")
+                return self._normalize_parameter_overrides(overrides_candidate, provider, self.db)
         return None
 
     async def cp_upsert_by_name(
@@ -963,12 +966,18 @@ class ModelConfigurationService:
                                 LLMProvider.is_active.is_(True),
                             )
                         )
+                        .options(selectinload(LLMProvider.provider_definition))
                         .order_by(LLMProvider.id)
                         .limit(1)
                     )
                 ).scalar_one_or_none()
                 if provider is None:
                     raise NotFoundError(f"no active llm_provider matches name {cfg.provider_name!r}")
+
+                # CP-supplied overrides go through the same adapter-aware
+                # normalization as the tenant-admin CRUD paths so unknown
+                # keys can't be persisted and rejected at first use.
+                normalized_overrides = self._normalize_parameter_overrides(cfg.parameter_overrides, provider, session)
 
                 # Validate the model exists for the resolved provider —
                 # otherwise we'd insert a model_config that fails on first use.
@@ -1015,7 +1024,7 @@ class ModelConfigurationService:
                         llm_provider_id=provider.id,
                         model_name=cfg.model_name,
                         prompt_id=prompt_id,
-                        parameter_overrides=cfg.parameter_overrides,
+                        parameter_overrides=normalized_overrides,
                         functionalities=cfg.functionalities,
                         created_by=first_user_row,
                     )
@@ -1026,7 +1035,7 @@ class ModelConfigurationService:
                     existing_mc.llm_provider_id = provider.id
                     existing_mc.model_name = cfg.model_name
                     existing_mc.prompt_id = prompt_id
-                    existing_mc.parameter_overrides = cfg.parameter_overrides
+                    existing_mc.parameter_overrides = normalized_overrides
                     existing_mc.functionalities = cfg.functionalities
                     mc = existing_mc
                     event = "cp_model_config_updated"
