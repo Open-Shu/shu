@@ -3,6 +3,7 @@ import { chatAPI, extractDataFromResponse, formatError } from '../../../../servi
 import { buildRenamePayloadBase, getLatestUserMessageContent } from '../utils/renamePayload';
 import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
 import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
+import { derivePool } from '../utils/thinkingPhrases';
 
 const useChatComposer = ({
   selectedConversation,
@@ -158,8 +159,7 @@ const useChatComposer = ({
     const placeholderIds = {};
     const placeholderMeta = {};
 
-    const hasKbSelected = Array.isArray(selectedKBIds) && selectedKBIds.some(Boolean);
-    const placeholderThinkingPool = selectedPlugin ? 'plugin' : hasKbSelected ? 'rag' : 'default';
+    const placeholderThinkingPool = derivePool({ selectedPlugin, selectedKBIds });
 
     queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
       const existing = getMessagesFromCache(oldData);

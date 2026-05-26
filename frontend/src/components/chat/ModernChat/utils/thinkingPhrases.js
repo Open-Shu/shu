@@ -66,6 +66,19 @@ const POOLS = {
 
 export const getPoolFor = (thinkingPool) => POOLS[thinkingPool] || DEFAULT_POOL;
 
+// Pool resolution at send-time, from request state. Plugin invocations
+// take precedence over KB selection — a plugin is the more specific
+// explicit intent.
+export const derivePool = ({ selectedPlugin, selectedKBIds } = {}) => {
+  if (selectedPlugin) {
+    return 'plugin';
+  }
+  if (Array.isArray(selectedKBIds) && selectedKBIds.some(Boolean)) {
+    return 'rag';
+  }
+  return 'default';
+};
+
 // Pick a random verb from `pool`, biased away from `currentWord` so the
 // same word never appears twice in a row (single-element pool degenerates
 // to always returning that element).
