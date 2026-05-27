@@ -27,3 +27,17 @@ class TestPluginsRouterEntitlementGate:
         # rather than re-raising it out of the client.
         with TestClient(gated_app(plugins_router), raise_server_exceptions=False) as client:
             assert client.get("/api/v1/plugins").status_code != 403
+
+
+class TestPluginsPublicExecuteMcpGate:
+    """SHU-773 (H1): the direct /plugins/{name}/execute route calls EXECUTOR
+    directly, so the mcp_servers gate has to run at dispatch — otherwise a
+    plugins-on / mcp-off tenant could execute an mcp plugin through it. The gate
+    runs before any registry/DB work, so no plugin stubbing is needed.
+    """
+
+    def test_mcp_execute_blocked_when_mcp_off(self, install_stub_cache):
+        install_stub_cache(entitlement_state(plugins=True, mcp_servers=False))
+        with TestClient(gated_app(plugins_router)) as client:
+            resp = client.post("/api/v1/plugins/mcp:Github/execute", json={"params": {}})
+            assert assert_entitlement_denied(resp, "mcp_servers")

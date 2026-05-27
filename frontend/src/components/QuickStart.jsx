@@ -167,6 +167,8 @@ const QuickStart = () => {
   // the tenant entitlement both allow it (resolved by useFeatureEnabled).
   const canPlugins = useFeatureEnabled('plugins');
   const canExperiences = useFeatureEnabled('experiences');
+  const canProviderMgmt = useFeatureEnabled('providers');
+  const canModelConfig = useFeatureEnabled('modelConfigs');
 
   const gettingStartedSections = [
     {
@@ -177,6 +179,7 @@ const QuickStart = () => {
       path: '/admin/llm-providers',
       priority: 'Start Here',
       statusKey: 'llm_provider_configured',
+      featureFlag: canProviderMgmt,
     },
     {
       title: 'Model Configurations',
@@ -186,6 +189,7 @@ const QuickStart = () => {
       path: '/admin/model-configurations',
       priority: 'Step 2',
       statusKey: 'model_configuration_created',
+      featureFlag: canModelConfig,
     },
     {
       title: 'Knowledge Bases',

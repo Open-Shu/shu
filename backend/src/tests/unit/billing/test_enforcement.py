@@ -50,6 +50,7 @@ from shu.billing.enforcement import (
     assert_kb_count_under_limit,
     assert_subscription_active,
     check_user_limit,
+    document_count_batch,
     get_current_billing_state,
     require_entitlement,
 )
@@ -794,3 +795,94 @@ class TestAssertCountUnderLimit:
         await helper(db)
 
         assert call_order == ["lock", "execute"]
+
+
+class TestDocumentCountBatch:
+    """`document_count_batch()` counts the DB once per batch (SHU-776 M1) but
+    still tracks remaining capacity in memory, so a batch can't push its own
+    inserts past the cap.
+    """
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_counts_once_then_tracks_in_memory(self, mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(0)  # plenty of headroom (remaining=5)
+
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+            await assert_document_count_under_limit(db)
+            await assert_document_count_under_limit(db)
+
+        # The DB was counted (and locked) exactly once for the whole batch.
+        assert db.execute.await_count == 1
+        mock_lock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_cap_minus_one_allows_one_then_blocks(self, _mock_lock, install_stub_cache):
+        """current=cap-1 with two new docs in one batch: the first lands, the
+        second is rejected — the batch can't overshoot via its own inserts.
+        """
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(4)  # remaining = 1
+
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)  # consumes the last slot
+            with pytest.raises(LimitExceededError):
+                await assert_document_count_under_limit(db)
+
+        # Still only one DB count — the second rejection is in-memory.
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_per_call_outside_batch(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(3)
+
+        await assert_document_count_under_limit(db)
+        await assert_document_count_under_limit(db)
+
+        # No batch scope (e.g. a direct upload) → each call re-checks: hard cap.
+        assert db.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_at_cap_blocks_every_item_in_batch(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(5)  # remaining = 0
+
+        async with document_count_batch():
+            with pytest.raises(LimitExceededError) as first:
+                await assert_document_count_under_limit(db)
+            # remaining stays 0, so the next item is rejected in-memory.
+            with pytest.raises(LimitExceededError):
+                await assert_document_count_under_limit(db)
+
+        assert first.value.details == {"limit": "document_count", "cap": 5, "current": 5}
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_bypass_when_cache_missing(self, _mock_lock, install_stub_cache):
+        # No cache installed → self-hosted bypass; the batch never touches the DB.
+        db = _db_returning_count(0)
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+            await assert_document_count_under_limit(db)
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_batch_scope_resets_after_exit(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(0)
+
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+        # Outside the scope again → next batch re-seeds from a fresh count.
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+
+        assert db.execute.await_count == 2

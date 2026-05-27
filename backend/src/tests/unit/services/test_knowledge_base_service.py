@@ -928,6 +928,25 @@ class TestCreateKnowledgeBaseLimit:
         await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
         assert len(captured) == 1
 
+    @pytest.mark.asyncio
+    async def test_at_cap_duplicate_name_is_conflict_not_limit(self, _mock_lock, install_stub_cache):
+        """A same-name re-create at the cap is a 409 conflict, not limit_exceeded —
+        the conflict check runs before the cap gate so we don't report 'out of
+        quota' for a request that wouldn't add a row.
+        """
+        from shu.core.exceptions import ConflictError
+
+        install_stub_cache(_state_with_kb_limit(2))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        service._get_kb_by_slug = AsyncMock(return_value=MagicMock(name="ExistingNamedKB"))
+        _set_kb_count(mock_db, 2)
+
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
+        assert captured == []
+
 
 @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
 class TestEnsurePersonalKnowledgeBaseLimit:

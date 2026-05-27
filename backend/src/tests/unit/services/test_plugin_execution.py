@@ -11,7 +11,15 @@ import pytest
 from shu.billing.cp_client import HEALTHY_DEFAULT
 from shu.billing.entitlements import EntitlementDeniedError, EntitlementSet
 from shu.plugins.registry import REGISTRY
-from shu.services.plugin_execution import _coerce_params, build_agent_tools, execute_plugin
+from shu.services.plugin_execution import (
+    _coerce_params,
+    assert_plugin_entitlement,
+    build_agent_tools,
+    execute_plugin,
+    is_mcp_plugin_name,
+    mcp_servers_entitled,
+    plugin_dispatch_allowed,
+)
 
 
 class TestParamCoercion:
@@ -141,3 +149,92 @@ class TestExecutePluginDefensiveCheck:
         install_stub_cache(_state(plugins=True, mcp_servers=False))
         with pytest.raises(EntitlementDeniedError):
             await execute_plugin(AsyncMock(), "mcp-srv", "read", {}, "owner-1")
+
+
+# SHU-773 (H1/H2): the shared plugin-entitlement gate used by the REST dispatch
+# routes (plugins_public, chat_plugins) and the scheduler/queue runner — none of
+# which pass through build_agent_tools' upstream filter.
+
+
+class TestIsMcpPluginName:
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [("mcp:Github", True), ("mcp-Github", True), ("github", False), ("gmail", False)],
+    )
+    def test_classifies_internal_and_wire_forms(self, name, expected):
+        assert is_mcp_plugin_name(name) is expected
+
+
+class TestAssertPluginEntitlement:
+    """Hard gate (raises) for the REST execute routes."""
+
+    @pytest.mark.asyncio
+    async def test_self_hosted_bypass_allows_mcp(self, install_stub_cache):
+        # No cache installed → no enforcement; an mcp plugin must not raise.
+        await assert_plugin_entitlement("mcp:srv")
+
+    @pytest.mark.asyncio
+    async def test_plugins_off_raises_for_native(self, install_stub_cache):
+        install_stub_cache(_state(plugins=False, mcp_servers=False))
+        with pytest.raises(EntitlementDeniedError) as exc:
+            await assert_plugin_entitlement("github")
+        assert exc.value.key == "plugins"
+
+    @pytest.mark.asyncio
+    async def test_plugins_on_mcp_off_allows_native_blocks_mcp(self, install_stub_cache):
+        install_stub_cache(_state(plugins=True, mcp_servers=False))
+        await assert_plugin_entitlement("github")  # native: no raise
+        with pytest.raises(EntitlementDeniedError) as exc:
+            await assert_plugin_entitlement("mcp:srv")
+        assert exc.value.key == "mcp_servers"
+
+    @pytest.mark.asyncio
+    async def test_wire_form_mcp_name_blocked(self, install_stub_cache):
+        install_stub_cache(_state(plugins=True, mcp_servers=False))
+        with pytest.raises(EntitlementDeniedError) as exc:
+            await assert_plugin_entitlement("mcp-srv")
+        assert exc.value.key == "mcp_servers"
+
+    @pytest.mark.asyncio
+    async def test_all_enabled_allows_both(self, install_stub_cache):
+        install_stub_cache(_state(plugins=True, mcp_servers=True))
+        await assert_plugin_entitlement("github")
+        await assert_plugin_entitlement("mcp:srv")
+
+
+class TestPluginDispatchAllowed:
+    """Soft gate (returns bool) for the scheduler/queue runner."""
+
+    @pytest.mark.asyncio
+    async def test_self_hosted_allows(self, install_stub_cache):
+        assert await plugin_dispatch_allowed("mcp:srv") is True
+
+    @pytest.mark.asyncio
+    async def test_plugins_off_blocks_everything(self, install_stub_cache):
+        install_stub_cache(_state(plugins=False, mcp_servers=False))
+        assert await plugin_dispatch_allowed("github") is False
+        assert await plugin_dispatch_allowed("mcp:srv") is False
+
+    @pytest.mark.asyncio
+    async def test_mcp_off_blocks_only_mcp(self, install_stub_cache):
+        install_stub_cache(_state(plugins=True, mcp_servers=False))
+        assert await plugin_dispatch_allowed("github") is True
+        assert await plugin_dispatch_allowed("mcp:srv") is False
+
+    @pytest.mark.asyncio
+    async def test_all_enabled_allows(self, install_stub_cache):
+        install_stub_cache(_state(plugins=True, mcp_servers=True))
+        assert await plugin_dispatch_allowed("mcp:srv") is True
+
+
+class TestMcpServersEntitled:
+    @pytest.mark.asyncio
+    async def test_self_hosted_true(self, install_stub_cache):
+        assert await mcp_servers_entitled() is True
+
+    @pytest.mark.asyncio
+    async def test_reflects_entitlement(self, install_stub_cache):
+        install_stub_cache(_state(plugins=True, mcp_servers=False))
+        assert await mcp_servers_entitled() is False
+        install_stub_cache(_state(plugins=True, mcp_servers=True))
+        assert await mcp_servers_entitled() is True

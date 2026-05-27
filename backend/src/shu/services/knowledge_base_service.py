@@ -613,10 +613,13 @@ class KnowledgeBaseService:
             raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
 
         try:
-            await self._assert_room_for_new_knowledge_base()
-
+            # Conflict check first: a same-name re-create is a 409, not a cap
+            # hit — checking the cap before it would wrongly return limit_exceeded
+            # for a request that wouldn't add a row.
             if await self._get_kb_by_slug(slug) is not None:
                 raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
+
+            await self._assert_room_for_new_knowledge_base()
 
             kb_dict = kb_data.model_dump()
             kb_dict["slug"] = slug
@@ -650,8 +653,9 @@ class KnowledgeBaseService:
         """Block when the tenant is already at its KB cap.
 
         Call only once a new KB is actually about to be created — both creation
-        paths return any pre-existing row before reaching here, so idempotent
-        re-provisioning never counts against the cap.
+        paths resolve any pre-existing row first (org-managed raises ConflictError,
+        personal returns the existing row), so a duplicate or idempotent
+        re-provision never reaches here and never counts against the cap.
         """
         await assert_kb_count_under_limit(self.db)
 

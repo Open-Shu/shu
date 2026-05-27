@@ -24,7 +24,12 @@ from ..plugins.loader import PluginRecord
 from ..plugins.registry import REGISTRY
 from ..plugins.schema import resolve_all_ops
 from ..schemas.envelope import SuccessResponse
-from ..services.plugin_execution import get_allowed_plugin_names
+from ..services.plugin_execution import (
+    assert_plugin_entitlement,
+    get_allowed_plugin_names,
+    is_mcp_plugin_name,
+    mcp_servers_entitled,
+)
 from ..services.plugin_identity import (
     PluginIdentityError,
     ensure_secrets_for_plugin,
@@ -94,9 +99,13 @@ async def list_chat_plugins(
 
     allowed = await get_allowed_plugin_names(str(user.id), set(manifest or {}), db)
 
+    mcp_ok = await mcp_servers_entitled()
+
     out: list[ChatPluginOpDescriptor] = []
     for name, rec in (manifest or {}).items():
         if name not in allowed:
+            continue
+        if not mcp_ok and is_mcp_plugin_name(name):
             continue
 
         chat_ops = get_chat_ops(rec)
@@ -156,6 +165,8 @@ async def execute_chat_plugin(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    await assert_plugin_entitlement(body.name)
+
     # Validate plugin is enabled, allowed by PBAC, and op is declared chat-callable
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}

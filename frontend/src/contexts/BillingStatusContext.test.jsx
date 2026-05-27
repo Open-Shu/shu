@@ -416,6 +416,7 @@ describe('useFeatureEnabled (SHU-773)', () => {
     <div>
       <div data-testid="featPlugins">{String(useFeatureEnabled('plugins'))}</div>
       <div data-testid="featExperiences">{String(useFeatureEnabled('experiences'))}</div>
+      <div data-testid="featMcp">{String(useFeatureEnabled('mcp'))}</div>
     </div>
   );
 
@@ -464,5 +465,32 @@ describe('useFeatureEnabled (SHU-773)', () => {
     });
     expect(screen.getByTestId('featPlugins').textContent).toBe('true');
     expect(screen.getByTestId('featExperiences').textContent).toBe('true');
+  });
+
+  it('requires both plugins and mcp_servers for the mcp feature (SHU-773 M2)', async () => {
+    // mcp_servers on but plugins off: the MCP admin routes live under the
+    // plugins router and 403 without plugins, so the UI must stay hidden too.
+    billingAPI.getSubscription.mockResolvedValue({
+      data: {
+        ...HEALTHY_RESPONSE.data,
+        entitlements: {
+          chat: true,
+          plugins: false,
+          experiences: false,
+          provider_management: false,
+          model_config_management: false,
+          mcp_servers: true,
+        },
+      },
+    });
+
+    renderFeatureProbe();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('featMcp').textContent).toBe('false');
+    });
+    // plugins is off too, so it's hidden — confirming mcp isn't enabled by its
+    // own entitlement alone.
+    expect(screen.getByTestId('featPlugins').textContent).toBe('false');
   });
 });

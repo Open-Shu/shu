@@ -11,6 +11,8 @@ in the design doc — there is no per-chokepoint policy.
 
 from __future__ import annotations
 
+import contextlib
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -327,18 +329,36 @@ async def _assert_count_under_limit(
     `cap_attr` names the `LimitSet` field holding the cap; `count_target` is
     the model column to count (tenant-scoped via RLS).
     """
+    counted = await _locked_count_and_cap(db, cap_attr=cap_attr, count_target=count_target)
+    if counted is None:
+        return
+    current, cap = counted
+    if current >= cap:
+        raise LimitExceededError(limit=limit_key, cap=cap, current=current)
+
+
+async def _locked_count_and_cap(
+    db: AsyncSession,
+    *,
+    cap_attr: str,
+    count_target: InstrumentedAttribute,
+) -> tuple[int, int] | None:
+    """Return `(current_count, cap)` under the per-tenant `billing_state` row lock,
+    or `None` when enforcement is bypassed (self-hosted / no cache).
+
+    The FOR UPDATE serialises against concurrent creates so two requests can't
+    both pass at `current = cap - 1`; mirrors `check_user_limit`.
+    """
     cache = await get_billing_state_cache()
     if cache is None:
-        return
+        return None
     state = await cache.get()
     cap = getattr(state.limits, cap_attr)
 
     await BillingStateService.get_for_update(db)
     result = await db.execute(select(func.count(count_target)))
     current = result.scalar() or 0
-
-    if current >= cap:
-        raise LimitExceededError(limit=limit_key, cap=cap, current=current)
+    return current, cap
 
 
 async def assert_kb_count_under_limit(db: AsyncSession) -> None:
@@ -353,17 +373,86 @@ async def assert_kb_count_under_limit(db: AsyncSession) -> None:
     )
 
 
+@dataclass
+class _DocCountBatch:
+    """Per-batch document-cap state.
+
+    `remaining` is how many more documents the batch may create, seeded from one
+    locked count on the first new document and decremented per document after —
+    so the batch's own inserts can't overshoot the cap. `bypass` short-circuits
+    self-hosted. `seeded` guards the one-time count.
+    """
+
+    seeded: bool = False
+    bypass: bool = False
+    cap: int = 0
+    remaining: int = 0
+
+
+# Active only inside `document_count_batch()`. When set, the document-cap gate
+# counts once for the whole batch and then tracks remaining capacity in memory.
+_doc_count_batch: ContextVar[_DocCountBatch | None] = ContextVar("doc_count_batch", default=None)
+
+
+@contextlib.asynccontextmanager
+async def document_count_batch():
+    """Scope a bulk-ingestion run so the document cap is counted once, not per doc.
+
+    Feed/plugin runs ingest many documents through `DocumentService.create_document`,
+    each of which would otherwise take `billing_state` FOR UPDATE and run a full
+    COUNT — needless contention on a sequential batch. Inside this scope the first
+    new document runs the authoritative locked count to seed remaining capacity;
+    each subsequent document decrements it and is rejected once it hits zero, so a
+    batch cannot exceed the cap with its own inserts.
+
+    Residual: the seed count is a snapshot, so two *concurrent* batches for the
+    same tenant could each fill the headroom and overshoot by up to one batch's
+    worth — bounded, and the next run blocks. Direct user uploads run outside this
+    scope and stay strictly per-document.
+    """
+    token = _doc_count_batch.set(_DocCountBatch())
+    try:
+        yield
+    finally:
+        _doc_count_batch.reset(token)
+
+
 async def assert_document_count_under_limit(db: AsyncSession) -> None:
     """Raise `LimitExceededError` if the tenant's document count is at or over
     `BillingState.limits.document_count_limit`. Cap is a per-tenant total
     across all KBs. See `_assert_count_under_limit`.
+
+    Outside a `document_count_batch()` scope this is a per-call authoritative
+    check (direct uploads). Inside one, the first call seeds remaining capacity
+    from a single locked count and each call consumes one — so the batch counts
+    the DB once but still can't push its own inserts past the cap.
     """
-    await _assert_count_under_limit(
-        db,
-        limit_key="document_count",
-        cap_attr="document_count_limit",
-        count_target=Document.id,
-    )
+    batch = _doc_count_batch.get()
+    if batch is None:
+        await _assert_count_under_limit(
+            db,
+            limit_key="document_count",
+            cap_attr="document_count_limit",
+            count_target=Document.id,
+        )
+        return
+
+    if not batch.seeded:
+        batch.seeded = True
+        counted = await _locked_count_and_cap(db, cap_attr="document_count_limit", count_target=Document.id)
+        if counted is None:
+            batch.bypass = True
+        else:
+            current, batch.cap = counted
+            batch.remaining = batch.cap - current
+
+    if batch.bypass:
+        return
+    if batch.remaining <= 0:
+        # The batch has consumed its headroom; report the cap as the current
+        # count since that's where the batch's own inserts have landed it.
+        raise LimitExceededError(limit="document_count", cap=batch.cap, current=batch.cap)
+    batch.remaining -= 1
 
 
 async def assert_document_count_under_limit_for_upload() -> None:
