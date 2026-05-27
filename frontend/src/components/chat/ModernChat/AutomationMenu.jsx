@@ -5,7 +5,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DashboardIcon from '@mui/icons-material/Dashboard';
-import { EXPERIENCES_ENABLED } from '../../../config/featureFlags';
+import { useFeatureEnabled } from '../../../config/featureFlags';
 
 const AutomationMenu = React.memo(function AutomationMenu({
   anchorEl,
@@ -17,6 +17,7 @@ const AutomationMenu = React.memo(function AutomationMenu({
   disableAutomation,
 }) {
   const navigate = useNavigate();
+  const canExperiences = useFeatureEnabled('experiences');
 
   const handleDashboardClick = () => {
     onClose();
@@ -31,7 +32,7 @@ const AutomationMenu = React.memo(function AutomationMenu({
       anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       transformOrigin={{ vertical: 'top', horizontal: 'left' }}
     >
-      {EXPERIENCES_ENABLED && (
+      {canExperiences && (
         <>
           <MenuItem onClick={handleDashboardClick}>
             <ListItemIcon>

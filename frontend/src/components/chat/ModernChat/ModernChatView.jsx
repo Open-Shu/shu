@@ -4,7 +4,7 @@ import { Box, Button, Paper, Alert, Drawer, Stack, Typography, useMediaQuery } f
 import { useTheme } from '@mui/material/styles';
 import { Add as AddIcon, ChatBubbleOutline as ChatIcon, Dashboard as DashboardIcon } from '@mui/icons-material';
 
-import { EXPERIENCES_ENABLED } from '../../../config/featureFlags';
+import { useFeatureEnabled } from '../../../config/featureFlags';
 import ConversationSidebar from './ConversationSidebar';
 import ChatHeader from './ChatHeader';
 import AutomationMenu from './AutomationMenu';
@@ -56,6 +56,7 @@ const ModernChatView = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const navigate = useNavigate();
+  const canExperiences = useFeatureEnabled('experiences');
 
   const sidebarContent = <ConversationSidebar {...conversationSidebarProps} isMobile={isMobile} />;
 
@@ -172,7 +173,7 @@ const ModernChatView = ({
                 >
                   New Chat
                 </Button>
-                {EXPERIENCES_ENABLED && (
+                {canExperiences && (
                   <Button
                     variant="outlined"
                     size="large"
