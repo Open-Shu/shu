@@ -25,14 +25,14 @@ const writingBob = keyframes`
   50%      { transform: translateY(-3px); }
 `;
 
-// Settle: an invisible hand lifts the quill briefly, then lays it
-// flat on the page. The 25% keyframe is the tiny lift-and-tilt before
-// the drop; the 100% endpoint is near-horizontal (-75°) for the
-// laid-to-rest pose.
-const settleDown = keyframes`
-  0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
-  25%  { transform: translateY(-2px) rotate(15deg); }
-  100% { transform: translateY(18px) rotate(75deg); opacity: 0; }
+// Outro: the breeze lifts the feather away and it dissolves into the
+// atmosphere. Combines a gentle up-and-right drift with an opacity
+// fade plus growing blur — the same dissolve treatment used for the
+// rotating verbs in ThinkingIndicator, so the streaming and thinking
+// phases share a visual vocabulary on exit.
+const liftAway = keyframes`
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 1; filter: blur(0); }
+  100% { transform: translate(12px, -14px) rotate(-8deg); opacity: 0; filter: blur(6px); }
 `;
 
 const PHASES = { STREAMING: 'streaming', SETTLING: 'settling', GONE: 'gone' };
@@ -99,7 +99,11 @@ const StreamingFeather = React.memo(function StreamingFeather({ isStreaming }) {
         width: '100%',
         height: STRIP_HEIGHT,
         position: 'relative',
-        overflow: 'hidden',
+        // During the lift-away outro the feather drifts above the strip
+        // (translateY -14px) and we want to see it lift into the bubble
+        // padding before dissolving. During writing the carriage stays
+        // bounded, so `hidden` is the safe default.
+        overflow: isSettling ? 'visible' : 'hidden',
         containerType: 'inline-size',
       }}
     >
@@ -128,9 +132,9 @@ const StreamingFeather = React.memo(function StreamingFeather({ isStreaming }) {
             display: 'block',
             transformOrigin: 'bottom center',
             animation: isSettling
-              ? `${settleDown} ${SETTLE_MS}ms ease-out forwards`
+              ? `${liftAway} ${SETTLE_MS}ms ease-out forwards`
               : `${writingBob} ${WRITING_BOB_MS}ms ease-in-out infinite`,
-            willChange: 'transform, opacity',
+            willChange: 'transform, opacity, filter',
           }}
         />
       </Box>

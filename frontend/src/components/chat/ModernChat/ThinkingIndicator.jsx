@@ -24,15 +24,14 @@ const WORD_TRANSITION_MS = 600;
 const FEATHER_WAFT_MS = 5000;
 const BREATHING_MS = 4000;
 
-// Wafting feather: predominantly horizontal swing with mild rotation
-// around the quill base (transform-origin: bottom center on the icon).
-// Asymmetric keyframe placement + tiny Y variance prevents the motion
-// from reading as a rhythmic up/down bob.
+// Wafting feather: slow horizontal swing with a 30° base rotation so
+// the feather sits closer to horizontal than its natural diagonal.
+// Two-point oscillation + ease-in-out gives a near-sinusoidal motion;
+// no Y translate so the rotation arc through transform-origin: bottom
+// center doesn't read as a vertical bob.
 const featherWaft = keyframes`
-  0%, 100% { transform: translate(-10px, 0) rotate(-6deg); }
-  30%      { transform: translate(-3px, 1px) rotate(0deg); }
-  50%      { transform: translate(10px, 0) rotate(6deg); }
-  75%      { transform: translate(2px, -1px) rotate(-1deg); }
+  0%, 100% { transform: translateX(-6px) rotate(28deg); }
+  50%      { transform: translateX(6px) rotate(32deg); }
 `;
 
 const wordGustOut = keyframes`
