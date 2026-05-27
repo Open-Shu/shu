@@ -159,6 +159,44 @@ class VariantStreamResult:
     terminated: bool = False
     partial_usage_unavailable: bool = False
 
+    # SHU-803 AC9g: audit fields recorded on the LLMUsage row's
+    # `request_metadata` for terminated streams. Empty dict on the
+    # non-terminated paths; populated by `_call_provider` when drain
+    # runs (after a user_terminated or shutdown signal).
+    #
+    # Keys:
+    #   drain_outcome: Literal["final_event", "done", "exception",
+    #       "shutdown_aborted"] — how drain exited.
+    #   cancel_attempted: bool — whether `adapter.cancel()` was spawned.
+    #   cancel_succeeded: bool — whether it returned True (2xx response).
+    #
+    # Ops uses these to distinguish a clean drain (`final_event` /
+    # `done` — usage captured normally) from a shutdown-truncated drain
+    # (`shutdown_aborted`) or a stuck upstream (`exception`).
+    drain_audit: dict[str, Any] = field(default_factory=dict)
+
+    # SHU-803 follow-up: handoff from terminate-time early-persist into
+    # finalize. When the `on_terminate_signal` callback in
+    # `_stream_variant_phase` runs successfully, the partial assistant
+    # Message row is written at signal time (created_at = signal moment)
+    # so a navigation-driven refetch during drain sees the partial
+    # immediately and a follow-up message sent before drain completes
+    # orders correctly. `_finalize_variant_phase` reads these to decide
+    # UPDATE-existing vs. INSERT-new at drain-finish.
+    #
+    # Both fields are None when:
+    #   - the stream completed naturally (no terminate signal), OR
+    #   - the early-persist callback raised (defensive fallback — finalize
+    #     runs its existing INSERT path so the row still lands at drain-
+    #     finish, just with the pre-fix temporal ordering caveat).
+    #
+    # `early_persisted_variant_index` is needed alongside the id because
+    # the regen path computes the new variant_index from a sibling-max
+    # query at INSERT time — finalize can't recover that index from
+    # `regen_lineage` alone, and we don't want to re-query.
+    early_persisted_message_id: str | None = None
+    early_persisted_variant_index: int | None = None
+
 
 @dataclass
 class RegenLineageInfo:

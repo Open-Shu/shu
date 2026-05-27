@@ -2,6 +2,7 @@ import copy
 import json
 from typing import Any
 
+import httpx
 import jmespath
 
 from shu.core.logging import get_logger
@@ -26,6 +27,24 @@ from ..adapter_base import (
 
 logger = get_logger(__name__)
 
+# SHU-803 AC9j: tracks provider IDs that have already produced one
+# INFO-level cancel-attempt-failed log. Subsequent failures from the
+# same provider escalate to WARN — operators get one breadcrumb the
+# first time a Responses-shaped gateway doesn't honor the cancel
+# endpoint, then a louder signal if it keeps happening (suggesting they
+# should configure that provider as completions-shape instead).
+# Module-level so it survives across adapter instances; in tests, the
+# `_reset_cancel_failure_tracking` helper clears it.
+_CANCEL_FAILURE_LOGGED_PROVIDERS: set[str] = set()
+
+
+def _reset_cancel_failure_tracking() -> None:
+    """SHU-803: test-only helper to clear the module-level
+    `_CANCEL_FAILURE_LOGGED_PROVIDERS` set between tests. Not part of
+    the public API; production code never calls this.
+    """
+    _CANCEL_FAILURE_LOGGED_PROVIDERS.clear()
+
 
 class ResponsesAdapter(BaseProviderAdapter):
     """Base adapter for providers implementing the OpenAI Responses API contract."""
@@ -35,6 +54,18 @@ class ResponsesAdapter(BaseProviderAdapter):
         self.function_call_messages: list[dict[str, Any]] = []
         self.function_call_reasoning_messages: list[dict[str, Any]] = []
         self._streamed_text: list[str] = []
+        # SHU-803 AC9e: response.id captured from the first
+        # `response.created` SSE event so `cancel()` can address the right
+        # in-flight run. Stays None until that event lands; `cancel()`
+        # returns False (no-op) if invoked before the id is known.
+        self._response_id: str | None = None
+        # SHU-803 AC9e: optional transport injection for the cancel POST.
+        # Production code leaves this None; ``cancel()`` constructs an
+        # ``httpx.AsyncClient`` inside an ``async with`` so the client is
+        # deterministically closed (no GC-time "Unclosed AsyncClient"
+        # warning). Tests pre-install an ``httpx.MockTransport`` here to
+        # intercept the cancel POST without patching ``httpx`` globally.
+        self._cancel_transport: httpx.AsyncBaseTransport | None = None
 
     # General provider information
     def get_provider_information(self) -> ProviderInformation:
@@ -81,6 +112,118 @@ class ResponsesAdapter(BaseProviderAdapter):
             args_dict = {}
 
         return ToolCallInstructions(plugin_name=plugin_name, operation=op, args_dict=args_dict)
+
+    async def cancel(self) -> bool:
+        """SHU-803 AC9e: POST to `/responses/{id}/cancel`.
+
+        The OpenAI Responses API does NOT respect stream-close as a
+        cancel signal — the run keeps executing server-side and billing
+        continues until either the run completes naturally or the
+        explicit cancel endpoint is hit. This override implements the
+        cancel endpoint so user-terminate actually stops the bill.
+
+        Behavior:
+
+        - Returns ``False`` immediately if ``_response_id`` is not set
+          (terminate fired before ``response.created`` landed — extremely
+          rare race). The drain path still captures usage if the
+          provider eventually emits ``response.completed``.
+        - Constructs the httpx client inside ``async with`` so it is
+          deterministically closed when the POST completes (no GC-time
+          "Unclosed AsyncClient" warnings). The adapter is per-stream
+          per-variant and cancel() runs at most once per stream — there
+          is no reuse to optimize for.
+        - 2-second timeout — the cancel POST should be quick or fall
+          through to drain. The consumer loop races this with drain
+          via ``asyncio.gather`` so a slow cancel does not block the
+          drain (Phase 2.2 decision in the SHU-803 game-plan).
+        - Returns ``True`` on 2xx response, ``False`` on any other
+          status or exception. Non-2xx triggers SHU-803 AC9j logging:
+          INFO first-time-per-provider, WARN on subsequent failures
+          (signaling the gateway probably doesn't honor the cancel
+          endpoint and should be configured as completions-shape).
+        - Never raises — exceptions are caught and folded into a
+          ``False`` return per the BaseProviderAdapter contract.
+        """
+        if not self._response_id:
+            # No `response.created` event yet — nothing to cancel.
+            # Drain still runs and captures usage if it eventually lands.
+            return False
+
+        base_url = self.get_field_with_override("get_api_base_url")
+        if not base_url:
+            # Mis-configured adapter — without a base URL we can't
+            # construct the cancel endpoint. Log and fall through.
+            logger.warning("ResponsesAdapter.cancel: get_api_base_url returned no value; skipping cancel POST")
+            return False
+
+        cancel_url = f"{base_url.rstrip('/')}/responses/{self._response_id}/cancel"
+        auth_def = self.get_authorization_header() or {}
+        headers = auth_def.get("headers") or {}
+
+        # SHU-803 AC9e: ``async with`` so the client (and its connection
+        # pool) is closed before this coroutine returns. The adapter is
+        # short-lived (one stream / variant) and cancel() runs at most
+        # once per stream, so there is no client reuse to optimize for.
+        try:
+            async with httpx.AsyncClient(
+                transport=self._cancel_transport,
+                timeout=2.0,
+            ) as client:
+                response = await client.post(cancel_url, headers=headers)
+        except Exception as exc:
+            # Network failure, DNS, TLS, whatever — fall through to drain.
+            # Log to telemetry; consumer loop doesn't care which side failed.
+            self._log_cancel_failure(
+                status_code=None,
+                error=str(exc),
+                cancel_url=cancel_url,
+            )
+            return False
+
+        if 200 <= response.status_code < 300:
+            return True
+
+        self._log_cancel_failure(
+            status_code=response.status_code,
+            error=None,
+            cancel_url=cancel_url,
+        )
+        return False
+
+    def _log_cancel_failure(
+        self,
+        *,
+        status_code: int | None,
+        error: str | None,
+        cancel_url: str,
+    ) -> None:
+        """SHU-803 AC9j: emit INFO the first time a provider's cancel
+        endpoint fails, then WARN on subsequent failures from the same
+        provider. Operators get one breadcrumb when a Responses-shaped
+        gateway doesn't honor the cancel endpoint, then a louder signal
+        if it keeps happening (suggesting they should configure that
+        provider as completions-shape instead).
+        """
+        provider_id = str(getattr(self.provider, "id", "") or cancel_url)
+        already_logged = provider_id in _CANCEL_FAILURE_LOGGED_PROVIDERS
+        level = logger.warning if already_logged else logger.info
+        if status_code is not None:
+            level(
+                "ResponsesAdapter.cancel: non-2xx response from %s (status=%d). "
+                "If this provider doesn't honor the cancel endpoint, configure "
+                "it as completions-shape so the consumer loop relies on drain "
+                "alone instead.",
+                cancel_url,
+                status_code,
+            )
+        else:
+            level(
+                "ResponsesAdapter.cancel: HTTP error contacting %s: %s. " "Drain will still attempt to capture usage.",
+                cancel_url,
+                error,
+            )
+        _CANCEL_FAILURE_LOGGED_PROVIDERS.add(provider_id)
 
     def _extract_usage(self, path: str, chunk) -> None:
         usage = jmespath.search(path, chunk) or {}
@@ -134,7 +277,24 @@ class ResponsesAdapter(BaseProviderAdapter):
 
         return parts
 
-    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:
+    async def handle_provider_event(self, chunk: dict[str, Any]) -> ProviderEventResult | None:  # noqa: PLR0912
+        # SHU-803 AC9e: capture response.id on every `response.created`
+        # event so `cancel()` targets the currently in-flight run. The
+        # adapter instance is reused across tool-call follow-up turns in
+        # ``_stream_variant_phase`` — each turn opens a fresh stream and
+        # emits a NEW ``response.created`` with a new id. A first-wins
+        # guard here would leave ``_response_id`` pointing at the long-
+        # completed first-turn id, so a user clicking Stop on a tool-
+        # using assistant's final answer would POST to the wrong
+        # /responses/{id}/cancel endpoint and the live stream would keep
+        # billing. If terminate fires BEFORE `response.created` lands
+        # (extremely tight race window), `cancel()` no-ops and drain
+        # still captures the eventual usage.
+        if chunk.get("type") == "response.created":
+            response_id = jmespath.search("response.id", chunk)
+            if isinstance(response_id, str) and response_id:
+                self._response_id = response_id
+
         incomplete_response = jmespath.search(
             "type=='response.incomplete' && response.incomplete_details.reason", chunk
         )

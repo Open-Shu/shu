@@ -33,6 +33,7 @@ Usage:
     # -> {"input": Decimal("0.000001"), "output": Decimal("0.000005")}
 """
 
+import re
 from decimal import Decimal
 
 from sqlalchemy import select, update
@@ -41,6 +42,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+# SHU-803 AC9d: regex used by ``_normalize_model_key`` to strip provider
+# prefixes (``vendor/``) and tier suffixes (``:nitro``, ``:free``, etc.)
+# before comparing against MODEL_PRICING. Compiled once at import time.
+_PROVIDER_PREFIX_RE = re.compile(r"^[^/]+/")
+_TIER_SUFFIX_RE = re.compile(r":[^/:]+$")
 
 _MTOK = Decimal("1000000")
 
@@ -83,56 +90,136 @@ MODEL_PRICING: dict[str, dict[str, Decimal]] = {
 }
 
 
+def _normalize_model_key(name: str) -> str:
+    """SHU-803 AC9d: collapse OpenRouter-style slugs to a MODEL_PRICING-comparable key.
+
+    OpenRouter exposes the same underlying model under a vendor-prefixed,
+    tier-suffixed slug (``google/gemma-4-31b-it:nitro``) while
+    ``MODEL_PRICING`` uses bare upstream names (``gemma-4-31B-it``).
+    Exact-string lookup misses those slugs and the DB-rate-fallback path
+    in ``usage_recording.py`` lands cost=0 even when tokens are counted
+    correctly — the billing-evasion abuse vector this AC closes.
+
+    Normalization rules (applied in order):
+    1. Strip a leading ``vendor/`` prefix (one slash; anything before the
+       slash is dropped). Matches OpenRouter / OpenAI-compatible gateway
+       conventions.
+    2. Strip a trailing ``:tier`` suffix (``:nitro``, ``:free``, ``:beta``,
+       etc.). Tier variants share rates with the base model.
+    3. Lowercase. ``gemma-4-31B-it`` and ``gemma-4-31b-it`` are the same
+       model to operators; case differences are a footgun.
+
+    The normalized form is used as a FALLBACK only — exact matches in
+    ``MODEL_PRICING`` still win, so an operator who wants a vendor-specific
+    rate can keep the slug verbatim in MODEL_PRICING and it will resolve
+    via the exact-match path.
+    """
+    if not name:
+        return name
+    normalized = _PROVIDER_PREFIX_RE.sub("", name, count=1)
+    normalized = _TIER_SUFFIX_RE.sub("", normalized, count=1)
+    return normalized.lower()
+
+
+# SHU-803 AC9d: precomputed normalized-key map. Built at module load so the
+# hot lookup path stays O(1). Keyed by the normalized form of every
+# MODEL_PRICING key; values are references into MODEL_PRICING itself so
+# updates to ``MODEL_PRICING`` propagate automatically (Python dict values
+# are shared references).
+_NORMALIZED_PRICING: dict[str, dict[str, Decimal]] = {
+    _normalize_model_key(name): pricing for name, pricing in MODEL_PRICING.items()
+}
+
+
 def get_pricing(model_name: str) -> dict[str, Decimal] | None:
     """Look up per-unit pricing for a model name. Returns None if unknown.
 
     Unit is per-token for chat/embedding models and per-page for ocr models,
     matching ``llm_models.model_type``.
+
+    Lookup strategy (SHU-803 AC9d):
+    1. Exact match against ``MODEL_PRICING``. Preserves the pre-existing
+       behavior for any operator who keeps slug-verbatim keys.
+    2. Normalized fallback via ``_normalize_model_key``. Covers the
+       OpenRouter slug case (``google/gemma-4-31b-it:nitro`` resolves to
+       the ``gemma-4-31B-it`` rates).
     """
-    return MODEL_PRICING.get(model_name)
+    pricing = MODEL_PRICING.get(model_name)
+    if pricing is not None:
+        return pricing
+    return _NORMALIZED_PRICING.get(_normalize_model_key(model_name))
 
 
 async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
     """Push reference pricing into llm_models rows.
 
-    For every model_name in MODEL_PRICING that exists in llm_models, sets
-    cost_per_input_unit and cost_per_output_unit. Models not in the
-    reference dict are left untouched.
+    For every ``llm_models.model_name`` that resolves to a MODEL_PRICING
+    entry (exact or normalized — see :func:`get_pricing`), sets
+    ``cost_per_input_unit`` and ``cost_per_output_unit``. Models that
+    don't resolve are left untouched.
+
+    SHU-803 AC9d: iteration is over DB model names (not MODEL_PRICING
+    keys) so OpenRouter slugs like ``google/gemma-4-31b-it:nitro``
+    pick up rates via the normalized fallback. The pre-fix exact-string
+    iteration left those rows NULL and the DB-rate fallback computed
+    cost=0.
+
+    SHU-803 AC9i: any case where two distinct DB model_name values
+    resolve to the same MODEL_PRICING entry *via the normalized fallback*
+    (i.e. neither matched exactly) logs a WARN naming both. Tier variants
+    that share rates by design (``...:nitro`` and ``...:free``) are the
+    common case and the WARN is informational — operators add explicit
+    MODEL_PRICING entries if they want the variants priced differently.
 
     Returns {"updated": N, "cleared": N, "skipped": N}:
       - updated: row written with non-zero rates.
-      - cleared: row explicitly NULLed because the reference pricing is zero
-        (demote-to-free case — prevents stale rates from a prior sync leaking
-        into DB-rate-fallback cost math).
-      - skipped: model_name was in MODEL_PRICING but not found in llm_models.
+      - cleared: row explicitly NULLed because reference pricing is zero
+        (demote-to-free case — prevents stale rates from a prior sync
+        leaking into DB-rate-fallback cost math).
+      - skipped: db model_name didn't resolve to any MODEL_PRICING entry.
     """
     from shu.models.llm_provider import LLMModel
 
-    # Get all model names currently in the DB
-    result = await db.execute(select(LLMModel.model_name))
-    db_model_names = {row[0] for row in result.all()}
+    # DISTINCT: model_name has no unique constraint — the same name can be
+    # registered under multiple providers (e.g. ``gpt-4`` on OpenAI direct
+    # and via an Azure proxy). Without DISTINCT the loop would run twice for
+    # the same name, double-counting ``updated``/``cleared`` and producing a
+    # bogus AC9i collision WARN that lists the same name twice.
+    result = await db.execute(select(LLMModel.model_name).distinct())
+    db_model_names = [row[0] for row in result.all()]
 
     updated = 0
     cleared = 0
-    skipped = 0
+    skipped: list[str] = []
+    # SHU-803 AC9i: track DB names that resolved via the normalized fallback,
+    # keyed by the normalized key they hit. Collisions (>1 db_name per key)
+    # are logged after the sync loop.
+    normalized_collisions: dict[str, list[str]] = {}
 
-    for model_name, pricing in MODEL_PRICING.items():
-        if model_name not in db_model_names:
-            skipped += 1
+    for db_model_name in db_model_names:
+        # Exact match first (preserves pre-fix behavior for any operator
+        # who keeps slug-verbatim MODEL_PRICING keys).
+        pricing = MODEL_PRICING.get(db_model_name)
+        if pricing is None:
+            normalized_key = _normalize_model_key(db_model_name)
+            pricing = _NORMALIZED_PRICING.get(normalized_key)
+            if pricing is not None:
+                normalized_collisions.setdefault(normalized_key, []).append(db_model_name)
+
+        if pricing is None:
+            skipped.append(db_model_name)
             continue
 
         # Zero-cost models (local/self-hosted) should have NULL rate columns so
         # "has pricing" checks (IS NOT NULL) are truthful. If a model used to be
         # paid and got demoted to free in model_pricing.py, a bare `continue`
         # here would leave stale non-null rates in the DB and the fallback cost
-        # math would keep billing the old rates. Explicitly NULL the columns so
-        # the source-of-truth change actually lands. Explicit equality (not
-        # Python truthiness) avoids the Decimal-falsiness foot-gun that bit us
-        # in the cost-contract fallback (now in services/usage_recording.py).
+        # math would keep billing the old rates. Explicit equality (not Python
+        # truthiness) avoids the Decimal-falsiness foot-gun.
         if pricing["input"] == 0 and pricing["output"] == 0:
             await db.execute(
                 update(LLMModel)
-                .where(LLMModel.model_name == model_name)
+                .where(LLMModel.model_name == db_model_name)
                 .values(
                     cost_per_input_unit=None,
                     cost_per_output_unit=None,
@@ -143,7 +230,7 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
 
         await db.execute(
             update(LLMModel)
-            .where(LLMModel.model_name == model_name)
+            .where(LLMModel.model_name == db_model_name)
             .values(
                 cost_per_input_unit=pricing["input"],
                 cost_per_output_unit=pricing["output"],
@@ -152,10 +239,28 @@ async def sync_pricing_to_db(db: AsyncSession) -> dict[str, int]:
         updated += 1
 
     await db.commit()
+
+    # SHU-803 AC9i: surface multi-db-name-to-one-pricing-key cases. Tier
+    # variants are the expected common case (``...:nitro`` and ``...:free``
+    # both normalize to the base); the WARN is informational so operators
+    # can confirm the resolution matches intent.
+    for normalized_key, db_names in normalized_collisions.items():
+        if len(db_names) > 1:
+            logger.warning(
+                "Pricing-lookup normalization collision: %d DB model_name values "
+                "resolved to MODEL_PRICING key %r via normalization fallback. "
+                "If these should be priced differently, add explicit MODEL_PRICING "
+                "entries. Names: %s",
+                len(db_names),
+                normalized_key,
+                ", ".join(db_names),
+            )
+
     logger.info(
-        "Model pricing sync complete: %d updated, %d cleared, %d skipped (not in DB)",
+        "Model pricing sync complete: %d updated, %d cleared, %d skipped (no MODEL_PRICING match): %s",
         updated,
         cleared,
+        len(skipped),
         skipped,
     )
-    return {"updated": updated, "cleared": cleared, "skipped": skipped}
+    return {"updated": updated, "cleared": cleared, "skipped": len(skipped)}

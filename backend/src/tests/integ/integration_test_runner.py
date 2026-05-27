@@ -166,32 +166,42 @@ class IntegrationTestRunner:
         """Create an admin user for testing."""
         import uuid
 
+        from shu.core.tenant import tenant_context_for_tenant_id
+
         test_id = str(uuid.uuid4())[:8]
 
-        # Clean up any existing test admin users (and dependent rows)
-        await self.db.execute(
-            text(
-                "DELETE FROM plugin_subscriptions WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+        # SHU-761: direct ORM inserts trip _stamp_tenant_id (before_flush event)
+        # which requires tenant_context to be set. The framework bypasses HTTP
+        # routes — which would set context via resolve_tenant — so we wrap the
+        # setup writes manually. Passing None defers to deployment-mode
+        # resolution: self-hosted → SELF_HOSTED_TENANT_UUID, silo → configured
+        # tenant. Multi-tenant test runs would need explicit tenant IDs but
+        # aren't the current target.
+        async with tenant_context_for_tenant_id(None):
+            # Clean up any existing test admin users (and dependent rows)
+            await self.db.execute(
+                text(
+                    "DELETE FROM plugin_subscriptions WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+                )
             )
-        )
-        await self.db.execute(
-            text(
-                "DELETE FROM provider_credentials WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+            await self.db.execute(
+                text(
+                    "DELETE FROM provider_credentials WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+                )
             )
-        )
-        await self.db.execute(text("DELETE FROM users WHERE email LIKE 'test-admin-%@example.com'"))
-        await self.db.commit()
+            await self.db.execute(text("DELETE FROM users WHERE email LIKE 'test-admin-%@example.com'"))
+            await self.db.commit()
 
-        # Create new admin user
-        self.admin_user = User(
-            email=f"test-admin-{test_id}@example.com",
-            name=f"Test Admin {test_id}",
-            role=UserRole.ADMIN.value,
-            is_active=True,
-        )
-        self.db.add(self.admin_user)
-        await self.db.commit()
-        await self.db.refresh(self.admin_user)
+            # Create new admin user
+            self.admin_user = User(
+                email=f"test-admin-{test_id}@example.com",
+                name=f"Test Admin {test_id}",
+                role=UserRole.ADMIN.value,
+                is_active=True,
+            )
+            self.db.add(self.admin_user)
+            await self.db.commit()
+            await self.db.refresh(self.admin_user)
 
         # Invalidate policy cache so it picks up the new admin user
         from shu.services.policy_engine import POLICY_CACHE

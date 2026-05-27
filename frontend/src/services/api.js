@@ -439,6 +439,12 @@ export const chatAPI = {
     api.post(`/chat/conversations/${conversationId}/send`, data, config),
   streamMessage: (conversationId, data, options = {}) =>
     sseStreamRequest(`${api.defaults.baseURL}/chat/conversations/${conversationId}/send`, data, options),
+  // SHU-803: terminate an in-flight chat stream. Returns 202 on success,
+  // 410 STREAM_NOT_ACTIVE if the stream already finalized, 403 if the
+  // caller isn't the stream's owner. Caller treats 202 and 410 as
+  // success (the stream's done either way); only surface a toast on 4xx
+  // ownership rejections or 5xx server errors.
+  terminateStream: (streamId) => api.post(`/chat/streams/${streamId}/terminate`),
   switchConversationModel: (conversationId, data) =>
     api.post(`/chat/conversations/${conversationId}/switch-model`, data),
 

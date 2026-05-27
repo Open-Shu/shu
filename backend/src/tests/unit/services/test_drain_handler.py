@@ -313,3 +313,83 @@ class TestSignalShutdownToInFlightStreams:
         # Count reflects the snapshot length (2), not the post-mutation
         # registry length (1).
         assert count == 2
+
+
+# SHU-803: both shutdown-signal helpers must set
+# ``lifecycle.shutdown_signaled = True`` IN ADDITION to calling
+# ``lc.signal("shutdown")``. The separate flag is the SIGTERM escape
+# valve for the per-stream drain loop in ``_call_provider``, which
+# can't rely on ``reason`` alone (priority semantics block
+# ``shutdown`` from overriding an existing ``user_terminated``).
+# Without this flag, an in-flight drain following user-terminate
+# would have no way to detect SIGTERM and would only exit via
+# cancellation propagation — bypassing the shielded finalize.
+
+
+class TestShutdownSignaledFlag:
+    """SHU-803: shutdown_signaled is the drain-escape-valve flag."""
+
+    def test_signal_shutdown_helper_sets_flag_on_every_lifecycle(self):
+        """``signal_shutdown_to_in_flight_streams`` is what the asyncio
+        SIGTERM signal handler calls (sync path). Every lifecycle in the
+        registry gets BOTH ``shutdown_signaled = True`` AND a
+        ``signal("shutdown")`` call. The flag is what the drain loop
+        observes between events.
+        """
+        first = _build_lifecycle("stream-1")
+        second = _build_lifecycle("stream-2")
+        registry = {first.stream_id: first, second.stream_id: second}
+
+        assert first.shutdown_signaled is False
+        assert second.shutdown_signaled is False
+
+        signal_shutdown_to_in_flight_streams(registry)
+
+        assert first.shutdown_signaled is True
+        assert second.shutdown_signaled is True
+        # And the reason update still happened.
+        assert first.reason == "shutdown"
+        assert second.reason == "shutdown"
+
+    @pytest.mark.asyncio
+    async def test_drain_helper_sets_flag_on_every_lifecycle(self):
+        """``drain_in_flight_streams`` (the lifespan backstop) also sets
+        the flag so a lifespan-only path — running without the SIGTERM
+        signal handler having fired first, e.g. on Windows dev without
+        ``add_signal_handler`` — still trips the drain escape valve.
+        """
+        first = _build_lifecycle("stream-1")
+        second = _build_lifecycle("stream-2")
+        # Give them no-op supervisor tasks so drain has something to
+        # await on.
+        first.supervise_task = asyncio.create_task(asyncio.sleep(0))
+        second.supervise_task = asyncio.create_task(asyncio.sleep(0))
+        registry = {first.stream_id: first, second.stream_id: second}
+
+        assert first.shutdown_signaled is False
+        assert second.shutdown_signaled is False
+
+        await drain_in_flight_streams(registry, timeout_seconds=1.0)
+
+        assert first.shutdown_signaled is True
+        assert second.shutdown_signaled is True
+
+    def test_flag_survives_user_terminated_first_writer_wins(self):
+        """The case the flag exists for: ``user_terminated`` won the
+        ``reason`` slot at priority 2, then SIGTERM fires shutdown. The
+        priority rule keeps ``reason="user_terminated"`` (audit trail
+        intact), but ``shutdown_signaled`` flips to True so the drain
+        knows to exit.
+        """
+        lc = _build_lifecycle("stream-1")
+        lc.signal("user_terminated")
+        assert lc.reason == "user_terminated"
+        assert lc.shutdown_signaled is False
+
+        registry = {lc.stream_id: lc}
+        signal_shutdown_to_in_flight_streams(registry)
+
+        # ``reason`` stays user_terminated (first-writer-wins at tier 2).
+        assert lc.reason == "user_terminated"
+        # But the flag is set — drain detects it and exits gracefully.
+        assert lc.shutdown_signaled is True

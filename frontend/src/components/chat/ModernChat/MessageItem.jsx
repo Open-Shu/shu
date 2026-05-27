@@ -426,6 +426,37 @@ const MessageItem = React.memo(function MessageItem({
                       <CircularProgress size={12} sx={{ color: theme.palette.secondary.main }} />
                     </Box>
                   )}
+                  {/* SHU-803 AC6/AC7/AC8: italic stopped-state caption on
+                      persisted messages. Hidden while still streaming so
+                      the live spinner / Stop button own the "active" UI;
+                      surfaces once the placeholder flips out of
+                      isStreaming (either via SSE final_message landing
+                      or the AC5 optimistic flip on the terminate POST
+                      202 response).
+
+                      Caption text branches on attribution: a
+                      user_terminated state reads "Stopped by user"
+                      (true cause), while a shutdown state reads
+                      "Response stopped" — server-initiated stops look
+                      like the same "partial content, here's what we
+                      got" outcome (AC8), but the user didn't trigger
+                      it and "by user" attribution would mislead. */}
+                  {!variant.isStreaming &&
+                    (variant.message_metadata?.stream_state === 'user_terminated' ||
+                      variant.message_metadata?.stream_state === 'shutdown') && (
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          mt: 0.5,
+                          display: 'block',
+                          fontStyle: 'italic',
+                          opacity: 0.7,
+                          color: timestampColor,
+                        }}
+                      >
+                        {variant.message_metadata?.stream_state === 'shutdown' ? 'Response stopped' : 'Stopped by user'}
+                      </Typography>
+                    )}
                   <Typography
                     variant="caption"
                     sx={{

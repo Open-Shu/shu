@@ -664,7 +664,7 @@ const ModernChat = () => {
     });
   }, []);
 
-  const { handleStreamingResponse, handleRegenerate } = useChatStreaming({
+  const { handleStreamingResponse, handleRegenerate, handleStopStream } = useChatStreaming({
     queryClient,
     setError,
     setStreamingConversationId,
@@ -724,6 +724,25 @@ const ModernChat = () => {
   latestHandleSendMessageRef.current = handleSendMessage;
 
   const isSendDisabled = isStreamingForSelectedConversation;
+
+  // SHU-803: the Send button morphs into a Stop button while streaming.
+  // `activeStreamingMessage` is any in-flight placeholder with a
+  // captured streamId — handleStopStream broadcasts the user_terminated
+  // stamp to every placeholder sharing that streamId, so for ensemble
+  // mode any one variant suffices as the message argument.
+  const activeStreamingMessage = useMemo(() => {
+    if (!isStreamingForSelectedConversation || !Array.isArray(flattenedMessages)) {
+      return null;
+    }
+    return flattenedMessages.find((m) => m?.isStreaming && m?.streamId) || null;
+  }, [isStreamingForSelectedConversation, flattenedMessages]);
+
+  const handleInputBarStop = useCallback(() => {
+    if (!activeStreamingMessage) {
+      return undefined;
+    }
+    return handleStopStream(activeStreamingMessage);
+  }, [activeStreamingMessage, handleStopStream]);
 
   const {
     visibleMessages: windowMessages,
@@ -1345,6 +1364,9 @@ const ModernChat = () => {
     onUploadToPersonalKB: uploadToPersonalKB,
     onRetryPersonalKBFile: retryPersonalKBFile,
     onDismissPersonalKBError: dismissPersonalKBError,
+    isStreaming: isStreamingForSelectedConversation,
+    canStop: Boolean(activeStreamingMessage),
+    onStop: handleInputBarStop,
   };
 
   const pluginPickerDialogProps = {
