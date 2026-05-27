@@ -1387,6 +1387,9 @@ class ConfigurationManager:
             "theme": self.get_user_theme(user_prefs, model_config, kb_config),
             "language": self.get_user_language(user_prefs, model_config, kb_config),
             "timezone": self.get_user_timezone(user_prefs, model_config, kb_config),
+            # Typography preferences (null = inherit from branding / shipped default)
+            "font_family": (user_prefs or {}).get("font_family"),
+            "font_size_scale": (user_prefs or {}).get("font_size_scale"),
         }
 
     # Full Document Escalation Methods

@@ -1,5 +1,6 @@
 import { mergeDeep } from './objectUtils';
 import { resolveBranding, derivePrimaryVariants } from './brandingUtils';
+import { getFontStack, resolveFontFamily, resolveHeadingFontFamily } from './typography';
 
 const primaryMain = '#2E5A87';
 const primaryLight = '#4A7BA7';
@@ -587,11 +588,35 @@ export {
   derivePrimaryVariants,
 } from './brandingUtils';
 
-export const getThemeConfig = (mode = 'light', branding) => {
+export const getThemeConfig = (mode = 'light', branding, userFontPref = null, userFontScaleResolved = null) => {
   const resolved = resolveBranding(branding);
   const base = mode === 'dark' ? darkThemeBase : lightThemeBase;
   const overrides = mode === 'dark' ? resolved.darkThemeOverrides : resolved.lightThemeOverrides;
   const config = mergeDeep(base, overrides);
+
+  // Apply resolved typography (SHU-811): user body font → brand body font → shipped default;
+  // heading font cascades brand only.
+  const bodyKey = resolveFontFamily(userFontPref, resolved.brandFontFamily);
+  const headingKey = resolveHeadingFontFamily(resolved.brandHeadingFontFamily);
+  const bodyStack = getFontStack(bodyKey);
+  const headingStack = getFontStack(headingKey);
+  if (config.typography) {
+    config.typography.fontFamily = bodyStack;
+    ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].forEach((variant) => {
+      if (config.typography[variant]) {
+        config.typography[variant] = { ...config.typography[variant], fontFamily: headingStack };
+      }
+    });
+    if (config.typography.body1) {
+      config.typography.body1 = { ...config.typography.body1, fontFamily: bodyStack };
+    }
+    if (config.typography.body2) {
+      config.typography.body2 = { ...config.typography.body2, fontFamily: bodyStack };
+    }
+  }
+  // userFontScaleResolved is read by ThemeContext for root font-size; it's
+  // not threaded into MUI typography (rem-based sizes scale via the root).
+  void userFontScaleResolved;
 
   // When branding overrides primary.main, the light/dark variants still hold
   // the base-theme defaults. Regenerate them so the full palette stays consistent.

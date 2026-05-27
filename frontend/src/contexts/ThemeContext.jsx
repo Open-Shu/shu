@@ -10,9 +10,45 @@ import {
   getBrandingFaviconUrlForTheme,
   getBrandingAppName,
 } from '../utils/constants';
+import {
+  resolveFontFamily,
+  resolveHeadingFontFamily,
+  resolveFontSizeScale,
+  computeRootFontSizePercent,
+} from '../utils/typography';
 import log from '../utils/log';
 
 const ThemeContext = createContext();
+
+const LS_THEME_KEY = 'shu-theme';
+const LS_FONT_FAMILY_KEY = 'shu-font-family';
+const LS_FONT_SCALE_KEY = 'shu-font-scale';
+
+const readLocal = (key) => {
+  if (typeof localStorage === 'undefined') {
+    return null;
+  }
+  try {
+    return localStorage.getItem(key);
+  } catch (_) {
+    return null;
+  }
+};
+
+const writeLocal = (key, value) => {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+  try {
+    if (value === null || value === undefined) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, value);
+    }
+  } catch (_) {
+    /* localStorage write failures are non-fatal */
+  }
+};
 
 export const useTheme = () => {
   const context = useContext(ThemeContext);
@@ -30,6 +66,12 @@ export const ThemeProvider = ({ children }) => {
   ); // actual mode after resolving 'auto'
   const [branding, setBrandingState] = useState(() => resolveBranding(defaultBranding));
   const [brandingLoaded, setBrandingLoaded] = useState(false);
+
+  // Typography prefs: null = inherit (cascade resolves to brand → shipped default).
+  // Seed from localStorage so anonymous users see their last-picked font without
+  // waiting for the server preference round-trip.
+  const [userFontFamily, setUserFontFamily] = useState(() => readLocal(LS_FONT_FAMILY_KEY));
+  const [userFontScale, setUserFontScale] = useState(() => readLocal(LS_FONT_SCALE_KEY));
 
   const setBranding = useCallback(
     (nextBranding) => {
@@ -62,15 +104,23 @@ export const ThemeProvider = ({ children }) => {
         .then((response) => {
           const prefs = extractDataFromResponse(response);
           setThemeMode(prefs.theme || 'auto');
+          // Server pref overrides local fallback (handles "logged in as a
+          // different user on a shared device" cleanly).
+          setUserFontFamily(prefs.font_family ?? null);
+          setUserFontScale(prefs.font_size_scale ?? null);
+          writeLocal(LS_FONT_FAMILY_KEY, prefs.font_family ?? null);
+          writeLocal(LS_FONT_SCALE_KEY, prefs.font_size_scale ?? null);
         })
         .catch((err) => {
-          log.warn('Failed to load theme preference, using default:', err);
+          log.warn('Failed to load user preferences, using defaults:', err);
           setThemeMode('auto');
         });
     } else {
-      // Use localStorage for non-authenticated users
-      const savedTheme = localStorage.getItem('shu-theme') || 'auto';
+      // Use localStorage for non-authenticated users (theme + fonts).
+      const savedTheme = readLocal(LS_THEME_KEY) || 'auto';
       setThemeMode(savedTheme);
+      setUserFontFamily(readLocal(LS_FONT_FAMILY_KEY));
+      setUserFontScale(readLocal(LS_FONT_SCALE_KEY));
     }
   }, [isAuthenticated, user]);
 
@@ -91,10 +141,31 @@ export const ThemeProvider = ({ children }) => {
     }
   }, [themeMode]);
 
-  // Create MUI theme based on resolved mode
+  // Resolve typography cascade.
+  const resolvedFontFamily = useMemo(
+    () => resolveFontFamily(userFontFamily, branding.brandFontFamily),
+    [userFontFamily, branding.brandFontFamily]
+  );
+  const resolvedHeadingFontFamily = useMemo(
+    () => resolveHeadingFontFamily(branding.brandHeadingFontFamily),
+    [branding.brandHeadingFontFamily]
+  );
+  const resolvedFontScale = useMemo(() => resolveFontSizeScale(userFontScale), [userFontScale]);
+
+  // Apply root font-size as a percentage so we scale relative to the user's
+  // browser-level font-size accessibility setting (px would override it).
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.documentElement.style.fontSize = computeRootFontSizePercent(resolvedFontScale);
+  }, [resolvedFontScale]);
+
+  // Create MUI theme based on resolved mode + resolved typography.
+  // Deps include the resolved values so a font change rebuilds the theme.
   const theme = useMemo(() => {
-    return createTheme(getThemeConfig(resolvedMode, branding));
-  }, [resolvedMode, branding]);
+    return createTheme(getThemeConfig(resolvedMode, branding, userFontFamily, resolvedFontScale));
+  }, [resolvedMode, branding, userFontFamily, resolvedFontScale, resolvedFontFamily, resolvedHeadingFontFamily]);
 
   // Insert branding information into DOM dynamicalls
   useEffect(() => {
@@ -140,7 +211,7 @@ export const ThemeProvider = ({ children }) => {
       setThemeMode(newTheme);
 
       // Save to localStorage for non-authenticated users
-      localStorage.setItem('shu-theme', newTheme);
+      writeLocal(LS_THEME_KEY, newTheme);
 
       // Save to backend if authenticated
       if (isAuthenticated) {
@@ -149,6 +220,39 @@ export const ThemeProvider = ({ children }) => {
           log.info('Theme preference saved:', newTheme);
         } catch (error) {
           log.warn('Failed to save theme preference:', error);
+        }
+      }
+    },
+    [isAuthenticated]
+  );
+
+  const changeFontFamily = useCallback(
+    async (newFontFamily) => {
+      // Treat empty string / undefined as null (= inherit).
+      const normalized = newFontFamily || null;
+      setUserFontFamily(normalized);
+      writeLocal(LS_FONT_FAMILY_KEY, normalized);
+      if (isAuthenticated) {
+        try {
+          await userPreferencesAPI.patchPreferences({ font_family: normalized });
+        } catch (error) {
+          log.warn('Failed to save font_family preference:', error);
+        }
+      }
+    },
+    [isAuthenticated]
+  );
+
+  const changeFontScale = useCallback(
+    async (newScale) => {
+      const normalized = newScale || null;
+      setUserFontScale(normalized);
+      writeLocal(LS_FONT_SCALE_KEY, normalized);
+      if (isAuthenticated) {
+        try {
+          await userPreferencesAPI.patchPreferences({ font_size_scale: normalized });
+        } catch (error) {
+          log.warn('Failed to save font_size_scale preference:', error);
         }
       }
     },
@@ -165,6 +269,14 @@ export const ThemeProvider = ({ children }) => {
     brandingLoaded,
     refreshBranding,
     setBranding,
+    // Typography
+    userFontFamily,
+    userFontScale,
+    resolvedFontFamily,
+    resolvedHeadingFontFamily,
+    resolvedFontScale,
+    changeFontFamily,
+    changeFontScale,
   };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

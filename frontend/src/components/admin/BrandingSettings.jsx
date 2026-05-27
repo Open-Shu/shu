@@ -1,13 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Box, Button, CircularProgress, Grid, Paper, Stack, TextField, Typography } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  FormControl,
+  Grid,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
 
 import PaletteIcon from '@mui/icons-material/Palette';
 import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
 import { resolveBranding } from '../../utils/brandingUtils';
 import { getThemeConfig } from '../../utils/constants';
+import { FONT_FAMILIES } from '../../utils/typography';
 import log from '../../utils/log';
 import PageHelpHeader from '../PageHelpHeader';
+
+const BRAND_FONT_INHERIT = '__default__';
 
 const emptyForm = {
   appName: '',
@@ -15,6 +32,8 @@ const emptyForm = {
   darkFaviconUrl: '',
   lightTopbarTextColor: '#FFFFFF',
   darkTopbarTextColor: '#FFFFFF',
+  brandFontFamily: null,
+  brandHeadingFontFamily: null,
   light: {
     primaryMain: '',
     secondaryMain: '',
@@ -77,6 +96,8 @@ const BrandingSettings = () => {
       darkFaviconUrl: branding.darkFaviconUrl || '',
       lightTopbarTextColor: branding.lightTopbarTextColor || '#FFFFFF',
       darkTopbarTextColor: branding.darkTopbarTextColor || '#FFFFFF',
+      brandFontFamily: branding.brandFontFamily ?? null,
+      brandHeadingFontFamily: branding.brandHeadingFontFamily ?? null,
       light: {
         primaryMain: branding.lightThemeOverrides?.palette?.primary?.main || resolvedLightTheme.palette.primary.main,
         secondaryMain:
@@ -141,6 +162,8 @@ const BrandingSettings = () => {
       dark_topbar_text_color: toNullable(formState.darkTopbarTextColor),
       light_theme_overrides: buildPaletteOverrides(formState.light),
       dark_theme_overrides: buildPaletteOverrides(formState.dark),
+      brand_font_family: formState.brandFontFamily,
+      brand_heading_font_family: formState.brandHeadingFontFamily,
     };
 
     try {
@@ -169,6 +192,8 @@ const BrandingSettings = () => {
         dark_topbar_text_color: null,
         light_theme_overrides: null,
         dark_theme_overrides: null,
+        brand_font_family: null,
+        brand_heading_font_family: null,
       });
       const data = extractDataFromResponse(response);
       const resolved = resolveBranding(data);
@@ -185,6 +210,8 @@ const BrandingSettings = () => {
         darkFaviconUrl: resolved.darkFaviconUrl || '',
         lightTopbarTextColor: resolved.lightTopbarTextColor || '#FFFFFF',
         darkTopbarTextColor: resolved.darkTopbarTextColor || '#FFFFFF',
+        brandFontFamily: resolved.brandFontFamily ?? null,
+        brandHeadingFontFamily: resolved.brandHeadingFontFamily ?? null,
         light: {
           primaryMain: resolved.lightThemeOverrides?.palette?.primary?.main || newLightTheme.palette.primary.main,
           secondaryMain: resolved.lightThemeOverrides?.palette?.secondary?.main || newLightTheme.palette.secondary.main,
@@ -425,6 +452,66 @@ const BrandingSettings = () => {
                   InputLabelProps={{ shrink: true }}
                   helperText="Text color for topbar in dark theme (default: white)"
                 />
+              </Grid>
+            </Grid>
+          </Stack>
+        </Paper>
+
+        <Paper sx={{ p: 3 }}>
+          <Stack spacing={2}>
+            <Typography variant="h6" fontWeight={600}>
+              Typography
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Team-wide font defaults. Users may override the body font in their personal preferences; heading font
+              applies to everyone.
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="brand-font-family-label">Brand Font (body)</InputLabel>
+                  <Select
+                    labelId="brand-font-family-label"
+                    label="Brand Font (body)"
+                    value={formState.brandFontFamily ?? BRAND_FONT_INHERIT}
+                    onChange={(e) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        brandFontFamily: e.target.value === BRAND_FONT_INHERIT ? null : e.target.value,
+                      }))
+                    }
+                  >
+                    <MenuItem value={BRAND_FONT_INHERIT}>Default (Inter)</MenuItem>
+                    {Object.entries(FONT_FAMILIES).map(([key, def]) => (
+                      <MenuItem key={key} value={key} sx={{ fontFamily: def.stack }}>
+                        {def.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="brand-heading-font-family-label">Brand Heading Font</InputLabel>
+                  <Select
+                    labelId="brand-heading-font-family-label"
+                    label="Brand Heading Font"
+                    value={formState.brandHeadingFontFamily ?? BRAND_FONT_INHERIT}
+                    onChange={(e) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        brandHeadingFontFamily: e.target.value === BRAND_FONT_INHERIT ? null : e.target.value,
+                      }))
+                    }
+                  >
+                    <MenuItem value={BRAND_FONT_INHERIT}>Default (Inter)</MenuItem>
+                    {Object.entries(FONT_FAMILIES).map(([key, def]) => (
+                      <MenuItem key={key} value={key} sx={{ fontFamily: def.stack }}>
+                        {def.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
               </Grid>
             </Grid>
           </Stack>

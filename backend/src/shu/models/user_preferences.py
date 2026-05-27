@@ -42,6 +42,10 @@ class UserPreferences(TenantScopedMixin, BaseModel):
     language = Column(String(10), default="en", nullable=False)  # Language preference
     timezone = Column(String(50), default="UTC", nullable=False)  # User timezone
 
+    # Typography preferences (nullable — null = inherit from branding / shipped default)
+    font_family = Column(String(50), nullable=True)
+    font_size_scale = Column(String(20), nullable=True)
+
     # Advanced Settings (JSON for flexibility)
     advanced_settings = Column(JSON, nullable=True)  # Additional custom settings
 
@@ -101,5 +105,8 @@ class UserPreferences(TenantScopedMixin, BaseModel):
             "theme": "light",
             "language": "en",
             "timezone": "UTC",
+            # Typography (null = inherit from branding / shipped default)
+            "font_family": None,
+            "font_size_scale": None,
             "advanced_settings": {},
         }
