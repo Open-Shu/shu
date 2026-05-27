@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
+from ..billing.enforcement import assert_kb_count_under_limit
 from ..core.exceptions import (
     ConflictError,
     KnowledgeBaseNotFoundError,
@@ -612,6 +613,8 @@ class KnowledgeBaseService:
             raise ValidationError("Knowledge base name must contain at least one alphanumeric character")
 
         try:
+            await self._assert_room_for_new_knowledge_base()
+
             if await self._get_kb_by_slug(slug) is not None:
                 raise ConflictError(f"Knowledge base '{kb_data.name}' already exists")
 
@@ -642,6 +645,15 @@ class KnowledgeBaseService:
             await self.db.rollback()
             logger.error(f"Failed to create knowledge base: {e}", exc_info=True)
             raise ShuException(f"Failed to create knowledge base: {e!s}", "KNOWLEDGE_BASE_CREATE_ERROR")
+
+    async def _assert_room_for_new_knowledge_base(self) -> None:
+        """Block when the tenant is already at its KB cap.
+
+        Call only once a new KB is actually about to be created — both creation
+        paths return any pre-existing row before reaching here, so idempotent
+        re-provisioning never counts against the cap.
+        """
+        await assert_kb_count_under_limit(self.db)
 
     async def ensure_personal_knowledge_base(self, owner_id: str, display_name: str, slug_token: str) -> KnowledgeBase:
         """Idempotently ensure the caller's Personal Knowledge KB exists.
@@ -685,6 +697,10 @@ class KnowledgeBaseService:
             existing = await self._get_personal_kb_by_owner(owner_id)
             if existing is not None:
                 return await self._return_or_heal_existing_personal_kb(existing, owner_id)
+
+            # TODO(SHU-776 follow-up): We currently count personal KBs as part of the limit.
+            # That should work for now, but we need to re-evaluate what we want to do here.
+            await self._assert_room_for_new_knowledge_base()
 
             from ..core.config import get_settings_instance
 

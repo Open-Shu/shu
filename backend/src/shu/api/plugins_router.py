@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from ..auth.rbac import get_current_user
+from ..billing.enforcement import require_entitlement
 from ..schemas.envelope import SuccessResponse
 from .dependencies import get_db
 from .mcp_admin import router as mcp_router
@@ -18,7 +19,13 @@ from .plugins_public import PluginInfoResponse
 from .plugins_public import list_plugins as _list_plugins
 from .plugins_public import router as public_router
 
-router = APIRouter(prefix="/plugins", tags=["plugins"])  # final prefix namespaced by settings.api_v1_prefix
+router = APIRouter(
+    prefix="/plugins",
+    tags=["plugins"],  # final prefix namespaced by settings.api_v1_prefix
+    # Gates the whole plugins surface (incl. the included mcp_router, which
+    # additionally requires "mcp_servers") on the tenant's plugins entitlement.
+    dependencies=[Depends(require_entitlement("plugins"))],
+)
 
 # Compose
 router.include_router(public_router)

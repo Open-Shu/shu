@@ -38,6 +38,23 @@ def _mock_settings(*, is_configured: bool = True):
     return settings
 
 
+def _subscription_db(kb_count: int = 0, document_count: int = 0) -> AsyncMock:
+    """db mock for get_subscription_status.
+
+    When a billing cache is installed the handler runs the SHU-773 usage block,
+    which issues exactly two count queries (KB then document). This returns those
+    totals; the handler's other DB access is patched (get_billing_config /
+    get_active_user_count).
+    """
+    db = AsyncMock()
+    kb_result = MagicMock()
+    kb_result.scalar.return_value = kb_count
+    doc_result = MagicMock()
+    doc_result.scalar.return_value = document_count
+    db.execute = AsyncMock(side_effect=[kb_result, doc_result])
+    return db
+
+
 def _decode(response) -> dict:
     return json.loads(response.body.decode())["data"]
 
@@ -90,7 +107,7 @@ class TestSubscriptionPaymentStatus:
         mock_count.return_value = 0
         install_stub_cache(HEALTHY_DEFAULT)
 
-        response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings())
+        response = await get_subscription_status(db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings())
         body = _decode(response)
 
         assert body["payment_failed_at"] is None
@@ -116,7 +133,7 @@ class TestSubscriptionPaymentStatus:
             )
         )
 
-        response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings())
+        response = await get_subscription_status(db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings())
         body = _decode(response)
 
         assert body["service_paused"] is True
@@ -135,7 +152,7 @@ class TestSubscriptionPaymentStatus:
         mock_count.return_value = 0
         # Fixture resets cache on setup; we don't install — endpoint sees None.
 
-        response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings())
+        response = await get_subscription_status(db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings())
         body = _decode(response)
 
         assert body["payment_failed_at"] is None
@@ -198,7 +215,7 @@ class TestSubscriptionAdminBlock:
 
         # is_configured=False skips the live Stripe seat-state branch — these
         # tests pin admin-block visibility, not Stripe.
-        response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=True), settings=_mock_settings(is_configured=False))
+        response = await get_subscription_status(db=_subscription_db(), user=_mock_user(is_admin=True), settings=_mock_settings(is_configured=False))
         body = _decode(response)
 
         for key in _ADMIN_ONLY_KEYS:
@@ -223,7 +240,7 @@ class TestSubscriptionAdminBlock:
         mock_count.return_value = 2
         install_stub_cache(_admin_visible_state())
 
-        response = await get_subscription_status(db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings(is_configured=False))
+        response = await get_subscription_status(db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings(is_configured=False))
         body = _decode(response)
 
         leaked = [key for key in _ADMIN_ONLY_KEYS if key in body]
@@ -268,7 +285,7 @@ class TestSubscriptionTrialAndEntitlements:
         )
 
         response = await get_subscription_status(
-            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
         )
         body = _decode(response)
 
@@ -303,7 +320,7 @@ class TestSubscriptionTrialAndEntitlements:
         install_stub_cache(HEALTHY_DEFAULT)
 
         response = await get_subscription_status(
-            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
         )
         body = _decode(response)
 
@@ -323,7 +340,7 @@ class TestSubscriptionTrialAndEntitlements:
         install_stub_cache(HEALTHY_DEFAULT)
 
         response = await get_subscription_status(
-            db=AsyncMock(),
+            db=_subscription_db(),
             user=_mock_user(is_admin=False),
             settings=_mock_settings(is_configured=False),
         )
@@ -347,7 +364,7 @@ class TestSubscriptionTrialAndEntitlements:
         install_stub_cache(HEALTHY_DEFAULT)
 
         response = await get_subscription_status(
-            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
         )
         body = _decode(response)
 
@@ -359,6 +376,55 @@ class TestSubscriptionTrialAndEntitlements:
             "model_config_management",
             "mcp_servers",
         }
+
+
+class TestSubscriptionUsageAndSelfHostedOmission:
+    """SHU-773 usage block + the self-hosted omission of the entitlement blocks."""
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_usage_block_reports_kb_and_document_counts(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        install_stub_cache(_make_state(limits=LimitSet(kb_count_limit=5, document_count_limit=100)))
+
+        response = await get_subscription_status(
+            db=_subscription_db(kb_count=3, document_count=42),
+            user=_mock_user(is_admin=False),
+            settings=_mock_settings(),
+        )
+        body = _decode(response)
+
+        assert body["usage"] == {"kb_count": 3, "document_count": 42}
+        assert body["limits"] == {"kb_count_limit": 5, "document_count_limit": 100}
+        # entitlements ride in the same cache-gated block as limits/usage.
+        assert body["entitlements"]["chat"] is True
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_self_hosted_omits_entitlement_limit_usage_blocks(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        """cache=None (self-hosted) → the three blocks are absent entirely, so
+        the frontend treats them as "all enabled / unlimited" rather than
+        reading HEALTHY_DEFAULT's chat-only entitlements and hiding every page.
+        """
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        # Fixture resets cache on setup; we don't install — endpoint sees None.
+
+        response = await get_subscription_status(
+            db=AsyncMock(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        assert "entitlements" not in body
+        assert "limits" not in body
+        assert "usage" not in body
 
 
 # Trial-action endpoints — upgrade-now and cancel-trial share the same

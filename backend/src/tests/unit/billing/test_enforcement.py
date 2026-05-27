@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
-from shu.billing.entitlements import EntitlementDeniedError, EntitlementSet, LimitSet
+from shu.billing.entitlements import (
+    EntitlementDeniedError,
+    EntitlementSet,
+    LimitExceededError,
+    LimitSet,
+)
 
 
 def _make_state(**overrides) -> BillingState:
@@ -40,7 +45,9 @@ from shu.billing.enforcement import (
     SubscriptionInactiveError,
     TrialCapExhaustedError,
     UserLimitStatus,
+    assert_document_count_under_limit,
     assert_entitlement,
+    assert_kb_count_under_limit,
     assert_subscription_active,
     check_user_limit,
     get_current_billing_state,
@@ -636,3 +643,154 @@ class TestRequireEntitlement:
         install_stub_cache(_state_with_entitlements(plugins=True))
         dep = require_entitlement("plugins")
         await dep()  # no raise
+
+
+# Resource limit enforcement — `assert_kb_count_under_limit` and
+# `assert_document_count_under_limit` each read the cached BillingState,
+# acquire a per-tenant FOR UPDATE lock, and raise `LimitExceededError`
+# when the live count is at or over the cap. The two helpers differ only
+# in which `LimitSet` field they read and which model they count, so the
+# behavior is exercised once via parametrization rather than duplicated.
+
+
+def _state_with_limits(**overrides) -> BillingState:
+    """Healthy non-trial state with custom limit caps."""
+    return _make_state(limits=LimitSet(**overrides))
+
+
+def _db_returning_count(count: int) -> AsyncMock:
+    """AsyncSession mock where `await db.execute(...).scalar()` yields `count`."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar.return_value = count
+    db.execute.return_value = result
+    return db
+
+
+_LIMIT_HELPER_PARAMS = [
+    pytest.param(
+        assert_kb_count_under_limit,
+        "kb_count_limit",
+        "kb_count",
+        id="kb_count",
+    ),
+    pytest.param(
+        assert_document_count_under_limit,
+        "document_count_limit",
+        "document_count",
+        id="document_count",
+    ),
+]
+
+
+@pytest.mark.parametrize(("helper", "cap_field", "expected_limit_key"), _LIMIT_HELPER_PARAMS)
+class TestAssertCountUnderLimit:
+    """Behavior of `assert_kb_count_under_limit` and `assert_document_count_under_limit`."""
+
+    @pytest.mark.asyncio
+    async def test_self_hosted_bypass_is_no_op(
+        self, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        """Cache singleton missing → no enforcement and no DB access.
+        Mirrors `assert_entitlement`'s bypass so dev environments aren't
+        gated on a CP that isn't configured. The fixture's autouse reset
+        leaves the slot as None when `_install` is not called.
+        """
+        db = AsyncMock()
+        await helper(db)
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_under_cap_does_not_raise(
+        self, mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+        db = _db_returning_count(3)
+
+        await helper(db)
+
+        mock_lock.assert_awaited_once_with(db)
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_at_cap_raises_with_typed_details(
+        self, _mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+        db = _db_returning_count(5)
+
+        with pytest.raises(LimitExceededError) as exc_info:
+            await helper(db)
+
+        err = exc_info.value
+        assert err.error_code == "limit_exceeded"
+        assert err.status_code == 403
+        assert err.details == {"limit": expected_limit_key, "cap": 5, "current": 5}
+        assert err.limit == expected_limit_key
+        assert err.cap == 5
+        assert err.current == 5
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_over_cap_raises(
+        self, _mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+        db = _db_returning_count(7)
+
+        with pytest.raises(LimitExceededError) as exc_info:
+            await helper(db)
+
+        assert exc_info.value.cap == 5
+        assert exc_info.value.current == 7
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_zero_cap_blocks_even_at_zero_count(
+        self, _mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        """HEALTHY_DEFAULT ships limits=(0,0); the strict-zeros decision
+        (SHU-776) means even a brand-new tenant at count=0 is blocked
+        until CP supplies real caps. Pins the fail-closed posture against
+        the count-vs-cap branch.
+        """
+        install_stub_cache(_state_with_limits(**{cap_field: 0}))
+        db = _db_returning_count(0)
+
+        with pytest.raises(LimitExceededError) as exc_info:
+            await helper(db)
+
+        assert exc_info.value.cap == 0
+        assert exc_info.value.current == 0
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_acquires_lock_before_counting(
+        self, mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        """FOR UPDATE must be held before the count query, otherwise two
+        concurrent creates at current=cap-1 could both pass the check.
+        """
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+
+        call_order: list[str] = []
+
+        async def _record_lock(_db):
+            call_order.append("lock")
+
+        mock_lock.side_effect = _record_lock
+
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar.return_value = 3
+
+        async def _record_execute(*_args, **_kwargs):
+            call_order.append("execute")
+            return result
+
+        db.execute.side_effect = _record_execute
+
+        await helper(db)
+
+        assert call_order == ["lock", "execute"]

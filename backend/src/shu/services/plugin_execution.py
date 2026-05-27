@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.auth.models import User
+from shu.billing.billing_state_cache import get_billing_state_cache
+from shu.billing.enforcement import assert_entitlement
 from shu.core.logging import get_logger
 from shu.models.plugin_execution import CallableTool
 from shu.models.plugin_registry import PluginDefinition
@@ -53,7 +55,28 @@ async def get_allowed_plugin_names(user_id: str, manifest_names: set[str] | list
     return set(candidate_names) - denied
 
 
+async def _resolve_plugin_entitlements() -> tuple[bool, bool]:
+    """Return ``(plugins_enabled, mcp_enabled)`` from the cached billing state.
+
+    Self-hosted / dev (no cache singleton) returns ``(True, True)`` — the same
+    bypass posture as the enforcement helpers, so dev keeps every tool.
+    """
+    cache = await get_billing_state_cache()
+    if cache is None:
+        return True, True
+    state = await cache.get()
+    return state.entitlements.plugins, state.entitlements.mcp_servers
+
+
 async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[CallableTool]:
+    # SHU-773: the agentic tool path runs inside the chat stream and never
+    # touches the chat_plugins router, so the entitlement gate has to live here
+    # too. Soft check — when plugins are off we expose no tools (chat keeps
+    # streaming) rather than raising mid-stream.
+    plugins_enabled, mcp_enabled = await _resolve_plugin_entitlements()
+    if not plugins_enabled:
+        return []
+
     tools: list[CallableTool] = []
 
     manifest: dict[str, PluginRecord] = {}
@@ -69,6 +92,10 @@ async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[Call
 
     for name, rec in (manifest or {}).items():
         if name not in allowed:
+            continue
+
+        # MCP tools are plugin-shaped but gated on their own entitlement.
+        if not mcp_enabled and name.startswith(_MCP_INTERNAL_PREFIX):
             continue
 
         chat_ops: list[str] = []
@@ -192,6 +219,15 @@ async def execute_plugin(
 ) -> dict[str, Any]:
     """Execute a chat-callable plugin op using the internal executor and return a serializable dict."""
     plugin_name = _unsanitize_plugin_name(plugin_name)
+
+    # Belt-and-braces: build_agent_tools already filters these out before the
+    # LLM sees them, so this only fires if a future code path dispatches without
+    # going through it. Raises EntitlementDeniedError (→ 403 on the chat_plugins
+    # route; a loud invariant-violation signal mid-stream).
+    await assert_entitlement("plugins")
+    if plugin_name.startswith(_MCP_INTERNAL_PREFIX):
+        await assert_entitlement("mcp_servers")
+
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:

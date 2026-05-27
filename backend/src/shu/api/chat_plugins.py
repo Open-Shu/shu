@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..api.dependencies import get_db
 from ..auth.models import User
 from ..auth.rbac import get_current_user
+from ..billing.enforcement import require_entitlement
 from ..core.response import ShuResponse
 from ..models.plugin_registry import PluginDefinition
 from ..plugins.base import Plugin
@@ -32,7 +33,14 @@ from ..services.plugin_identity import (
     resolve_user_email_for_execution,
 )
 
-router = APIRouter(prefix="/chat/plugins", tags=["chat-plugins"])  # prefixed by settings.api_v1_prefix in main
+# Gated on "plugins": a chat-only tenant can still chat, but cannot invoke any
+# Shu plugin op from chat. The mid-stream agentic path is gated separately in
+# `services/plugin_execution.py` (build_agent_tools / execute_plugin).
+router = APIRouter(
+    prefix="/chat/plugins",
+    tags=["chat-plugins"],  # prefixed by settings.api_v1_prefix in main
+    dependencies=[Depends(require_entitlement("plugins"))],
+)
 
 
 class ChatPluginOpDescriptor(BaseModel):

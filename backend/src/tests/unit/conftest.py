@@ -15,16 +15,31 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
 os.environ.setdefault("SHU_LLM_ENCRYPTION_KEY", "5n7s4FR2ctJo5EBLUIgx_cKuX-ydpE5jg-xSMlKz5zQ=")
 os.environ.setdefault("SHU_OAUTH_ENCRYPTION_KEY", "Ngyzgo3L2B3D_b6MXEffwnS68hPMGS_4YwWRrtNSwQs=")
 
-# Default deployment mode for tests. Developer .env files commonly set
-# SHU_TENANT_ID (a UUID), which would clash with the default self_hosted
-# mode under the tenant-isolation cross-field model validator. Forcing
-# `silo` here keeps the env+.env combo valid at import time (when
-# modules like http_client.py instantiate Settings). SHU_DEPLOYMENT_MODE
-# is not present in .env, so this os.environ assignment survives any
-# later `load_dotenv(override=True)` calls inside shu.core.config.
-# Tests that need a different mode override via monkeypatch.
+# Force a deployment mode that's valid alongside a tenant id. The tenant-
+# isolation cross-field validator rejects SHU_TENANT_ID under self_hosted and
+# multi_tenant; `silo` is the combo the suite relies on.
 os.environ["SHU_DEPLOYMENT_MODE"] = "silo"
 os.environ.setdefault("SHU_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+
+# shu.core.config runs `load_dotenv(override=True)` at import, which reloads the
+# developer's .env and overwrites the line above — if that .env sets
+# SHU_DEPLOYMENT_MODE=multi_tenant it collides with SHU_TENANT_ID and breaks
+# collection for the entire suite. Wrap load_dotenv (before any shu import binds
+# it via `from dotenv import load_dotenv`) so .env still supplies every other
+# setting, but the test deployment mode is re-pinned after each load. Keeps the
+# unit suite hermetic against a local .env without touching production config.
+import dotenv as _dotenv
+
+_real_load_dotenv = _dotenv.load_dotenv
+
+
+def _load_dotenv_pinning_test_mode(*args, **kwargs):
+    result = _real_load_dotenv(*args, **kwargs)
+    os.environ["SHU_DEPLOYMENT_MODE"] = "silo"
+    return result
+
+
+_dotenv.load_dotenv = _load_dotenv_pinning_test_mode
 
 # Add backend/src to sys.path so shu.* imports work when running pytest from repo root.
 PROJECT_SRC = Path(__file__).resolve().parents[2]

@@ -15,9 +15,13 @@ goes through `cp_client.py` — so this module must stay leaf-level.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from shu.core.exceptions import ShuException
+
+LimitKey = Literal["kb_count", "document_count"]
 
 
 class EntitlementSet(BaseModel):
@@ -72,3 +76,23 @@ class EntitlementDeniedError(ShuException):
             details={"entitlement": key},
         )
         self.key = key
+
+
+class LimitExceededError(ShuException):
+    """Raised when a tenant's resource count is at or over the cap declared
+    in `BillingState.limits`.
+
+    Mirrors `EntitlementDeniedError`'s contract — same status code, same
+    nested-error envelope — so the frontend parses both with one code path.
+    """
+
+    def __init__(self, *, limit: LimitKey, cap: int, current: int) -> None:
+        super().__init__(
+            message="Resource limit reached for this tenant.",
+            error_code="limit_exceeded",
+            status_code=403,
+            details={"limit": limit, "cap": cap, "current": current},
+        )
+        self.limit = limit
+        self.cap = cap
+        self.current = current

@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from shu.billing.adapters import (
     UsageProviderImpl,
@@ -25,13 +27,15 @@ from shu.billing.adapters import (
 from shu.billing.billing_state_cache import get_billing_state_cache
 from shu.billing.config import get_billing_settings
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
-from shu.billing.entitlements import EntitlementDeniedError
+from shu.billing.entitlements import EntitlementDeniedError, LimitExceededError, LimitKey
 from shu.billing.markup import resolve_markup
 from shu.billing.state_service import BillingStateService
 from shu.billing.stripe_client import StripeClient
 from shu.core.database import get_async_session_local
 from shu.core.exceptions import ShuException
 from shu.core.logging import get_logger
+from shu.models.document import Document
+from shu.models.knowledge_base import KnowledgeBase
 
 logger = get_logger(__name__)
 
@@ -301,3 +305,77 @@ def require_entitlement(key: str):
         await assert_entitlement(key)
 
     return dep
+
+
+async def _assert_count_under_limit(
+    db: AsyncSession,
+    *,
+    limit_key: LimitKey,
+    cap_attr: str,
+    count_target: InstrumentedAttribute,
+) -> None:
+    """Shared body for the SHU-776 KB / document count gates.
+
+    Self-hosted / dev (cache singleton missing) bypasses enforcement —
+    matches `assert_entitlement`'s posture so dev environments aren't
+    gated on a CP that isn't configured.
+
+    Acquires the per-tenant `billing_state` row FOR UPDATE before counting
+    so two concurrent creates can't both pass the check at `current = cap - 1`.
+    Mirrors the pattern in `check_user_limit`.
+
+    `cap_attr` names the `LimitSet` field holding the cap; `count_target` is
+    the model column to count (tenant-scoped via RLS).
+    """
+    cache = await get_billing_state_cache()
+    if cache is None:
+        return
+    state = await cache.get()
+    cap = getattr(state.limits, cap_attr)
+
+    await BillingStateService.get_for_update(db)
+    result = await db.execute(select(func.count(count_target)))
+    current = result.scalar() or 0
+
+    if current >= cap:
+        raise LimitExceededError(limit=limit_key, cap=cap, current=current)
+
+
+async def assert_kb_count_under_limit(db: AsyncSession) -> None:
+    """Raise `LimitExceededError` if the tenant's KB count is at or over
+    `BillingState.limits.kb_count_limit`. See `_assert_count_under_limit`.
+    """
+    await _assert_count_under_limit(
+        db,
+        limit_key="kb_count",
+        cap_attr="kb_count_limit",
+        count_target=KnowledgeBase.id,
+    )
+
+
+async def assert_document_count_under_limit(db: AsyncSession) -> None:
+    """Raise `LimitExceededError` if the tenant's document count is at or over
+    `BillingState.limits.document_count_limit`. Cap is a per-tenant total
+    across all KBs. See `_assert_count_under_limit`.
+    """
+    await _assert_count_under_limit(
+        db,
+        limit_key="document_count",
+        cap_attr="document_count_limit",
+        count_target=Document.id,
+    )
+
+
+async def assert_document_count_under_limit_for_upload() -> None:
+    """Parameterless FastAPI dependency for the document-upload route.
+
+    Fast-fails an over-cap upload before bytes are staged or OCR jobs are
+    enqueued. Opens its own short-lived session — mirroring
+    `assert_subscription_active` — so the FOR UPDATE acquired inside
+    `assert_document_count_under_limit` releases right after the count
+    rather than being held for the whole upload request. The authoritative,
+    race-safe gate still runs in `DocumentService.create_document`.
+    """
+    session_local = get_async_session_local()
+    async with session_local() as db:
+        await assert_document_count_under_limit(db)

@@ -9,16 +9,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fastapi.testclient import TestClient
+
 from shu.api.mcp_admin import (
     create_connection,
     delete_connection,
     get_connection,
     list_connections,
+    router as mcp_router,
     sync_connection,
     update_connection,
     update_tool_config,
 )
 from shu.core.exceptions import ConflictError, NotFoundError
+from tests.unit.api.conftest import assert_entitlement_denied, entitlement_state, gated_app
 from shu.schemas.mcp_admin import (
     McpConnectionCreate,
     McpConnectionUpdate,
@@ -333,3 +337,17 @@ class TestDeriveStatus:
             last_connected_at=None, last_error=None, consecutive_failures=0
         )
         assert _derive_status(conn) == McpConnectionStatus.DISCONNECTED
+
+
+class TestMcpEntitlementGate:
+    """SHU-773: the MCP sub-router is gated on the mcp_servers entitlement.
+
+    Mounted standalone here, so only its own mcp_servers gate applies. In
+    production it's nested under plugins_router, which adds the plugins gate —
+    i.e. MCP requires both entitlements.
+    """
+
+    def test_mcp_servers_off_returns_403(self, install_stub_cache):
+        install_stub_cache(entitlement_state(mcp_servers=False))
+        with TestClient(gated_app(mcp_router)) as client:
+            assert assert_entitlement_denied(client.get("/api/v1/mcp/connections"), "mcp_servers")

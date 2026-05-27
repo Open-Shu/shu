@@ -873,3 +873,103 @@ class TestResolvePersonalKbSlugToken:
         user.name = "###"
         user.email = ""
         assert resolve_personal_kb_slug_token(user) == "user"
+
+
+# SHU-776: kb_count_limit enforcement on the two KB-creation paths. Both go
+# through `assert_kb_count_under_limit`, which bypasses when no billing cache
+# is installed — that's why every test above (no cache) is unaffected.
+
+_P_STATE_SERVICE = "shu.billing.state_service.BillingStateService.get_for_update"
+
+
+def _state_with_kb_limit(cap: int):
+    """HEALTHY_DEFAULT with the KB cap overridden — only `limits` is read."""
+    import dataclasses
+
+    from shu.billing.cp_client import HEALTHY_DEFAULT
+    from shu.billing.entitlements import LimitSet
+
+    return dataclasses.replace(HEALTHY_DEFAULT, limits=LimitSet(kb_count_limit=cap))
+
+
+def _set_kb_count(mock_db, count: int) -> None:
+    """Make `await mock_db.execute(...).scalar()` return `count` (the cap query)."""
+    result = MagicMock()
+    result.scalar.return_value = count
+    mock_db.execute = AsyncMock(return_value=result)
+
+
+@patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+class TestCreateKnowledgeBaseLimit:
+    """create_knowledge_base honours kb_count_limit when a billing cache is present."""
+
+    @pytest.mark.asyncio
+    async def test_at_cap_raises_and_writes_nothing(self, _mock_lock, install_stub_cache):
+        from shu.billing.entitlements import LimitExceededError
+
+        install_stub_cache(_state_with_kb_limit(2))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        _set_kb_count(mock_db, 2)
+
+        with pytest.raises(LimitExceededError):
+            await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_under_cap_creates(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_kb_limit(5))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        _set_kb_count(mock_db, 3)
+
+        await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
+        assert len(captured) == 1
+
+
+@patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+class TestEnsurePersonalKnowledgeBaseLimit:
+    """ensure_personal_knowledge_base counts personal KBs against the cap, but
+    only when provisioning a new one — an existing KB returns before the gate."""
+
+    @pytest.mark.asyncio
+    async def test_new_personal_kb_at_cap_raises(self, _mock_lock, install_stub_cache):
+        from shu.billing.entitlements import LimitExceededError
+
+        install_stub_cache(_state_with_kb_limit(2))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        _set_kb_count(mock_db, 2)
+
+        mock_settings = MagicMock()
+        mock_settings.personal_kb_rag_fetch_full_documents = True
+        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
+            with pytest.raises(LimitExceededError):
+                await service.ensure_personal_knowledge_base(
+                    owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+                )
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_existing_personal_kb_bypasses_cap(self, _mock_lock, install_stub_cache):
+        """Cap=0 blocks all new KBs, but a user who already has a personal KB
+        must still get it back — the idempotent return precedes the gate.
+        """
+        install_stub_cache(_state_with_kb_limit(0))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        existing_kb = MagicMock(name="ExistingPersonalKB")
+        existing_kb.is_personal = True
+        existing_kb.owner_id = "user-1"
+        service._get_personal_kb_by_owner = AsyncMock(return_value=existing_kb)
+
+        result = await service.ensure_personal_knowledge_base(
+            owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        assert result is existing_kb
+        assert captured == []
