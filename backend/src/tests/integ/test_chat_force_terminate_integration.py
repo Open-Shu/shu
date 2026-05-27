@@ -150,6 +150,12 @@ async def _capture_stream_id_and_terminate(
         # ~10ms so the terminate POST lands well before finalize.
         deadline = asyncio.get_running_loop().time() + 5.0
         while True:
+            # Bail immediately if _consume_stream already resolved the
+            # future (e.g. set an exception on a non-200 response) so we
+            # don't keep the task alive until the 5s deadline — that
+            # delays the join in the finally block.
+            if stream_id_future.done():
+                return
             registry = getattr(_app.state, "in_flight_streams", {}) or {}
             # Filter by conversation_id so the poller doesn't grab a stream
             # from elsewhere (a browser tab open during dev smoke testing, a

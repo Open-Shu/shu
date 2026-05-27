@@ -605,7 +605,31 @@ class AnthropicAdapter(BaseProviderAdapter):
             return ProviderContentDeltaEventResult(content=content_delta)
 
         if "usage" in chunk:
-            self._latest_usage_event = chunk
+            # SHU-803 AC9b: MERGE the chunk's usage with the prior
+            # ``_latest_usage_event`` (if any) so a later ``message_delta``
+            # (top-level usage carrying only output_tokens) does NOT
+            # overwrite the ``input_tokens`` Anthropic emitted earlier
+            # in ``message_start``. Without the merge, a stream that
+            # naturally completes records ``input_tokens=0`` on the
+            # ``LLMUsage`` row because ``_extract_usage`` reads whatever
+            # the LAST usage-bearing chunk was — and message_delta is
+            # always last.
+            existing_usage = (self._latest_usage_event or {}).get("usage") or {}
+            new_usage = chunk.get("usage") or {}
+            merged_usage = {**existing_usage, **new_usage}
+            self._latest_usage_event = {**chunk, "usage": merged_usage}
+        elif (
+            chunk.get("type") == "message_start"
+            and isinstance(chunk.get("message"), dict)
+            and "usage" in chunk["message"]
+        ):
+            # SHU-803 AC9b: Anthropic emits initial input_tokens on `message_start`
+            # with usage nested under `message`, not top-level. Without this branch
+            # `_latest_usage_event` stays None and a terminate before any
+            # `message_delta` lands loses input_tokens entirely. Normalize the
+            # shape so `_extract_usage` (which jmespath-searches the top-level
+            # `usage` key) sees it the same as a `message_delta` chunk.
+            self._latest_usage_event = {"usage": chunk["message"]["usage"]}
 
         _, index, start_event = jmespath.search(
             "type=='content_block_start' && content_block.type == 'tool_use' && *", chunk

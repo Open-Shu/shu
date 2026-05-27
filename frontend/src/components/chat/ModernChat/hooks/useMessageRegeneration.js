@@ -4,6 +4,7 @@ import log from '../../../../utils/log';
 import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
 import { iterateSSE, tryParseJSON } from '../utils/sseParser';
 import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
+import { makeStreamToken } from './useChatStreaming';
 
 const useMessageRegeneration = ({
   queryClient,
@@ -17,6 +18,17 @@ const useMessageRegeneration = ({
   shouldAutoFollowRef,
   focusMessageById,
   setError,
+  // SHU-803 follow-up: regenerate runs its own SSE loop independent of
+  // `handleStreamingResponse`, so it needs these state setters wired in
+  // directly. Without them, `streamingConversationId` stays null during
+  // a regen and the InputBar never flips Send → Stop.
+  setStreamingConversationId,
+  setStreamingStarted,
+  // SHU-803 follow-up: owned by `useChatStreaming`; tracks which
+  // conversation currently holds the global streaming state. Both
+  // hooks compete to set/clear that state, so the ref serves as the
+  // canonical "do I still own this?" check before any clear.
+  streamingOwnerRef,
 }) => {
   const isMountedRef = useRef(false);
   const abortControllerRef = useRef(null);
@@ -80,6 +92,21 @@ const useMessageRegeneration = ({
       }
 
       startRegeneration(messageId, parentId, tempId);
+
+      // SHU-803 follow-up: mark the conversation as streaming BEFORE
+      // the SSE request fires so the InputBar swaps Send → Stop
+      // immediately. The Stop button stays disabled (with
+      // "Initializing…" tooltip) until the stream_start SSE event
+      // lands and stamps the streamId on the placeholder. Also claim
+      // ownership of the global streaming state — keyed by a per-
+      // stream token so a newer same-conv stream's claim isn't
+      // matched by this regen's closure.
+      const streamToken = makeStreamToken();
+      if (streamingOwnerRef) {
+        streamingOwnerRef.current = streamToken;
+      }
+      setStreamingConversationId?.(conversationId);
+      setStreamingStarted?.(false);
 
       queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
         const existing = getMessagesFromCache(oldData);
@@ -179,6 +206,16 @@ const useMessageRegeneration = ({
         }
 
         completeRegeneration(messageId);
+        // SHU-803 follow-up: release the InputBar back to Send, but
+        // only if this regen still owns the global streaming state.
+        // Keyed by this regen's per-instance streamToken (not
+        // conversationId) so a newer same-conv stream's claim isn't
+        // matched by this regen's closure.
+        if (streamingOwnerRef && streamingOwnerRef.current === streamToken) {
+          streamingOwnerRef.current = null;
+          setStreamingConversationId?.(null);
+          setStreamingStarted?.(false);
+        }
       };
 
       try {
@@ -236,6 +273,32 @@ const useMessageRegeneration = ({
           }
 
           const eventType = parsed?.event;
+
+          // SHU-803 follow-up: stamp the streamId AND this regen's
+          // streamToken on the temp placeholder so the InputBar's
+          // handleInputBarStop can pick them up via
+          // `flattenedMessages.find(...)` AND so handleStopStream's
+          // ownership-ref guard has the per-stream token to compare.
+          if (eventType === 'stream_start') {
+            const streamId = parsed?.content?.stream_id;
+            if (streamId) {
+              queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
+                const existing = getMessagesFromCache(oldData);
+                const updated = existing.map((m) => {
+                  if (m.id !== tempId) {
+                    return m;
+                  }
+                  if (m.streamId === streamId && m.streamToken === streamToken) {
+                    return m;
+                  }
+                  return { ...m, streamId, streamToken };
+                });
+                return rebuildCache(oldData, updated);
+              });
+            }
+            continue;
+          }
+
           if (eventType === 'final_message' && parsed?.content) {
             const created = {
               ...(parsed.content || {}),
@@ -284,6 +347,10 @@ const useMessageRegeneration = ({
             if (!hasContentStarted) {
               hasContentStarted = true;
               extra.reasoning_collapsed = true;
+              // SHU-803 follow-up: gate the InputBar's "Initializing…"
+              // → enabled transition on first content delta (matches
+              // the main streaming path's behavior).
+              setStreamingStarted?.(true);
             }
             updateTempRegenContent(conversationId, tempId, regenAccum, extra);
             continue;
@@ -330,6 +397,11 @@ const useMessageRegeneration = ({
           if (!hasContentStarted) {
             hasContentStarted = true;
             extra.reasoning_collapsed = true;
+            // SHU-803 follow-up: mirror the content_delta branch so the
+            // InputBar's "Initializing…" → enabled transition fires when
+            // an upstream emits raw ``parsed.content`` strings instead
+            // of typed ``content_delta`` events.
+            setStreamingStarted?.(true);
           }
           updateTempRegenContent(conversationId, tempId, regenAccum, extra);
         }
@@ -388,6 +460,9 @@ const useMessageRegeneration = ({
       shouldAutoFollowRef,
       focusMessageById,
       conversationRef,
+      setStreamingConversationId,
+      setStreamingStarted,
+      streamingOwnerRef,
     ]
   );
 

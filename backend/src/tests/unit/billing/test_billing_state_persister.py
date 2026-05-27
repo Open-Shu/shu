@@ -17,7 +17,7 @@ import pytest
 
 from shu.billing.billing_state_persister import PERSIST_KEY, BillingStatePersister
 from shu.billing.cp_client import BillingState
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementSet, LimitSet
 
 
 def _state(**overrides: Any) -> BillingState:
@@ -31,6 +31,13 @@ def _state(**overrides: Any) -> BillingState:
         "total_grant_amount": Decimal("50.00"),
         "remaining_grant_amount": Decimal("12.34"),
         "seat_price_usd": Decimal("20.00"),
+        "limits": LimitSet(),
+        "subscription_status": None,
+        "current_period_start": None,
+        "current_period_end": None,
+        "cancel_at_period_end": False,
+        "canceled_at": None,
+        "usage_markup_multiplier": None,
     }
     base.update(overrides)
     return BillingState(**base)

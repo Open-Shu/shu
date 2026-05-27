@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -119,7 +119,41 @@ class StreamLifecycle:
     user_id: str
     conversation_id: str
     event: asyncio.Event = field(default_factory=asyncio.Event)
+    # SHU-803 follow-up: dedicated event that fires ONLY when the
+    # lifecycle reason resolves to an intentional stop
+    # (``user_terminated`` or ``shutdown``). ``client_disconnected``
+    # leaves this event unset.
+    #
+    # Rationale: ``_iter_with_signal_break`` races provider chunks
+    # against an event so the consumer loop wakes on a stop signal
+    # without waiting for the next provider chunk. Racing against
+    # ``self.event`` (which fires on ANY signal) breaks for the
+    # disconnect-then-stop sequence: ``client_disconnected`` sets
+    # ``self.event``, the wrapper yields its one-shot sentinel,
+    # ``_call_provider`` ignores it because the reason isn't intentional,
+    # and the wrapper switches to plain chunk-yielding. A later
+    # ``user_terminated`` / ``shutdown`` upgrades ``self.reason`` but
+    # ``self.event`` is already set — so the wrapper is no longer
+    # racing and a silent provider can block until the next chunk
+    # (or the httpx 120s read timeout). Racing against this dedicated
+    # event closes that window: ``client_disconnected`` doesn't fire
+    # it, and the eventual intentional-stop signal sets it for the
+    # first time, waking the wrapper.
+    intentional_stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     reason: StreamLifecycleReason | None = None
+    # SHU-803: separate flag tracking whether shutdown was signaled. Cannot
+    # be derived from `reason` alone because the priority-based `signal()`
+    # treats `user_terminated` and `shutdown` as the same tier (both
+    # intentional stops), so a `shutdown` arriving AFTER `user_terminated`
+    # leaves `reason="user_terminated"` unchanged. The drain loop in
+    # `_call_provider` reads this flag between events as the SIGTERM
+    # escape valve — without it, an in-flight drain following a
+    # user-terminate has no way to detect shutdown and would only exit
+    # via cancellation propagation at the lifespan-drain timeout (which
+    # bypasses the shielded finalize since `_call_provider` itself is
+    # not shielded). Set by `signal_shutdown_to_in_flight_streams` and
+    # by `drain_in_flight_streams`; checked by the drain loop.
+    shutdown_signaled: bool = False
     # SHU-802: cleanup callback. Set by the endpoint when it registers the
     # lifecycle in `app.state.in_flight_streams`; invoked by the per-stream
     # supervisor when all variant tasks have completed (registry pop). The
@@ -163,6 +197,15 @@ class StreamLifecycle:
         # Always set the event so consumers blocked on `await event.wait()`
         # wake up even when this call didn't change the reason.
         self.event.set()
+        # SHU-803 follow-up: separately fire the intentional-stop event
+        # iff the RESOLVED reason (after priority resolution) is an
+        # intentional stop. Disconnect-only paths leave this event
+        # unset. A later user_terminate / shutdown upgrade fires it
+        # for the first time even when the main event is already set
+        # from the prior disconnect — that's the load-bearing property
+        # this event was added for. Idempotent like ``event.set()``.
+        if self.reason in ("user_terminated", "shutdown"):
+            self.intentional_stop_event.set()
         return accepted
 
     def resolved_reason(self) -> StreamLifecycleReason:
@@ -230,6 +273,10 @@ async def drain_in_flight_streams(
         return 0
 
     for lc in lifecycles:
+        # SHU-803: set the drain-escape-valve flag before signaling so the
+        # drain loop's between-events check observes it. Idempotent — set
+        # may already be True from the SIGTERM handler having fired first.
+        lc.shutdown_signaled = True
         lc.signal("shutdown")
 
     supervise_tasks = [lc.supervise_task for lc in lifecycles if lc.supervise_task is not None]
@@ -289,6 +336,11 @@ def signal_shutdown_to_in_flight_streams(registry: dict[str, StreamLifecycle]) -
     """
     lifecycles = list(registry.values())
     for lc in lifecycles:
+        # SHU-803: set the drain-escape-valve flag before signaling so any
+        # in-flight `_call_provider` drain loop can exit gracefully on its
+        # next between-events check, allowing the shielded finalize to
+        # commit before lifespan-drain cancellation propagates.
+        lc.shutdown_signaled = True
         lc.signal("shutdown")
     return len(lifecycles)
 
@@ -322,6 +374,157 @@ async def periodic_in_flight_streams_size_log(
             )
         except Exception as e:
             logger.warning(f"in_flight_streams size log error: {e}")
+
+
+# SHU-803 follow-up: sentinel yielded by ``_iter_with_signal_break`` exactly
+# once when ``lifecycle.event`` fires before the next provider chunk
+# arrives. Identity-checked via ``is`` so it can never collide with any
+# real provider event value. Module-level so callers can import for
+# pattern matching.
+_SIGNAL_SENTINEL: object = object()
+
+
+async def _iter_with_signal_break(  # noqa: PLR0912
+    stream: Any, signal_event: asyncio.Event
+) -> AsyncGenerator[Any, None]:
+    """Async-iterator wrapper that races provider chunks against a signal.
+
+    Wraps the provider stream so the consumer loop observes a
+    ``user_terminated`` / ``shutdown`` signal WITHOUT having to wait
+    for the next provider chunk to arrive. The base SHU-803 design
+    checked ``lifecycle.event.is_set()`` at the top of each
+    ``async for`` iteration — fine when the provider streams steadily,
+    but if the provider goes quiet after the user clicks Stop (slow
+    network, rate-limit pause, reasoning model thinking, hung HTTP
+    read), the signal isn't observed until the next chunk arrives.
+    In that gap the early-persist callback hasn't fired, so a refetch
+    or follow-up message during the gap reintroduces the
+    vanishing-content + temporal-ordering races SHU-803's early-persist
+    guarantee is meant to prevent.
+
+    Behavior:
+
+    - Until the signal fires: each next-chunk read races
+      ``signal_event.wait()``. If the chunk wins, yield it normally.
+    - The MOMENT the signal fires (with no chunk pending or before the
+      pending chunk arrives): yield ``_SIGNAL_SENTINEL`` exactly once.
+      The caller's loop body inspects this and triggers its existing
+      terminate path (which then fires the early-persist callback,
+      sets ``draining=True``, etc.) BEFORE the next provider chunk
+      arrives.
+    - After the sentinel: continue yielding provider chunks normally
+      (the drain consumes them silently). A pending chunk task
+      started before the signal is preserved across the sentinel
+      yield, so we don't drop the next provider event.
+
+    Robustness: pending tasks (next-chunk + signal-wait) are tracked
+    and cancelled in a ``finally`` block so an early consumer exit
+    (the for-loop ``break``s out of drain mode on ``ProviderFinalEventResult``,
+    for example) doesn't leak orphaned asyncio tasks. Cancellation
+    exceptions on the awaited cleanup are absorbed since cleanup is
+    best-effort.
+
+    Args:
+        stream: The provider-side async iterator (return value of
+            ``await client.chat_completion(...)``).
+        signal_event: Typically ``lifecycle.event`` — the
+            ``asyncio.Event`` the terminate POST / shutdown drain
+            sets when the signal lands.
+
+    Yields:
+        Provider chunks (passed through unchanged), plus exactly one
+        ``_SIGNAL_SENTINEL`` if the signal fires before stream
+        completion.
+
+    """
+    aiter = stream.__aiter__()
+    pending_chunk: asyncio.Task | None = None
+    signal_task: asyncio.Task | None = None
+    signal_yielded = False
+    try:
+        while True:
+            # Case A: we've already yielded the sentinel once. Resume
+            # normal chunk-yielding so drain consumes whatever the
+            # provider emits next.
+            if signal_yielded:
+                if pending_chunk is None:
+                    pending_chunk = asyncio.create_task(aiter.__anext__())
+                try:
+                    chunk = await pending_chunk
+                except StopAsyncIteration:
+                    pending_chunk = None
+                    return
+                pending_chunk = None
+                yield chunk
+                continue
+
+            # Case B: signal is set BEFORE we have a chance to race
+            # chunk-vs-signal. This happens when the terminate POST
+            # lands in the brief window between handleStreamingResponse
+            # starting and the wrapper's first iteration — e.g., the
+            # user clicked Stop immediately after `stream_start`
+            # arrived but before the provider emitted its first content
+            # chunk. Yield the sentinel right now: blocking on
+            # ``await pending_chunk`` would defeat the wrapper's whole
+            # point (it'd wait for a chunk that may never arrive while
+            # the caller's lifecycle check sits unreachable).
+            if signal_event.is_set():
+                signal_yielded = True
+                yield _SIGNAL_SENTINEL
+                continue
+
+            # Case C: race chunk-vs-signal. The normal hot path.
+            if pending_chunk is None:
+                pending_chunk = asyncio.create_task(aiter.__anext__())
+            if signal_task is None:
+                signal_task = asyncio.create_task(signal_event.wait())
+
+            done, _pending = await asyncio.wait(
+                {pending_chunk, signal_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if pending_chunk in done:
+                # Chunk arrived first (the normal hot path). The signal
+                # may also be done if it fired in the same tick — we
+                # don't yield the sentinel in that case because the
+                # caller's existing lifecycle.event.is_set() check
+                # will fire on this iteration anyway.
+                try:
+                    chunk = pending_chunk.result()
+                except StopAsyncIteration:
+                    pending_chunk = None
+                    return
+                pending_chunk = None
+                yield chunk
+            else:
+                # Signal fired without a chunk. Yield the sentinel exactly
+                # once. ``pending_chunk`` stays alive; we'll resolve it
+                # on the next iteration via the signal_yielded branch.
+                signal_yielded = True
+                yield _SIGNAL_SENTINEL
+    finally:
+        # Best-effort cleanup of orphaned tasks. Cancelling and absorbing
+        # is necessary because (a) consumers may break out of the for-loop
+        # mid-iteration (e.g., drain breaks on ``ProviderFinalEventResult``),
+        # leaving these tasks alive and producing "Task exception was
+        # never retrieved" warnings; (b) the next-chunk task wraps an
+        # HTTP read so cancellation closes the underlying connection,
+        # which is the right behavior on consumer abort anyway.
+        for task in (pending_chunk, signal_task):
+            if task is not None and not task.done():
+                task.cancel()
+        for task in (pending_chunk, signal_task):
+            if task is not None:
+                try:
+                    await task
+                except (StopAsyncIteration, asyncio.CancelledError):
+                    pass
+                except Exception:
+                    # Cleanup is best-effort; provider HTTP errors during
+                    # the cancellation of a pending chunk read are noise
+                    # at this point — the caller has already moved on.
+                    pass
 
 
 @dataclass
@@ -512,7 +715,7 @@ class EnsembleStreamingHelper:
                     },
                 )
 
-    async def _call_provider(
+    async def _call_provider(  # noqa: PLR0912, PLR0915
         self,
         *,
         client: UnifiedLLMClient,
@@ -526,7 +729,8 @@ class EnsembleStreamingHelper:
         tools_enabled: bool,
         lifecycle: "StreamLifecycle",
         content_accumulator: list[str],
-    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool, dict[str, Any]]:
+        on_terminate_signal: Callable[[], Awaitable[None]] | None = None,
+    ) -> tuple[ProviderResponseEvent | None, list[ChatMessage] | None, bool, dict[str, Any], dict[str, Any]]:
         """Stream provider responses for a single model variant and enqueue interim events to the provided queue.
 
         Parameters
@@ -548,20 +752,32 @@ class EnsembleStreamingHelper:
                 content-delta strings are appended in order. The list is the source of truth
                 for partial content on early termination — `"".join(content_accumulator)` gives
                 whatever the provider had emitted before the break.
+            on_terminate_signal (Optional[Callable[[], Awaitable[None]]]): SHU-803 follow-up.
+                One-shot callback invoked when a ``user_terminated`` signal is detected and
+                BEFORE the silent drain begins. Caller closes over ``content_accumulator`` and
+                the variant context, writes the partial Message row in its own session, and
+                stores the assigned id back via a caller-managed holder. Any exception is
+                caught and swallowed — drain proceeds normally and finalize falls back to its
+                existing INSERT-at-drain-finish path. Not invoked on ``shutdown`` (the lifespan
+                drain budget is too tight to pay for an extra DB round-trip per stream).
 
         Returns
         -------
-            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]], bool, dict[str, Any]]:
+            tuple[Optional[ProviderResponseEvent], Optional[List[ChatMessage]], bool, dict[str, Any], dict[str, Any]]:
                 final_message_event: The provider's final event (content or error) if produced, otherwise None.
                 followup_messages: Additional messages emitted by the provider (e.g., from a tool call) to be sent back for follow-up, or None.
                 terminated: SHU-802. True if the loop exited early because the lifecycle was
                     signalled with ``user_terminated`` / ``shutdown``; the caller transitions
                     to finalize with the partial content from ``content_accumulator``.
                 partial_usage: SHU-802. Snapshot of ``client.provider_adapter.get_partial_usage_snapshot()``
-                    at the break point — populated only when ``terminated`` is True. Empty dict on
-                    natural completion (the final event's metadata carries the natural-end usage).
-                    See AC10: the LLMUsage row for an interrupted stream records these tokens when
-                    the provider had emitted usage events before the break.
+                    at drain exit (or at break for shutdown-on-entry) — populated only when ``terminated``
+                    is True. Empty dict on natural completion (the final event's metadata carries the
+                    natural-end usage). See AC10: the LLMUsage row for an interrupted stream records
+                    these tokens when the provider had emitted usage events before the break.
+                drain_audit: SHU-803 AC9g. Audit fields stamped on the LLMUsage row's
+                    ``request_metadata`` for terminated streams. Empty dict on the non-terminated path.
+                    Keys: ``drain_outcome`` ∈ {``final_event``, ``done``, ``exception``, ``shutdown_aborted``},
+                    ``cancel_attempted: bool``, ``cancel_succeeded: bool``.
 
         """
         final_message_event: ProviderFinalEventResult | None = None
@@ -569,76 +785,222 @@ class EnsembleStreamingHelper:
         llm_params = None
         terminated = False
         partial_usage: dict[str, Any] = {}
+        drain_audit: dict[str, Any] = {}
 
-        async for stream_event in await client.chat_completion(
-            messages=messages,
-            model=inputs.model.model_name,
-            stream=allowed_to_stream,
-            model_overrides=inputs.model_configuration.parameter_overrides or None,
-            llm_params=llm_params,
-            return_as_stream=True,  # We always stream to our frontends
-            tools_enabled=tools_enabled,
-        ):
-            # SHU-802: between-events terminate check. Only intentional stops
-            # short-circuit — `client_disconnected` lets the LLM run to its
-            # natural end so the full response lands (the headline bug-fix
-            # behavior). The check fires BEFORE event processing so we don't
-            # enqueue a stale delta after the user has hit Stop. Latency from
-            # terminate-POST → break is gated by the provider's inter-chunk
-            # interval: the provider has to deliver the next chunk before we
-            # can observe the event, so a slow provider extends the window.
-            # This matches the design decision around per-provider
-            # partial-usage accuracy in H4.
-            if lifecycle.event.is_set() and lifecycle.reason in ("user_terminated", "shutdown"):
-                terminated = True
-                # SHU-802 AC10: capture whatever provider-reported usage has
-                # accumulated up to this point so the LLMUsage row for the
-                # interrupted stream records real tokens instead of zeros.
-                # Empty dict (no usage emitted yet) flips partial_usage_unavailable
-                # on in finalize.
-                try:
-                    partial_usage = client.provider_adapter.get_partial_usage_snapshot()
-                except Exception as snapshot_exc:
-                    # Snapshot failure must not mask the terminate path. Log
-                    # and fall through with an empty snapshot — the existing
-                    # partial_usage_unavailable=True path then applies.
-                    logger.warning(
-                        "Failed to capture partial usage on terminate: %s",
-                        snapshot_exc,
-                        exc_info=True,
+        # SHU-803 AC9c: drain-after-terminate state. Once a ``user_terminated``
+        # signal lands, we transition to drain mode: stop forwarding content
+        # deltas to the SSE queue and stop appending to ``content_accumulator``
+        # (so the user sees the stream stop immediately and the persisted
+        # ``Message.content`` matches what was on screen), but keep consuming
+        # the upstream HTTP stream silently to capture the eventual usage
+        # event. End-only-usage providers (OpenAI Chat Completions /
+        # OpenRouter / Responses API) emit usage in their final chunk; drain
+        # ensures the LLMUsage row records what the provider actually billed.
+        # Uncapped by wall-clock (per ticket revision) — the implicit upper
+        # bound is the httpx ``SHU_LLM_STREAMING_READ_TIMEOUT=120s``
+        # inter-chunk read timeout. SIGTERM escape valve handled via
+        # ``lifecycle.shutdown_signaled`` between-events check.
+        draining = False
+        cancel_task: asyncio.Task[bool] | None = None
+        drain_start_ts: datetime | None = None
+        heartbeat_last_emit: datetime | None = None
+
+        try:
+            # SHU-803 follow-up: wrap the provider stream so the terminate
+            # signal is observed without waiting for the next chunk to
+            # arrive. The wrapper yields _SIGNAL_SENTINEL exactly once
+            # when ``lifecycle.event`` fires before a pending chunk
+            # resolves — that drives the existing terminate-detection
+            # block below to fire immediately (and run early-persist),
+            # rather than blocking inside ``await __anext__()`` for the
+            # provider to emit again. See ``_iter_with_signal_break``
+            # docstring for the full rationale.
+            provider_stream = await client.chat_completion(
+                messages=messages,
+                model=inputs.model.model_name,
+                stream=allowed_to_stream,
+                model_overrides=inputs.model_configuration.parameter_overrides or None,
+                llm_params=llm_params,
+                return_as_stream=True,  # We always stream to our frontends
+                tools_enabled=tools_enabled,
+            )
+            # SHU-803 follow-up: race against the INTENTIONAL-stop event,
+            # not the omnibus ``lifecycle.event``. A ``client_disconnected``
+            # sets the omnibus event but does NOT signal we should drain
+            # (disconnect-survival lets the stream finish naturally). If
+            # the wrapper raced the omnibus event, a disconnect would
+            # consume its one-shot sentinel and a LATER user_terminate /
+            # shutdown couldn't wake the silent-provider race anymore.
+            # The dedicated event fires only on user_terminated /
+            # shutdown — including the case where an earlier disconnect
+            # already set the omnibus event.
+            async for stream_event in _iter_with_signal_break(provider_stream, lifecycle.intentional_stop_event):
+                # ===== SHU-803: terminate-signal state transition =====
+                # Between-events check. Only intentional stops short-circuit —
+                # ``client_disconnected`` lets the LLM run to its natural end
+                # so the full response lands (the SHU-802 headline behavior).
+                # When ``stream_event is _SIGNAL_SENTINEL`` this branch is the
+                # ENTIRE handling — we then ``continue`` past chunk-processing
+                # since the sentinel is not a real provider event.
+                if not draining and lifecycle.event.is_set() and lifecycle.reason in ("user_terminated", "shutdown"):
+                    terminated = True
+                    if lifecycle.reason == "shutdown" or lifecycle.shutdown_signaled:
+                        # Shutdown entry: don't drain. Lifespan drain has a
+                        # wall-clock budget (5s default) — spending it on per-
+                        # stream drains would risk SIGKILL before finalize
+                        # commits. Snapshot now and break.
+                        drain_audit = {
+                            "drain_outcome": "shutdown_aborted",
+                            "cancel_attempted": False,
+                            "cancel_succeeded": False,
+                        }
+                        break
+                    # ``user_terminated`` entry: enter drain mode and spawn
+                    # cancel concurrently. The cancel races drain — whichever
+                    # ends generation faster wins. A False / no-op cancel
+                    # (most adapters) just means drain runs to natural end.
+                    draining = True
+                    drain_start_ts = datetime.now(UTC)
+                    heartbeat_last_emit = drain_start_ts
+                    cancel_task = asyncio.create_task(client.provider_adapter.cancel())
+
+                    # SHU-803 follow-up: fire the early-persist callback
+                    # BEFORE the drain starts consuming silently. The callback
+                    # writes the partial Message row to DB at signal time so
+                    # (a) a navigation refetch during the (possibly minute-
+                    # long) drain sees the persisted partial, and (b) a
+                    # follow-up user message sent before drain finishes orders
+                    # correctly by `created_at`. The callback owns its own
+                    # session (no entanglement with the stream task), captures
+                    # `content_accumulator` from the caller scope, and stores
+                    # the assigned id back via a caller-managed holder.
+                    #
+                    # Defensive: ANY exception in the callback is logged and
+                    # swallowed. On callback failure, `early_persisted_message_id`
+                    # stays None on the result, finalize falls through to its
+                    # existing INSERT path at drain-finish, and the user
+                    # observes today's behavior (vanishing-content + ordering
+                    # race during drain). The drain itself is unaffected, so
+                    # billing fidelity is preserved.
+                    if on_terminate_signal is not None:
+                        try:
+                            await on_terminate_signal()
+                        except Exception:
+                            logger.warning(
+                                "Early-persist callback raised; finalize will INSERT at drain-finish",
+                                extra={
+                                    "model": inputs.model.model_name,
+                                    "variant_index": variant_index,
+                                },
+                                exc_info=True,
+                            )
+
+                    logger.info(
+                        "drain_started",
+                        extra={
+                            "model": inputs.model.model_name,
+                            "adapter_type": type(client.provider_adapter).__name__,
+                            "variant_index": variant_index,
+                        },
                     )
-                    partial_usage = {}
-                break
+                    # Fall through to silent-consume branch — this very event
+                    # might be a Final (provider was about to finish anyway).
 
-            stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
-            logger.debug("EVENT %s", stream_event)
-            if isinstance(stream_event, ProviderToolCallEventResult) and tools_enabled:
-                followup_messages = stream_event.additional_messages
-                if stream_event.content:
+                # SHU-803 follow-up: skip the rest of the loop body when this
+                # iteration was driven by the signal sentinel (no actual
+                # provider event to process). The terminate-detection block
+                # above already handled the state transition; falling through
+                # to drain-mode or normal-mode handling would treat the
+                # sentinel object as a provider event and crash.
+                if stream_event is _SIGNAL_SENTINEL:
+                    continue
+
+                # ===== SHU-803: drain mode silent-consume =====
+                if draining:
+                    # SIGTERM escape valve. ``shutdown_signaled`` is set on
+                    # the lifecycle by ``signal_shutdown_to_in_flight_streams``
+                    # / ``drain_in_flight_streams``; it's a separate flag from
+                    # ``reason`` because priority semantics treat
+                    # user_terminated and shutdown as equal tier (a shutdown
+                    # after user_terminated does NOT update ``reason``).
+                    # Without this flag the drain would only exit via the
+                    # lifespan-drain cancellation propagation, which bypasses
+                    # the shielded finalize.
+                    if lifecycle.shutdown_signaled:
+                        drain_audit["drain_outcome"] = "shutdown_aborted"
+                        break
+                    # Heartbeat every 30s of drain wall-clock. Operators grep
+                    # ``drain_in_progress`` to distinguish "drain working as
+                    # designed for a slow response" from "drain stuck."
+                    now = datetime.now(UTC)
+                    if heartbeat_last_emit is not None and (now - heartbeat_last_emit).total_seconds() >= 30:
+                        logger.info(
+                            "drain_in_progress",
+                            extra={
+                                "elapsed_seconds": (now - drain_start_ts).total_seconds()
+                                if drain_start_ts is not None
+                                else None,
+                                "model": inputs.model.model_name,
+                                "adapter_type": type(client.provider_adapter).__name__,
+                                "variant_index": variant_index,
+                            },
+                        )
+                        heartbeat_last_emit = now
+                    # Final-event detection — capture the natural end of the
+                    # stream (the OpenAI Responses ``response.completed``
+                    # path; Anthropic ``message_delta`` with end_turn). The
+                    # adapter's ``handle_provider_event`` has already run
+                    # for this chunk inside ``_stream_response``, so any
+                    # usage event in the same chunk has been stashed into
+                    # adapter internal state — the post-loop snapshot picks
+                    # it up.
+                    if isinstance(stream_event, ProviderFinalEventResult):
+                        drain_audit["drain_outcome"] = "final_event"
+                        break
+                    # All other events (content deltas, reasoning deltas,
+                    # tool-call deltas) are silently dropped during drain.
+                    continue
+
+                # ===== Normal mode: existing SHU-802 event handling =====
+                stream_event: ProviderEventResult = stream_event  # noqa: PLW0127, PLW2901 # typing for easier understanding
+                logger.debug("EVENT %s", stream_event)
+                if isinstance(stream_event, ProviderToolCallEventResult) and tools_enabled:
+                    followup_messages = stream_event.additional_messages
+                    if stream_event.content:
+                        await queue.put(
+                            ProviderResponseEvent(
+                                type="reasoning_delta",
+                                content=f"{stream_event.content}\n",
+                                variant_index=variant_index,
+                                model_configuration_id=getattr(inputs.model_configuration, "id", None),
+                                model_configuration=model_snapshot,
+                                model_name=model_display_name,
+                                model_display_name=model_display_name,
+                            )
+                        )
+                elif (
+                    isinstance(stream_event, (ProviderContentDeltaEventResult, ProviderReasoningDeltaEventResult))
+                    and stream_event.content
+                ):
+                    # SHU-802: accumulate content-delta strings so finalize can
+                    # persist partial content if the stream is terminated. We
+                    # only track ContentDelta (not ReasoningDelta) since the
+                    # assistant Message.content field holds final answer text,
+                    # not reasoning traces.
+                    if isinstance(stream_event, ProviderContentDeltaEventResult):
+                        content_accumulator.append(stream_event.content)
                     await queue.put(
-                        ProviderResponseEvent(
-                            type="reasoning_delta",
-                            content=f"{stream_event.content}\n",
-                            variant_index=variant_index,
-                            model_configuration_id=getattr(inputs.model_configuration, "id", None),
-                            model_configuration=model_snapshot,
-                            model_name=model_display_name,
-                            model_display_name=model_display_name,
+                        ProviderResponseEvent.from_provider_event_result(
+                            stream_event,
+                            variant_index,
+                            getattr(inputs.model_configuration, "id", None),
+                            model_snapshot or None,
+                            model_display_name,
+                            inputs.model.model_name,
                         )
                     )
-            elif (
-                isinstance(stream_event, (ProviderContentDeltaEventResult, ProviderReasoningDeltaEventResult))
-                and stream_event.content
-            ):
-                # SHU-802: accumulate content-delta strings so finalize can
-                # persist partial content if the stream is terminated. We
-                # only track ContentDelta (not ReasoningDelta) since the
-                # assistant Message.content field holds final answer text,
-                # not reasoning traces.
-                if isinstance(stream_event, ProviderContentDeltaEventResult):
-                    content_accumulator.append(stream_event.content)
-                await queue.put(
-                    ProviderResponseEvent.from_provider_event_result(
+                elif isinstance(stream_event, (ProviderFinalEventResult, ProviderErrorEventResult)):
+                    final_message_event = ProviderResponseEvent.from_provider_event_result(
                         stream_event,
                         variant_index,
                         getattr(inputs.model_configuration, "id", None),
@@ -646,18 +1008,101 @@ class EnsembleStreamingHelper:
                         model_display_name,
                         inputs.model.model_name,
                     )
+        except Exception as exc:
+            # SHU-803 AC9c: an exception during drain (httpx ReadTimeout
+            # after 120s of upstream silence, network teardown, etc.) is
+            # caught and folded into ``drain_outcome="exception"`` so
+            # finalize commits with whatever usage was captured up to
+            # the exception. Exceptions before drain entry are re-raised
+            # for the existing error-handling paths in
+            # ``_stream_variant_phase``.
+            if draining:
+                drain_audit["drain_outcome"] = "exception"
+                drain_audit["drain_exception_type"] = type(exc).__name__
+                logger.warning(
+                    "drain_exception",
+                    extra={
+                        "model": inputs.model.model_name,
+                        "error_type": type(exc).__name__,
+                        "variant_index": variant_index,
+                    },
+                    exc_info=True,
                 )
-            elif isinstance(stream_event, (ProviderFinalEventResult, ProviderErrorEventResult)):
-                final_message_event = ProviderResponseEvent.from_provider_event_result(
-                    stream_event,
-                    variant_index,
-                    getattr(inputs.model_configuration, "id", None),
-                    model_snapshot or None,
-                    model_display_name,
-                    inputs.model.model_name,
+            else:
+                raise
+
+        # ===== SHU-803: post-drain wrapup =====
+        # On either drain path (user_terminated drain or shutdown
+        # immediate break) we need: a final usage snapshot from the
+        # adapter, an awaited cancel_task with bounded timeout, and
+        # the drain_audit dict populated for finalize to stamp on the
+        # LLMUsage row's request_metadata (AC9g).
+        if draining or terminated:
+            # If we drained through to natural [DONE] without ever
+            # seeing a ProviderFinalEventResult AND no exception fired,
+            # drain_outcome wasn't set inside the loop — that's the
+            # "done" case (typical for OpenAI Chat Completions where
+            # the usage chunk is the last chunk before [DONE], and the
+            # adapter consumes it via handle_provider_event but never
+            # yields a Final).
+            drain_audit.setdefault("drain_outcome", "done")
+
+            # Await the cancel task with a tight timeout. ResponsesAdapter
+            # cancel() has its own 2s httpx timeout so this rarely waits
+            # the full 2s here; the cap is belt-and-suspenders for an
+            # adapter that ignored the contract.
+            if cancel_task is not None:
+                drain_audit["cancel_attempted"] = True
+                try:
+                    cancel_succeeded = await asyncio.wait_for(cancel_task, timeout=2.0)
+                    drain_audit["cancel_succeeded"] = bool(cancel_succeeded)
+                except TimeoutError:
+                    cancel_task.cancel()
+                    drain_audit["cancel_succeeded"] = False
+                except Exception:
+                    # Cancel contract says implementations MUST NOT raise;
+                    # fold any escape into a False return so the
+                    # finalize-side request_metadata stays clean.
+                    drain_audit["cancel_succeeded"] = False
+            else:
+                drain_audit.setdefault("cancel_attempted", False)
+                drain_audit.setdefault("cancel_succeeded", False)
+
+            # Final usage snapshot. The adapter override flushes any
+            # pending ``_latest_usage_event`` into ``self.usage`` and
+            # returns a copy — idempotent, so a re-snapshot here over
+            # the same internal state is safe. Captures any usage event
+            # consumed silently during drain.
+            try:
+                partial_usage = client.provider_adapter.get_partial_usage_snapshot()
+            except Exception as snapshot_exc:
+                logger.warning(
+                    "Failed to capture partial usage on drain exit: %s",
+                    snapshot_exc,
+                    exc_info=True,
+                )
+                partial_usage = {}
+
+            # Drain duration log on exit (only when we actually entered
+            # the drain loop — shutdown_aborted-on-entry skips this).
+            if drain_start_ts is not None:
+                drain_elapsed = (datetime.now(UTC) - drain_start_ts).total_seconds()
+                logger.info(
+                    "drain_completed",
+                    extra={
+                        "drain_outcome": drain_audit.get("drain_outcome"),
+                        "drain_elapsed_seconds": drain_elapsed,
+                        "model": inputs.model.model_name,
+                        "adapter_type": type(client.provider_adapter).__name__,
+                        "variant_index": variant_index,
+                        "cancel_attempted": drain_audit.get("cancel_attempted"),
+                        "cancel_succeeded": drain_audit.get("cancel_succeeded"),
+                        "partial_input_tokens": partial_usage.get("input_tokens", 0),
+                        "partial_output_tokens": partial_usage.get("output_tokens", 0),
+                    },
                 )
 
-        return final_message_event, followup_messages, terminated, partial_usage
+        return final_message_event, followup_messages, terminated, partial_usage, drain_audit
 
     async def _stream_variant_phase(  # noqa: PLR0912, PLR0915
         self,
@@ -666,6 +1111,9 @@ class EnsembleStreamingHelper:
         inputs: "ModelExecutionInputs",
         queue: asyncio.Queue,
         conversation_id: str,
+        parent_message_id: str,
+        use_parent_as_message_id: bool,
+        regen_lineage: "RegenLineageInfo | None",
         force_no_streaming: bool,
         start_time: datetime,
         lifecycle: "StreamLifecycle",
@@ -786,10 +1234,170 @@ class EnsembleStreamingHelper:
             # before the break — finalize flags this with
             # `partial_usage_unavailable=True`.
             partial_usage: dict[str, Any] = {}
+            # SHU-803 AC9g: drain audit fields stamped on the LLMUsage row's
+            # request_metadata for terminated streams. Populated by
+            # `_call_provider` only when terminated; empty dict otherwise.
+            drain_audit: dict[str, Any] = {}
+
+            # SHU-803 follow-up: terminate-time early-persist holder. The
+            # `on_terminate_signal` callback below stamps the assigned
+            # message_id + variant_index here when it commits successfully.
+            # `_finalize_variant_phase` reads these via the returned
+            # VariantStreamResult to decide UPDATE-existing vs. INSERT-new.
+            # Empty dict on (a) natural completion (callback never fires) or
+            # (b) callback failure (callback returns cleanly without stamping).
+            early_state: dict[str, Any] = {}
+
+            async def on_terminate_signal() -> None:
+                """SHU-803 follow-up: write the partial assistant Message at terminate-signal time.
+
+                Lifted from the regen-aware INSERT block in
+                `_finalize_variant_phase` (lines that handle assigned_message_id /
+                variant_index assignment + regen lineage backfill + IntegrityError
+                retry). Runs in its own fresh session — completely independent of
+                the stream task's session lifecycle. Captures `content_accumulator`,
+                `client`, lifecycle, regen_lineage, and the variant context from
+                the enclosing scope.
+
+                Side effect on success: ``early_state["message_id"]`` and
+                ``early_state["variant_index"]`` are set. On any failure
+                (regen retry exhaustion, transient DB error), returns cleanly
+                without stamping so `_finalize_variant_phase` falls through to
+                its existing INSERT-at-drain-finish path.
+
+                Does NOT write LLMUsage — that stays with finalize after drain
+                exits, so usage tokens reflect drain's final snapshot.
+                """
+                partial_content = "".join(content_accumulator).strip()
+                try:
+                    partial_usage_at_signal = client.provider_adapter.get_partial_usage_snapshot()
+                except Exception:
+                    partial_usage_at_signal = {}
+                partial_usage_unavailable_at_signal = not partial_usage_at_signal
+
+                base_metadata: dict[str, Any] = dict(config_metadata)
+                base_metadata["response_time_ms"] = (datetime.now(UTC) - start_time).total_seconds() * 1000
+                base_metadata["streamed"] = True
+                base_metadata["has_citations"] = False
+                base_metadata["stream_state"] = lifecycle.resolved_reason()
+                if partial_usage_unavailable_at_signal:
+                    base_metadata["partial_usage_unavailable"] = True
+
+                session_factory = get_async_session_local()
+                attempt = 0
+                while True:
+                    attempt += 1
+                    now_signal = datetime.now(UTC)
+                    try:
+                        async with session_factory() as session:
+                            # Regen-only: legacy backfill of original target's
+                            # lineage + compute new variant_index from sibling-max.
+                            # Mirrors the same block in `_finalize_variant_phase`.
+                            if regen_lineage:
+                                target_row = (
+                                    await session.execute(
+                                        select(Message).where(Message.id == regen_lineage.target_message_id)
+                                    )
+                                ).scalar_one_or_none()
+                                if target_row and target_row.parent_message_id is None:
+                                    target_row.parent_message_id = regen_lineage.root_id
+                                    if target_row.id == regen_lineage.root_id:
+                                        target_row.variant_index = 0
+                                sibling_rows = (
+                                    await session.execute(
+                                        select(Message.variant_index).where(
+                                            Message.parent_message_id == regen_lineage.root_id
+                                        )
+                                    )
+                                ).all()
+                                existing_indices = [vi for (vi,) in sibling_rows if vi is not None]
+                                assigned_variant_index = (max(existing_indices) + 1) if existing_indices else 1
+                                assigned_parent_message_id = regen_lineage.root_id
+                                assigned_message_id = str(uuid.uuid4())
+                                metadata_dict = {
+                                    **base_metadata,
+                                    "regenerated": True,
+                                    "regenerated_from_message_id": regen_lineage.target_message_id,
+                                }
+                            else:
+                                assigned_variant_index = variant_index
+                                assigned_parent_message_id = parent_message_id
+                                assigned_message_id = (
+                                    parent_message_id
+                                    if use_parent_as_message_id and variant_index == 0
+                                    else str(uuid.uuid4())
+                                )
+                                metadata_dict = dict(base_metadata)
+
+                            assistant_msg = Message(
+                                id=assigned_message_id,
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=partial_content,
+                                model_id=inputs.model.id,
+                                message_metadata=metadata_dict,
+                                parent_message_id=assigned_parent_message_id,
+                                variant_index=assigned_variant_index,
+                            )
+                            session.add(assistant_msg)
+                            await session.flush()
+
+                            # Bump conversation.updated_at at signal time so the
+                            # conversation sorts to top of "recently updated"
+                            # immediately. Finalize's UPDATE branch SKIPS this
+                            # bump to avoid double-write (the cosmetic ordering
+                            # is already correct after this commit).
+                            await session.execute(
+                                update(Conversation)
+                                .where(Conversation.id == conversation_id)
+                                .values(updated_at=now_signal)
+                            )
+
+                            await session.commit()
+                            early_state["message_id"] = assigned_message_id
+                            early_state["variant_index"] = assigned_variant_index
+                            logger.info(
+                                "Early-persist of terminated variant succeeded",
+                                extra={
+                                    "phase": "early_persist_terminated",
+                                    "conversation_id": conversation_id,
+                                    "variant_index": assigned_variant_index,
+                                    "message_id": assigned_message_id,
+                                    "attempt": attempt,
+                                    "regen": regen_lineage is not None,
+                                },
+                            )
+                        # success — exit retry loop
+                        return
+                    except IntegrityError as ie:
+                        # Same retry semantics as `_finalize_variant_phase`:
+                        # regen races on (parent_message_id, variant_index)
+                        # UNIQUE; non-regen path should never trip this.
+                        # Exhausting the budget here returns cleanly (no
+                        # stamping) so finalize falls through to its INSERT
+                        # path at drain-finish.
+                        if not regen_lineage or attempt >= REGEN_MAX_ATTEMPTS:
+                            logger.error(
+                                "Early-persist IntegrityError after %d attempts (regen=%s): %s",
+                                attempt,
+                                regen_lineage is not None,
+                                ie,
+                            )
+                            return
+                        logger.info(
+                            "Early-persist regen variant_index conflict on attempt %d; retrying",
+                            attempt,
+                        )
 
             # We loop until the agents are done pulling what they need to pull.
             while True:
-                final_message_event, additional_messages, terminated, partial_usage = await self._call_provider(
+                (
+                    final_message_event,
+                    additional_messages,
+                    terminated,
+                    partial_usage,
+                    drain_audit,
+                ) = await self._call_provider(
                     client=client,
                     messages=call_messages,
                     inputs=inputs,
@@ -801,6 +1409,7 @@ class EnsembleStreamingHelper:
                     tools_enabled=tools_enabled,
                     lifecycle=lifecycle,
                     content_accumulator=content_accumulator,
+                    on_terminate_signal=on_terminate_signal,
                 )
                 # SHU-802: user_terminated / shutdown short-circuits the tool
                 # loop too — once the lifecycle is signalled we stop calling
@@ -861,6 +1470,12 @@ class EnsembleStreamingHelper:
                     usage=partial_usage,
                     model_name_for_event=model_display_name,
                     final_event_type="final_message",
+                    drain_audit=drain_audit,
+                    # SHU-803 follow-up: hand off the early-persisted ids
+                    # (if the callback committed successfully) so finalize
+                    # takes the UPDATE-existing branch instead of INSERT.
+                    early_persisted_message_id=early_state.get("message_id"),
+                    early_persisted_variant_index=early_state.get("variant_index"),
                 )
 
             if final_message_event is None:
@@ -1038,6 +1653,172 @@ class EnsembleStreamingHelper:
         if result.success:
             assert result.full_content is not None, "VariantStreamResult.success requires full_content"
 
+            # SHU-803 follow-up: UPDATE-existing branch. When the
+            # terminate-time `on_terminate_signal` callback in
+            # `_stream_variant_phase` committed the partial Message at
+            # signal time, this branch only needs to refine the
+            # `partial_usage_unavailable` flag (drain may have captured
+            # usage that wasn't available at signal time) and INSERT
+            # the LLMUsage row. No Message INSERT, no retry loop (the
+            # UNIQUE-constrained columns don't change on UPDATE), and
+            # no `conversation.updated_at` bump (already done at signal
+            # time — bumping again would be cosmetic noise).
+            if result.early_persisted_message_id is not None:
+                early_msg_id = result.early_persisted_message_id
+                early_variant_index = (
+                    result.early_persisted_variant_index
+                    if result.early_persisted_variant_index is not None
+                    else variant_index
+                )
+                early_assistant_msg_loaded: Message | None = None
+                try:
+                    async with session_factory() as session:
+                        # Refine partial_usage_unavailable based on drain-
+                        # final state. At signal time we may not have had
+                        # usage yet (flag=True); drain might have captured
+                        # the end-of-stream usage chunk between then and
+                        # now (flag should flip to False).
+                        existing_msg = (
+                            await session.execute(select(Message).where(Message.id == early_msg_id))
+                        ).scalar_one_or_none()
+                        if existing_msg is not None:
+                            metadata_now = dict(existing_msg.message_metadata or {})
+                            if result.partial_usage_unavailable:
+                                metadata_now["partial_usage_unavailable"] = True
+                            else:
+                                metadata_now.pop("partial_usage_unavailable", None)
+                            existing_msg.message_metadata = metadata_now
+                            # SQLAlchemy doesn't deep-diff JSON columns by
+                            # default; flag the attribute as modified so the
+                            # UPDATE actually emits.
+                            from sqlalchemy.orm.attributes import flag_modified
+
+                            flag_modified(existing_msg, "message_metadata")
+
+                        # Insert LLMUsage with drain-final state.
+                        # Terminated streams record success=False with the
+                        # interrupted error message (matches the existing
+                        # INSERT branch). Drain audit goes on
+                        # request_metadata for ops grep.
+                        early_request_metadata: dict[str, Any] | None = (
+                            dict(result.drain_audit) if result.drain_audit else None
+                        )
+                        await get_usage_recorder().record(
+                            provider_id=inputs.model.provider_id,
+                            model_id=inputs.model.id,
+                            request_type="chat",
+                            input_tokens=result.usage.get("input_tokens", 0),
+                            output_tokens=result.usage.get("output_tokens", 0),
+                            total_cost=safe_decimal(result.usage.get("cost")),
+                            user_id=str(conversation_owner_id) if conversation_owner_id else None,
+                            response_time_ms=result.metadata.get("response_time_ms"),
+                            success=False,
+                            error_message=f"Stream interrupted: {lifecycle.resolved_reason()}",
+                            request_metadata=early_request_metadata,
+                            session=session,
+                        )
+
+                        await session.commit()
+
+                        # Post-commit reload with relationships for SSE.
+                        try:
+                            stmt = (
+                                select(Message)
+                                .where(Message.id == early_msg_id)
+                                .options(
+                                    selectinload(Message.model),
+                                    selectinload(Message.conversation),
+                                    selectinload(Message.attachments),
+                                )
+                            )
+                            early_assistant_msg_loaded = (await session.execute(stmt)).scalar_one()
+                        except Exception as reload_exc:
+                            logger.warning(
+                                "Post-commit reload failed on early-persist UPDATE; "
+                                "emitting final_message with degraded relationship metadata.",
+                                extra={
+                                    "phase": "finalize_post_commit_reload_failed",
+                                    "conversation_id": conversation_id,
+                                    "variant_index": early_variant_index,
+                                    "error_type": type(reload_exc).__name__,
+                                },
+                                exc_info=True,
+                            )
+                            early_assistant_msg_loaded = existing_msg
+                except Exception as exc:
+                    # LLMUsage INSERT or session commit failed. The Message
+                    # row from early-persist is already committed — user
+                    # content is preserved; we have a billing-data gap.
+                    # Log ERROR for ops grep and best-effort reload the
+                    # Message for the SSE event so the consumer doesn't
+                    # hang waiting for a terminal event.
+                    logger.error(
+                        "Variant finalize UPDATE-on-early-persist rolled back; " "Message persists, LLMUsage missing",
+                        extra={
+                            "phase": "finalize_rollback",
+                            "conversation_id": conversation_id,
+                            "variant_index": early_variant_index,
+                            "error_type": type(exc).__name__,
+                            "early_persisted": True,
+                            "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+                        },
+                        exc_info=True,
+                    )
+                    try:
+                        async with session_factory() as session_reload:
+                            stmt = (
+                                select(Message)
+                                .where(Message.id == early_msg_id)
+                                .options(
+                                    selectinload(Message.model),
+                                    selectinload(Message.conversation),
+                                    selectinload(Message.attachments),
+                                )
+                            )
+                            early_assistant_msg_loaded = (await session_reload.execute(stmt)).scalar_one_or_none()
+                    except Exception:
+                        early_assistant_msg_loaded = None
+
+                if early_assistant_msg_loaded is None:
+                    # Catastrophic: can't load the early-persisted row.
+                    # Emit a terminal error event so the SSE consumer
+                    # exits its `queue.get()` loop.
+                    await queue.put(
+                        self._create_error_event(
+                            "An internal error prevented loading your response. Please try again.",
+                            early_variant_index,
+                            inputs,
+                            model_snapshot,
+                            model_display_name,
+                        )
+                    )
+                else:
+                    await queue.put(
+                        ProviderResponseEvent(
+                            type=result.final_event_type or "final_message",
+                            content=serialize_message_for_sse(early_assistant_msg_loaded),
+                            variant_index=early_variant_index,
+                            model_configuration_id=getattr(inputs.model_configuration, "id", None),
+                            model_configuration=model_snapshot or None,
+                            model_name=result.model_name_for_event,
+                            model_display_name=model_display_name,
+                        )
+                    )
+                logger.info(
+                    "Variant finalize phase complete",
+                    extra={
+                        "phase": "finalize_complete",
+                        "conversation_id": conversation_id,
+                        "variant_index": early_variant_index,
+                        "success": early_assistant_msg_loaded is not None,
+                        "lifecycle_reason": lifecycle.resolved_reason(),
+                        "terminated": True,
+                        "early_persisted": True,
+                        "elapsed_ms": (datetime.now(UTC) - finalize_phase_start).total_seconds() * 1000,
+                    },
+                )
+                return
+
             # Retry loop only matters for the regen path; for the non-regen
             # path the variant_index is fixed by the ensemble loop counter
             # and there is no risk of a UNIQUE collision. We use a single
@@ -1138,6 +1919,16 @@ class EnsembleStreamingHelper:
                         else:
                             usage_success = True
                             usage_error_message = None
+                        # SHU-803 AC9g: stamp drain audit fields on the
+                        # LLMUsage row's request_metadata for terminated
+                        # streams so ops can distinguish a clean drain
+                        # (final_event / done) from a shutdown-truncated
+                        # one (shutdown_aborted) or a stuck upstream
+                        # (exception). Non-terminated rows skip this —
+                        # request_metadata stays None.
+                        request_metadata: dict[str, Any] | None = None
+                        if result.terminated and result.drain_audit:
+                            request_metadata = dict(result.drain_audit)
                         await get_usage_recorder().record(
                             provider_id=inputs.model.provider_id,
                             model_id=inputs.model.id,
@@ -1149,6 +1940,7 @@ class EnsembleStreamingHelper:
                             response_time_ms=result.metadata.get("response_time_ms"),
                             success=usage_success,
                             error_message=usage_error_message,
+                            request_metadata=request_metadata,
                             session=session,
                         )
 
@@ -1480,6 +2272,9 @@ class EnsembleStreamingHelper:
                     inputs=inputs,
                     queue=queue,
                     conversation_id=conversation_id,
+                    parent_message_id=parent_message_id,
+                    use_parent_as_message_id=use_parent_as_message_id,
+                    regen_lineage=regen_lineage,
                     force_no_streaming=force_no_streaming,
                     start_time=start_time,
                     lifecycle=lifecycle,

@@ -59,37 +59,13 @@ class TestInvoicePaidCycleRollover:
         )
 
     @pytest.mark.asyncio
-    async def test_on_payment_recovered_still_called_unchanged(self):
-        """Regression: existing payment-recovered path survives the extension."""
-        handler = InvoicePaidHandler()
-        on_payment_recovered = AsyncMock()
-
-        await handler.handle(
-            _make_event("subscription_cycle"),
-            on_payment_recovered=on_payment_recovered,
-        )
-
-        on_payment_recovered.assert_awaited_once_with(
-            "cus_1", "sub_1", "in_1", "evt_test_1"
-        )
-
-    @pytest.mark.asyncio
     async def test_no_callbacks_noops_cleanly(self):
-        """Handler tolerates missing callbacks — it just logs and returns."""
+        """Handler tolerates missing callbacks — it just logs and returns.
+
+        Subscription / payment status persistence was lifted to CP (SHU-774),
+        so `on_cycle_rollover` is the only callback the dispatcher passes.
+        When `seat_service` is None (unconfigured tenant) the router omits
+        even that — this test pins that the handler stays a clean no-op.
+        """
         handler = InvoicePaidHandler()
         await handler.handle(_make_event("subscription_cycle"))
-
-    @pytest.mark.asyncio
-    async def test_both_callbacks_invoked_when_provided(self):
-        handler = InvoicePaidHandler()
-        on_payment_recovered = AsyncMock()
-        on_cycle_rollover = AsyncMock()
-
-        await handler.handle(
-            _make_event("subscription_cycle"),
-            on_payment_recovered=on_payment_recovered,
-            on_cycle_rollover=on_cycle_rollover,
-        )
-
-        on_payment_recovered.assert_awaited_once()
-        on_cycle_rollover.assert_awaited_once()

@@ -31,7 +31,7 @@ from shu.billing.cp_client import (
     CpUnexpectedStatus,
     CpUnreachable,
 )
-from shu.billing.entitlements import EntitlementSet
+from shu.billing.entitlements import EntitlementSet, LimitSet
 from shu.core.logging import get_logger
 
 BASE_URL = "https://cp.example.test"
@@ -61,6 +61,16 @@ _MIN_PAYLOAD: dict[str, Any] = {
     "total_grant_amount": 0,
     "remaining_grant_amount": 0,
     "seat_price_usd": 0,
+    "limits": {"document_count_limit": 0, "kb_count_limit": 0},
+    # SHU-774 fields. `None` is a meaningful wire value (no Shu-managed sub);
+    # the contract is "always emitted," so the missing-field test below
+    # exercises each one.
+    "subscription_status": None,
+    "current_period_start": None,
+    "current_period_end": None,
+    "cancel_at_period_end": False,
+    "canceled_at": None,
+    "usage_markup_multiplier": None,
 }
 
 
@@ -145,6 +155,13 @@ async def test_200_with_null_payment_failed_at_returns_billing_state() -> None:
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
+        limits=LimitSet(),
+        subscription_status=None,
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+        canceled_at=None,
+        usage_markup_multiplier=None,
     )
 
 
@@ -255,6 +272,15 @@ async def test_malformed_json_raises_cp_malformed_response() -> None:
         "total_grant_amount",
         "remaining_grant_amount",
         "seat_price_usd",
+        # SHU-774 fields: CP always emits these (None when no Shu-managed
+        # sub); a missing field is a contract violation, not a default.
+        "limits",
+        "subscription_status",
+        "current_period_start",
+        "current_period_end",
+        "cancel_at_period_end",
+        "canceled_at",
+        "usage_markup_multiplier",
     ],
 )
 async def test_missing_field_raises_cp_malformed_response(missing_field: str) -> None:
@@ -323,6 +349,25 @@ async def test_list_payload_raises_cp_malformed_response() -> None:
         {"remaining_grant_amount": -5},
         # Negative seat price
         {"seat_price_usd": -10},
+        # SHU-774: Literal["trialing", "active", "past_due", "canceled", "unpaid"]
+        # rejects anything else. Catches Stripe enum drift (e.g. "incomplete",
+        # "paused") that would otherwise silently bypass the cancel gate.
+        {"subscription_status": "incomplete"},
+        # Capitalization / typo on CP's side — same gate-bypass risk.
+        {"subscription_status": "Canceled"},
+        # cancel_at_period_end is StrictBool — string for bool is type drift.
+        {"cancel_at_period_end": "true"},
+        # Naive datetime on the new period / canceled fields.
+        {"current_period_start": "2026-05-01T00:00:00"},
+        {"current_period_end": "2026-06-01T00:00:00"},
+        {"canceled_at": "2026-05-15T12:00:00"},
+        # Unix timestamps on the new datetime fields — rejected by the
+        # same shared validator that covers payment_failed_at / trial_deadline.
+        {"current_period_start": 1714478096},
+        {"canceled_at": 1715785696},
+        # Non-positive usage markup → Field(gt=0) violation.
+        {"usage_markup_multiplier": 0},
+        {"usage_markup_multiplier": -1},
     ],
     ids=[
         "string-for-bool",
@@ -337,6 +382,16 @@ async def test_list_payload_raises_cp_malformed_response() -> None:
         "negative-total-grant",
         "negative-remaining-grant",
         "negative-seat-price",
+        "unknown-subscription-status",
+        "miscased-subscription-status",
+        "string-for-cancel-at-period-end",
+        "naive-current-period-start",
+        "naive-current-period-end",
+        "naive-canceled-at",
+        "int-for-current-period-start",
+        "int-for-canceled-at",
+        "zero-usage-markup-multiplier",
+        "negative-usage-markup-multiplier",
     ],
 )
 async def test_type_drift_raises_cp_malformed_response(overrides: dict) -> None:
@@ -382,6 +437,56 @@ async def test_200_populates_entitlements_and_trial_fields_from_payload() -> Non
     assert state.total_grant_amount == Decimal("50.00")
     assert state.remaining_grant_amount == Decimal("42.50")
     assert state.seat_price_usd == Decimal("20.00")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_value",
+    ["trialing", "active", "past_due", "canceled", "unpaid"],
+)
+async def test_200_parses_each_subscription_status_literal(status_value: str) -> None:
+    """Pin the Literal members. If CP starts emitting a status we accept,
+    we want a positive round-trip test; if someone removes a member from
+    the Literal (or Stripe drops one), this test fails loudly.
+    """
+    payload = _payload(
+        subscription_status=status_value,
+        current_period_start="2026-05-01T00:00:00Z",
+        current_period_end="2026-06-01T00:00:00Z",
+    )
+    http_client = _http_client_returning(_ok_response(payload))
+
+    state = await _make_client(http_client).fetch_billing_state()
+
+    assert state.subscription_status == status_value
+
+
+@pytest.mark.asyncio
+async def test_200_populates_shu_774_fields_from_payload() -> None:
+    """End-to-end parse of every SHU-774 wire field — period bounds,
+    canceled_at, cancel_at_period_end, limits, usage_markup_multiplier.
+    Locks the parse path so a wire-format change surfaces here.
+    """
+    payload = _payload(
+        subscription_status="active",
+        current_period_start="2026-05-01T00:00:00Z",
+        current_period_end="2026-06-01T00:00:00Z",
+        cancel_at_period_end=True,
+        canceled_at="2026-05-15T08:30:00Z",
+        usage_markup_multiplier="1.25",
+        limits={"document_count_limit": 100, "kb_count_limit": 5},
+    )
+    http_client = _http_client_returning(_ok_response(payload))
+
+    state = await _make_client(http_client).fetch_billing_state()
+
+    assert state.subscription_status == "active"
+    assert state.current_period_start == datetime(2026, 5, 1, tzinfo=timezone.utc)
+    assert state.current_period_end == datetime(2026, 6, 1, tzinfo=timezone.utc)
+    assert state.cancel_at_period_end is True
+    assert state.canceled_at == datetime(2026, 5, 15, 8, 30, tzinfo=timezone.utc)
+    assert state.usage_markup_multiplier == Decimal("1.25")
+    assert state.limits == LimitSet(document_count_limit=100, kb_count_limit=5)
 
 
 @pytest.mark.asyncio

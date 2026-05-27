@@ -408,6 +408,33 @@ class BaseProviderAdapter:
         else:
             self.usage = self._aggregate_usage(self.usage, usage_dict)
 
+    async def cancel(self) -> bool:
+        """SHU-803 AC9e: best-effort upstream cancellation.
+
+        Default returns ``False`` (no-op). Override in adapters whose
+        underlying provider exposes a real cancel API — for example
+        ``ResponsesAdapter`` POSTs to ``/responses/{id}/cancel`` because
+        the OpenAI Responses API keeps generating server-side after
+        stream close (and billing continues) unless the cancel endpoint
+        is hit.
+
+        Returns ``True`` when the cancel request succeeded (2xx),
+        ``False`` if the adapter doesn't support cancellation OR the
+        attempt failed for any reason (network error, non-2xx, exception).
+        Callers MUST fall through to the drain path regardless of return
+        value — cancel is racing drain in the SHU-803 design and a False
+        return simply means we proceed without the explicit cancel
+        signal. For providers that respect stream-close as cancel
+        (Anthropic, Gemini), the drain loop closes the HTTP stream
+        naturally when it exits, which is the cancel signal.
+
+        Must NOT raise — exceptions are logged inside the implementation
+        and folded into a ``False`` return so the consumer loop's
+        ``asyncio.gather(cancel_task, drain_task)`` doesn't surface a
+        cancel-side exception as the gather result.
+        """
+        return False
+
     def get_partial_usage_snapshot(self) -> UsageDict:
         """SHU-802: return cumulative usage seen so far on a partial stream.
 
