@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Typography, useMediaQuery } from '@mui/material';
-import { alpha, useTheme } from '@mui/material/styles';
 import { keyframes } from '@emotion/react';
 import FeatherIcon from './FeatherIcon';
 import { DEFAULT_POOL, PLUGIN_POOL, RAG_POOL, getPoolFor, pickNextWord } from './utils/thinkingPhrases';
@@ -24,7 +23,6 @@ const WORD_TRANSITION_MS = 700;
 const LETTER_DURATION_MS = 400;
 const LETTER_STAGGER_MS = 25;
 const FEATHER_WAFT_MS = 5000;
-const BREATHING_MS = 4000;
 
 // Wafting feather: slow horizontal swing with a 30° base rotation so
 // the feather sits closer to horizontal than its natural diagonal.
@@ -50,13 +48,7 @@ const letterGustIn = keyframes`
   100% { transform: translate(0, 0) rotate(0deg); opacity: 1; filter: blur(0); }
 `;
 
-const breathing = keyframes`
-  0%, 100% { opacity: 0; }
-  50%      { opacity: 0.04; }
-`;
-
 const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
-  const theme = useTheme();
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const pool = useMemo(() => getPoolFor(message?.thinkingPool), [message?.thinkingPool]);
   const [currentWord, setCurrentWord] = useState(() => pickNextWord(pool, null));
@@ -101,20 +93,14 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
         display: 'flex',
         alignItems: 'center',
         minHeight: 40,
-        overflow: 'hidden',
+        // overflow stays visible so the per-letter intro can bring
+        // letters in from `translateX(-15px)` without the leftmost
+        // letter getting clipped at the indicator's left edge — they
+        // bleed harmlessly into the bubble's 16px padding before
+        // reaching their settled position. The feather strip handles
+        // its own clipping locally.
       }}
     >
-      <Box
-        aria-hidden
-        sx={{
-          position: 'absolute',
-          inset: 0,
-          background: `radial-gradient(circle at 50% 50%, ${alpha(theme.palette.secondary.main, 1)} 0%, transparent 60%)`,
-          animation: `${breathing} ${BREATHING_MS}ms ease-in-out infinite`,
-          pointerEvents: 'none',
-          willChange: 'opacity',
-        }}
-      />
       <Box sx={{ mr: 1.5, position: 'relative', flexShrink: 0 }}>
         <Typography variant="body2" sx={{ ...wordSx, visibility: 'hidden', display: 'inline-block' }}>
           {LONGEST_WORD}
@@ -127,6 +113,13 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
             position: 'absolute',
             top: 0,
             left: 0,
+            // Per-letter inline-block spans lose italic kerning that a
+            // single text run gets; some words render a few px wider
+            // than the ghost and would otherwise wrap. `nowrap` keeps
+            // them on one line — the slight extension past the ghost's
+            // right edge spills into the 12px mr gap before the
+            // feather, which is invisible margin.
+            whiteSpace: 'nowrap',
             color: 'text.secondary',
             '& > span': {
               display: 'inline-block',

@@ -3,19 +3,22 @@ import { Box, useMediaQuery } from '@mui/material';
 import { keyframes } from '@emotion/react';
 import FeatherIcon from './FeatherIcon';
 
-const WRITING_CYCLE_MS = 4000;
+const WRITING_CYCLE_MS = 6000;
 const WRITING_BOB_MS = 240;
 const SETTLE_MS = 1000;
 const FEATHER_SIZE = 28;
 const STRIP_HEIGHT = 36;
 
-// Carriage: writes left→right over 80% of the cycle, returns quickly
-// (and smoothly) over the remaining 20%. Travel distance is derived
-// from the strip's own width (100cqw) minus the feather width, so it
-// adapts to whatever bubble it lands in.
+// Carriage: writes left→right over 90% of the cycle, snaps quickly
+// (and smoothly) back to the left over the remaining 10% — a longer
+// deliberate writing stroke followed by a brisker carriage-return.
+// Travel distance is derived from the strip's own width (100cqw)
+// minus the feather width, so it adapts to whatever bubble it lands
+// in (and the speed stays steady regardless of bubble width thanks
+// to the 6s cycle).
 const writingCarriage = keyframes`
   0%   { transform: translateX(0); animation-timing-function: ease-in-out; }
-  80%  { transform: translateX(calc(100cqw - ${FEATHER_SIZE}px)); animation-timing-function: ease-in-out; }
+  90%  { transform: translateX(calc(100cqw - ${FEATHER_SIZE}px)); animation-timing-function: ease-in-out; }
   100% { transform: translateX(0); }
 `;
 
