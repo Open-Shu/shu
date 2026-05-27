@@ -240,7 +240,7 @@ export default function GeneralPreferencesSection() {
                 ))}
               </ToggleButtonGroup>
               <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                Default is the new baseline (20% smaller than the browser default).
+                Applies to all text across the app.
               </Typography>
             </Box>
           </Stack>
