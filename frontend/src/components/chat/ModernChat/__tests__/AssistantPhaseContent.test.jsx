@@ -119,4 +119,18 @@ describe('AssistantPhaseContent — done phase', () => {
     // passed through correctly so the self-unmount can happen.
     expect(screen.getByTestId('streaming-feather')).toHaveAttribute('data-streaming', 'false');
   });
+
+  it('still renders MessageContent if a done message somehow carries PLACEHOLDER_THINKING as content', () => {
+    // SHU-803's handleStopStream clears PLACEHOLDER_THINKING from
+    // content on Stop, so in practice no persisted message should
+    // end up with this content. Defensive coverage for the theoretical
+    // case (e.g., a model literally responding with the Unicode
+    // ellipsis "Thinking…") so the bubble body isn't silently hidden.
+    renderForVariant({
+      isStreaming: false,
+      content: PLACEHOLDER_THINKING,
+    });
+    expect(screen.getByTestId('message-content')).toBeInTheDocument();
+    expect(screen.getByTestId('message-content')).toHaveTextContent(PLACEHOLDER_THINKING);
+  });
 });

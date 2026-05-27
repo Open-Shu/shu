@@ -28,10 +28,17 @@ const AssistantPhaseContent = React.memo(function AssistantPhaseContent({
   // Reasoning-first window: reasoning_delta exits the thinking phase
   // but doesn't touch `content`, which stays as PLACEHOLDER_THINKING
   // until the first content_delta arrives. Suppress MessageContent
-  // until then so the literal "Thinking…" string doesn't render as
-  // the bubble's main text below the reasoning panel. StreamingFeather
-  // continues to indicate active work.
-  const showMessageContent = variant.content !== PLACEHOLDER_THINKING;
+  // during that window so the literal "Thinking…" string doesn't
+  // render as the bubble's main text below the reasoning panel.
+  // StreamingFeather continues to indicate active work.
+  //
+  // Gated on `isStreaming` so the suppression only applies to the
+  // active reasoning-first window. A "done" message that happens to
+  // carry PLACEHOLDER_THINKING as its persisted content (essentially
+  // impossible in practice — SHU-803's handleStopStream clears it on
+  // Stop — but defensive) still renders rather than silently hiding
+  // the entire bubble body.
+  const showMessageContent = !variant.isStreaming || variant.content !== PLACEHOLDER_THINKING;
 
   return (
     <>
