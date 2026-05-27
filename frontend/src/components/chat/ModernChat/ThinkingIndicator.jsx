@@ -20,7 +20,9 @@ const wordSx = {
 };
 
 const WORD_ROTATION_MS = 2200;
-const WORD_TRANSITION_MS = 600;
+const WORD_TRANSITION_MS = 700;
+const LETTER_DURATION_MS = 400;
+const LETTER_STAGGER_MS = 25;
 const FEATHER_WAFT_MS = 5000;
 const BREATHING_MS = 4000;
 
@@ -34,14 +36,18 @@ const featherWaft = keyframes`
   50%      { transform: translateX(6px) rotate(32deg); }
 `;
 
-const wordGustOut = keyframes`
-  0%   { transform: translateX(0) skewX(0deg); opacity: 1; filter: blur(0); }
-  100% { transform: translateX(20px) skewX(-8deg); opacity: 0; filter: blur(4px); }
+// Per-letter scatter: each letter animates independently with a
+// stagger delay set via the `--letter-delay` CSS variable on its
+// inline style. Leftmost letters move first so the transition reads
+// as wind propagating left-to-right across the word.
+const letterGustOut = keyframes`
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 1; filter: blur(0); }
+  100% { transform: translate(15px, -6px) rotate(12deg); opacity: 0; filter: blur(3px); }
 `;
 
-const wordGustIn = keyframes`
-  0%   { transform: translateX(-20px) skewX(8deg); opacity: 0; filter: blur(4px); }
-  100% { transform: translateX(0) skewX(0deg); opacity: 1; filter: blur(0); }
+const letterGustIn = keyframes`
+  0%   { transform: translate(-15px, 4px) rotate(-6deg); opacity: 0; filter: blur(3px); }
+  100% { transform: translate(0, 0) rotate(0deg); opacity: 1; filter: blur(0); }
 `;
 
 const breathing = keyframes`
@@ -122,13 +128,26 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
             top: 0,
             left: 0,
             color: 'text.secondary',
-            animation: isLeaving
-              ? `${wordGustOut} ${WORD_TRANSITION_MS}ms ease-out forwards`
-              : `${wordGustIn} ${WORD_TRANSITION_MS}ms ease-out forwards`,
-            willChange: 'transform, opacity, filter',
+            '& > span': {
+              display: 'inline-block',
+              // `both` fill-mode holds the 0% keyframe state during the
+              // per-letter delay (rather than the un-animated DOM state),
+              // so letters waiting their turn during the intro stay
+              // invisible instead of flashing into view before their
+              // animation kicks in.
+              animation: isLeaving
+                ? `${letterGustOut} ${LETTER_DURATION_MS}ms ease-out var(--letter-delay, 0ms) both`
+                : `${letterGustIn} ${LETTER_DURATION_MS}ms ease-out var(--letter-delay, 0ms) both`,
+              willChange: 'transform, opacity, filter',
+            },
           }}
         >
-          {currentWord}
+          {currentWord.split('').map((letter, idx) => (
+            // eslint-disable-next-line react/no-array-index-key
+            <span key={idx} style={{ '--letter-delay': `${idx * LETTER_STAGGER_MS}ms` }}>
+              {letter === ' ' ? ' ' : letter}
+            </span>
+          ))}
         </Typography>
       </Box>
       <Box

@@ -41,22 +41,28 @@ describe('ThinkingIndicator — pool selection', () => {
     mockMatchMedia(false);
   });
 
+  // Use element.textContent (recursive) rather than the direct-text-node
+  // content testing-library provides by default — the visible word
+  // renders as per-letter spans inside a Typography, so the parent's
+  // direct text-node content is empty.
+  const inPool = (pool) => (_content, element) => Boolean(element) && pool.includes(element.textContent ?? '');
+
   it('renders the feather and a verb from the default pool when thinkingPool is undefined', () => {
     render(<ThinkingIndicator message={{}} />, { wrapper: TestWrapper });
     expect(screen.getByTestId('feather-icon')).toBeInTheDocument();
-    const defaultWords = screen.queryAllByText((content) => DEFAULT_POOL.includes(content));
+    const defaultWords = screen.queryAllByText(inPool(DEFAULT_POOL));
     expect(defaultWords.length).toBeGreaterThan(0);
   });
 
   it('renders a verb from the RAG pool when thinkingPool is "rag"', () => {
     render(<ThinkingIndicator message={{ thinkingPool: 'rag' }} />, { wrapper: TestWrapper });
-    const ragWords = screen.queryAllByText((content) => RAG_POOL.includes(content));
+    const ragWords = screen.queryAllByText(inPool(RAG_POOL));
     expect(ragWords.length).toBeGreaterThan(0);
   });
 
   it('renders a verb from the plugin pool when thinkingPool is "plugin"', () => {
     render(<ThinkingIndicator message={{ thinkingPool: 'plugin' }} />, { wrapper: TestWrapper });
-    const pluginWords = screen.queryAllByText((content) => PLUGIN_POOL.includes(content));
+    const pluginWords = screen.queryAllByText(inPool(PLUGIN_POOL));
     expect(pluginWords.length).toBeGreaterThan(0);
   });
 });
