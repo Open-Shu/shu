@@ -25,18 +25,28 @@ const AssistantPhaseContent = React.memo(function AssistantPhaseContent({
     return <ThinkingIndicator message={variant} />;
   }
 
+  // Reasoning-first window: reasoning_delta exits the thinking phase
+  // but doesn't touch `content`, which stays as PLACEHOLDER_THINKING
+  // until the first content_delta arrives. Suppress MessageContent
+  // until then so the literal "Thinking…" string doesn't render as
+  // the bubble's main text below the reasoning panel. StreamingFeather
+  // continues to indicate active work.
+  const showMessageContent = variant.content !== PLACEHOLDER_THINKING;
+
   return (
     <>
-      <MessageContent
-        message={variant}
-        theme={theme}
-        isDarkMode={isDarkMode}
-        userBubbleText={userBubbleText}
-        assistantLinkColor={assistantLinkColor}
-        parseDocumentHref={parseDocumentHref}
-        onOpenDocument={onOpenDocument}
-        attachmentChipStyles={attachmentChipStyles}
-      />
+      {showMessageContent && (
+        <MessageContent
+          message={variant}
+          theme={theme}
+          isDarkMode={isDarkMode}
+          userBubbleText={userBubbleText}
+          assistantLinkColor={assistantLinkColor}
+          parseDocumentHref={parseDocumentHref}
+          onOpenDocument={onOpenDocument}
+          attachmentChipStyles={attachmentChipStyles}
+        />
+      )}
       <StreamingFeather isStreaming={Boolean(variant.isStreaming)} />
     </>
   );

@@ -82,8 +82,27 @@ describe('AssistantPhaseContent — streaming phase', () => {
       { hasReasoning: true }
     );
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument();
-    expect(screen.getByTestId('message-content')).toBeInTheDocument();
+    // MessageContent is suppressed during the reasoning-first window —
+    // variant.content is still PLACEHOLDER_THINKING and rendering it
+    // through MessageContent would surface the literal "Thinking…"
+    // string as the bubble's main text. StreamingFeather is still
+    // shown to indicate active work.
+    expect(screen.queryByTestId('message-content')).not.toBeInTheDocument();
+    expect(screen.queryByText(PLACEHOLDER_THINKING)).not.toBeInTheDocument();
     expect(screen.getByTestId('streaming-feather')).toHaveAttribute('data-streaming', 'true');
+  });
+
+  it('renders MessageContent once content has streamed in past the placeholder', () => {
+    renderForVariant(
+      {
+        isStreaming: true,
+        content: 'first real chunk',
+      },
+      { hasReasoning: true }
+    );
+    // Same hasReasoning=true setup, but the content has advanced past
+    // PLACEHOLDER_THINKING — MessageContent should render normally now.
+    expect(screen.getByTestId('message-content')).toHaveTextContent('first real chunk');
   });
 });
 

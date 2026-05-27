@@ -77,9 +77,13 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
 
   if (reduceMotion) {
     return (
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 1 }}>
-        <FeatherIcon sx={{ fontSize: 24, color: 'text.secondary' }} />
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+      <Box
+        role="status"
+        aria-label={PLACEHOLDER_THINKING}
+        sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 1 }}
+      >
+        <FeatherIcon aria-hidden sx={{ fontSize: 24, color: 'text.secondary' }} />
+        <Typography aria-hidden variant="body2" sx={{ color: 'text.secondary' }}>
           {PLACEHOLDER_THINKING}
         </Typography>
       </Box>
@@ -87,7 +91,14 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
   }
 
   return (
+    // role="status" + a stable aria-label gives assistive tech a
+    // single, non-flickering "Thinking…" announcement instead of
+    // hearing each rotating verb as the per-letter spans cycle.
+    // Inner visuals (rotating word, drifting feather) are
+    // aria-hidden — purely decorative.
     <Box
+      role="status"
+      aria-label={PLACEHOLDER_THINKING}
       sx={{
         position: 'relative',
         display: 'flex',
@@ -101,7 +112,7 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
         // its own clipping locally.
       }}
     >
-      <Box sx={{ mr: 1.5, position: 'relative', flexShrink: 0 }}>
+      <Box aria-hidden sx={{ mr: 1.5, position: 'relative', flexShrink: 0 }}>
         <Typography variant="body2" sx={{ ...wordSx, visibility: 'hidden', display: 'inline-block' }}>
           {LONGEST_WORD}
         </Typography>
@@ -144,6 +155,7 @@ const ThinkingIndicator = React.memo(function ThinkingIndicator({ message }) {
         </Typography>
       </Box>
       <Box
+        aria-hidden
         sx={{
           position: 'relative',
           width: 64,

@@ -4,6 +4,7 @@ import '@testing-library/jest-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ThinkingIndicator from '../ThinkingIndicator';
 import { DEFAULT_POOL, RAG_POOL, PLUGIN_POOL } from '../utils/thinkingPhrases';
+import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
 
 // Replace the SVG-heavy FeatherIcon with a marker so we can assert
 // "the feather is rendered" without parsing path data.
@@ -90,6 +91,22 @@ describe('ThinkingIndicator — reduced-motion fallback', () => {
     // animated layout only. Its absence here confirms the reduced-motion
     // branch is taken.
     expect(screen.queryByText('Coordinating')).not.toBeInTheDocument();
+  });
+});
+
+describe('ThinkingIndicator — accessibility', () => {
+  it('exposes a stable "Thinking…" status to assistive tech in animated mode', () => {
+    mockMatchMedia(false);
+    render(<ThinkingIndicator message={{}} />, { wrapper: TestWrapper });
+    const status = screen.getByRole('status', { name: PLACEHOLDER_THINKING });
+    expect(status).toBeInTheDocument();
+  });
+
+  it('exposes a stable "Thinking…" status in reduced-motion mode too', () => {
+    mockMatchMedia(true);
+    render(<ThinkingIndicator message={{}} />, { wrapper: TestWrapper });
+    const status = screen.getByRole('status', { name: PLACEHOLDER_THINKING });
+    expect(status).toBeInTheDocument();
   });
 });
 
