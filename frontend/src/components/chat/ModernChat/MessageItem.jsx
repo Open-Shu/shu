@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Avatar, Box, IconButton, Paper, Typography, Tooltip, Button, useMediaQuery } from '@mui/material';
+import { visuallyHidden } from '@mui/utils';
 import {
   Person as UserIcon,
   Refresh as RefreshIcon,
@@ -215,7 +216,7 @@ const MessageItem = React.memo(function MessageItem({
       p: 2,
       flexShrink: 1,
       width: 'fit-content',
-      maxWidth: isMobile ? '100%' : 'min(85%, calc(100% - 56px))',
+      maxWidth: isMobile ? '100%' : showAvatars ? 'min(85%, calc(100% - 56px))' : '85%',
       minWidth: 0,
       overflowWrap: 'anywhere',
       wordBreak: 'break-word',
@@ -245,6 +246,11 @@ const MessageItem = React.memo(function MessageItem({
           >
             {!isMobile && avatarNode}
             <Paper sx={userBubbleSx}>
+              {!showAvatars && (
+                <Box component="span" sx={visuallyHidden}>
+                  You said:
+                </Box>
+              )}
               <MessageContent
                 message={message}
                 theme={theme}
@@ -313,7 +319,9 @@ const MessageItem = React.memo(function MessageItem({
         ? { xs: '100%', md: 'min(480px, 100%)', xl: 'min(620px, 100%)' }
         : isMobile
           ? '100%'
-          : 'min(85%, calc(100% - 56px))',
+          : showAvatars
+            ? 'min(85%, calc(100% - 56px))'
+            : '85%',
       minWidth: isSideBySide ? { xs: '100%', sm: 280, lg: 320 } : 0,
       overflowWrap: 'anywhere',
       wordBreak: 'break-word',
@@ -378,6 +386,11 @@ const MessageItem = React.memo(function MessageItem({
               const reasoningCollapsed = Boolean(variant.reasoning_collapsed);
               return (
                 <Paper key={variant.streamSlotId || variant.id} sx={getBubbleSx(variant, variantPending)}>
+                  {!showAvatars && (
+                    <Box component="span" sx={visuallyHidden}>
+                      Assistant said:
+                    </Box>
+                  )}
                   {showVariantLabel && (
                     <Typography variant="caption" sx={{ fontWeight: 600, opacity: 0.7 }}>
                       Variant {idx + 1}

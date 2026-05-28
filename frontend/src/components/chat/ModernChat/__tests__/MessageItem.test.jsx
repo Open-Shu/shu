@@ -273,4 +273,47 @@ describe('MessageItem — SHU-815 assistant avatar config', () => {
     // is suppressed symmetrically with the assistant — neither speaker shows.
     expect(screen.queryByTestId('user-avatar')).toBeNull();
   });
+
+  it('mode="none" injects visually-hidden speaker prefixes for screen readers (AC a11y #3)', () => {
+    // With the avatars hidden, bubble alignment + colour become the only
+    // visual cue for speaker. Screen readers need an accessible label —
+    // a visually-hidden "Assistant said:" / "You said:" prefix on each
+    // bubble preserves speaker distinction without affecting layout.
+    const assistantMessage = makeAssistantMessage({ message_metadata: {} });
+    const { rerender } = render(
+      <TestWrapper>
+        <MessageItem
+          message={assistantMessage}
+          {...baseProps({
+            avatarConfig: { mode: 'none', curatedId: 'shu_feather', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByText('Assistant said:')).toBeInTheDocument();
+
+    const userMessage = { ...assistantMessage, role: 'user', content: 'hi' };
+    rerender(
+      <TestWrapper>
+        <MessageItem
+          message={userMessage}
+          {...baseProps({
+            avatarConfig: { mode: 'none', curatedId: 'shu_feather', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByText('You said:')).toBeInTheDocument();
+  });
+
+  it('curated mode does NOT inject speaker prefixes (icons already convey the cue)', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem message={message} {...baseProps()} />
+      </TestWrapper>
+    );
+    expect(screen.queryByText('Assistant said:')).toBeNull();
+    expect(screen.queryByText('You said:')).toBeNull();
+  });
 });
