@@ -44,6 +44,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 INIT_SQL_PATH = PROJECT_ROOT.parent / "init-db.sql"
 ALEMBIC_INI_PATH = PROJECT_ROOT / "alembic.ini"
 
+# Mirror the sys.path setup in migrations/env.py so that helpers which load
+# migration files before alembic invokes env.py (e.g. _resolve_orphaned_revision
+# → walk_revisions()) can resolve `from shu...` imports inside migration modules.
+_SRC_PATH = PROJECT_ROOT / "src"
+if str(_SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(_SRC_PATH))
+
 LOG_PREFIX = "[database]"
 
 
