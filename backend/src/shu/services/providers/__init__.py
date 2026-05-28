@@ -7,6 +7,7 @@ Import built-in adapters so they register with the adapter registry.
 # Import adapters for side-effect registration
 from .adapters import (
     anthropic_adapter,
+    digitalocean_completions_adapter,
     gemini_adapter,
     generic_completions_adapter,
     lmstudio_adapter,
@@ -19,6 +20,7 @@ from .adapters import (
 
 __all__ = [
     "anthropic_adapter",
+    "digitalocean_completions_adapter",
     "gemini_adapter",
     "generic_completions_adapter",
     "lmstudio_adapter",

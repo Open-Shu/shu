@@ -124,8 +124,8 @@ class CompletionsAdapter(BaseProviderAdapter):
         self._update_usage(
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0),
-            usage.get("prompt_tokens_details", {}).get("cached_tokens", 0),
-            usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0),
+            (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
+            (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0),
             usage.get("total_tokens", 0),
             cost,
         )
