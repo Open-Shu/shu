@@ -119,11 +119,18 @@ const TypographyPreview = ({ fontKey, brandHeadingFontKey }) => {
 };
 
 export default function GeneralPreferencesSection() {
-  const { themeMode, changeTheme, branding, resolvedFontFamily, changeFontFamily, changeFontScale } = useTheme();
+  const {
+    themeMode,
+    changeTheme,
+    branding,
+    resolvedFontFamily,
+    resolvedHeadingFontFamily,
+    changeFontFamily,
+    changeFontScale,
+  } = useTheme();
   const { preferences, setPreferences, error, setError, mutation } = useUserPreferences(themeMode);
 
   const brandFontKey = branding?.brandFontFamily ?? null;
-  const brandHeadingFontKey = branding?.brandHeadingFontFamily ?? brandFontKey ?? 'inter';
 
   const previewFontKey = preferences.font_family || resolvedFontFamily;
 
@@ -139,7 +146,12 @@ export default function GeneralPreferencesSection() {
     if (value === null) {
       return; // ToggleButtonGroup deselect — ignore
     }
-    const normalized = value === INHERIT_VALUE ? null : value;
+    // Reset semantics: picking "Default" persists null (= inherit / use the
+    // shipped baseline) rather than locking the user to the literal label.
+    // Future re-tuning of the scale multipliers then applies to null-holders
+    // automatically without a data migration. Mirrors the font_family
+    // INHERIT_VALUE pattern.
+    const normalized = value === INHERIT_VALUE || value === 'default' ? null : value;
     setPreferences((prev) => ({ ...prev, font_size_scale: normalized }));
     changeFontScale(normalized);
   };
@@ -263,7 +275,7 @@ export default function GeneralPreferencesSection() {
           </Stack>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TypographyPreview fontKey={previewFontKey} brandHeadingFontKey={brandHeadingFontKey} />
+          <TypographyPreview fontKey={previewFontKey} brandHeadingFontKey={resolvedHeadingFontFamily} />
         </Grid>
       </Grid>
 

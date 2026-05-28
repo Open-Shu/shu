@@ -27,6 +27,16 @@ class BrandingSettings(BaseModel):
     brand_font_family: str | None = None
     brand_heading_font_family: str | None = None
 
+    @field_validator("brand_font_family", "brand_heading_font_family")
+    @classmethod
+    def validate_response_brand_font(cls, v: str | None) -> str | None:
+        """Reject legacy/direct-DB values outside the curated list so the
+        frontend cascade can't be fed an unknown key.
+        """
+        if v is not None and v not in VALID_FONT_FAMILIES:
+            raise ValueError(f"font must be one of: {VALID_FONT_FAMILIES}")
+        return v
+
 
 class BrandingSettingsUpdate(BaseModel):
     """Partial update payload for branding settings."""

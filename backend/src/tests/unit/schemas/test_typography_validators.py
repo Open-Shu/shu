@@ -12,13 +12,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from shu.schemas.branding import BrandingSettingsUpdate
+from shu.schemas.branding import BrandingSettings, BrandingSettingsUpdate
 from shu.schemas.typography_constants import (
     SHIPPED_DEFAULT_FONT,
     VALID_FONT_FAMILIES,
     VALID_FONT_SIZE_SCALES,
 )
-from shu.schemas.user_preferences import UserPreferencesBase, UserPreferencesUpdate
+from shu.schemas.user_preferences import UserPreferencesBase, UserPreferencesResponse, UserPreferencesUpdate
 
 
 class TestUserPreferencesFontFamilyValidator:
@@ -85,6 +85,56 @@ class TestBrandingFontValidators:
     def test_rejects_uncurated_brand_heading_font(self, bad_value: str) -> None:
         with pytest.raises(ValidationError):
             BrandingSettingsUpdate(brand_heading_font_family=bad_value)
+
+
+class TestResponseSchemaValidators:
+    """Read-schema validators guard against legacy / direct-DB bad data leaking
+    through GET responses to the frontend. Writes are already protected by the
+    Update schemas; this is the defensive read-side layer."""
+
+    def _response_kwargs(self, **overrides: object) -> dict[str, object]:
+        return {
+            "memory_depth": 5,
+            "memory_similarity_threshold": 0.6,
+            "theme": "light",
+            "language": "en",
+            "timezone": "UTC",
+            "font_family": None,
+            "font_size_scale": None,
+            "advanced_settings": {},
+            # System-provided read-only fields surfaced in the response envelope.
+            "summary_search_min_token_length": 4,
+            "summary_search_max_tokens": 8000,
+            **overrides,
+        }
+
+    def test_user_response_accepts_curated_font_family(self) -> None:
+        response = UserPreferencesResponse.model_validate(self._response_kwargs(font_family="space-grotesk"))
+        assert response.font_family == "space-grotesk"
+
+    def test_user_response_accepts_null_font_family(self) -> None:
+        response = UserPreferencesResponse.model_validate(self._response_kwargs(font_family=None))
+        assert response.font_family is None
+
+    def test_user_response_rejects_invalid_font_family(self) -> None:
+        with pytest.raises(ValidationError):
+            UserPreferencesResponse.model_validate(self._response_kwargs(font_family="Comic Sans MS"))
+
+    def test_user_response_rejects_invalid_font_size_scale(self) -> None:
+        with pytest.raises(ValidationError):
+            UserPreferencesResponse.model_validate(self._response_kwargs(font_size_scale="huge"))
+
+    def test_branding_response_accepts_curated_brand_font(self) -> None:
+        branding = BrandingSettings.model_validate({"brand_font_family": "atkinson-hyperlegible"})
+        assert branding.brand_font_family == "atkinson-hyperlegible"
+
+    def test_branding_response_rejects_invalid_brand_font(self) -> None:
+        with pytest.raises(ValidationError):
+            BrandingSettings.model_validate({"brand_font_family": "Wingdings"})
+
+    def test_branding_response_rejects_invalid_brand_heading_font(self) -> None:
+        with pytest.raises(ValidationError):
+            BrandingSettings.model_validate({"brand_heading_font_family": "Comic Sans MS"})
 
 
 class TestSharedConstants:

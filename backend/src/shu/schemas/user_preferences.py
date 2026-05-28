@@ -153,6 +153,24 @@ class UserPreferencesResponse(BaseModel):
     # Advanced Settings
     advanced_settings: dict[str, Any]
 
+    @field_validator("font_family")
+    @classmethod
+    def validate_response_font_family(cls, v: str | None) -> str | None:
+        """Reject legacy/direct-DB values outside the curated list so the
+        frontend Select doesn't render an unknown option silently.
+        """
+        if v is not None and v not in VALID_FONT_FAMILIES:
+            raise ValueError(f"font_family must be one of: {VALID_FONT_FAMILIES}")
+        return v
+
+    @field_validator("font_size_scale")
+    @classmethod
+    def validate_response_font_size_scale(cls, v: str | None) -> str | None:
+        """Reject legacy/direct-DB values outside the curated list."""
+        if v is not None and v not in VALID_FONT_SIZE_SCALES:
+            raise ValueError(f"font_size_scale must be one of: {VALID_FONT_SIZE_SCALES}")
+        return v
+
     # System-provided read-only configuration
     summary_search_min_token_length: int
     summary_search_max_tokens: int
