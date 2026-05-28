@@ -588,14 +588,15 @@ export {
   derivePrimaryVariants,
 } from './brandingUtils';
 
-export const getThemeConfig = (mode = 'light', branding, userFontPref = null, userFontScaleResolved = null) => {
+export const getThemeConfig = (mode = 'light', branding, userFontPref = null) => {
   const resolved = resolveBranding(branding);
   const base = mode === 'dark' ? darkThemeBase : lightThemeBase;
   const overrides = mode === 'dark' ? resolved.darkThemeOverrides : resolved.lightThemeOverrides;
   const config = mergeDeep(base, overrides);
 
   // Apply resolved typography (SHU-811): user body font → brand body font → shipped default;
-  // heading font cascades brand only.
+  // heading font cascades brand only. Font size scale lives on the HTML root
+  // (via ThemeContext) so all rem-based sizes in this theme scale with it.
   const bodyKey = resolveFontFamily(userFontPref, resolved.brandFontFamily);
   const headingKey = resolveHeadingFontFamily(resolved.brandHeadingFontFamily);
   const bodyStack = getFontStack(bodyKey);
@@ -614,9 +615,6 @@ export const getThemeConfig = (mode = 'light', branding, userFontPref = null, us
       config.typography.body2 = { ...config.typography.body2, fontFamily: bodyStack };
     }
   }
-  // userFontScaleResolved is read by ThemeContext for root font-size; it's
-  // not threaded into MUI typography (rem-based sizes scale via the root).
-  void userFontScaleResolved;
 
   // When branding overrides primary.main, the light/dark variants still hold
   // the base-theme defaults. Regenerate them so the full palette stays consistent.

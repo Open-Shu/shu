@@ -161,11 +161,12 @@ export const ThemeProvider = ({ children }) => {
     document.documentElement.style.fontSize = computeRootFontSizePercent(resolvedFontScale);
   }, [resolvedFontScale]);
 
-  // Create MUI theme based on resolved mode + resolved typography.
-  // Deps include the resolved values so a font change rebuilds the theme.
+  // Create MUI theme based on resolved mode + resolved body/heading fonts.
+  // The font size scale is *not* a theme dep — it lives on the HTML root
+  // via the effect above, and rem-based sizes pick it up at render time.
   const theme = useMemo(() => {
-    return createTheme(getThemeConfig(resolvedMode, branding, userFontFamily, resolvedFontScale));
-  }, [resolvedMode, branding, userFontFamily, resolvedFontScale, resolvedFontFamily, resolvedHeadingFontFamily]);
+    return createTheme(getThemeConfig(resolvedMode, branding, userFontFamily));
+  }, [resolvedMode, branding, userFontFamily]);
 
   // Insert branding information into DOM dynamicalls
   useEffect(() => {
