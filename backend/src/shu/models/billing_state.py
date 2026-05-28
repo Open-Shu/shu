@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Integer, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,8 +44,18 @@ class BillingState(TenantScopedMixin, Base):
 
     # Override the mixin's tenant_id column to make it the primary key.
     # No explicit index — the PK constraint creates one implicitly.
+    #
+    # `Uuid(as_uuid=False)` matches `TenantScopedMixin.tenant_id` and the
+    # `tenants.id` UUID column in Postgres. Declaring the column as
+    # `String` here would still pass the FK referential check, but
+    # SQLAlchemy would bind the INSERT parameter as `$1::VARCHAR` and
+    # asyncpg/Postgres refuses the implicit `varchar → uuid` cast,
+    # surfacing as `DatatypeMismatchError` at flush time. The
+    # `as_uuid=False` form keeps the Python attribute as `str` so the
+    # `before_flush` listener can keep stamping the string returned by
+    # `tenant_context.get()` without converting to `uuid.UUID`.
     tenant_id: Mapped[str] = mapped_column(
-        String,
+        Uuid(as_uuid=False),
         ForeignKey("tenants.id", ondelete="RESTRICT"),
         primary_key=True,
     )
