@@ -241,19 +241,21 @@ export default function GeneralPreferencesSection() {
               <Typography variant="body2" sx={{ mb: 1, color: 'text.secondary' }}>
                 Font Size
               </Typography>
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={preferences.font_size_scale ?? 'default'}
-                onChange={handleFontScaleChange}
-                aria-label="font size scale"
-              >
-                {VALID_FONT_SIZE_SCALES.map((key) => (
-                  <ToggleButton key={key} value={key} aria-label={FONT_SIZE_SCALES[key].label}>
-                    {FONT_SIZE_SCALES[key].label}
-                  </ToggleButton>
-                ))}
-              </ToggleButtonGroup>
+              <Box sx={{ overflowX: 'auto', maxWidth: '100%' }}>
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={preferences.font_size_scale ?? 'default'}
+                  onChange={handleFontScaleChange}
+                  aria-label="font size scale"
+                >
+                  {VALID_FONT_SIZE_SCALES.map((key) => (
+                    <ToggleButton key={key} value={key} aria-label={FONT_SIZE_SCALES[key].label}>
+                      {FONT_SIZE_SCALES[key].label}
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+              </Box>
               <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
                 Applies to all text across the app.
               </Typography>
