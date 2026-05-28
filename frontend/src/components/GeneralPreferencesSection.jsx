@@ -72,32 +72,48 @@ function useUserPreferences(themeMode) {
   return { preferences, setPreferences, error, setError, mutation };
 }
 
-const TypographyPreview = ({ fontKey, scaleKey, brandHeadingFontKey }) => {
+const TypographyPreview = ({ fontKey, brandHeadingFontKey }) => {
   const bodyStack = getFontStack(fontKey);
   const headingStack = getFontStack(brandHeadingFontKey);
-  const multiplier = (FONT_SIZE_SCALES[scaleKey] ?? FONT_SIZE_SCALES.default).multiplier;
-  // Anchor the preview to a fixed pixel size so the user sees the absolute
-  // result regardless of the page-level root scaling. 16px reference = the
-  // browser default before the 20% baseline reduction.
-  const previewBase = 16 * multiplier;
+  // Sizes use rem so the preview reflects the user's current scale — the
+  // body line below is rendered at the exact size chat messages will use.
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mb: 1, fontSize: '12px' }}>
-        Preview ({Math.round(previewBase * 100) / 100}px body)
-      </Typography>
-      <Box sx={{ fontFamily: headingStack, fontSize: `${previewBase * 1.5}px`, fontWeight: 600, mb: 0.5 }}>
-        The quick brown fox
+      <Box
+        sx={{
+          color: 'text.secondary',
+          fontSize: '0.75rem',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          mb: 1.5,
+          pb: 1,
+          borderBottom: '1px dashed',
+          borderColor: 'divider',
+        }}
+      >
+        Preview
       </Box>
-      <Box sx={{ fontFamily: bodyStack, fontSize: `${previewBase}px`, lineHeight: 1.5 }}>
-        Jumps over the lazy dog. 1234567890 — sphinx of black quartz, judge my vow.
+      <Box sx={{ fontFamily: headingStack, fontSize: '1.5rem', fontWeight: 600, mb: 0.5 }}>Page & section headings</Box>
+      <Box sx={{ fontFamily: bodyStack, fontSize: '1rem', lineHeight: 1.5 }}>
+        Chat messages and body text. Sphinx of black quartz, judge my vow. 1234567890.
       </Box>
-      <Box sx={{ fontFamily: bodyStack, fontSize: `${previewBase * 0.875}px`, color: 'text.secondary', mt: 0.5 }}>
-        Secondary text uses the same body font at a smaller size.
+      <Box sx={{ fontFamily: bodyStack, fontSize: '0.875rem', color: 'text.secondary', mt: 0.5 }}>
+        Captions, hints, and supporting text.
       </Box>
-      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mt: 1.5, fontSize: '12px' }}>
-        Reference (always 16px, unaffected by scale)
-      </Typography>
-      <Box sx={{ fontFamily: bodyStack, fontSize: '16px' }}>This line is always 16px.</Box>
+      <Box
+        sx={{
+          fontFamily: bodyStack,
+          fontSize: '16px',
+          color: 'text.secondary',
+          mt: 1.5,
+          pt: 1,
+          borderTop: '1px dashed',
+          borderColor: 'divider',
+        }}
+      >
+        Fixed reference, unaffected by your selection.
+      </Box>
     </Paper>
   );
 };
@@ -110,7 +126,6 @@ export default function GeneralPreferencesSection() {
   const brandHeadingFontKey = branding?.brandHeadingFontFamily ?? brandFontKey ?? 'inter';
 
   const previewFontKey = preferences.font_family || resolvedFontFamily;
-  const previewScaleKey = preferences.font_size_scale || 'default';
 
   // Match the theme-dropdown pattern: typography changes apply (and persist
   // via PATCH) immediately on selection so the live preview matches the page.
@@ -246,11 +261,7 @@ export default function GeneralPreferencesSection() {
           </Stack>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TypographyPreview
-            fontKey={previewFontKey}
-            scaleKey={previewScaleKey}
-            brandHeadingFontKey={brandHeadingFontKey}
-          />
+          <TypographyPreview fontKey={previewFontKey} brandHeadingFontKey={brandHeadingFontKey} />
         </Grid>
       </Grid>
 
