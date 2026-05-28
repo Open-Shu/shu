@@ -10,7 +10,9 @@ access checks reflect the latest state.
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from typing import TYPE_CHECKING
+
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -30,7 +32,13 @@ from shu.schemas.access_policy import (
     PolicyListResponse,
     PolicyResponse,
 )
+from shu.schemas.cp_provisioning import SetPoliciesRequest, SetPoliciesResponse
 from shu.services.policy_engine import POLICY_CACHE
+from shu.services.tenant_admin_service import CP_ACTOR
+
+if TYPE_CHECKING:
+    from shu.services.audit_logger import AuditLogger
+    from shu.services.tenant_admin_service import TenantAdminService
 
 logger = get_logger(__name__)
 
@@ -42,8 +50,17 @@ class PolicyService:
     and statements are always included inline, not as sub-resources.
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_admin_svc: TenantAdminService | None = None,
+        audit_logger: AuditLogger | None = None,
+    ) -> None:
         self.db = db
+        # The two CP-only deps. Existing in-tenant callers don't pass them.
+        self._tenant_admin_svc = tenant_admin_svc
+        self._audit = audit_logger
 
     async def create_policy(self, data: PolicyInput, created_by: str) -> AccessPolicy:
         """Create a complete policy document with bindings and statements.
@@ -312,3 +329,139 @@ class PolicyService:
                     resources=s.resources,
                 )
             )
+
+    async def cp_replace_and_bind(
+        self,
+        tenant_id: str,
+        payload: SetPoliciesRequest,
+        reason: str,
+    ) -> SetPoliciesResponse:
+        """Replace named policies and (optionally) bind them to all users.
+
+        Per-name surgical replace: each policy in the payload deletes any
+        existing row with the same `(tenant_id, name)` and inserts the new
+        version. Policies NOT in the payload are LEFT ALONE — they keep
+        their rows, statements, and bindings. An empty payload is a no-op.
+
+        Two reasons for this scope rather than a tenant-wide wipe:
+        * In silo deployments the tenant IS the entire database; a
+          tenant-wide wipe is a customer-wide destructive event if CP
+          ever ships a malformed empty payload.
+        * Even in multi-tenant mode, CP only knows what it's pushing,
+          not what's already there. Implicit "everything else is retired"
+          is too much policy authority to grant a single API call.
+
+        Bindings on a replaced policy cascade away with the old row
+        (`ondelete="CASCADE"` on `access_policy_bindings.policy_id`).
+        `bind_to_all_users=True` recreates bindings for the new policy
+        IDs. Policies not in the payload keep their bindings untouched.
+
+        `AccessPolicy.created_by` is non-nullable FK; CP isn't a user, so
+        inserted rows are attributed to the lexicographically-first user
+        id in the tenant. Cosmetic until a real system-user concept lands.
+        """
+        if self._tenant_admin_svc is None or self._audit is None:
+            raise RuntimeError(
+                "PolicyService.cp_replace_and_bind requires tenant_admin_svc and audit_logger to be injected"
+            )
+
+        policy_ids_by_name: dict[str, str] = {}
+        bindings_created = 0
+        policy_names = [p.name for p in payload.policies]
+
+        # Reject duplicate names up front. The per-name delete+insert would
+        # otherwise persist multiple rows for the same name while only the
+        # last id survives in policy_ids_by_name, leaving the response and
+        # downstream bindings inconsistent with the database.
+        duplicates = sorted({n for n in policy_names if policy_names.count(n) > 1})
+        if duplicates:
+            raise ValidationError(f"duplicate policy names in payload: {duplicates}")
+
+        async with self._tenant_admin_svc.impersonate_tenant(tenant_id, CP_ACTOR, reason) as session:
+            first_user_id = (await session.execute(select(User.id).order_by(User.id).limit(1))).scalar_one_or_none()
+            if first_user_id is None:
+                raise NotFoundError("tenant has no users; create the tenant before pushing policies")
+
+            replaced_count = 0
+            if policy_names:
+                # Only delete policies that are to be changed. This allows us to call silo customers
+                # and not break their entire setup.
+                replaced_count = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(AccessPolicy)
+                        .where(AccessPolicy.tenant_id == tenant_id)
+                        .where(AccessPolicy.name.in_(policy_names))
+                    )
+                ).scalar() or 0
+                await session.execute(
+                    delete(AccessPolicy)
+                    .where(AccessPolicy.tenant_id == tenant_id)
+                    .where(AccessPolicy.name.in_(policy_names))
+                )
+
+            await self._audit.log(
+                event="cp_policies_replace_started",
+                actor=CP_ACTOR,
+                target=tenant_id,
+                reason=reason,
+                replaced_count=replaced_count,
+                new_count=len(payload.policies),
+            )
+
+            for policy_in in payload.policies:
+                policy = AccessPolicy(
+                    name=policy_in.name,
+                    description=policy_in.description,
+                    effect=policy_in.effect,
+                    is_active=True,
+                    created_by=first_user_id,
+                )
+                session.add(policy)
+                await session.flush()
+                for stmt in policy_in.statements:
+                    session.add(
+                        AccessPolicyStatement(
+                            policy_id=policy.id,
+                            actions=stmt.actions,
+                            resources=stmt.resources,
+                        )
+                    )
+                policy_ids_by_name[policy_in.name] = policy.id
+                await self._audit.log(
+                    event="cp_policy_inserted",
+                    actor=CP_ACTOR,
+                    target=policy_in.name,
+                    reason=reason,
+                )
+
+            if payload.bind_to_all_users and policy_ids_by_name:
+                user_ids: list[str] = list((await session.execute(select(User.id))).scalars().all())
+                for user_id in user_ids:
+                    for policy_id in policy_ids_by_name.values():
+                        session.add(
+                            AccessPolicyBinding(
+                                policy_id=policy_id,
+                                actor_type="user",
+                                actor_id=user_id,
+                            )
+                        )
+                        bindings_created += 1
+                await self._audit.log(
+                    event="cp_policy_bindings_created",
+                    actor=CP_ACTOR,
+                    target=tenant_id,
+                    reason=reason,
+                    bindings_created=bindings_created,
+                )
+
+            await session.commit()
+
+        # Cache invalidation happens after the writer commits so concurrent
+        # readers don't see a stale-then-empty flap.
+        POLICY_CACHE.invalidate()
+
+        return SetPoliciesResponse(
+            policy_ids_by_name=policy_ids_by_name,
+            bindings_created=bindings_created,
+        )

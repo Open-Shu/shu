@@ -188,6 +188,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             "/openapi.json",
             "/static/",  # Self-hosted static assets (e.g., ReDoc JS)
             "/api/v1/settings/branding/assets/",
+            "/api/v1/admin/cp/",
         ]
         return any(path.startswith(prefix) for prefix in public_prefixes)
 
