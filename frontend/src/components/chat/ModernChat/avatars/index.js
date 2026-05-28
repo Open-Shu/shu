@@ -1,7 +1,7 @@
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
+import CycloneIcon from '@mui/icons-material/Cyclone';
 import EmojiObjectsIcon from '@mui/icons-material/EmojiObjects';
-import PsychologyIcon from '@mui/icons-material/Psychology';
+import FlareIcon from '@mui/icons-material/Flare';
 import SpaIcon from '@mui/icons-material/Spa';
 import ShuFeatherIcon from './ShuFeatherIcon';
 
@@ -9,8 +9,8 @@ export const SHU_FEATHER_ID = 'shu_feather';
 
 export const CURATED_AVATARS = [
   { id: SHU_FEATHER_ID, label: 'Shu feather', component: ShuFeatherIcon },
-  { id: 'auto_awesome', label: 'Sparkle', component: AutoAwesomeIcon },
-  { id: 'psychology', label: 'Brain', component: PsychologyIcon },
+  { id: 'flare', label: 'Sunburst', component: FlareIcon },
+  { id: 'cyclone', label: 'Swirl', component: CycloneIcon },
   { id: 'emoji_objects', label: 'Lightbulb', component: EmojiObjectsIcon },
   { id: 'bolt', label: 'Bolt', component: BoltIcon },
   { id: 'spa', label: 'Leaf', component: SpaIcon },

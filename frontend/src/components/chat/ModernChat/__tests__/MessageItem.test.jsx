@@ -194,12 +194,12 @@ describe('MessageItem — SHU-815 assistant avatar config', () => {
         <MessageItem
           message={message}
           {...baseProps({
-            avatarConfig: { mode: 'curated', curatedId: 'auto_awesome', assetUrl: null, appName: 'Shu' },
+            avatarConfig: { mode: 'curated', curatedId: 'cyclone', assetUrl: null, appName: 'Shu' },
           })}
         />
       </TestWrapper>
     );
-    expect(screen.getByLabelText('Sparkle')).toBeInTheDocument();
+    expect(screen.getByLabelText('Swirl')).toBeInTheDocument();
     expect(screen.queryByLabelText('Shu feather')).toBeNull();
   });
 
