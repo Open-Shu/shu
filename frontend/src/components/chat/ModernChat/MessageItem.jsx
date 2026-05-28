@@ -507,7 +507,15 @@ const MessageItem = React.memo(function MessageItem({
       </Box>
 
       {message.role === 'assistant' && (
-        <Box sx={{ mt: 0.5, pl: isMobile ? 0 : 7, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box
+          sx={{
+            mt: 0.5,
+            pl: isMobile || !showAvatars ? 0 : 7,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
           {group.length > 1 && !isSideBySide && (
             <>
               <Tooltip title="Previous variant">
