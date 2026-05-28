@@ -244,6 +244,8 @@ const useChatStreaming = ({
               conversation_id: conversationId,
               isStreaming: true,
               isPlaceholder: true,
+              thinkingPool: 'default',
+              streamSlotId: tempMessageId,
               // SHU-803 follow-up: stamp this stream's token so
               // handleStopStream can read it from the cache message
               // and check its ownership-ref guard correctly. Carries
@@ -471,6 +473,10 @@ const useChatStreaming = ({
                       placeholderMsg.reasoning_collapsed ?? (placeholderMsg.reasoning_stream ? true : undefined),
                   }
                 : {};
+              // Preserve streamSlotId across the placeholder→finalMessage id
+              // swap so MessageItem's Paper key stays stable and the
+              // StreamingFeather settle-down animation has a chance to play.
+              const preservedSlotId = placeholderMsg?.streamSlotId || placeholderId;
               const updated = existing.map((m) => {
                 if (m.id === placeholderId) {
                   return {
@@ -478,6 +484,7 @@ const useChatStreaming = ({
                     ...reasoningProps,
                     isPlaceholder: false,
                     isStreaming: false,
+                    streamSlotId: preservedSlotId,
                   };
                 }
                 return m;
@@ -490,6 +497,7 @@ const useChatStreaming = ({
                   ...reasoningProps,
                   isPlaceholder: false,
                   isStreaming: false,
+                  streamSlotId: preservedSlotId,
                 });
               }
               return rebuildCache(oldData, updated);

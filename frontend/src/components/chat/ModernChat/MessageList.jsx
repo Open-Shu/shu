@@ -189,7 +189,7 @@ const MessageList = React.memo(
               const isSideBySide = sideBySideParents?.has?.(parentId);
               return (
                 <MessageItem
-                  key={message.id}
+                  key={message.streamSlotId || message.id}
                   message={message}
                   isLast={isLastGlobal}
                   user={user}
