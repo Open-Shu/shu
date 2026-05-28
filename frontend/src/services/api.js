@@ -330,6 +330,13 @@ export const brandingAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  uploadAssistantAvatar: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/settings/branding/assistant-avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 };
 
 // Knowledge base endpoints

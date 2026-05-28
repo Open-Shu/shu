@@ -2,6 +2,8 @@ import React, { forwardRef, useImperativeHandle, useMemo, useRef, useCallback } 
 import { Box, Skeleton } from '@mui/material';
 import MessageItem from './MessageItem';
 import { CHAT_SCROLL_TOP_THRESHOLD, CHAT_SCROLL_BOTTOM_THRESHOLD, CHAT_WINDOW_SIZE } from './utils/chatConfig';
+import { useTheme as useAppTheme } from '../../../contexts/ThemeContext';
+import { resolveBranding } from '../../../utils/brandingUtils';
 
 const MessageList = React.memo(
   forwardRef(function MessageList(
@@ -38,6 +40,20 @@ const MessageList = React.memo(
     ref
   ) {
     const items = useMemo(() => (Array.isArray(messages) ? messages : []), [messages]);
+    const { branding } = useAppTheme();
+    // Read branding once at this level and derive a memo-stable avatarConfig so
+    // MessageItem's React.memo doesn't churn on unrelated branding context
+    // updates. The avatar fields are the only branding state MessageItem cares
+    // about.
+    const avatarConfig = useMemo(() => {
+      const resolved = resolveBranding(branding);
+      return {
+        mode: resolved.assistantAvatarMode || 'curated',
+        curatedId: resolved.assistantAvatarCuratedId || 'shu_feather',
+        assetUrl: resolved.assistantAvatarAssetUrl || null,
+        appName: resolved.appName || 'Assistant',
+      };
+    }, [branding]);
     const scrollRef = useRef(null);
     const lastBottomStateRef = useRef(true);
     const topLoadArmedRef = useRef(false);
@@ -209,6 +225,7 @@ const MessageList = React.memo(
                   isSideBySide={!!isSideBySide}
                   onToggleSideBySide={onToggleSideBySide}
                   onToggleReasoning={onToggleReasoning}
+                  avatarConfig={avatarConfig}
                 />
               );
             })}

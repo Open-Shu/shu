@@ -28,6 +28,9 @@ def _build_default_payload(settings: Settings) -> dict[str, object]:
         "dark_favicon_url": settings.branding_default_dark_favicon_url,
         "light_topbar_text_color": None,
         "dark_topbar_text_color": None,
+        "assistant_avatar_mode": "curated",
+        "assistant_avatar_curated_id": "shu_feather",
+        "assistant_avatar_asset_url": None,
         "updated_at": None,
         "updated_by": None,
     }
@@ -106,6 +109,16 @@ class BrandingService:
             else:
                 stored[key] = value
 
+        # Mode-switch cleanup: when the finalized assistant_avatar_mode is no
+        # longer "custom", the previously-uploaded asset becomes orphaned. Delete
+        # the file and drop the URL so disk space doesn't accumulate over time.
+        final_avatar_mode = stored.get("assistant_avatar_mode")
+        if final_avatar_mode is not None and final_avatar_mode != "custom":
+            orphan_url = stored.get("assistant_avatar_asset_url")
+            if orphan_url:
+                self._remove_local_asset(orphan_url)
+                stored.pop("assistant_avatar_asset_url", None)
+
         now = datetime.now(UTC).isoformat()
         stored["updated_at"] = now
         if user_id:
@@ -138,10 +151,10 @@ class BrandingService:
 
         """
         asset_type = asset_type.lower()
-        if asset_type not in {"favicon", "dark_favicon"}:
+        if asset_type not in {"favicon", "dark_favicon", "assistant_avatar"}:
             raise ValueError("Unsupported asset type")
 
-        self._validate_asset(filename=filename, file_bytes=file_bytes)
+        self._validate_asset(filename=filename, file_bytes=file_bytes, asset_type=asset_type)
 
         extension = Path(filename).suffix.lower()
         asset_filename = f"{asset_type}_{uuid.uuid4().hex}{extension}"
@@ -163,7 +176,13 @@ class BrandingService:
 
         # Update configuration
         field_name = self._asset_type_to_field_name(asset_type)
-        update = BrandingSettingsUpdate(**{field_name: public_url})
+        update_fields: dict[str, object] = {field_name: public_url}
+        # An avatar upload implicitly switches mode to "custom" so the chat
+        # renders the new image rather than the previously-selected curated
+        # icon.
+        if asset_type == "assistant_avatar":
+            update_fields["assistant_avatar_mode"] = "custom"
+        update = BrandingSettingsUpdate(**update_fields)
 
         try:
             return await self.update_branding(update, user_id=user_id)
@@ -197,12 +216,15 @@ class BrandingService:
     def _default_payload(self) -> dict[str, object]:
         return _build_default_payload(self.settings)
 
-    def _validate_asset(self, *, filename: str, file_bytes: bytes) -> None:
+    def _validate_asset(self, *, filename: str, file_bytes: bytes, asset_type: str = "favicon") -> None:
         if not filename:
             raise ValueError("Filename is required")
 
         extension = Path(filename).suffix.lower().lstrip(".")
-        allowed = {ext.lower() for ext in self.settings.branding_allowed_favicon_extensions}
+        if asset_type == "assistant_avatar":
+            allowed = {ext.lower() for ext in self.settings.branding_allowed_avatar_extensions}
+        else:
+            allowed = {ext.lower() for ext in self.settings.branding_allowed_favicon_extensions}
 
         if extension not in allowed:
             raise ValueError(f"Invalid file type '.{extension}'. Allowed types: {', '.join(sorted(allowed))}")
@@ -270,6 +292,7 @@ class BrandingService:
         mapping = {
             "favicon": "favicon_url",
             "dark_favicon": "dark_favicon_url",
+            "assistant_avatar": "assistant_avatar_asset_url",
         }
         return mapping[asset_type]
 

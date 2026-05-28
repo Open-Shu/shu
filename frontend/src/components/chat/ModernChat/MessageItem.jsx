@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import { Avatar, Box, IconButton, Paper, Typography, Tooltip, Button, useMediaQuery } from '@mui/material';
 import {
   Person as UserIcon,
-  SmartToy as BotIcon,
   Refresh as RefreshIcon,
   ContentCopy as ContentCopyIcon,
   NavigateBefore as NavigateBeforeIcon,
@@ -14,6 +13,9 @@ import AssistantPhaseContent from './AssistantPhaseContent';
 import UserAvatar from '../../shared/UserAvatar.jsx';
 import { formatMessageTimestamp } from './utils/messageVariants';
 import { PLACEHOLDER_THINKING } from './utils/chatConfig';
+import { resolveCuratedAvatar } from './avatars';
+
+const DEFAULT_AVATAR_CONFIG = { mode: 'curated', curatedId: 'shu_feather', assetUrl: null, appName: 'Assistant' };
 
 const INLINE_AVATAR_SIZE = 20;
 const INLINE_AVATAR_ICON_SIZE = 14;
@@ -40,6 +42,7 @@ const MessageItem = React.memo(function MessageItem({
   isSideBySide = false,
   onToggleSideBySide,
   onToggleReasoning,
+  avatarConfig = DEFAULT_AVATAR_CONFIG,
 }) {
   const parentId = message.parent_message_id || message.id;
   const group = useMemo(() => variantGroups[parentId] || [message], [parentId, message, variantGroups]);
@@ -87,7 +90,46 @@ const MessageItem = React.memo(function MessageItem({
   const isUser = message.role === 'user';
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const userInlineAvatar = (
+  const avatarMode = avatarConfig?.mode || 'curated';
+  // No-icon mode hides BOTH speaker avatars symmetrically; bubble alignment +
+  // colour continue to distinguish speakers.
+  const showAvatars = avatarMode !== 'none';
+
+  const renderAssistantAvatar = (size, iconSize) => {
+    if (avatarMode === 'custom' && avatarConfig?.assetUrl) {
+      return (
+        <Avatar
+          src={avatarConfig.assetUrl}
+          alt={avatarConfig?.appName || 'Assistant'}
+          sx={{
+            width: size,
+            height: size,
+            flexShrink: 0,
+            fontSize: '0.65rem',
+          }}
+        />
+      );
+    }
+    const entry = resolveCuratedAvatar(avatarConfig?.curatedId);
+    const IconComponent = entry.component;
+    return (
+      <Avatar
+        sx={{
+          bgcolor: theme.palette.secondary.main,
+          color: theme.palette.secondary.contrastText,
+          width: size,
+          height: size,
+          flexShrink: 0,
+          fontSize: '0.65rem',
+        }}
+        aria-label={entry.label}
+      >
+        <IconComponent sx={{ fontSize: iconSize }} />
+      </Avatar>
+    );
+  };
+
+  const userInlineAvatar = showAvatars ? (
     <UserAvatar
       user={user}
       size={INLINE_AVATAR_SIZE}
@@ -103,24 +145,11 @@ const MessageItem = React.memo(function MessageItem({
       }}
       fallbackChar={<UserIcon sx={{ fontSize: INLINE_AVATAR_ICON_SIZE }} />}
     />
-  );
+  ) : null;
 
-  const assistantInlineAvatar = (
-    <Avatar
-      sx={{
-        bgcolor: theme.palette.secondary.main,
-        color: theme.palette.secondary.contrastText,
-        width: INLINE_AVATAR_SIZE,
-        height: INLINE_AVATAR_SIZE,
-        flexShrink: 0,
-        fontSize: '0.65rem',
-      }}
-    >
-      <BotIcon sx={{ fontSize: INLINE_AVATAR_ICON_SIZE }} />
-    </Avatar>
-  );
+  const assistantInlineAvatar = showAvatars ? renderAssistantAvatar(INLINE_AVATAR_SIZE, INLINE_AVATAR_ICON_SIZE) : null;
 
-  const avatarNode = isUser ? (
+  const avatarNode = !showAvatars ? null : isUser ? (
     <UserAvatar
       user={user}
       size={DESKTOP_AVATAR_SIZE}
@@ -132,17 +161,7 @@ const MessageItem = React.memo(function MessageItem({
       fallbackChar={<UserIcon fontSize="small" />}
     />
   ) : (
-    <Avatar
-      sx={{
-        bgcolor: theme.palette.secondary.main,
-        color: theme.palette.secondary.contrastText,
-        width: DESKTOP_AVATAR_SIZE,
-        height: DESKTOP_AVATAR_SIZE,
-        flexShrink: 0,
-      }}
-    >
-      <BotIcon />
-    </Avatar>
+    renderAssistantAvatar(DESKTOP_AVATAR_SIZE, undefined)
   );
 
   const containerDirection = isUser ? 'row-reverse' : 'row';

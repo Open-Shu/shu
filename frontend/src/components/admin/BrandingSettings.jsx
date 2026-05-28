@@ -8,6 +8,7 @@ import { resolveBranding } from '../../utils/brandingUtils';
 import { getThemeConfig } from '../../utils/constants';
 import log from '../../utils/log';
 import PageHelpHeader from '../PageHelpHeader';
+import AssistantAvatarSection from './branding/AssistantAvatarSection';
 
 const emptyForm = {
   appName: '',
@@ -397,6 +398,8 @@ const BrandingSettings = () => {
             </Stack>
           </Paper>
         </Stack>
+
+        <AssistantAvatarSection branding={branding} setBranding={setBranding} setStatus={setStatus} />
 
         <Paper sx={{ p: 3 }}>
           <Stack spacing={2}>
