@@ -23,14 +23,14 @@ from ..models.llm_provider import Message
 from ..models.model_configuration import ModelConfiguration
 from ..services.chat_types import ChatContext
 from ..services.model_configuration_service import ModelConfigurationService
+from ..services.side_call_settings import (
+    PROFILING_MODEL_SETTING_KEY,
+    SIDE_CALL_MODEL_SETTING_KEY,
+)
 from ..services.system_settings_service import SystemSettingsService
 from ..services.usage_recording import get_usage_recorder
 
 logger = get_logger(__name__)
-
-# Constants for side-call configuration
-SIDE_CALL_MODEL_SETTING_KEY = "side_call_model_config_id"
-PROFILING_MODEL_SETTING_KEY = "profiling_model_config_id"
 
 
 class SideCallResult:
