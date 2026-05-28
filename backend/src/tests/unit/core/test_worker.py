@@ -19,7 +19,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from tests.unit.conftest import disabled_billing_state, healthy_billing_state
 
-from shu.billing.enforcement import SubscriptionInactiveError, TrialCapExhaustedError
+from shu.billing.enforcement import SubscriptionInactiveError, HardCapExhaustedError
 from shu.core.queue_backend import InMemoryQueueBackend, Job
 from shu.core.worker import Worker, WorkerConfig
 from shu.core.workload_routing import WorkloadType, enqueue_job
@@ -816,7 +816,7 @@ class TestWorkloadCapacityLimiter:
 # Billing Gate Tests (SHU-703 / SHU-757)
 #
 # When the service-layer gate raises `SubscriptionInactiveError` (post-grace
-# OR-key disable) OR `TrialCapExhaustedError` (trial grant pool exhausted),
+# OR-key disable) OR `HardCapExhaustedError` (trial grant pool exhausted),
 # the worker handler must drop the job cleanly — propagating would log a
 # stack trace and requeue, neither of which is correct for a known billing
 # state. Both errors share the same drop path so new billing-gated failure
@@ -891,7 +891,7 @@ class TestProcessJobBillingGate:
 
     The `RE_EMBEDDING` case is the load-bearing one: it wasn't covered by the
     earlier per-handler catches and surfaced as 3-attempt retry storms in
-    production logs. The `TrialCapExhaustedError` matrix is the SHU-757
+    production logs. The `HardCapExhaustedError` matrix is the SHU-757
     counterpart — without explicit coverage in dispatch, a trial tenant who
     exhausts their grant mid-ingestion sees the same retry-storm shape.
     """
@@ -924,8 +924,8 @@ class TestProcessJobBillingGate:
                 "SubscriptionInactiveError",
             ),
             (
-                lambda: TrialCapExhaustedError(trial_deadline=None, total_grant_amount=Decimal("0")),
-                "TrialCapExhaustedError",
+                lambda: HardCapExhaustedError(trial_deadline=None, total_grant_amount=Decimal("0")),
+                "HardCapExhaustedError",
             ),
         ],
     )

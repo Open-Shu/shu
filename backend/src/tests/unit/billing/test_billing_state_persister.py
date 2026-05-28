@@ -26,18 +26,17 @@ def _state(**overrides: Any) -> BillingState:
         "payment_failed_at": None,
         "payment_grace_days": 0,
         "entitlements": EntitlementSet(plugins=True),
-        "is_trial": True,
-        "trial_deadline": datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
         "total_grant_amount": Decimal("50.00"),
         "remaining_grant_amount": Decimal("12.34"),
         "seat_price_usd": Decimal("20.00"),
         "limits": LimitSet(),
-        "subscription_status": None,
-        "current_period_start": None,
-        "current_period_end": None,
+        "subscription_status": "trialing",
+        "current_period_start": datetime(2026, 5, 1, tzinfo=timezone.utc),
+        "current_period_end": datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
         "cancel_at_period_end": False,
         "canceled_at": None,
         "usage_markup_multiplier": None,
+        "hard_cap": True,
     }
     base.update(overrides)
     return BillingState(**base)
@@ -125,7 +124,7 @@ async def test_load_returns_none_when_blob_fails_schema_validation(
     HEALTHY_DEFAULT via the existing path.
     """
 
-    # Pre-extension shape (missing entitlements, is_trial, grants, ...).
+    # Pre-extension shape (missing entitlements, grants, hard_cap, ...).
     # A real older deployment would have saved exactly this, then we'd
     # upgrade and try to load it.
     legacy_blob = {

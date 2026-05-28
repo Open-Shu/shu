@@ -43,8 +43,6 @@ def _state(disabled: bool = False, **overrides) -> BillingState:
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -55,6 +53,7 @@ def _state(disabled: bool = False, **overrides) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
     base.update(overrides)
     return BillingState(**base)
@@ -344,12 +343,12 @@ async def test_cp_auth_failed_is_treated_identically_to_unreachable() -> None:
 # paid features to free tenants when CP is down.
 
 
-def test_healthy_default_blocks_llm_via_trial_cap_and_keeps_or_key_open() -> None:
+def test_healthy_default_blocks_llm_via_hard_cap_and_keeps_or_key_open() -> None:
     # Cold-start CP-down posture: chat entitlement on so OCR/embeddings keep
-    # working (those don't go through the trial-cap), but is_trial=True with
-    # zero grant so the LLM-side trial-cap blocks. A trial tenant whose
-    # process restarts during a CP outage cannot rack up unbounded LLM cost
-    # before we get a real value back.
+    # working (those don't go through the hard-cap), but hard_cap=True with
+    # zero grant so the LLM-side cap blocks. A tenant whose process restarts
+    # during a CP outage cannot rack up unbounded LLM cost before we get a
+    # real value back.
     assert HEALTHY_DEFAULT.entitlements == EntitlementSet()
     assert HEALTHY_DEFAULT.entitlements.chat is True
     assert HEALTHY_DEFAULT.entitlements.plugins is False
@@ -358,12 +357,15 @@ def test_healthy_default_blocks_llm_via_trial_cap_and_keeps_or_key_open() -> Non
     assert HEALTHY_DEFAULT.entitlements.model_config_management is False
     assert HEALTHY_DEFAULT.entitlements.mcp_servers is False
     assert HEALTHY_DEFAULT.openrouter_key_disabled is False
-    assert HEALTHY_DEFAULT.is_trial is True
+    assert HEALTHY_DEFAULT.hard_cap is True
     assert HEALTHY_DEFAULT.total_grant_amount == Decimal(0)
     # `None` matches the trial wire shape post-Task 26 — tenant router
     # computes the displayed remaining from local usage. With total=0,
     # the computation returns 0, consistent with the fail-closed posture.
     assert HEALTHY_DEFAULT.remaining_grant_amount is None
+    # No subscription known at cold-start, so the derived `is_trial` /
+    # `trial_deadline` accessors (SHU-813) both report inert values.
+    assert HEALTHY_DEFAULT.is_trial is False
     assert HEALTHY_DEFAULT.trial_deadline is None
     assert HEALTHY_DEFAULT.seat_price_usd == Decimal(0)
 
@@ -427,11 +429,12 @@ async def test_warm_cache_failure_preserves_trial_and_grant_fields() -> None:
     """
     seeded = _state(
         entitlements=EntitlementSet(plugins=True, experiences=True),
-        is_trial=True,
-        trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+        subscription_status="trialing",
+        current_period_end=datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
         total_grant_amount=Decimal("50.00"),
         remaining_grant_amount=Decimal("12.34"),
         seat_price_usd=Decimal("20.00"),
+        hard_cap=True,
     )
     client = _stub_client(side_effects=[seeded, CpUnreachable("down")])
     cache = _make_cache(client, clock=_stepping_clock(_T0, timedelta(seconds=_TTL + 1)))
@@ -554,8 +557,11 @@ async def test_invalidate_serializes_with_in_flight_fetch() -> None:
 
 
 def _state_with_period_end(period_end: datetime, *, is_trial: bool = True) -> BillingState:
+    # `is_trial` is no longer a wire field (SHU-813) — `subscription_status
+    # == "trialing"` is the source of truth. Test helper keeps the boolean
+    # parameter shape for caller ergonomics and translates here.
     return _state(
-        is_trial=is_trial,
+        subscription_status="trialing" if is_trial else "active",
         current_period_start=_T0,
         current_period_end=period_end,
     )

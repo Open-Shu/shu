@@ -71,8 +71,6 @@ def _make_state(**overrides) -> BillingState:
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -83,6 +81,7 @@ def _make_state(**overrides) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
     base.update(overrides)
     return BillingState(**base)
@@ -275,12 +274,14 @@ class TestSubscriptionTrialAndEntitlements:
         install_stub_cache(
             _make_state(
                 entitlements=EntitlementSet(plugins=True, experiences=True),
-                is_trial=True,
-                trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+                subscription_status="trialing",
+                current_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+                current_period_end=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
                 total_grant_amount=Decimal("50.00"),
                 remaining_grant_amount=Decimal("12.34"),
                 seat_price_usd=Decimal("20.00"),
                 limits=LimitSet(document_count_limit=100, kb_count_limit=5),
+                hard_cap=True,
             )
         )
 
@@ -594,13 +595,14 @@ def _trial_state(
     # an explicit multiplier (or None to verify the configured-default
     # fallback path).
     return _make_state(
-        is_trial=True,
-        trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
+        subscription_status="trialing",
+        current_period_start=current_period_start,
+        current_period_end=datetime(2026, 5, 30, tzinfo=UTC),
         total_grant_amount=total_grant,
         remaining_grant_amount=None,
         seat_price_usd=Decimal("20"),
-        current_period_start=current_period_start,
         usage_markup_multiplier=usage_markup_multiplier,
+        hard_cap=True,
     )
 
 
