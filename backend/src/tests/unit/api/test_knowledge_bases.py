@@ -25,6 +25,7 @@ from shu.api.knowledge_bases import (
 )
 from shu.auth.rbac import require_kb_write_access
 from shu.billing.cp_client import BillingState
+from shu.billing.enforcement import assert_subscription_active
 from shu.billing.entitlements import EntitlementSet, LimitSet
 from shu.schemas.knowledge_base import KnowledgeBaseCreate
 from tests.unit.api.conftest import make_app_with_router
@@ -235,6 +236,80 @@ class TestUploadDocumentsSubscriptionGate:
             assert body["error"]["details"]["grace_deadline"] is not None
 
             # The gate must fire BEFORE the route reads bytes or stages anything.
+            mock_ingest.assert_not_called()
+            mock_staging_cls.assert_not_called()
+            mock_enqueue.assert_not_called()
+
+
+class TestUploadDocumentsLimitGate:
+    """SHU-776: the document-count gate fast-fails (403) before staging or enqueue.
+
+    The subscription gate is exercised by the class above; here it's overridden
+    to a no-op so this test isolates the document-count gate.
+    """
+
+    def test_at_document_cap_returns_403_and_blocks_ingestion(self, install_stub_cache):
+        install_stub_cache(
+            BillingState(
+                openrouter_key_disabled=False,
+                payment_failed_at=None,
+                payment_grace_days=0,
+                entitlements=EntitlementSet(),
+                is_trial=False,
+                trial_deadline=None,
+                total_grant_amount=Decimal(0),
+                remaining_grant_amount=Decimal(0),
+                seat_price_usd=Decimal(0),
+                limits=LimitSet(document_count_limit=5),
+                subscription_status="active",
+                current_period_start=None,
+                current_period_end=None,
+                cancel_at_period_end=False,
+                canceled_at=None,
+                usage_markup_multiplier=None,
+            )
+        )
+
+        app = make_app_with_router(kb_router)
+        fake_user = _mock_user("user-123")
+        fake_db = AsyncMock()
+
+        app.dependency_overrides[require_kb_write_access] = lambda: fake_user
+        app.dependency_overrides[get_db] = lambda: fake_db
+        app.dependency_overrides[assert_subscription_active] = lambda: None
+
+        # The fast-fail dep opens its own short-lived session — point it at a
+        # mock whose count query reports the tenant already at the cap.
+        count_result = MagicMock()
+        count_result.scalar.return_value = 5
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=count_result)
+        session_cm = MagicMock()
+        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("shu.billing.enforcement.get_async_session_local", return_value=lambda: session_cm),
+            patch("shu.billing.state_service.BillingStateService.get_for_update", new=AsyncMock()),
+            patch("shu.api.knowledge_bases.ingest_document_service") as mock_ingest,
+            patch("shu.services.file_staging_service.FileStagingService") as mock_staging_cls,
+            patch("shu.core.workload_routing.enqueue_job") as mock_enqueue,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/knowledge-bases/kb-1/documents/upload",
+                    files={"files": ("test.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+                )
+
+            assert response.status_code == 403
+            assert response.headers["content-type"].startswith("application/json")
+
+            body = response.json()
+            assert body["error"]["code"] == "limit_exceeded"
+            assert body["error"]["details"]["limit"] == "document_count"
+            assert body["error"]["details"]["cap"] == 5
+            assert body["error"]["details"]["current"] == 5
+
             mock_ingest.assert_not_called()
             mock_staging_cls.assert_not_called()
             mock_enqueue.assert_not_called()

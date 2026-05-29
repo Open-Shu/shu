@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
+from ..billing.enforcement import require_entitlement
 from ..core.exceptions import ConflictError, NotFoundError, ShuException, ValidationError
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
@@ -25,7 +26,13 @@ from ..services.experience_service import ExperienceService
 from .dependencies import get_db
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/experiences", tags=["experiences"])
+# Gated on "experiences": the entire surface (incl. list/read) is hidden from
+# tenants without the entitlement — the UI page won't render either.
+router = APIRouter(
+    prefix="/experiences",
+    tags=["experiences"],
+    dependencies=[Depends(require_entitlement("experiences"))],
+)
 
 
 @router.get(

@@ -1,7 +1,8 @@
 import React from 'react';
 import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BillingStatusProvider, useBillingStatus } from './BillingStatusContext';
+import { BillingStatusProvider, useBillingStatus, useEntitlement } from './BillingStatusContext';
+import { useFeatureEnabled } from '../config/featureFlags';
 import { billingAPI } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
@@ -312,5 +313,184 @@ describe('BillingStatusContext', () => {
     fireEvent.focus(window);
 
     expect(billingAPI.getSubscription).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('BillingStatusContext entitlements (SHU-773)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    billingAPI.getSubscription.mockReset();
+    useAuth.mockReturnValue({ isAuthenticated: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const EntitlementProbe = () => {
+    const { entitlements, limits, usage } = useBillingStatus();
+    return (
+      <div>
+        <div data-testid="entitlements">{JSON.stringify(entitlements)}</div>
+        <div data-testid="limits">{JSON.stringify(limits)}</div>
+        <div data-testid="usage">{JSON.stringify(usage)}</div>
+        <div data-testid="canPlugins">{String(useEntitlement('plugins'))}</div>
+        <div data-testid="canExperiences">{String(useEntitlement('experiences'))}</div>
+      </div>
+    );
+  };
+
+  const renderEntitlementProbe = () =>
+    render(
+      <BillingStatusProvider>
+        <EntitlementProbe />
+      </BillingStatusProvider>
+    );
+
+  it('propagates entitlements/limits/usage and reflects them in useEntitlement', async () => {
+    billingAPI.getSubscription.mockResolvedValue({
+      data: {
+        ...HEALTHY_RESPONSE.data,
+        entitlements: {
+          chat: true,
+          plugins: true,
+          experiences: false,
+          provider_management: false,
+          model_config_management: false,
+          mcp_servers: false,
+        },
+        limits: { kb_count_limit: 5, document_count_limit: 100 },
+        usage: { kb_count: 2, document_count: 40 },
+      },
+    });
+
+    renderEntitlementProbe();
+
+    // Wait on the experiences=false transition: it's true in the initial null
+    // state and only flips to false once the fetched entitlements land, so it
+    // reliably gates on the fetch (unlike plugins, true in both states).
+    await waitFor(() => {
+      expect(screen.getByTestId('canExperiences').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('canPlugins').textContent).toBe('true');
+    expect(JSON.parse(screen.getByTestId('limits').textContent)).toEqual({
+      kb_count_limit: 5,
+      document_count_limit: 100,
+    });
+    expect(JSON.parse(screen.getByTestId('usage').textContent)).toEqual({
+      kb_count: 2,
+      document_count: 40,
+    });
+  });
+
+  it('defaults to null and treats useEntitlement as enabled when blocks are omitted (self-hosted)', async () => {
+    // Self-hosted responses omit entitlements/limits/usage entirely.
+    billingAPI.getSubscription.mockResolvedValue(HEALTHY_RESPONSE);
+
+    renderEntitlementProbe();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('entitlements').textContent).toBe('null');
+    });
+    // null entitlements → every feature is treated as enabled so self-hosted
+    // and dev deployments keep showing every page.
+    expect(screen.getByTestId('canPlugins').textContent).toBe('true');
+    expect(screen.getByTestId('canExperiences').textContent).toBe('true');
+    expect(screen.getByTestId('limits').textContent).toBe('null');
+    expect(screen.getByTestId('usage').textContent).toBe('null');
+  });
+});
+
+describe('useFeatureEnabled (SHU-773)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    billingAPI.getSubscription.mockReset();
+    useAuth.mockReturnValue({ isAuthenticated: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const FeatureProbe = () => (
+    <div>
+      <div data-testid="featPlugins">{String(useFeatureEnabled('plugins'))}</div>
+      <div data-testid="featExperiences">{String(useFeatureEnabled('experiences'))}</div>
+      <div data-testid="featMcp">{String(useFeatureEnabled('mcp'))}</div>
+    </div>
+  );
+
+  const renderFeatureProbe = () =>
+    render(
+      <BillingStatusProvider>
+        <FeatureProbe />
+      </BillingStatusProvider>
+    );
+
+  it('ANDs the entitlement with the (default-true) build flag', async () => {
+    billingAPI.getSubscription.mockResolvedValue({
+      data: {
+        ...HEALTHY_RESPONSE.data,
+        entitlements: {
+          chat: true,
+          plugins: true,
+          experiences: false,
+          provider_management: false,
+          model_config_management: false,
+          mcp_servers: false,
+        },
+      },
+    });
+
+    renderFeatureProbe();
+
+    // experiences=false only flips once the fetch lands (true in the null
+    // initial state), so it reliably gates the wait.
+    await waitFor(() => {
+      expect(screen.getByTestId('featExperiences').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('featPlugins').textContent).toBe('true');
+  });
+
+  it('treats every feature as enabled on self-hosted (entitlements omitted)', async () => {
+    billingAPI.getSubscription.mockResolvedValue(HEALTHY_RESPONSE);
+
+    renderFeatureProbe();
+
+    // Self-hosted: entitlements stay null before and after the fetch, so both
+    // features read true throughout. Wait for the mount fetch to confirm the
+    // response (with no entitlements block) doesn't flip them off.
+    await waitFor(() => {
+      expect(billingAPI.getSubscription).toHaveBeenCalled();
+    });
+    expect(screen.getByTestId('featPlugins').textContent).toBe('true');
+    expect(screen.getByTestId('featExperiences').textContent).toBe('true');
+  });
+
+  it('requires both plugins and mcp_servers for the mcp feature (SHU-773 M2)', async () => {
+    // mcp_servers on but plugins off: the MCP admin routes live under the
+    // plugins router and 403 without plugins, so the UI must stay hidden too.
+    billingAPI.getSubscription.mockResolvedValue({
+      data: {
+        ...HEALTHY_RESPONSE.data,
+        entitlements: {
+          chat: true,
+          plugins: false,
+          experiences: false,
+          provider_management: false,
+          model_config_management: false,
+          mcp_servers: true,
+        },
+      },
+    });
+
+    renderFeatureProbe();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('featMcp').textContent).toBe('false');
+    });
+    // plugins is off too, so it's hidden — confirming mcp isn't enabled by its
+    // own entitlement alone.
+    expect(screen.getByTestId('featPlugins').textContent).toBe('false');
   });
 });

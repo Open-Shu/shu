@@ -28,6 +28,11 @@ const HEALTHY_STATE = {
   remainingGrantAmount: null,
   seatPriceUsd: null,
   userCount: 0,
+  // SHU-773: the backend omits these blocks on self-hosted (no control plane).
+  // null is the "unknown → don't gate" signal consumers key off of.
+  entitlements: null,
+  limits: null,
+  usage: null,
 };
 
 const BillingStatusContext = createContext(null);
@@ -62,6 +67,11 @@ export const BillingStatusProvider = ({ children }) => {
         remainingGrantAmount: parseDecimalField(data.remaining_grant_amount),
         seatPriceUsd: parseDecimalField(data.seat_price_usd),
         userCount: data.user_count ?? 0,
+        // Absent on self-hosted responses → null, which useEntitlement reads
+        // as "all enabled" so dev/self-hosted UIs keep showing every page.
+        entitlements: data.entitlements ?? null,
+        limits: data.limits ?? null,
+        usage: data.usage ?? null,
       });
     } catch (error) {
       // Swallow: transient API hiccups must not flash the banner. Keep last-known-healthy state.
@@ -99,6 +109,9 @@ export const BillingStatusProvider = ({ children }) => {
     remainingGrantAmount: status.remainingGrantAmount,
     seatPriceUsd: status.seatPriceUsd,
     userCount: status.userCount,
+    entitlements: status.entitlements,
+    limits: status.limits,
+    usage: status.usage,
     loading,
     // Exposed for trial-exit actions (upgrade-now / cancel-trial) so the
     // banner can pull fresh state immediately after success rather than
@@ -107,6 +120,22 @@ export const BillingStatusProvider = ({ children }) => {
   };
 
   return <BillingStatusContext.Provider value={value}>{children}</BillingStatusContext.Provider>;
+};
+
+/**
+ * useEntitlement(key) — true when the tenant may use the feature.
+ *
+ * Returns true when entitlements are null (self-hosted, or not yet loaded) so
+ * we never hide a feature the backend would actually allow; otherwise reflects
+ * the server's boolean. Pair with the build-time VITE_*_ENABLED flags — both
+ * must be true for a feature to render.
+ */
+export const useEntitlement = (key) => {
+  const { entitlements } = useBillingStatus();
+  if (entitlements === null) {
+    return true;
+  }
+  return entitlements[key] === true;
 };
 
 export default BillingStatusContext;
