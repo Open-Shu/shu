@@ -17,7 +17,7 @@ import {
 import {
   Add as AddIcon,
   AttachFile as AttachmentIcon,
-  SmartToy as BotIcon,
+  Extension as PluginIcon,
   Send as SendIcon,
   Stop as StopIcon,
   Hub as EnsembleIcon,
@@ -363,7 +363,7 @@ const InputBar = React.memo(function InputBar({
               }}
             >
               <ListItemIcon>
-                <BotIcon fontSize="small" />
+                <PluginIcon fontSize="small" />
               </ListItemIcon>
               Use a plugin
             </MenuItem>

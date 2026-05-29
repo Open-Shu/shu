@@ -28,7 +28,7 @@ import {
   Delete as DeleteIcon,
   PlayArrow as TestIcon,
   Settings as SettingsIcon,
-  SmartToy as ModelIcon,
+  Memory as ModelIcon,
   Psychology as PromptIcon,
   Storage as KnowledgeBaseIcon,
   Refresh as RefreshIcon,
