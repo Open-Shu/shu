@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .typography_constants import VALID_FONT_FAMILIES, VALID_FONT_SIZE_SCALES
+from .typography_constants import FontFamilyKey, FontSizeScaleKey
 
 # Valid theme options - centralized to avoid divergence
 VALID_THEMES = ["light", "dark", "auto"]
@@ -42,9 +42,10 @@ class UserPreferencesBase(BaseModel):
     language: str = Field(default="en", min_length=2, max_length=10, description="Language preference (ISO code)")
     timezone: str = Field(default="UTC", description="User timezone")
 
-    # Typography preferences (null = inherit from branding / shipped default)
-    font_family: str | None = Field(default=None, description="Body font family")
-    font_size_scale: str | None = Field(default=None, description="Font size scale tier")
+    # Typography preferences (null = inherit from branding / shipped default).
+    # FontFamilyKey / FontSizeScaleKey carry the curated-enum AfterValidator.
+    font_family: FontFamilyKey = Field(default=None, description="Body font family")
+    font_size_scale: FontSizeScaleKey = Field(default=None, description="Font size scale tier")
 
     # Advanced Settings
     advanced_settings: dict[str, Any] | None = Field(
@@ -59,22 +60,6 @@ class UserPreferencesBase(BaseModel):
         """Validate theme options."""
         if v not in VALID_THEMES:
             raise ValueError(f"Theme must be one of: {VALID_THEMES}")
-        return v
-
-    @field_validator("font_family")
-    @classmethod
-    def validate_font_family(cls, v: str | None) -> str | None:
-        """Validate font family is in the curated list."""
-        if v is not None and v not in VALID_FONT_FAMILIES:
-            raise ValueError(f"font_family must be one of: {VALID_FONT_FAMILIES}")
-        return v
-
-    @field_validator("font_size_scale")
-    @classmethod
-    def validate_font_size_scale(cls, v: str | None) -> str | None:
-        """Validate font size scale tier."""
-        if v is not None and v not in VALID_FONT_SIZE_SCALES:
-            raise ValueError(f"font_size_scale must be one of: {VALID_FONT_SIZE_SCALES}")
         return v
 
 
@@ -98,9 +83,9 @@ class UserPreferencesUpdate(BaseModel):
     language: str | None = Field(None, min_length=2, max_length=10)
     timezone: str | None = None
 
-    # Typography preferences
-    font_family: str | None = None
-    font_size_scale: str | None = None
+    # Typography preferences — curated enums enforced by the type alias.
+    font_family: FontFamilyKey = None
+    font_size_scale: FontSizeScaleKey = None
 
     # Advanced Settings
     advanced_settings: dict[str, Any] | None = None
@@ -113,22 +98,6 @@ class UserPreferencesUpdate(BaseModel):
         """Validate theme options."""
         if v is not None and v not in VALID_THEMES:
             raise ValueError(f"Theme must be one of: {VALID_THEMES}")
-        return v
-
-    @field_validator("font_family")
-    @classmethod
-    def validate_font_family(cls, v: str | None) -> str | None:
-        """Validate font family is in the curated list."""
-        if v is not None and v not in VALID_FONT_FAMILIES:
-            raise ValueError(f"font_family must be one of: {VALID_FONT_FAMILIES}")
-        return v
-
-    @field_validator("font_size_scale")
-    @classmethod
-    def validate_font_size_scale(cls, v: str | None) -> str | None:
-        """Validate font size scale tier."""
-        if v is not None and v not in VALID_FONT_SIZE_SCALES:
-            raise ValueError(f"font_size_scale must be one of: {VALID_FONT_SIZE_SCALES}")
         return v
 
 
@@ -146,30 +115,14 @@ class UserPreferencesResponse(BaseModel):
     language: str
     timezone: str
 
-    # Typography preferences (nullable — null = inherit from branding)
-    font_family: str | None
-    font_size_scale: str | None
+    # Typography preferences (null = inherit from branding).
+    # FontFamilyKey / FontSizeScaleKey reject legacy/direct-DB values outside
+    # the curated list so the frontend Select never sees an unknown option.
+    font_family: FontFamilyKey
+    font_size_scale: FontSizeScaleKey
 
     # Advanced Settings
     advanced_settings: dict[str, Any]
-
-    @field_validator("font_family")
-    @classmethod
-    def validate_response_font_family(cls, v: str | None) -> str | None:
-        """Reject legacy/direct-DB values outside the curated list so the
-        frontend Select doesn't render an unknown option silently.
-        """
-        if v is not None and v not in VALID_FONT_FAMILIES:
-            raise ValueError(f"font_family must be one of: {VALID_FONT_FAMILIES}")
-        return v
-
-    @field_validator("font_size_scale")
-    @classmethod
-    def validate_response_font_size_scale(cls, v: str | None) -> str | None:
-        """Reject legacy/direct-DB values outside the curated list."""
-        if v is not None and v not in VALID_FONT_SIZE_SCALES:
-            raise ValueError(f"font_size_scale must be one of: {VALID_FONT_SIZE_SCALES}")
-        return v
 
     # System-provided read-only configuration
     summary_search_min_token_length: int

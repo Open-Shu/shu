@@ -89,17 +89,26 @@ export const resolveFontFamily = (userPref, brandPref) => {
 };
 
 /**
- * Resolve the effective heading font key. Headings are admin-only — no
- * per-user override (yet). Falls back to SHIPPED_DEFAULT_FONT.
+ * Resolve the effective heading font key.
  *
- * @param {string | null | undefined} brandPref - branding.brand_heading_font_family
+ * Cascade:
+ *  1. Admin's `brand_heading_font_family` (heading override) — if set.
+ *  2. The resolved body font — so user's body pick and admin's body brand
+ *     flow through to headings when no heading-specific override exists.
+ *     This is what callers see when an admin hasn't differentiated heading
+ *     from body — keeps the page visually unified instead of forcing a
+ *     mixed-font look that no one configured.
+ *
+ * @param {string | null | undefined} brandHeadingPref - branding.brand_heading_font_family
+ * @param {string | null | undefined} userBodyPref - user_preferences.font_family
+ * @param {string | null | undefined} brandBodyPref - branding.brand_font_family
  * @returns {string} a key from FONT_FAMILIES
  */
-export const resolveHeadingFontFamily = (brandPref) => {
-  if (brandPref && FONT_FAMILIES[brandPref]) {
-    return brandPref;
+export const resolveHeadingFontFamily = (brandHeadingPref, userBodyPref, brandBodyPref) => {
+  if (brandHeadingPref && FONT_FAMILIES[brandHeadingPref]) {
+    return brandHeadingPref;
   }
-  return SHIPPED_DEFAULT_FONT;
+  return resolveFontFamily(userBodyPref, brandBodyPref);
 };
 
 /**
