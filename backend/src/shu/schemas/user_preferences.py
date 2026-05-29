@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .typography_constants import FontFamilyKey, FontSizeScaleKey
+
 # Valid theme options - centralized to avoid divergence
 VALID_THEMES = ["light", "dark", "auto"]
 
@@ -39,6 +41,11 @@ class UserPreferencesBase(BaseModel):
     theme: str = Field(default="light", description="UI theme preference")
     language: str = Field(default="en", min_length=2, max_length=10, description="Language preference (ISO code)")
     timezone: str = Field(default="UTC", description="User timezone")
+
+    # Typography preferences (null = inherit from branding / shipped default).
+    # FontFamilyKey / FontSizeScaleKey carry the curated-enum AfterValidator.
+    font_family: FontFamilyKey = Field(default=None, description="Body font family")
+    font_size_scale: FontSizeScaleKey = Field(default=None, description="Font size scale tier")
 
     # Advanced Settings
     advanced_settings: dict[str, Any] | None = Field(
@@ -76,6 +83,10 @@ class UserPreferencesUpdate(BaseModel):
     language: str | None = Field(None, min_length=2, max_length=10)
     timezone: str | None = None
 
+    # Typography preferences — curated enums enforced by the type alias.
+    font_family: FontFamilyKey = None
+    font_size_scale: FontSizeScaleKey = None
+
     # Advanced Settings
     advanced_settings: dict[str, Any] | None = None
 
@@ -103,6 +114,12 @@ class UserPreferencesResponse(BaseModel):
     theme: str
     language: str
     timezone: str
+
+    # Typography preferences (null = inherit from branding).
+    # FontFamilyKey / FontSizeScaleKey reject legacy/direct-DB values outside
+    # the curated list so the frontend Select never sees an unknown option.
+    font_family: FontFamilyKey
+    font_size_scale: FontSizeScaleKey
 
     # Advanced Settings
     advanced_settings: dict[str, Any]

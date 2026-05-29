@@ -28,6 +28,8 @@ def _build_default_payload(settings: Settings) -> dict[str, object]:
         "dark_favicon_url": settings.branding_default_dark_favicon_url,
         "light_topbar_text_color": None,
         "dark_topbar_text_color": None,
+        "brand_font_family": None,
+        "brand_heading_font_family": None,
         "updated_at": None,
         "updated_by": None,
     }

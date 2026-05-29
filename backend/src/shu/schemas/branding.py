@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .typography_constants import FontFamilyKey
+
 
 class BrandingSettings(BaseModel):
     """Complete branding payload returned to clients."""
@@ -21,6 +23,12 @@ class BrandingSettings(BaseModel):
     light_topbar_text_color: str | None = None
     dark_topbar_text_color: str | None = None
 
+    # Typography branding fields (null = use shipped default).
+    # FontFamilyKey rejects legacy/direct-DB values outside the curated
+    # list so the frontend cascade can't be fed an unknown key.
+    brand_font_family: FontFamilyKey = None
+    brand_heading_font_family: FontFamilyKey = None
+
 
 class BrandingSettingsUpdate(BaseModel):
     """Partial update payload for branding settings."""
@@ -36,3 +44,7 @@ class BrandingSettingsUpdate(BaseModel):
     dark_favicon_url: str | None = None
     light_topbar_text_color: str | None = None
     dark_topbar_text_color: str | None = None
+
+    # Typography branding fields — curated enum enforced by FontFamilyKey.
+    brand_font_family: FontFamilyKey = None
+    brand_heading_font_family: FontFamilyKey = None

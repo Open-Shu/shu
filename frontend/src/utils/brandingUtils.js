@@ -28,6 +28,8 @@ export const defaultBranding = {
   darkTopbarTextColor: null,
   lightThemeOverrides: {},
   darkThemeOverrides: {},
+  brandFontFamily: null,
+  brandHeadingFontFamily: null,
   updatedAt: null,
   updatedBy: null,
 };
@@ -50,6 +52,8 @@ export const resolveBranding = (branding) => {
     darkTopbarTextColor: raw.darkTopbarTextColor ?? raw.dark_topbar_text_color ?? null,
     lightThemeOverrides: toPlainObject(raw.lightThemeOverrides ?? raw.light_theme_overrides) || {},
     darkThemeOverrides: toPlainObject(raw.darkThemeOverrides ?? raw.dark_theme_overrides) || {},
+    brandFontFamily: raw.brandFontFamily ?? raw.brand_font_family ?? null,
+    brandHeadingFontFamily: raw.brandHeadingFontFamily ?? raw.brand_heading_font_family ?? null,
     updatedAt: raw.updatedAt ?? raw.updated_at ?? defaultBranding.updatedAt,
     updatedBy: raw.updatedBy ?? raw.updated_by ?? defaultBranding.updatedBy,
   };
