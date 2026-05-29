@@ -288,7 +288,10 @@ class BaseProviderAdapter:
             error string from the internal-tool router.
 
         """
-        if self.internal_tool_router.is_internal_plugin(plugin_name):
+        # Class-level predicate so plugin-style calls don't pay for
+        # router construction — and so tests that build the adapter via
+        # __new__ (skipping __init__) don't break on the lazy property.
+        if InternalToolRouter.is_internal_plugin(plugin_name):
             content, is_error, cost = await self.internal_tool_router.execute(operation, args_dict)
             await self._record_internal_tool_usage(operation, content, is_error, cost)
             return content

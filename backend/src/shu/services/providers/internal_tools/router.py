@@ -56,11 +56,17 @@ class InternalToolRouter:
             ),
         }
 
-    def is_internal_plugin(self, plugin_name: str) -> bool:
+    @classmethod
+    def is_internal_plugin(cls, plugin_name: str) -> bool:
         """Whether ``plugin_name`` (the LHS of ``__`` in the wire function name)
         is the internal-tool namespace and should be dispatched in-process.
+
+        Class-level so callers can short-circuit on the predicate without
+        constructing a router instance — relevant for any code path that
+        invokes ``_call_plugin`` with a non-``int`` name and shouldn't pay
+        for tool-registry construction.
         """
-        return plugin_name == self._NAMESPACE
+        return plugin_name == cls._NAMESPACE
 
     def pop_toggle_keys(self, params: dict[str, Any]) -> dict[str, bool]:
         """Lift every ``int:*`` toggle key out of ``params`` in place.
