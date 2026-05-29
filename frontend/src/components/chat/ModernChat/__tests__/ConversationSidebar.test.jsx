@@ -22,6 +22,15 @@ vi.mock('../../../shared/MarkdownRenderer', () => ({
   },
 }));
 
+// Stub feature gating: this suite doesn't exercise entitlements, so keep the
+// Dashboard (experiences) link visible and avoid needing a BillingStatusProvider.
+vi.mock('../../../../config/featureFlags', () => ({
+  PLUGINS_ENABLED: true,
+  MCP_ENABLED: true,
+  EXPERIENCES_ENABLED: true,
+  useFeatureEnabled: () => true,
+}));
+
 // Test wrapper component
 const TestWrapper = ({ children }) => {
   const theme = createTheme();

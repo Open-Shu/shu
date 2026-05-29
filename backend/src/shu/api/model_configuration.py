@@ -16,6 +16,7 @@ from shu.core.logging import get_logger
 from ..api.dependencies import get_db
 from ..auth.models import User, UserRole
 from ..auth.rbac import require_power_user, require_regular_user
+from ..billing.enforcement import require_entitlement
 from ..core.config import ConfigurationManager, get_config_manager_dependency
 from ..core.database import get_async_session_local
 from ..core.exceptions import LLMConfigurationError, LLMError, ShuException
@@ -40,6 +41,12 @@ from ..services.side_call_service import SideCallService
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/model-configurations", tags=["Model Configurations"])
+
+# SHU-773: managing model configs (create/update/delete/test, KB-prompt
+# assignment) requires the model_config_management entitlement. Attached
+# per-route — the list and get-by-id reads stay open so the chat model picker
+# keeps working on tiers without this entitlement.
+_model_config_mgmt = Depends(require_entitlement("model_config_management"))
 
 
 def _format_test_error_with_suggestions(error_message: Any) -> str:
@@ -198,6 +205,7 @@ async def _handle_test_file_upload(
     status_code=status.HTTP_201_CREATED,
     summary="Create Model Configuration",
     description="Create a new model configuration that combines base model + prompt + optional knowledge bases",
+    dependencies=[_model_config_mgmt],
 )
 async def create_model_configuration(
     config_data: ModelConfigurationCreate,
@@ -368,6 +376,7 @@ async def get_model_configuration(
     response_model=SuccessResponse[ModelConfigurationResponse],
     summary="Update Model Configuration",
     description="Update a model configuration",
+    dependencies=[_model_config_mgmt],
 )
 async def update_model_configuration(
     config_id: str,
@@ -450,6 +459,7 @@ async def update_model_configuration(
     status_code=204,
     summary="Delete Model Configuration",
     description="Delete a model configuration",
+    dependencies=[_model_config_mgmt],
 )
 async def delete_model_configuration(
     config_id: str,
@@ -487,6 +497,7 @@ async def delete_model_configuration(
     response_model=SuccessResponse[ModelConfigurationTestResponse],
     summary="Test Model Configuration",
     description="Test a model configuration with a sample message (non-streaming for better error messages)",
+    dependencies=[_model_config_mgmt],
 )
 async def test_model_configuration(  # noqa: PLR0915
     config_id: str,
@@ -672,6 +683,7 @@ async def get_model_config_kb_prompts(
     status_code=status.HTTP_201_CREATED,
     summary="Assign KB Prompt",
     description="Assign a prompt to a specific knowledge base for a model configuration",
+    dependencies=[_model_config_mgmt],
 )
 async def assign_kb_prompt(
     config_id: str,
@@ -717,6 +729,7 @@ async def assign_kb_prompt(
     response_model=SuccessResponse[dict[str, bool]],
     summary="Remove KB Prompt Assignment",
     description="Remove a KB prompt assignment from a model configuration",
+    dependencies=[_model_config_mgmt],
 )
 async def remove_kb_prompt(
     config_id: str,

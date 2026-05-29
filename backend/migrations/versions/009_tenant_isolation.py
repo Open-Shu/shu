@@ -223,6 +223,91 @@ def _replace_policy(table: str, policy: str, body: str) -> None:
     op.execute(f"CREATE POLICY {policy} ON {table} {body}")
 
 
+def _defuse_orphan_composite_fk_refs() -> None:
+    """Convert dangling child→parent references into a VALIDATE-compatible state.
+
+    The pre-009 schema had gaps where child columns lacked a foreign key to
+    their parent (notably ``knowledge_bases.owner_id`` → ``users.id``). That
+    allowed legitimate operations — e.g. spinning up a privileged user to
+    ingest a corpus, then deleting the user once done — to leave child rows
+    pointing at a parent that no longer exists. The data in the child row is
+    real and worth keeping; the dangling reference is the lie.
+
+    For each composite FK we're about to validate:
+      * If the child column is NULLABLE: set dangling refs to NULL. The
+        composite FK is satisfied vacuously by a NULL child column (SQL
+        MATCH SIMPLE), so VALIDATE then passes without touching the row's
+        other data.
+      * If the child column is NOT NULL: there is no clean recovery — the
+        row literally cannot exist without a valid parent. Collect every
+        such case and raise ONE error listing all of them, so the operator
+        sees the full remediation list rather than fixing-and-rerunning one
+        constraint at a time.
+
+    Idempotent: a re-run finds zero orphans (we just nulled them) and exits
+    silently.
+    """
+    bind = op.get_bind()
+    nulled: list[tuple[str, str, int]] = []
+    blocked: list[tuple[str, str, str, str, int]] = []
+
+    for child, child_col, parent, parent_col in _COMPOSITE_FKS:
+        is_nullable = bind.execute(
+            sa.text(
+                "SELECT is_nullable = 'YES' FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+            ),
+            {"t": child, "c": child_col},
+        ).scalar()
+
+        orphan_count = bind.execute(
+            sa.text(
+                f"SELECT COUNT(*) FROM {child} c "
+                f"WHERE c.{child_col} IS NOT NULL "
+                f"  AND NOT EXISTS ("
+                f"    SELECT 1 FROM {parent} p "
+                f"    WHERE p.tenant_id = c.tenant_id AND p.{parent_col} = c.{child_col}"
+                f"  )"
+            )
+        ).scalar()
+
+        if not orphan_count:
+            continue
+
+        if is_nullable:
+            bind.execute(
+                sa.text(
+                    f"UPDATE {child} SET {child_col} = NULL "
+                    f"WHERE {child_col} IS NOT NULL "
+                    f"  AND NOT EXISTS ("
+                    f"    SELECT 1 FROM {parent} p "
+                    f"    WHERE p.tenant_id = {child}.tenant_id AND p.{parent_col} = {child}.{child_col}"
+                    f"  )"
+                )
+            )
+            nulled.append((child, child_col, orphan_count))
+        else:
+            blocked.append((child, child_col, parent, parent_col, orphan_count))
+
+    for child, child_col, n in nulled:
+        print(
+            f"[009] Nulled {n} orphan ref(s) in {child}.{child_col} "
+            f"(nullable; parent row missing — data preserved, ownership cleared)",
+            flush=True,
+        )
+
+    if blocked:
+        lines = [
+            "Composite FK validation would fail: NOT NULL child columns reference",
+            "missing parent rows. The migration cannot auto-resolve these because",
+            "the row cannot exist without a valid parent. Resolve manually, then",
+            "re-run. Orphan inventory:",
+        ]
+        for child, child_col, parent, parent_col, n in blocked:
+            lines.append(f"  - {child}.{child_col} -> {parent}({parent_col}): {n} orphan(s)")
+        raise RuntimeError("\n".join(lines))
+
+
 # Section C SQL kept as a single string so the function bodies (which include
 # $$ delimiters) read naturally alongside their grants.
 _SD_FUNCTIONS_SQL = r"""
@@ -601,6 +686,13 @@ def upgrade() -> None:
     # row to reference a parent in a different tenant — Postgres refuses the
     # insert. The existing single-column FK stays in place alongside.
     # =========================================================================
+
+    # Pre-flight: defuse dangling refs left by pre-009 schema gaps (e.g.
+    # knowledge_bases.owner_id had no FK to users.id, so deleting a user
+    # silently orphaned their KBs). Nullable child columns get their dangling
+    # refs nulled; NOT NULL columns fail loud with the full inventory.
+    _defuse_orphan_composite_fk_refs()
+
     inventory = list(_COMPOSITE_FKS)
 
     parent_uniques = sorted({(parent, parent_col) for _, _, parent, parent_col in inventory})

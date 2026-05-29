@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import require_power_user
+from ..billing.enforcement import require_entitlement
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
 from ..core.response import ShuResponse
@@ -29,7 +30,13 @@ from .dependencies import get_db
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/mcp", tags=["mcp-admin"])
+# Mounted under plugins_router, which already gates on "plugins"; this adds the
+# "mcp_servers" gate so MCP requires both entitlements.
+router = APIRouter(
+    prefix="/mcp",
+    tags=["mcp-admin"],
+    dependencies=[Depends(require_entitlement("mcp_servers"))],
+)
 
 
 def _derive_status(conn) -> McpConnectionStatus:

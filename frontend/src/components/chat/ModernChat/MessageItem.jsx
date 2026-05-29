@@ -1,15 +1,5 @@
 import React, { useMemo } from 'react';
-import {
-  Avatar,
-  Box,
-  IconButton,
-  Paper,
-  Typography,
-  Tooltip,
-  CircularProgress,
-  Button,
-  useMediaQuery,
-} from '@mui/material';
+import { Avatar, Box, IconButton, Paper, Typography, Tooltip, Button, useMediaQuery } from '@mui/material';
 import {
   Person as UserIcon,
   SmartToy as BotIcon,
@@ -20,6 +10,7 @@ import {
   ViewColumn as SideBySideIcon,
 } from '@mui/icons-material';
 import MessageContent from './MessageContent';
+import AssistantPhaseContent from './AssistantPhaseContent';
 import UserAvatar from '../../shared/UserAvatar.jsx';
 import { formatMessageTimestamp } from './utils/messageVariants';
 import { PLACEHOLDER_THINKING } from './utils/chatConfig';
@@ -367,7 +358,7 @@ const MessageItem = React.memo(function MessageItem({
               const hasReasoning = reasoningText.length > 0;
               const reasoningCollapsed = Boolean(variant.reasoning_collapsed);
               return (
-                <Paper key={variant.id} sx={getBubbleSx(variant, variantPending)}>
+                <Paper key={variant.streamSlotId || variant.id} sx={getBubbleSx(variant, variantPending)}>
                   {showVariantLabel && (
                     <Typography variant="caption" sx={{ fontWeight: 600, opacity: 0.7 }}>
                       Variant {idx + 1}
@@ -405,8 +396,9 @@ const MessageItem = React.memo(function MessageItem({
                       )}
                     </Box>
                   )}
-                  <MessageContent
-                    message={variant}
+                  <AssistantPhaseContent
+                    variant={variant}
+                    hasReasoning={hasReasoning}
                     theme={theme}
                     isDarkMode={chatStyles.isDarkMode}
                     userBubbleText={chatStyles.userBubbleText}
@@ -415,24 +407,13 @@ const MessageItem = React.memo(function MessageItem({
                     onOpenDocument={onOpenDocument}
                     attachmentChipStyles={attachmentChipStyles}
                   />
-                  {variant.isStreaming && (
-                    <Box
-                      sx={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        ml: 1,
-                      }}
-                    >
-                      <CircularProgress size={12} sx={{ color: theme.palette.secondary.main }} />
-                    </Box>
-                  )}
                   {/* SHU-803 AC6/AC7/AC8: italic stopped-state caption on
                       persisted messages. Hidden while still streaming so
-                      the live spinner / Stop button own the "active" UI;
-                      surfaces once the placeholder flips out of
-                      isStreaming (either via SSE final_message landing
-                      or the AC5 optimistic flip on the terminate POST
-                      202 response).
+                      the live writing-feather / Stop button own the
+                      "active" UI; surfaces once the placeholder flips
+                      out of isStreaming (either via SSE final_message
+                      landing or the AC5 optimistic flip on the
+                      terminate POST 202 response).
 
                       Caption text branches on attribution: a
                       user_terminated state reads "Stopped by user"

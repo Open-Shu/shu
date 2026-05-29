@@ -20,7 +20,10 @@ from ..auth.rbac import (
     require_kb_write_access,
     require_power_user,
 )
-from ..billing.enforcement import assert_subscription_active
+from ..billing.enforcement import (
+    assert_document_count_under_limit_for_upload,
+    assert_subscription_active,
+)
 from ..core.config import get_settings_instance
 from ..core.exceptions import ShuException
 from ..core.logging import get_logger
@@ -955,6 +958,7 @@ async def upload_documents(
     db: AsyncSession = Depends(get_db),
     # WHY — short-circuits before staging any bytes or enqueueing OCR jobs.
     _subscription_active: None = Depends(assert_subscription_active),
+    _under_doc_limit: None = Depends(assert_document_count_under_limit_for_upload),
 ):
     """Upload documents directly to a knowledge base.
 

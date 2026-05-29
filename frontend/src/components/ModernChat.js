@@ -51,6 +51,7 @@ import {
   CHAT_PLUGINS_ENABLED,
   LONG_CONVERSATION_THRESHOLD,
 } from './chat/ModernChat/utils/chatConfig';
+import { useFeatureEnabled } from '../config/featureFlags';
 
 const SIDE_CALL_NOT_CONFIGURED_TOOLTIP =
   'Side-caller agent not configured. Configure a model configuration and set it as the side-caller to restore conversation naming and summary generation functionality.';
@@ -62,7 +63,12 @@ const ModernChat = () => {
   const { branding } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
 
-  const pluginsEnabled = CHAT_PLUGINS_ENABLED;
+  // Chat plugin controls require the build flag (CHAT_PLUGINS_ENABLED, which
+  // already folds in VITE_PLUGINS_ENABLED) AND the tenant's plugins entitlement,
+  // matching the server gate. useFeatureEnabled is called unconditionally — the
+  // build flag is ANDed after so the hook isn't short-circuited (rules of hooks).
+  const pluginsEntitled = useFeatureEnabled('plugins');
+  const pluginsEnabled = CHAT_PLUGINS_ENABLED && pluginsEntitled;
 
   const queryClient = useQueryClient();
   const { user, canManageUsers } = useAuth();

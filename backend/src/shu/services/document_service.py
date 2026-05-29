@@ -7,6 +7,7 @@ including CRUD operations, processing, and multi-source support.
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..billing.enforcement import assert_document_count_under_limit
 from ..core.exceptions import DocumentNotFoundError, KnowledgeBaseNotFoundError
 from ..core.logging import get_logger
 from ..models.document import Document, DocumentChunk, DocumentStatus
@@ -75,6 +76,8 @@ class DocumentService:
             )
             return DocumentResponse.from_orm(existing)
 
+        await self._assert_room_for_new_document()
+
         # Create document
         document = Document(**doc_data.dict())
         self.db.add(document)
@@ -92,6 +95,15 @@ class DocumentService:
         )
 
         return DocumentResponse.from_orm(document)
+
+    async def _assert_room_for_new_document(self) -> None:
+        """Block when the tenant is already at its document cap.
+
+        Call only once a new document is actually about to be created — the
+        idempotent existing-document check returns first, so re-ingesting an
+        already-stored document never counts against the cap.
+        """
+        await assert_document_count_under_limit(self.db)
 
     async def get_document(self, doc_id: str) -> DocumentDetailResponse:
         """Get a specific document by ID."""

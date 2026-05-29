@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.core.logging import get_logger
 
+from ..billing.enforcement import document_count_batch
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..models.plugin_registry import PluginDefinition
@@ -25,6 +26,7 @@ from ..models.provider_identity import ProviderIdentity
 from ..plugins.executor import EXECUTOR
 from ..plugins.host.auth_capability import AuthCapability
 from ..plugins.registry import REGISTRY
+from ..services.plugin_execution import plugin_dispatch_allowed
 from ..services.plugin_identity import (
     PluginIdentityError,
     ensure_secrets_for_plugin,
@@ -62,6 +64,7 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
 
     Covers:
         1. Check if associated PluginFeed is disabled
+        1.5. Check tenant plugin/MCP entitlements (revocation safety)
         2. Resolve plugin via REGISTRY
         3. Load per-plugin limits from PluginDefinition
         4. Resolve user_email / auth_mode / impersonate_email
@@ -105,6 +108,13 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
     # Step 1: Check if schedule is disabled
     if feed and not feed.enabled:
         return _preflight_failure(rec, "schedule_disabled")
+
+    # Step 1.5: Entitlement gate. This path never passes through build_agent_tools'
+    # upstream filter, so a downgraded tenant's existing feeds would otherwise keep
+    # running — including MCP feeds after mcp_servers is revoked. Skip rather than
+    # raise, matching the surrounding preflight style.
+    if not await plugin_dispatch_allowed(rec.plugin_name):
+        return _preflight_failure(rec, "entitlement_revoked")
 
     # Step 2: Resolve plugin
     plugin = await REGISTRY.resolve(rec.plugin_name, session)
@@ -177,17 +187,20 @@ async def execute_plugin_record(  # noqa: PLR0912, PLR0915
     if rec.schedule_id:
         eff_params["__schedule_id"] = str(rec.schedule_id)
 
-    # Step 9: Execute plugin (may raise HTTPException or other exceptions)
-    exec_result = await EXECUTOR.execute(
-        plugin=plugin,
-        user_id=str(rec.user_id),
-        user_email=user_email_val,
-        agent_key=rec.agent_key,
-        params=eff_params,
-        limits=per_plugin_limits,
-        provider_identities=providers_map,
-        db_session=session,
-    )
+    # Step 9: Execute plugin (may raise HTTPException or other exceptions).
+    # One feed/queue run is one ingestion batch: scope it so the per-tenant
+    # document cap is checked once for the run, not once per ingested document.
+    async with document_count_batch():
+        exec_result = await EXECUTOR.execute(
+            plugin=plugin,
+            user_id=str(rec.user_id),
+            user_email=user_email_val,
+            agent_key=rec.agent_key,
+            params=eff_params,
+            limits=per_plugin_limits,
+            provider_identities=providers_map,
+            db_session=session,
+        )
 
     # Step 10: Normalize result to dict
     try:

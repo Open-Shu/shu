@@ -98,6 +98,16 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
         const nowIso = new Date().toISOString();
         placeholderMetaOption[key] = { id: placeholderId, created_at: nowIso };
 
+        // Late-arriving variant — inherit thinkingPool from any sibling
+        // placeholder already in cache so all variants of one stream
+        // show verbs from the same pool. Cold start (no siblings) falls
+        // back to the default pool.
+        const siblingIds = Object.values(placeholderLookup).filter((id) => id && id !== placeholderId);
+        const cacheNow = queryClient.getQueryData(['conversation-messages', conversationId]);
+        const cacheMessages = getMessagesFromCache(cacheNow);
+        const sibling = Array.isArray(cacheMessages) ? cacheMessages.find((m) => siblingIds.includes(m.id)) : null;
+        const inheritedPool = sibling?.thinkingPool || 'default';
+
         queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
           const existing = getMessagesFromCache(oldData);
           const placeholder = {
@@ -110,6 +120,8 @@ const useStreamingPlaceholders = ({ queryClient, replaceSideBySideParent }) => {
             isPlaceholder: true,
             parent_message_id: resolvedParentId || placeholderRootOption || placeholderId,
             variant_index: typeof variantIndex === 'number' ? variantIndex : undefined,
+            thinkingPool: inheritedPool,
+            streamSlotId: placeholderId,
           };
           return rebuildCache(oldData, [...existing, placeholder]);
         });

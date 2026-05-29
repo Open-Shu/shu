@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.auth.models import User
+from shu.billing.billing_state_cache import get_billing_state_cache
+from shu.billing.enforcement import assert_entitlement
 from shu.core.logging import get_logger
 from shu.models.plugin_execution import CallableTool
 from shu.models.plugin_registry import PluginDefinition
@@ -40,6 +42,23 @@ def _unsanitize_plugin_name(name: str) -> str:
     return name
 
 
+def is_mcp_plugin_name(name: str) -> bool:
+    """Return True for MCP-sourced plugin names, in internal (`mcp:`) or wire (`mcp-`) form."""
+    return _unsanitize_plugin_name(name).startswith(_MCP_INTERNAL_PREFIX)
+
+
+def required_plugin_entitlements(plugin_name: str) -> tuple[str, ...]:
+    """Entitlement keys a plugin dispatch requires: always `plugins`, plus
+    `mcp_servers` for MCP-sourced plugins.
+
+    Single source of the plugins-vs-MCP rule, shared by the hard gate
+    (`assert_plugin_entitlement`) and the soft gate (`plugin_dispatch_allowed`).
+    """
+    if is_mcp_plugin_name(plugin_name):
+        return ("plugins", "mcp_servers")
+    return ("plugins",)
+
+
 async def get_allowed_plugin_names(user_id: str, manifest_names: set[str] | list[str], db: AsyncSession) -> set[str]:
     """Return the set of plugin names the user is allowed to see.
 
@@ -53,7 +72,68 @@ async def get_allowed_plugin_names(user_id: str, manifest_names: set[str] | list
     return set(candidate_names) - denied
 
 
+async def _resolve_plugin_entitlements() -> tuple[bool, bool]:
+    """Return ``(plugins_enabled, mcp_enabled)`` from the cached billing state.
+
+    Self-hosted / dev (no cache singleton) returns ``(True, True)`` — the same
+    bypass posture as the enforcement helpers, so dev keeps every tool.
+    """
+    cache = await get_billing_state_cache()
+    if cache is None:
+        return True, True
+    state = await cache.get()
+    return state.entitlements.plugins, state.entitlements.mcp_servers
+
+
+async def assert_plugin_entitlement(plugin_name: str) -> None:
+    """Raise `EntitlementDeniedError` unless the tenant may dispatch this plugin.
+
+    Requires `plugins`; MCP-sourced plugins additionally require `mcp_servers`.
+    Accepts internal (`mcp:`) or wire (`mcp-`) names; self-hosted (no cache)
+    no-ops via `assert_entitlement`.
+
+    `build_agent_tools` filters the agentic path upstream, but the REST dispatch
+    routes (`plugins_public`, `chat_plugins`) call the executor directly — this
+    is their shared gate, so a `plugins`-on / `mcp_servers`-off tenant can't
+    reach an MCP plugin through them. Raises with the first missing key.
+    """
+    for key in required_plugin_entitlements(plugin_name):
+        await assert_entitlement(key)
+
+
+async def plugin_dispatch_allowed(plugin_name: str) -> bool:
+    """Soft variant of `assert_plugin_entitlement` for non-request contexts.
+
+    The scheduler/queue runner prefers skipping a now-unentitled execution over
+    raising mid-loop, so it checks this instead of asserting. Returns True on
+    self-hosted (no cache).
+    """
+    cache = await get_billing_state_cache()
+    if cache is None:
+        return True
+    state = await cache.get()
+    return all(getattr(state.entitlements, key, False) is True for key in required_plugin_entitlements(plugin_name))
+
+
+async def mcp_servers_entitled() -> bool:
+    """Return True when the tenant may use MCP plugins (or self-hosted).
+
+    List endpoints read this once to hide `mcp:` plugins when `mcp_servers` is
+    off, so a `plugins`-entitled tenant can't even discover them.
+    """
+    _, mcp_enabled = await _resolve_plugin_entitlements()
+    return mcp_enabled
+
+
 async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[CallableTool]:
+    # SHU-773: the agentic tool path runs inside the chat stream and never
+    # touches the chat_plugins router, so the entitlement gate has to live here
+    # too. Soft check — when plugins are off we expose no tools (chat keeps
+    # streaming) rather than raising mid-stream.
+    plugins_enabled, mcp_enabled = await _resolve_plugin_entitlements()
+    if not plugins_enabled:
+        return []
+
     tools: list[CallableTool] = []
 
     manifest: dict[str, PluginRecord] = {}
@@ -69,6 +149,10 @@ async def build_agent_tools(db_session: AsyncSession, user_id: str) -> list[Call
 
     for name, rec in (manifest or {}).items():
         if name not in allowed:
+            continue
+
+        # MCP tools are plugin-shaped but gated on their own entitlement.
+        if not mcp_enabled and is_mcp_plugin_name(name):
             continue
 
         chat_ops: list[str] = []
@@ -192,6 +276,12 @@ async def execute_plugin(
 ) -> dict[str, Any]:
     """Execute a chat-callable plugin op using the internal executor and return a serializable dict."""
     plugin_name = _unsanitize_plugin_name(plugin_name)
+
+    # Belt-and-braces: build_agent_tools already filters disabled plugins/MCP
+    # out before the LLM sees them, so under normal flow this is unreachable. It
+    # still guards any future caller that dispatches without that upstream filter.
+    await assert_plugin_entitlement(plugin_name)
+
     try:
         manifest = getattr(REGISTRY, "_manifest", {}) or {}
         if not manifest:

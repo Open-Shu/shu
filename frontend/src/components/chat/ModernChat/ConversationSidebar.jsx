@@ -28,7 +28,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import ClearIcon from '@mui/icons-material/Clear';
 import MarkdownRenderer from '../../shared/MarkdownRenderer';
-import { EXPERIENCES_ENABLED } from '../../../config/featureFlags';
+import { useFeatureEnabled } from '../../../config/featureFlags';
 
 const ConversationSidebar = React.memo(function ConversationSidebar({
   conversations,
@@ -50,6 +50,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === 'dark';
   const navigate = useNavigate();
+  const canExperiences = useFeatureEnabled('experiences');
 
   return (
     <Paper
@@ -73,7 +74,7 @@ const ConversationSidebar = React.memo(function ConversationSidebar({
           gap: 2,
         }}
       >
-        {EXPERIENCES_ENABLED && (
+        {canExperiences && (
           <Button
             fullWidth
             variant="outlined"
