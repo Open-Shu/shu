@@ -228,7 +228,29 @@ class UnifiedLLMClient:
 
         logger.info(f"Initialized LLM client for provider: {provider.name} ({provider.provider_type})")
 
-    async def _build_tool_context(self, payload: dict[str, Any], tools_enabled: bool) -> dict[str, Any]:
+    def _pop_internal_tool_toggles(self, payload_patch: dict[str, Any]) -> dict[str, bool]:
+        """Lift framework-internal tool toggle keys out of ``payload_patch``.
+
+        Internal-tool toggles (e.g. ``int:web_search: true``) are persisted on
+        ``ModelConfiguration.parameter_overrides`` and flow through the same
+        parameter pipeline as real provider params — but they are *not*
+        provider params; providers would reject them as unknown top-level
+        keys. We pop them here so they never reach the wire; downstream,
+        ``_build_tool_context`` resolves the toggles into ``CallableTool``
+        records via ``InternalToolRouter``.
+
+        Mutates ``payload_patch`` in place (removes matched keys) and
+        returns the lifted toggles. SHU-816.
+        """
+        prefix = self.provider_adapter.internal_tool_router.PREFIX
+        return {k: bool(payload_patch.pop(k)) for k in list(payload_patch) if k.startswith(prefix)}
+
+    async def _build_tool_context(
+        self,
+        payload: dict[str, Any],
+        tools_enabled: bool,
+        internal_tool_toggles: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
         if not tools_enabled or not self.conversation_owner_id:
             return payload
         # SHU-759: build_agent_tools needs a session, but by the time this
@@ -239,6 +261,20 @@ class UnifiedLLMClient:
         session_factory = get_async_session_local()
         async with session_factory() as session:
             tools: list[CallableTool] = await build_agent_tools(session, user_id=self.conversation_owner_id)
+        # SHU-816: resolve enabled int:* toggles to CallableTool records via
+        # the adapter's router and append alongside the plugin/MCP tools.
+        # An unknown toggle (model config persists a name the router no
+        # longer knows) is skipped with a warning instead of crashing.
+        if internal_tool_toggles:
+            router = self.provider_adapter.internal_tool_router
+            for name, enabled in internal_tool_toggles.items():
+                if not enabled:
+                    continue
+                callable_tool = router.get_callable(name)
+                if callable_tool is None:
+                    logger.warning("Skipping unknown internal tool: %s", name)
+                    continue
+                tools.append(callable_tool)
         return await self.provider_adapter.inject_tool_payload(tools, payload)
 
     def _build_client_headers(self):
@@ -334,9 +370,10 @@ class UnifiedLLMClient:
             model_overrides,
             llm_params or {},
         )
+        internal_tool_toggles = self._pop_internal_tool_toggles(payload_patch)
         payload.update(payload_patch)
 
-        payload = await self._build_tool_context(payload, tools_enabled)
+        payload = await self._build_tool_context(payload, tools_enabled, internal_tool_toggles)
 
         payload = await self.provider_adapter.post_process_payload(payload)
 

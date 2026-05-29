@@ -4,6 +4,7 @@ Uses Pydantic Settings for type-safe, environment-based configuration.
 """
 
 import uuid
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -677,6 +678,16 @@ class Settings(BaseSettings):
     # Embedding: set to false for hosted deployments that use external API providers,
     # avoiding the memory overhead of sentence-transformers (~2GB).
     local_embedding_enabled: bool = Field(True, alias="SHU_LOCAL_EMBEDDING_ENABLED")
+
+    # Internal-tool backend keys (SHU-816). The `int:web_search` framework
+    # tool calls Brave Search when this is set; if unset, the tool returns
+    # a friendly "unavailable" string so conversations don't crash.
+    brave_search_api_key: str | None = Field(None, alias="SHU_BRAVE_SEARCH_API_KEY")
+    # Per-query cost recorded against each successful Brave search call.
+    # Default 0.005 (= $5 per 1000 queries), matching Brave's published
+    # Pro-tier rate. Override via env if your contract is different.
+    # Failed/unavailable searches always bill 0 regardless of this value.
+    brave_search_cost_per_query: Decimal = Field(Decimal("0.005"), alias="SHU_BRAVE_SEARCH_COST_PER_QUERY")
 
     # OCR: set SHU_MISTRAL_OCR_API_KEY to use Mistral OCR via OpenRouter
     # instead of local EasyOCR/Tesseract. API key presence is the switch.

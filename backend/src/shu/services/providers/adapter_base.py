@@ -27,6 +27,8 @@ from shu.models.plugin_execution import CallableTool
 from shu.services.chat_types import ChatContext, ChatMessage
 from shu.services.plugin_execution import execute_plugin
 from shu.services.providers.events import ProviderStreamEvent
+from shu.services.providers.internal_tools.router import InternalToolRouter
+from shu.services.usage_recording import get_usage_recorder
 
 logger = get_logger(__name__)
 
@@ -193,11 +195,28 @@ class BaseProviderAdapter:
         # default. Callers convert cost back to Decimal via safe_decimal() when
         # recording usage. See UsageDict for the full shape.
         self.usage: UsageDict = {}
+        # SHU-816: router is built lazily on first access so non-chat code
+        # paths (model discovery, validation, etc.) don't construct internal
+        # tools they'll never use.
+        self._internal_tool_router: InternalToolRouter | None = None
 
         if self.provider and self.encryption_key:
             self.api_key = (
                 self.__decrypt_api_key(self.provider.api_key_encrypted) if self.provider.api_key_encrypted else None
             )
+
+    @property
+    def internal_tool_router(self) -> InternalToolRouter:
+        """Lazy-constructed per-adapter-instance router for ``int:`` tool calls.
+
+        Per-instance (= per-request) so tool instances are garbage-collected
+        with the adapter at end-of-request. The router itself is cheap; the
+        tools may hold resources (HTTP clients) that benefit from
+        request-scoped lifetimes.
+        """
+        if self._internal_tool_router is None:
+            self._internal_tool_router = InternalToolRouter(self.settings)
+        return self._internal_tool_router
 
     def __decrypt_api_key(self, encrypted_key: str) -> str:
         """Decrypt stored API key."""
@@ -208,8 +227,49 @@ class BaseProviderAdapter:
             logger.error(f"Failed to decrypt API key for provider {self.provider.name}: {e}")
             raise LLMConfigurationError(f"Failed to decrypt API key: {e}")
 
+    async def _record_internal_tool_usage(self, bare_op: str, cost: Decimal, content: str) -> None:
+        """Write a fire-and-forget ``llm_usage`` row for an internal-tool call.
+
+        SHU-816: tool calls land in the existing ``llm_usage`` table with
+        ``request_type="internal_tool"`` and ``model_id=None``. The Stripe
+        pipeline already sums ``total_cost`` across rows; tool costs flow
+        through without any pipeline change. Per-tool attribution lives
+        in ``request_metadata.tool_name`` for analytics.
+
+        Failures here are logged inside the recorder but never raised —
+        billing must never crash a conversation turn.
+        """
+        if self.provider is None or self.conversation_owner_id is None:
+            # No provider context (test paths, etc.) or anonymous call —
+            # nothing to attribute the row to. Skip silently; the model
+            # has already received its result.
+            return
+
+        # Tools signal "this was a failure, don't bill" via cost==0. Other
+        # signals (the content starting with `unknown internal tool:` or
+        # `<tool> failed:`) would be more brittle to detect; cost is the
+        # authoritative discriminator.
+        success = cost > Decimal("0")
+
+        await get_usage_recorder().record(
+            provider_id=self.provider.id,
+            model_id=None,
+            user_id=self.conversation_owner_id,
+            request_type="internal_tool",
+            total_cost=cost,
+            success=success,
+            error_message=None if success else content[:500],
+            request_metadata={"tool_name": f"{self.internal_tool_router.NAMESPACE}__{bare_op}"},
+        )
+
     async def _call_plugin(self, plugin_name: str, operation: str, args_dict: dict[str, Any]) -> str:
         """Invoke a plugin operation and return the JSON-serialised result.
+
+        SHU-816: tool calls whose name starts with ``int:`` are framework-
+        internal tools (``int:web_search``, future ``int:agentic_search``,
+        etc.). They short-circuit through the ``InternalToolRouter`` and
+        never touch the plugin registry. Everything else follows the
+        existing plugin-resolution path below.
 
         When knowledge base IDs are bound to this adapter instance (via
         ``self.knowledge_base_ids``), they are merged into the ``__host.kb``
@@ -218,14 +278,22 @@ class BaseProviderAdapter:
         are preserved.
 
         Args:
-            plugin_name: Registered name of the plugin to call.
+            plugin_name: Registered name of the plugin to call, OR an
+                ``int:*`` prefixed internal-tool name.
             operation: The specific operation within the plugin to invoke.
+                Ignored for internal tools (they have no multi-op concept).
             args_dict: Arguments provided by the LLM for this tool call.
 
         Returns:
-            JSON string of the plugin's return value.
+            JSON string of the plugin's return value, or a structured
+            error string from the internal-tool router.
 
         """
+        if plugin_name == self.internal_tool_router.NAMESPACE:
+            content, cost = await self.internal_tool_router.execute(operation, args_dict)
+            await self._record_internal_tool_usage(operation, cost, content)
+            return content
+
         if self.knowledge_base_ids is not None:
             host = dict(args_dict.get("__host") or {})
             kb = dict(host.get("kb") or {})

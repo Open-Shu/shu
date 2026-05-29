@@ -1,12 +1,16 @@
-"""Unit tests for PluginLoader._static_scan_for_violations.
+"""Unit tests for PluginLoader._static_scan_for_violations and discover.
 
 Verifies the AST-based import guard correctly blocks disallowed modules
 (requests, httpx, urllib3, urllib, importlib, shu.*) while allowing
 shu_plugin_sdk and explicitly allowlisted modules like urllib.parse.
+
+Also covers manifest-name reservation guards (mcp-, int-, int:) added
+for MCP and the internal-tool framework (SHU-816).
 """
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 
 import pytest
@@ -229,3 +233,135 @@ def test_fallback_regex_catches_dunder_import_with_fromlist_in_bad_syntax(
 def test_blocks_dunder_import(loader: PluginLoader, plugin_dir: Path) -> None:
     """__import__('requests') is caught without any import statement."""
     _assert_single_violation(loader, plugin_dir, "__import__('requests')\n", "requests")
+
+
+# ----------------------------------------------------------------------
+# Manifest-name reservation guards: mcp-, int, names containing ':' (SHU-816)
+# ----------------------------------------------------------------------
+
+
+def _make_discovery_loader(tmp_path: Path, manifests: dict[str, dict], monkeypatch) -> PluginLoader:
+    """Build a PluginLoader pointed at tmp_path with fake manifest dirs.
+
+    ``manifests`` maps a directory name to the ``PLUGIN_MANIFEST`` dict
+    that the loader should see when it imports that plugin's manifest.
+    """
+    # Create the plugin directories + empty manifest.py files. The actual
+    # import is patched below; the files just need to exist for
+    # `(child / "manifest.py").exists()` to return True.
+    for dirname in manifests:
+        plugin_dir = tmp_path / dirname
+        plugin_dir.mkdir()
+        (plugin_dir / "manifest.py").write_text("")
+
+    def fake_import_module(spec_name: str):
+        # spec_name is "plugins.<dirname>.manifest"
+        dirname = spec_name.split(".")[1]
+        module = types.ModuleType(spec_name)
+        module.PLUGIN_MANIFEST = manifests[dirname]
+        return module
+
+    monkeypatch.setattr("shu.plugins.loader.importlib.import_module", fake_import_module)
+    return PluginLoader(plugins_dir=tmp_path)
+
+
+def test_discover_skips_mcp_prefixed_plugins(tmp_path: Path, monkeypatch, caplog) -> None:
+    """The mcp- prefix is reserved for MCP-derived plugins (pre-existing guard)."""
+    loader = _make_discovery_loader(
+        tmp_path,
+        {
+            "mcpfoo_dir": {"name": "mcp-foo", "module": "x"},
+            "normal_dir": {"name": "normal-plugin", "module": "x"},
+        },
+        monkeypatch,
+    )
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        records = loader.discover()
+
+    assert "normal-plugin" in records
+    assert "mcp-foo" not in records
+    assert any("'mcp-' prefix is reserved" in r.message for r in caplog.records)
+
+
+def test_discover_skips_any_plugin_name_containing_colon(tmp_path: Path, monkeypatch, caplog) -> None:
+    """Plugin names with `:` are rejected — they break tool-call wire format (SHU-816)."""
+    loader = _make_discovery_loader(
+        tmp_path,
+        {
+            "intbar_dir": {"name": "int:bar", "module": "x"},
+            "mcpfoo_dir2": {"name": "mcp:server", "module": "x"},
+            "weird_dir": {"name": "my:thing", "module": "x"},
+            "normal_dir": {"name": "normal-plugin", "module": "x"},
+        },
+        monkeypatch,
+    )
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        records = loader.discover()
+
+    assert "normal-plugin" in records
+    # All three colon-containing names are skipped — the rule is "any colon
+    # anywhere", not specifically prefix-based.
+    assert "int:bar" not in records
+    assert "mcp:server" not in records
+    assert "my:thing" not in records
+    assert sum(1 for r in caplog.records if "must not contain ':'" in r.message) >= 3
+
+
+def test_discover_allows_int_hyphen_names(tmp_path: Path, monkeypatch) -> None:
+    """`int-foo` is NOT reserved — only the exact `int` name + colon-containing names are rejected (SHU-816)."""
+    loader = _make_discovery_loader(
+        tmp_path,
+        {"intfoo_dir": {"name": "int-foo", "module": "x"}},
+        monkeypatch,
+    )
+
+    records = loader.discover()
+    assert "int-foo" in records
+
+
+def test_discover_skips_exact_int_plugin_name(tmp_path: Path, monkeypatch, caplog) -> None:
+    """Exact name `int` collides with the InternalToolRouter wire namespace (SHU-816)."""
+    loader = _make_discovery_loader(
+        tmp_path,
+        {
+            "int_dir": {"name": "int", "module": "x"},
+            "normal_dir": {"name": "normal-plugin", "module": "x"},
+        },
+        monkeypatch,
+    )
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        records = loader.discover()
+
+    assert "normal-plugin" in records
+    # The bare `int` name is reserved — it's the virtual plugin all
+    # internal tools dispatch through.
+    assert "int" not in records
+    assert any("'int' name is reserved" in r.message for r in caplog.records)
+
+
+def test_discover_allows_names_that_only_contain_int_substring(tmp_path: Path, monkeypatch) -> None:
+    """Reservation is prefix-based — a plugin whose name contains 'int' elsewhere is fine."""
+    loader = _make_discovery_loader(
+        tmp_path,
+        {
+            "midint_dir": {"name": "print-helper", "module": "x"},
+            "endint_dir": {"name": "data-int", "module": "x"},
+            "underint_dir": {"name": "my_int_tool", "module": "x"},
+        },
+        monkeypatch,
+    )
+
+    records = loader.discover()
+
+    assert "print-helper" in records
+    assert "data-int" in records
+    assert "my_int_tool" in records

@@ -61,9 +61,10 @@ def test_provider_settings(digitalocean_adapter):
     assert set(parameter_mapping.keys()) == {
         "temperature",
         "top_p",
-        "max_tokens",
+        "max_completion_tokens",
         "reasoning_effort",
         "parallel_tool_calls",
+        "int:web_search",
     }
     reasoning_options = {option.value for option in parameter_mapping["reasoning_effort"].options}
     assert reasoning_options == {"low", "medium", "high"}

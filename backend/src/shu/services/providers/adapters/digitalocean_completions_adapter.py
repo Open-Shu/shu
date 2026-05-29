@@ -76,10 +76,20 @@ class DigitalOceanCompletionsAdapter(CompletionsAdapter):
                 label="Top P",
                 description="Nucleus sampling cutoff; set to 1.0 to disable.",
             ),
-            "max_tokens": IntegerParameter(
+            # DO deprecated `max_tokens` in favor of `max_completion_tokens`
+            # (which also counts reasoning tokens against the budget).
+            # Default when unset is ~2048 — usually enough, but reasoning
+            # models with `reasoning_effort` set can exhaust that on a
+            # single tool-call turn. Raise to 4096+ if you see truncated
+            # tool calls or `finish_reason=length`.
+            "max_completion_tokens": IntegerParameter(
                 min=1,
-                label="Max Tokens",
-                description="Hard cap on output tokens generated.",
+                label="Max Completion Tokens",
+                description=(
+                    "Hard cap on output tokens (including reasoning tokens). "
+                    "DO defaults to ~2048 when unset. Reasoning models may "
+                    "need 4096+ for tool-use turns."
+                ),
             ),
             "reasoning_effort": EnumParameter(
                 label="Reasoning Effort",
@@ -94,6 +104,16 @@ class DigitalOceanCompletionsAdapter(CompletionsAdapter):
                 label="Parallel Tool Calls",
                 description="Allow the model to emit multiple tool calls in a single turn.",
                 default=True,
+            ),
+            # SHU-816: the `int:` prefix on the key is both the routing
+            # identifier and the toggle id — the framework lifts these
+            # out of the payload before send and resolves them through
+            # the InternalToolRouter. `label`/`description` carry the UI
+            # text.
+            "int:web_search": BooleanParameter(
+                label="Web Search",
+                description="Let the model search the web (via Brave Search) when answering.",
+                default=False,
             ),
         }
 

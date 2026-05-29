@@ -21,6 +21,33 @@ from .schema import validate_legacy_schema, validate_per_op_schemas
 logger = get_logger(__name__)
 
 
+def _rejection_reason_for_plugin_name(name: str) -> str | None:
+    """Return a human-readable rejection reason, or None if the name is acceptable.
+
+    Centralizes every manifest-name reservation so ``discover()`` can stay
+    focused on iterating manifests. Each branch documents *why* the name
+    is reserved — the loader is the load-bearing place for these rules.
+    """
+    # Pre-existing: `mcp-` is reserved for MCP-derived plugin manifests.
+    if name.startswith("mcp-"):
+        return "'mcp-' prefix is reserved"
+    # SHU-816: the bare `int` plugin name is the InternalToolRouter wire
+    # namespace. Internal tools dispatch as `int__<tool>`; a real plugin
+    # named `int` would collide with that dispatch.
+    if name == "int":
+        return "'int' name is reserved (SHU-816 internal-tool router namespace)"
+    # SHU-816: plugin names containing `:` end up in the function-name
+    # wire format and break tool-call argument streaming on some models
+    # (observed: Gemma 4 on DO and OpenRouter truncated mid-arg when a
+    # colon-bearing function name was emitted). Rejecting at the loader
+    # is cheaper than debugging the model behavior later. Side effect:
+    # blocks MCP-style `mcp:server` manifest names; the MCP adapter
+    # shape is being reconsidered anyway.
+    if ":" in name:
+        return "plugin names must not contain ':' (breaks tool-call wire format)"
+    return None
+
+
 @dataclass
 class PluginRecord:
     name: str
@@ -207,8 +234,9 @@ class PluginLoader:
                 chat_callable_ops = m.get("chat_callable_ops") or []
                 if not (name and entry):
                     continue
-                if name.startswith("mcp-"):
-                    logger.warning("Skipping plugin '%s': 'mcp-' prefix is reserved", name)
+                rejection = _rejection_reason_for_plugin_name(name)
+                if rejection is not None:
+                    logger.warning("Skipping plugin '%s': %s", name, rejection)
                     continue
                 rec = PluginRecord(
                     name=name,
