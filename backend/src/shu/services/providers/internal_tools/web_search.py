@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from decimal import Decimal
 from typing import Any, ClassVar
@@ -20,6 +21,14 @@ _REQUEST_TIMEOUT_SECONDS = 10.0
 _ZERO = Decimal("0")
 
 
+def _query_fingerprint(query: str) -> str:
+    # Search queries routinely contain user PII (names, medical terms,
+    # internal IDs) routed through the model. Logging a short hash +
+    # length keeps the audit trail without leaking the content into
+    # long-retention prod logs.
+    return hashlib.sha256(query.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+
 class WebSearchTool(InternalTool):
     """Web search via Brave Search API.
 
@@ -31,21 +40,16 @@ class WebSearchTool(InternalTool):
 
     name: ClassVar[str] = "web_search"
     description: ClassVar[str] = (
-        "Search the web for current information. The query supports standard "
-        "search operators (e.g., `site:example.com` to restrict to a domain, "
-        '`"exact phrase"` for exact-match, `-excluded` to exclude a term, '
-        "`OR` between alternatives). Returns a JSON object with up to three "
-        "sections: `web` (list of {title, url, snippet}), `discussions` "
-        "(list of {title, url, question, top_comment}), and `faq` (list of "
-        "{title, url, question, answer}). Empty sections are omitted."
+        "Search the web for current information. Returns JSON with up to "
+        "`web`, `discussions`, and `faq` arrays of result records (empty "
+        "sections omitted). Supports search operators: `site:`, quotes, "
+        "`-term`, `OR`."
     )
 
     def __init__(self, api_key: str | None, cost_per_query: Decimal = _ZERO) -> None:
         self._api_key = api_key
-        # SHU-816: per-call rate to attribute to llm_usage.total_cost on
-        # success. Failures + unconfigured-key path always bill zero —
-        # we record the call as a failure row but never charge the user
-        # for an attempt that didn't return data.
+        # SHU-816: per-call rate attributed to llm_usage.total_cost on
+        # success. Failure paths bill zero regardless of this value.
         self._cost_per_query = cost_per_query
 
     def parameter_schema(self) -> dict[str, Any]:
@@ -61,13 +65,13 @@ class WebSearchTool(InternalTool):
             "additionalProperties": False,
         }
 
-    async def execute(self, args: dict[str, Any]) -> tuple[str, Decimal]:
+    async def execute(self, args: dict[str, Any]) -> tuple[str, bool, Decimal]:
         if not self._api_key:
-            return ("web search is unavailable: SHU_BRAVE_SEARCH_API_KEY is not set", _ZERO)
+            return ("web search is unavailable: SHU_BRAVE_SEARCH_API_KEY is not set", True, _ZERO)
 
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
-            return ("web search failed: missing or empty `query` argument", _ZERO)
+            return ("web search failed: missing or empty `query` argument", True, _ZERO)
 
         # TODO(SHU-816 task 16 follow-up): Cache successful results via
         # CacheBackend. Proposed key shape:
@@ -76,7 +80,8 @@ class WebSearchTool(InternalTool):
         # cache-backend injection path deferred until there's a separate
         # ticket for caching.
 
-        logger.info("Performing Brave web search for: %s", query)
+        query_id = _query_fingerprint(query)
+        logger.info("Brave web search: query_len=%d query_hash=%s", len(query), query_id)
 
         try:
             # Per-call client mirrors the existing per-call pattern in
@@ -94,34 +99,35 @@ class WebSearchTool(InternalTool):
                 payload = response.json()
         except httpx.HTTPStatusError as exc:
             logger.warning(
-                "Brave web search returned HTTP %s for query %r",
+                "Brave web search returned HTTP %s (query_hash=%s)",
                 exc.response.status_code,
-                query,
+                query_id,
             )
-            return (f"web search failed: HTTP {exc.response.status_code} from Brave", _ZERO)
+            return (f"web search failed: HTTP {exc.response.status_code} from Brave", True, _ZERO)
         except httpx.TimeoutException:
             logger.warning(
-                "Brave web search timed out after %ss for query %r",
+                "Brave web search timed out after %ss (query_hash=%s)",
                 _REQUEST_TIMEOUT_SECONDS,
-                query,
+                query_id,
             )
             return (
                 f"web search failed: Brave request timed out after {_REQUEST_TIMEOUT_SECONDS}s",
+                True,
                 _ZERO,
             )
         except httpx.HTTPError as exc:
-            logger.warning("Brave web search HTTP error for query %r: %s", query, exc)
-            return (f"web search failed: {exc}", _ZERO)
+            logger.warning("Brave web search HTTP error (query_hash=%s): %s", query_id, exc)
+            return (f"web search failed: {exc}", True, _ZERO)
         except (ValueError, KeyError) as exc:
             # Unexpected: Brave returned a 2xx but the body didn't shape up.
             # Log with traceback so we notice if their schema drifts.
             logger.warning(
-                "Brave web search returned a malformed response for query %r: %s",
-                query,
+                "Brave web search returned a malformed response (query_hash=%s): %s",
+                query_id,
                 exc,
                 exc_info=True,
             )
-            return (f"web search failed: malformed Brave response ({exc})", _ZERO)
+            return (f"web search failed: malformed Brave response ({exc})", True, _ZERO)
 
         # Brave returns up to three result sections in a single response;
         # exposing all of them gives the model more angles for follow-up
@@ -165,4 +171,4 @@ class WebSearchTool(InternalTool):
                 for item in faq_results[:_RESULT_LIMIT]
             ]
 
-        return (json.dumps(output), self._cost_per_query)
+        return (json.dumps(output), False, self._cost_per_query)

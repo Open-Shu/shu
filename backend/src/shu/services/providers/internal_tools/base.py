@@ -47,16 +47,22 @@ class InternalTool(ABC):
         """Return the JSON Schema describing the tool's arguments."""
 
     @abstractmethod
-    async def execute(self, args: dict[str, Any]) -> tuple[str, Decimal]:
-        """Run the tool. Return ``(content, cost)``.
+    async def execute(self, args: dict[str, Any]) -> tuple[str, bool, Decimal]:
+        """Run the tool. Return ``(content, is_error, cost)``.
 
         ``content`` is the string the model sees as the tool-role message
         — error strings, formatted results, etc.
 
+        ``is_error`` is the authoritative success/failure signal. Kept
+        separate from ``cost`` so a tool that legitimately costs zero (a
+        free successful call — calculator, current_time, etc.) is still
+        recorded as a success. Inferring success from cost would mis-
+        record those rows as failures and dump their output into
+        ``llm_usage.error_message``.
+
         ``cost`` is the USD cost of this specific invocation. Tools without
         a metered upstream return ``Decimal("0")``; tools whose upstream
         bills per call return the per-call rate; tools whose upstream
-        bills per unit return the rate * units. Failed calls (errors,
-        unavailable upstreams) should return ``Decimal("0")`` — we
-        record the call as a failure row but don't bill for it.
+        bills per unit return the rate * units. Failed calls always
+        return ``Decimal("0")`` regardless of the tool's configured rate.
         """

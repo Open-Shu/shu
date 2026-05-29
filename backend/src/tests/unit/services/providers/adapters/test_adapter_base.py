@@ -53,9 +53,9 @@ def test_internal_tool_router_property_is_lazy(adapter):
 async def test_call_plugin_routes_int_namespace_to_internal_router(adapter, monkeypatch):
     # The model's tool_call name `int__web_search` is parsed by
     # _tool_call_to_instructions into plugin_name="int", operation="web_search".
-    # _call_plugin's fast-path matches plugin_name against the router's
-    # NAMESPACE and dispatches with `operation` as the bare op.
-    spy = AsyncMock(return_value=("router-result", Decimal("0.005")))
+    # _call_plugin's fast-path delegates the "is this internal?" decision
+    # to the router and dispatches with `operation` as the bare op.
+    spy = AsyncMock(return_value=("router-result", False, Decimal("0.005")))
     monkeypatch.setattr(adapter.internal_tool_router, "execute", spy)
 
     result = await adapter._call_plugin("int", "web_search", {"query": "anything"})
@@ -67,14 +67,12 @@ async def test_call_plugin_routes_int_namespace_to_internal_router(adapter, monk
 
 @pytest.mark.asyncio
 async def test_call_plugin_records_internal_tool_usage_on_success(adapter, monkeypatch):
-    # Successful tool call (cost > 0) → record_usage called with the
-    # right shape: provider_id from the adapter, model_id=None,
-    # request_type="internal_tool", success=True, cost forwarded,
-    # tool_name in request_metadata.
+    # Successful tool call → record_usage called with success=True, cost
+    # forwarded, tool_name in request_metadata.
     monkeypatch.setattr(
         adapter.internal_tool_router,
         "execute",
-        AsyncMock(return_value=("result", Decimal("0.005"))),
+        AsyncMock(return_value=("result", False, Decimal("0.005"))),
     )
     record_spy = AsyncMock()
     monkeypatch.setattr(
@@ -97,14 +95,39 @@ async def test_call_plugin_records_internal_tool_usage_on_success(adapter, monke
 
 
 @pytest.mark.asyncio
-async def test_call_plugin_records_internal_tool_usage_on_failure(adapter, monkeypatch):
-    # Failed tool call (cost == 0) → record_usage called with
-    # success=False, total_cost=0, error_message populated from the
-    # tool's returned content. The user is not billed.
+async def test_call_plugin_records_zero_cost_success(adapter, monkeypatch):
+    # Regression for SHU-816 H2: a successful tool that legitimately
+    # costs zero (free upstream, or operator set cost_per_query=0) must
+    # still record success=True with no error_message — not failure with
+    # the tool's output dumped into error_message.
     monkeypatch.setattr(
         adapter.internal_tool_router,
         "execute",
-        AsyncMock(return_value=("web search failed: HTTP 429 from Brave", Decimal("0"))),
+        AsyncMock(return_value=('{"web": []}', False, Decimal("0"))),
+    )
+    record_spy = AsyncMock()
+    monkeypatch.setattr(
+        "shu.services.providers.adapter_base.get_usage_recorder",
+        lambda: types.SimpleNamespace(record=record_spy),
+    )
+
+    await adapter._call_plugin("int", "web_search", {"query": "x"})
+
+    kwargs = record_spy.await_args.kwargs
+    assert kwargs["success"] is True
+    assert kwargs["error_message"] is None
+    assert kwargs["total_cost"] == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_call_plugin_records_internal_tool_usage_on_failure(adapter, monkeypatch):
+    # Failed tool call → record_usage called with success=False,
+    # total_cost=0, error_message populated from the tool's returned
+    # content. The user is not billed.
+    monkeypatch.setattr(
+        adapter.internal_tool_router,
+        "execute",
+        AsyncMock(return_value=("web search failed: HTTP 429 from Brave", True, Decimal("0"))),
     )
     record_spy = AsyncMock()
     monkeypatch.setattr(
@@ -118,6 +141,31 @@ async def test_call_plugin_records_internal_tool_usage_on_failure(adapter, monke
     assert kwargs["total_cost"] == Decimal("0")
     assert kwargs["success"] is False
     assert kwargs["error_message"] == "web search failed: HTTP 429 from Brave"
+
+
+@pytest.mark.asyncio
+async def test_call_plugin_skips_usage_recording_when_no_provider(monkeypatch):
+    # Without a provider on the context, there's no FK target for the
+    # usage row — _record_internal_tool_usage early-returns silently.
+    # The model still gets its result; we just don't write a billing row.
+    ctx = ProviderAdapterContext(provider=None, conversation_owner_id="u1")
+    a = BaseProviderAdapter(ctx)
+
+    monkeypatch.setattr(
+        a.internal_tool_router,
+        "execute",
+        AsyncMock(return_value=("result", False, Decimal("0.005"))),
+    )
+    record_spy = AsyncMock()
+    monkeypatch.setattr(
+        "shu.services.providers.adapter_base.get_usage_recorder",
+        lambda: types.SimpleNamespace(record=record_spy),
+    )
+
+    result = await a._call_plugin("int", "web_search", {"query": "x"})
+
+    assert result == "result"
+    record_spy.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -173,7 +221,7 @@ async def test_call_plugin_int_namespace_skips_kb_enrichment(adapter, monkeypatc
 
     async def fake_execute(bare_op, args):
         captured["args"] = args
-        return ("ok", Decimal("0"))
+        return ("ok", False, Decimal("0"))
 
     monkeypatch.setattr(adapter.internal_tool_router, "execute", fake_execute)
 

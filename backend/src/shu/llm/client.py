@@ -228,23 +228,6 @@ class UnifiedLLMClient:
 
         logger.info(f"Initialized LLM client for provider: {provider.name} ({provider.provider_type})")
 
-    def _pop_internal_tool_toggles(self, payload_patch: dict[str, Any]) -> dict[str, bool]:
-        """Lift framework-internal tool toggle keys out of ``payload_patch``.
-
-        Internal-tool toggles (e.g. ``int:web_search: true``) are persisted on
-        ``ModelConfiguration.parameter_overrides`` and flow through the same
-        parameter pipeline as real provider params — but they are *not*
-        provider params; providers would reject them as unknown top-level
-        keys. We pop them here so they never reach the wire; downstream,
-        ``_build_tool_context`` resolves the toggles into ``CallableTool``
-        records via ``InternalToolRouter``.
-
-        Mutates ``payload_patch`` in place (removes matched keys) and
-        returns the lifted toggles. SHU-816.
-        """
-        prefix = self.provider_adapter.internal_tool_router.PREFIX
-        return {k: bool(payload_patch.pop(k)) for k in list(payload_patch) if k.startswith(prefix)}
-
     async def _build_tool_context(
         self,
         payload: dict[str, Any],
@@ -370,7 +353,8 @@ class UnifiedLLMClient:
             model_overrides,
             llm_params or {},
         )
-        internal_tool_toggles = self._pop_internal_tool_toggles(payload_patch)
+
+        internal_tool_toggles = self.provider_adapter.internal_tool_router.pop_toggle_keys(payload_patch)
         payload.update(payload_patch)
 
         payload = await self._build_tool_context(payload, tools_enabled, internal_tool_toggles)

@@ -17,12 +17,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from tests.unit.conftest import disabled_billing_state
 
 from shu.billing.enforcement import SubscriptionInactiveError
 from shu.llm.client import UnifiedLLMClient
 from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
-from tests.unit.conftest import disabled_billing_state
 
 
 class TestExtractHttpErrorDetails:
@@ -44,12 +44,11 @@ class TestExtractHttpErrorDetails:
         mock_request = MagicMock()
         mock_request.url = "https://api.example.com/v1/chat/completions"
 
-        error = httpx.HTTPStatusError(
+        return httpx.HTTPStatusError(
             message=f"HTTP {status_code}",
             request=mock_request,
             response=mock_response,
         )
-        return error
 
     def test_extract_openai_style_error(self) -> None:
         """Test extraction from OpenAI-style error response."""

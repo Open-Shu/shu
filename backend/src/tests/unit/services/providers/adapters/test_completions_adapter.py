@@ -127,6 +127,32 @@ def test_provider_defaults(completions_adapter):
     assert completions_adapter.get_model_information_path() == "data[*].{id: id, name: id}"
 
 
+def test_extract_usage_handles_null_token_details(completions_adapter):
+    # DO and some other providers emit `prompt_tokens_details: null`
+    # (and the completion variant) instead of omitting the key. A naive
+    # `usage.get(key, {})` returns None in that case and the subsequent
+    # `.get("cached_tokens", 0)` raises AttributeError mid-stream. The
+    # `or {}` guard in CompletionsAdapter._extract_usage absorbs the
+    # null. Regression test for that path.
+    chunk = {
+        "usage": {
+            "prompt_tokens": 12,
+            "completion_tokens": 7,
+            "total_tokens": 19,
+            "prompt_tokens_details": None,
+            "completion_tokens_details": None,
+        }
+    }
+
+    completions_adapter._extract_usage("usage", chunk)
+
+    assert completions_adapter.usage["input_tokens"] == 12
+    assert completions_adapter.usage["output_tokens"] == 7
+    assert completions_adapter.usage["total_tokens"] == 19
+    assert completions_adapter.usage["cached_tokens"] == 0
+    assert completions_adapter.usage["reasoning_tokens"] == 0
+
+
 @pytest.mark.asyncio
 async def test_event_handling(completions_adapter, patch_plugin_calls):
     for payload in COMPLETIONS_ACTIONABLE_FUNCTION_CALL_DELTAS_PAYLOAD:

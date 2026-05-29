@@ -121,6 +121,9 @@ class CompletionsAdapter(BaseProviderAdapter):
             return
         raw_cost = usage.get("cost")
         cost = safe_decimal(raw_cost) if raw_cost is not None else None
+        # `or {}` (not the `get` default): DO and some others emit the
+        # *_details keys as explicit null rather than omitting them, so
+        # the dict default only kicks in on missing keys, not nulls.
         self._update_usage(
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0),

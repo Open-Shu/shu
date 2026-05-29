@@ -227,7 +227,7 @@ class BaseProviderAdapter:
             logger.error(f"Failed to decrypt API key for provider {self.provider.name}: {e}")
             raise LLMConfigurationError(f"Failed to decrypt API key: {e}")
 
-    async def _record_internal_tool_usage(self, bare_op: str, cost: Decimal, content: str) -> None:
+    async def _record_internal_tool_usage(self, bare_op: str, content: str, is_error: bool, cost: Decimal) -> None:
         """Write a fire-and-forget ``llm_usage`` row for an internal-tool call.
 
         SHU-816: tool calls land in the existing ``llm_usage`` table with
@@ -235,6 +235,11 @@ class BaseProviderAdapter:
         pipeline already sums ``total_cost`` across rows; tool costs flow
         through without any pipeline change. Per-tool attribution lives
         in ``request_metadata.tool_name`` for analytics.
+
+        ``is_error`` is the authoritative success signal — kept separate
+        from ``cost`` so a tool that legitimately costs zero (free
+        successful call) isn't mis-recorded as a failure with its output
+        dumped into ``error_message``.
 
         Failures here are logged inside the recorder but never raised —
         billing must never crash a conversation turn.
@@ -245,21 +250,15 @@ class BaseProviderAdapter:
             # has already received its result.
             return
 
-        # Tools signal "this was a failure, don't bill" via cost==0. Other
-        # signals (the content starting with `unknown internal tool:` or
-        # `<tool> failed:`) would be more brittle to detect; cost is the
-        # authoritative discriminator.
-        success = cost > Decimal("0")
-
         await get_usage_recorder().record(
             provider_id=self.provider.id,
             model_id=None,
             user_id=self.conversation_owner_id,
             request_type="internal_tool",
             total_cost=cost,
-            success=success,
-            error_message=None if success else content[:500],
-            request_metadata={"tool_name": f"{self.internal_tool_router.NAMESPACE}__{bare_op}"},
+            success=not is_error,
+            error_message=content[:500] if is_error else None,
+            request_metadata={"tool_name": self.internal_tool_router.wire_name(bare_op)},
         )
 
     async def _call_plugin(self, plugin_name: str, operation: str, args_dict: dict[str, Any]) -> str:
@@ -289,9 +288,9 @@ class BaseProviderAdapter:
             error string from the internal-tool router.
 
         """
-        if plugin_name == self.internal_tool_router.NAMESPACE:
-            content, cost = await self.internal_tool_router.execute(operation, args_dict)
-            await self._record_internal_tool_usage(operation, cost, content)
+        if self.internal_tool_router.is_internal_plugin(plugin_name):
+            content, is_error, cost = await self.internal_tool_router.execute(operation, args_dict)
+            await self._record_internal_tool_usage(operation, content, is_error, cost)
             return content
 
         if self.knowledge_base_ids is not None:
