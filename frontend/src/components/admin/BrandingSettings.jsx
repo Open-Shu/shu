@@ -10,6 +10,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Snackbar,
   Stack,
   TextField,
   Typography,
@@ -18,12 +19,20 @@ import {
 import PaletteIcon from '@mui/icons-material/Palette';
 import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
+import { DRAWER_CONTENT_CENTER_OFFSET } from '../../layouts/constants';
 import { resolveBranding } from '../../utils/brandingUtils';
 import { getThemeConfig } from '../../utils/constants';
 import { FONT_FAMILIES } from '../../utils/typography';
 import log from '../../utils/log';
 import PageHelpHeader from '../PageHelpHeader';
 import AssistantAvatarSection from './branding/AssistantAvatarSection';
+
+// Auto-hide window for success toasts. Errors set autoHideDuration={null}
+// so the user must dismiss them explicitly. Follow-up: when the global
+// NotificationProvider lands, this constant moves into that module's
+// defaults (alongside SHORT/DEFAULT/LONG values to standardise the
+// 3000/4000/6000ms inconsistency across the codebase).
+const SNACKBAR_AUTOHIDE_MS = 6000;
 
 const BRAND_FONT_INHERIT = '__default__';
 
@@ -76,6 +85,13 @@ const BrandingSettings = () => {
   const [formState, setFormState] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
+  // snackContent shadows `status` but stays populated through the Snackbar's
+  // exit transition. Without it, the Alert's severity falls back to 'info'
+  // (default) for one frame as status clears, producing a blue flash mid-fade.
+  const [snackContent, setSnackContent] = useState(null);
+  if (status && status !== snackContent) {
+    setSnackContent(status);
+  }
   const [uploadingLightFavicon, setUploadingLightFavicon] = useState(false);
   const [uploadingDarkFavicon, setUploadingDarkFavicon] = useState(false);
 
@@ -300,11 +316,42 @@ const BrandingSettings = () => {
           ]}
         />
 
-        {status && (
-          <Alert severity={status.type} onClose={() => setStatus(null)}>
-            {status.message}
+        {/* Snackbar renders via Portal to document.body so status messages
+            from sections deep in the form (e.g., the Avatar upload-reject
+            toast) appear at the viewport edge regardless of scroll position.
+            Errors stay until dismissed; successes auto-hide after 6s.
+            Follow-up: promote to a global NotificationProvider used by every
+            admin page (see ticket for the wider list). */}
+        <Snackbar
+          open={!!status}
+          autoHideDuration={status?.type === 'error' ? null : SNACKBAR_AUTOHIDE_MS}
+          onClose={(_event, reason) => {
+            if (reason === 'clickaway') {
+              return;
+            }
+            setStatus(null);
+          }}
+          TransitionProps={{ onExited: () => setSnackContent(null) }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          sx={{
+            // AdminLayout has a persistent left drawer on desktop. Default
+            // horizontal: 'center' centers on the viewport, which lands the
+            // toast left of the visible content center by half the drawer
+            // width. Shift right by half DRAWER_WIDTH on sm+ to recenter on
+            // the content. Mobile (xs) keeps the default — the drawer there
+            // is a temporary overlay and doesn't push content.
+            transform: { sm: `translateX(calc(-50% + ${DRAWER_CONTENT_CENTER_OFFSET}px))` },
+          }}
+        >
+          <Alert
+            severity={snackContent?.type || 'info'}
+            onClose={() => setStatus(null)}
+            variant="filled"
+            sx={{ width: '100%' }}
+          >
+            {snackContent?.message}
           </Alert>
-        )}
+        </Snackbar>
 
         <Paper sx={{ p: 3 }}>
           <Stack spacing={2}>

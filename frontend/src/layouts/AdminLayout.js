@@ -38,8 +38,11 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import TopBar from '../components/layout/TopBar.jsx';
 import { useFeatureEnabled } from '../config/featureFlags';
+import { DRAWER_WIDTH, MOBILE_HAMBURGER_WIDTH, TOPBAR_CONTENT_GAP } from './constants';
 
-const DRAWER_WIDTH = 280;
+// Re-export so existing consumers (BrandingSettings, etc.) keep working
+// without a path change. The new canonical location is ./constants.
+export { DRAWER_WIDTH };
 
 const AdminLayout = ({ children }) => {
   const navigate = useNavigate();
@@ -240,7 +243,7 @@ const AdminLayout = ({ children }) => {
       <TopBar
         sectionTitle={isMobile ? undefined : 'Admin Panel'}
         sectionIcon={<AdminIcon />}
-        leftOffset={isMobile ? 56 : DRAWER_WIDTH + 16}
+        leftOffset={isMobile ? MOBILE_HAMBURGER_WIDTH : DRAWER_WIDTH + TOPBAR_CONTENT_GAP}
         appBarPosition="static"
         showAdminLink={false}
         hamburgerButton={
