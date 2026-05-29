@@ -21,11 +21,14 @@ vi.mock('../../utils/constants', () => ({
   getBrandingAppName: vi.fn(),
 }));
 
-// Default: all feature flags enabled (matching production defaults)
+// Default: all features enabled (matching production defaults). useFeatureEnabled
+// is the single gate QuickStart reads; tests drive it via the hoisted mock.
+const { mockUseFeatureEnabled } = vi.hoisted(() => ({ mockUseFeatureEnabled: vi.fn(() => true) }));
 vi.mock('../../config/featureFlags', () => ({
   PLUGINS_ENABLED: true,
   MCP_ENABLED: true,
   EXPERIENCES_ENABLED: true,
+  useFeatureEnabled: mockUseFeatureEnabled,
 }));
 
 import QuickStart from '../QuickStart';
@@ -298,16 +301,12 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     });
   });
 
-  afterEach(async () => {
-    const featureFlags = await import('../../config/featureFlags');
-    featureFlags.PLUGINS_ENABLED = true;
-    featureFlags.MCP_ENABLED = true;
-    featureFlags.EXPERIENCES_ENABLED = true;
+  afterEach(() => {
+    mockUseFeatureEnabled.mockImplementation(() => true);
   });
 
-  test('hides Plugins and Plugin Feeds cards when PLUGINS_ENABLED is false', async () => {
-    const featureFlags = await import('../../config/featureFlags');
-    featureFlags.PLUGINS_ENABLED = false;
+  test('hides Plugins and Plugin Feeds cards when plugins is not entitled', async () => {
+    mockUseFeatureEnabled.mockImplementation((feature) => feature !== 'plugins');
 
     render(
       <TestWrapper>
@@ -326,9 +325,8 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     expect(screen.getByText('Knowledge Bases')).toBeInTheDocument();
   });
 
-  test('hides Experiences card when EXPERIENCES_ENABLED is false', async () => {
-    const featureFlags = await import('../../config/featureFlags');
-    featureFlags.EXPERIENCES_ENABLED = false;
+  test('hides Experiences card when experiences is not entitled', async () => {
+    mockUseFeatureEnabled.mockImplementation((feature) => feature !== 'experiences');
 
     render(
       <TestWrapper>
@@ -346,9 +344,7 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
   });
 
   test('progress counter adjusts when cards are filtered out', async () => {
-    const featureFlags = await import('../../config/featureFlags');
-    featureFlags.PLUGINS_ENABLED = false;
-    featureFlags.EXPERIENCES_ENABLED = false;
+    mockUseFeatureEnabled.mockImplementation((feature) => feature !== 'plugins' && feature !== 'experiences');
 
     render(
       <TestWrapper>
@@ -364,9 +360,8 @@ describe('QuickStart Component - Feature Flag Filtering', () => {
     });
   });
 
-  test('hides Plugin and Feed key concepts when PLUGINS_ENABLED is false', async () => {
-    const featureFlags = await import('../../config/featureFlags');
-    featureFlags.PLUGINS_ENABLED = false;
+  test('hides Plugin and Feed key concepts when plugins is not entitled', async () => {
+    mockUseFeatureEnabled.mockImplementation((feature) => feature !== 'plugins');
 
     render(
       <TestWrapper>

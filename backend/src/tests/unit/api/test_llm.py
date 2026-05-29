@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from shu.api.llm import (
     LLMModelCreate,
@@ -27,6 +28,7 @@ from shu.api.llm import (
     disable_provider_model,
     get_provider,
     list_models,
+    router as llm_router,
     sync_provider_models,
     update_provider,
 )
@@ -37,6 +39,7 @@ from shu.core.exceptions import (
 )
 from shu.llm.service import LLMService
 from shu.models.llm_provider import LLMModel, LLMProvider, ModelType
+from tests.unit.api.conftest import assert_entitlement_denied, entitlement_state, gated_app
 
 
 LOCKED_DETAIL = "Provider is managed by Shu and cannot be modified."
@@ -572,3 +575,21 @@ class TestGetAvailableModelsDoubleActiveFilter:
         assert "llm_providers.is_active" not in sql, (
             f"admin listing must not reference llm_providers.is_active; got: {sql}"
         )
+
+
+class TestLlmProviderEntitlementGate:
+    """SHU-773: provider-management routes are gated; /models stays open."""
+
+    def test_provider_management_off_blocks_providers(self, install_stub_cache):
+        install_stub_cache(entitlement_state(provider_management=False))
+        with TestClient(gated_app(llm_router)) as client:
+            assert assert_entitlement_denied(client.get("/api/v1/llm/providers"), "provider_management")
+
+    def test_models_stays_open_when_provider_management_off(self, install_stub_cache):
+        install_stub_cache(entitlement_state(provider_management=False))
+        app = gated_app(llm_router)
+        with patch("shu.api.llm.LLMService") as svc_cls:
+            svc_cls.return_value.get_available_models = AsyncMock(return_value=[])
+            with TestClient(app) as client:
+                # /models is intentionally ungated — the chat model picker reads it.
+                assert client.get("/api/v1/llm/models").status_code == 200

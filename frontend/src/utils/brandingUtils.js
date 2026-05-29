@@ -31,6 +31,8 @@ export const defaultBranding = {
   assistantAvatarMode: 'curated',
   assistantAvatarCuratedId: 'shu_feather',
   assistantAvatarAssetUrl: null,
+  brandFontFamily: null,
+  brandHeadingFontFamily: null,
   updatedAt: null,
   updatedBy: null,
 };
@@ -58,6 +60,8 @@ export const resolveBranding = (branding) => {
       raw.assistantAvatarCuratedId ?? raw.assistant_avatar_curated_id ?? defaultBranding.assistantAvatarCuratedId,
     assistantAvatarAssetUrl:
       raw.assistantAvatarAssetUrl ?? raw.assistant_avatar_asset_url ?? defaultBranding.assistantAvatarAssetUrl,
+    brandFontFamily: raw.brandFontFamily ?? raw.brand_font_family ?? null,
+    brandHeadingFontFamily: raw.brandHeadingFontFamily ?? raw.brand_heading_font_family ?? null,
     updatedAt: raw.updatedAt ?? raw.updated_at ?? defaultBranding.updatedAt,
     updatedBy: raw.updatedBy ?? raw.updated_by ?? defaultBranding.updatedBy,
   };

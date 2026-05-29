@@ -37,7 +37,7 @@ import {
 
 import { useNavigate, useLocation } from 'react-router-dom';
 import TopBar from '../components/layout/TopBar.jsx';
-import { PLUGINS_ENABLED, MCP_ENABLED, EXPERIENCES_ENABLED } from '../config/featureFlags';
+import { useFeatureEnabled } from '../config/featureFlags';
 
 const DRAWER_WIDTH = 280;
 
@@ -47,6 +47,14 @@ const AdminLayout = ({ children }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // SHU-773: each nav entry shows only when its build-time flag AND the
+  // tenant's entitlement both allow it — both resolved by useFeatureEnabled.
+  const canPlugins = useFeatureEnabled('plugins');
+  const canMcp = useFeatureEnabled('mcp');
+  const canExperiences = useFeatureEnabled('experiences');
+  const canModelConfig = useFeatureEnabled('modelConfigs');
+  const canProviderMgmt = useFeatureEnabled('providers');
 
   const handleDrawerToggle = () => {
     setMobileOpen((prev) => !prev);
@@ -65,6 +73,7 @@ const AdminLayout = ({ children }) => {
       text: 'Model Configurations',
       icon: <ModelConfigIcon />,
       path: '/admin/model-configurations',
+      featureFlag: canModelConfig,
     },
     {
       text: 'Knowledge Bases',
@@ -72,14 +81,14 @@ const AdminLayout = ({ children }) => {
       path: '/admin/knowledge-bases',
     },
     { text: 'Prompts', icon: <PromptsIcon />, path: '/admin/prompts' },
-    { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins', featureFlag: PLUGINS_ENABLED },
-    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds', featureFlag: PLUGINS_ENABLED },
-    { text: 'MCP Servers', icon: <HubIcon />, path: '/admin/mcp', featureFlag: MCP_ENABLED },
+    { text: 'Plugins', icon: <ExtensionIcon />, path: '/admin/plugins', featureFlag: canPlugins },
+    { text: 'Plugin Feeds', icon: <ScheduleIcon />, path: '/admin/feeds', featureFlag: canPlugins },
+    { text: 'MCP Servers', icon: <HubIcon />, path: '/admin/mcp', featureFlag: canMcp },
     {
       text: 'Experiences',
       icon: <ExperiencesIcon />,
       path: '/admin/experiences',
-      featureFlag: EXPERIENCES_ENABLED,
+      featureFlag: canExperiences,
     },
     {
       text: 'Query Tester',
@@ -95,6 +104,7 @@ const AdminLayout = ({ children }) => {
       text: 'LLM Providers',
       icon: <LLMProvidersIcon />,
       path: '/admin/llm-providers',
+      featureFlag: canProviderMgmt,
     },
     { text: 'Branding', icon: <BrandingIcon />, path: '/admin/branding' },
   ];
@@ -165,12 +175,18 @@ const AdminLayout = ({ children }) => {
               System Configuration
             </Typography>
           </ListItem>
-          {systemMenuItems.map((item) => (
-            <ListItemButton key={item.text} selected={isActive(item.path)} onClick={() => handleNavigation(item.path)}>
-              <ListItemIcon>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
-          ))}
+          {systemMenuItems
+            .filter((item) => item.featureFlag !== false)
+            .map((item) => (
+              <ListItemButton
+                key={item.text}
+                selected={isActive(item.path)}
+                onClick={() => handleNavigation(item.path)}
+              >
+                <ListItemIcon>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.text} />
+              </ListItemButton>
+            ))}
 
           {/* RBAC Management */}
           <ListItem>

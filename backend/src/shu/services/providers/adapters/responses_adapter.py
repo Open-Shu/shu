@@ -356,7 +356,11 @@ class ResponsesAdapter(BaseProviderAdapter):
             self._streamed_text.append(content_delta)
             return ProviderContentDeltaEventResult(content=content_delta)
 
-        reasoning_delta = jmespath.search("type=='response.reasoning_summary_text.delta' && delta", chunk)
+        # The query now checks for the preferred type first, then the fallback. OpenAI returns reasoning_summary_text,
+        # while OR returns reasoning_text.
+        reasoning_delta = jmespath.search(
+            "(type=='response.reasoning_summary_text.delta' || type=='response.reasoning_text.delta') && delta", chunk
+        )
         if reasoning_delta:
             return ProviderReasoningDeltaEventResult(content=reasoning_delta)
 

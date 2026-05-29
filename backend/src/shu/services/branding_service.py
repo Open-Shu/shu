@@ -31,6 +31,8 @@ def _build_default_payload(settings: Settings) -> dict[str, object]:
         "assistant_avatar_mode": "curated",
         "assistant_avatar_curated_id": "shu_feather",
         "assistant_avatar_asset_url": None,
+        "brand_font_family": None,
+        "brand_heading_font_family": None,
         "updated_at": None,
         "updated_by": None,
     }

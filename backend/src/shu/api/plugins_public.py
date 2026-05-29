@@ -26,6 +26,11 @@ from ..plugins.executor import EXECUTOR
 from ..plugins.registry import REGISTRY
 from ..plugins.schema import resolve_all_ops
 from ..schemas.envelope import SuccessResponse
+from ..services.plugin_execution import (
+    assert_plugin_entitlement,
+    is_mcp_plugin_name,
+    mcp_servers_entitled,
+)
 from ..services.plugin_identity import get_provider_identities_map, resolve_user_email_for_execution
 from ..services.plugin_validation import enforce_input_limit, enforce_output_limit
 from ..services.policy_engine import POLICY_CACHE
@@ -96,10 +101,14 @@ async def list_plugins(
     all_names = list((manifest or {}).keys())
     denied = await POLICY_CACHE.get_denied_resources(str(user.id), "plugin.read", "plugin", all_names, db)
 
+    mcp_ok = await mcp_servers_entitled()
+
     db_by_name = {r.name: r for r in rows}
     out: list[PluginInfoResponse] = []
     for name, rec in (manifest or {}).items():
         if name in denied:
+            continue
+        if not mcp_ok and is_mcp_plugin_name(name):
             continue
         try:
             r = db_by_name.get(name)
@@ -147,6 +156,9 @@ async def get_plugin(
     user: User = Depends(get_current_user),
 ):
     if not await POLICY_CACHE.check(str(user.id), "plugin.read", f"plugin:{name}", db):
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+    if is_mcp_plugin_name(name) and not await mcp_servers_entitled():
         raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
 
     res = await db.execute(select(PluginDefinition).where(PluginDefinition.name == name))
@@ -200,6 +212,10 @@ async def execute_plugin(  # noqa: PLR0912, PLR0915
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # SHU-773: direct REST dispatch bypasses build_agent_tools' filter, so the
+    # plugins / mcp_servers gate has to run here too (the router only gates plugins).
+    await assert_plugin_entitlement(name)
+
     plugin = await REGISTRY.resolve(name, db)
     if not plugin:
         raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found or disabled")
