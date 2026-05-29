@@ -924,7 +924,7 @@ class TestProcessJobBillingGate:
                 "SubscriptionInactiveError",
             ),
             (
-                lambda: HardCapExhaustedError(trial_deadline=None, total_grant_amount=Decimal("0")),
+                lambda: HardCapExhaustedError(period_end=None, total_grant_amount=Decimal("0")),
                 "HardCapExhaustedError",
             ),
         ],

@@ -81,15 +81,19 @@ class HardCapExhaustedError(ShuException):
     def __init__(
         self,
         *,
-        trial_deadline: datetime | None,
+        period_end: datetime | None,
         total_grant_amount: Decimal,
     ) -> None:
+        # `period_end` (was `trial_deadline` pre-SHU-813) is the "budget
+        # resets on …" anchor for both surfaces: during `trialing` it equals
+        # the trial deadline, on the free tier it's the regular cycle end.
+        # Either way the frontend has a non-null datetime to render.
         super().__init__(
             message="Usage budget exhausted.",
             error_code="hard_cap_exhausted",
             status_code=402,
             details={
-                "trial_deadline": trial_deadline.isoformat() if trial_deadline else None,
+                "period_end": period_end.isoformat() if period_end else None,
                 "total_grant_amount": str(total_grant_amount),
             },
         )
@@ -162,7 +166,7 @@ async def assert_subscription_active() -> None:
         # Fail-closed on missing period info: silent bypass would
         # let unbounded spend through on a data anomaly.
         raise HardCapExhaustedError(
-            trial_deadline=state.trial_deadline,
+            period_end=state.current_period_end,
             total_grant_amount=state.total_grant_amount,
         )
     session_local = get_async_session_local()
@@ -178,7 +182,7 @@ async def assert_subscription_active() -> None:
     billed_cost = summary.total_cost_usd * resolve_markup(state)
     if billed_cost >= state.total_grant_amount:
         raise HardCapExhaustedError(
-            trial_deadline=state.trial_deadline,
+            period_end=state.current_period_end,
             total_grant_amount=state.total_grant_amount,
         )
 

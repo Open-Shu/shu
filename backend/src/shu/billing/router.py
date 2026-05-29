@@ -236,6 +236,7 @@ async def get_subscription_status(
         "service_paused": state.openrouter_key_disabled,
         "is_trial": state.is_trial,
         "trial_deadline": state.trial_deadline.isoformat() if state.trial_deadline else None,
+        "hard_cap": state.hard_cap,
         "total_grant_amount": str(state.total_grant_amount),
         "remaining_grant_amount": str(remaining_grant_amount),
         "seat_price_usd": str(state.seat_price_usd),

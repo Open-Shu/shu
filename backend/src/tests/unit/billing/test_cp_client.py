@@ -560,6 +560,37 @@ async def test_unknown_extra_field_is_ignored_for_forward_compat() -> None:
     assert not hasattr(state, "future_field_we_dont_know_about")
 
 
+@pytest.mark.asyncio
+async def test_deprecated_trial_fields_from_old_cp_are_ignored() -> None:
+    """Rollout lock for the SHU-813 wire shape change.
+
+    CP still emits `is_trial` and `trial_deadline` for the migration window
+    (they were dropped from this tenant's schema but kept upstream). The
+    parser must ignore both — and the derived `is_trial` / `trial_deadline`
+    accessors must read from `subscription_status` / `current_period_end`,
+    not the legacy wire fields. Without this lock, a CP rollback that
+    re-emits a different value for those fields could silently flip the
+    tenant's view of trial state.
+    """
+    # Wire-side mismatch: legacy `is_trial=True` but `subscription_status`
+    # is `"active"`. The derived accessor must trust `subscription_status`,
+    # not the legacy boolean — otherwise an old CP version's stale wire
+    # field could override the new source of truth.
+    payload = _payload(
+        is_trial=True,
+        trial_deadline="2026-05-30T12:00:00Z",
+        subscription_status="active",
+        current_period_start="2026-05-01T00:00:00Z",
+        current_period_end="2026-06-01T00:00:00Z",
+    )
+    http_client = _http_client_returning(_ok_response(payload))
+
+    state = await _make_client(http_client).fetch_billing_state()
+
+    assert state.is_trial is False
+    assert state.trial_deadline is None
+
+
 # Trial-action POST endpoints — `post_upgrade_now` and `post_cancel_subscription`
 # share `_send_signed` + `_classify_trial_action_response`. Both currently
 # require a trialing subscription on CP side and emit 409 otherwise, so

@@ -337,9 +337,9 @@ def _trialing_state(
     # The markup-aware test class below passes an explicit multiplier
     # (or None to verify the configured-default fallback path).
     #
-    # `current_period_end` doubles as the source for the derived
-    # `trial_deadline` accessor (SHU-813) — pinning it here keeps the
-    # cap-exhausted error detail's `trial_deadline` field deterministic.
+    # `current_period_end` is what HardCapExhaustedError now reports as the
+    # `period_end` detail (SHU-813 / L2 rename) — pinning it here keeps that
+    # error detail deterministic across tests.
     return _make_state(
         total_grant_amount=total_grant,
         remaining_grant_amount=total_grant,
@@ -427,8 +427,15 @@ class TestAssertSubscriptionActiveHardCap:
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("5.00"))),
         ):
-            with pytest.raises(HardCapExhaustedError):
+            with pytest.raises(HardCapExhaustedError) as exc_info:
                 await assert_subscription_active()
+
+        # `period_end` (SHU-813 L2) — must be non-null for a free-tier
+        # non-trialing tenant so the frontend can render "budget resets on …"
+        # for the cap-exhausted surface. The pre-rename `trial_deadline` was
+        # always None outside `trialing`, which gave the free-tier UI nothing
+        # to anchor on.
+        assert exc_info.value.details["period_end"] == "2026-06-01T00:00:00+00:00"
 
     @pytest.mark.asyncio
     async def test_canceled_subscription_status_raises_subscription_inactive(self, install_stub_cache):
@@ -459,7 +466,7 @@ class TestAssertSubscriptionActiveHardCap:
         sitting exactly at the budget shouldn't get one more call through.
         """
         install_stub_cache(_trialing_state(total_grant=Decimal("50.00")))
-        trial_deadline = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
+        period_end = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
@@ -471,7 +478,9 @@ class TestAssertSubscriptionActiveHardCap:
         err = exc_info.value
         assert err.error_code == "hard_cap_exhausted"
         assert err.status_code == 402
-        assert err.details["trial_deadline"] == trial_deadline.isoformat()
+        # `period_end` (SHU-813 L2 rename, was `trial_deadline`) — sourced
+        # from `current_period_end` so it's non-null in the free-tier case too.
+        assert err.details["period_end"] == period_end.isoformat()
         assert err.details["total_grant_amount"] == "50.00"
 
     @pytest.mark.asyncio
