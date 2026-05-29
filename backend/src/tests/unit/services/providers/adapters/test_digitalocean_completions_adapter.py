@@ -53,9 +53,16 @@ def test_provider_settings(digitalocean_adapter):
     assert digitalocean_adapter.get_chat_endpoint() == "/chat/completions"
     assert digitalocean_adapter.get_models_endpoint() == "/models"
 
+    # Set a stand-in api_key directly — the fixture builds the adapter
+    # without an encrypted provider key, so the constructor leaves
+    # self.api_key=None. We want to test the auth-header format under
+    # realistic conditions (a real key reaches the wire as "Bearer <key>"),
+    # not the degenerate "Bearer None" shape.
+    digitalocean_adapter.api_key = "fake-key"
+
     authorization_header = digitalocean_adapter.get_authorization_header()
     assert authorization_header.get("scheme") == "bearer"
-    assert authorization_header.get("headers", {}).get("Authorization") == f"Bearer {None}"
+    assert authorization_header.get("headers", {}).get("Authorization") == "Bearer fake-key"
 
     parameter_mapping = digitalocean_adapter.get_parameter_mapping()
     assert set(parameter_mapping.keys()) == {

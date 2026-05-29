@@ -4,8 +4,10 @@ Verifies the AST-based import guard correctly blocks disallowed modules
 (requests, httpx, urllib3, urllib, importlib, shu.*) while allowing
 shu_plugin_sdk and explicitly allowlisted modules like urllib.parse.
 
-Also covers manifest-name reservation guards (mcp-, int-, int:) added
-for MCP and the internal-tool framework (SHU-816).
+Also covers the manifest-name reservation guards added for MCP and the
+internal-tool framework (SHU-816): the ``mcp-`` prefix, the exact name
+``int``, and any name containing ``:``. The ``int-`` prefix is NOT
+reserved — see ``test_discover_allows_int_hyphen_names``.
 """
 
 from __future__ import annotations
