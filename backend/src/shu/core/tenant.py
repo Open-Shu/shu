@@ -287,14 +287,16 @@ async def _tenant_context_for_credential(
                 "Multi-tenant tenant resolution requires a credential identifier; none was provided."
             )
 
-    # Normalize to str so tenant_context honors its ``str | None`` annotation
-    # regardless of what a credential resolver returned. The SD lookups already
-    # ``RETURNS text`` and the deployment constants are str, but an explicit
-    # tenant_id (worker dispatch, fan-out) can arrive as a uuid.UUID — coercing
-    # here is the single boundary that keeps a UUID out of the contextvar, so the
-    # before_flush guard never compares a str column against a UUID context.
-    if tid is not None:
-        tid = str(tid)
+    # Normalize at this single boundary (the only ``tenant_context.set`` site):
+    #   - a uuid.UUID (explicit tenant_id from worker dispatch / fan-out) becomes a
+    #     str so the contextvar honors its ``str | None`` annotation and the
+    #     before_flush guard never compares a str column against a UUID context;
+    #   - any falsy value (``""`` from an empty job payload or a stray caller)
+    #     collapses to ``None`` — "no tenant", not a literal empty string. Without
+    #     this, the begin hook would write ``set_config('app.tenant_id', '')`` and
+    #     every tenant-scoped query on that connection would 500 on ``''::uuid``
+    #     instead of behaving like "no context → no rows".
+    tid = str(tid) if tid else None
 
     token = tenant_context.set(tid)
     try:

@@ -500,11 +500,27 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915
     # plugins_auto_sync gates the DB *write* path (create/update/purge
     # PluginDefinition rows) which may not be desired in all environments.
     try:
+        from contextlib import nullcontext
+
+        from .core.config import DeploymentMode
         from .core.database import get_async_session_local
+        from .core.tenant import tenant_context_for_tenant_id
         from .plugins.registry import REGISTRY
 
         session_maker = get_async_session_local()
-        async with session_maker() as session:
+        # The sync reads mcp_server_connections, which is tenant-scoped under RLS,
+        # so it must run with a tenant context or the policy's current_setting cast
+        # aborts the transaction. Self-hosted/silo scope to the single deployment
+        # tenant (tenant_context_for_tenant_id(None) resolves it). Multi-tenant has
+        # no single deployment tenant — and MCP is platform/blocked there (SHU-824)
+        # — so it runs unscoped: the MCP read safely returns 0 rows and the global
+        # plugin_definitions sync proceeds normally.
+        tenant_scope = (
+            nullcontext()
+            if settings.deployment_mode == DeploymentMode.MULTI_TENANT
+            else tenant_context_for_tenant_id(None)
+        )
+        async with tenant_scope, session_maker() as session:
             if getattr(settings, "plugins_auto_sync", False):
                 stats = await REGISTRY.sync(session)
                 logger.info("Plugins auto-sync completed", extra={"stats": stats})

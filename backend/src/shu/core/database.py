@@ -211,10 +211,13 @@ def _set_tenant_on_begin(conn) -> None:
     if _is_admin_connection(conn):
         return
     tid = tenant_context.get(None)
-    if tid is None:
-        # Default-deny will kick in once RLS is active and the role lacks
-        # BYPASSRLS; log once at DEBUG so the missing-context site is greppable
-        # without spamming production logs.
+    if not tid:
+        # Falsy (None or "") => no tenant. Never write an empty string into the
+        # GUC: ``current_setting('app.tenant_id', true)`` then returns '' instead
+        # of NULL, and the RLS policy's ``::uuid`` cast raises on '' (vs. NULL,
+        # which is harmless). Leaving it unset means default-deny returns 0 rows.
+        # Log once at DEBUG so the missing-context site is greppable without
+        # spamming production logs.
         logger.debug("transaction begun without tenant context")
         return
     conn.execute(

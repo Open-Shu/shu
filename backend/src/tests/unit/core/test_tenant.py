@@ -212,6 +212,18 @@ async def test_uuid_tenant_id_is_normalized_to_str_in_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_string_tenant_id_collapses_to_none() -> None:
+    """SHU-825 regression: an empty-string tenant_id (stray caller / empty job
+    payload) must collapse to None ("no tenant"), never a literal "". If "" reached
+    the contextvar, the engine begin hook would run set_config('app.tenant_id', '')
+    and every tenant-scoped query on that connection would 500 on ''::uuid instead
+    of behaving like "no context -> 0 rows"."""
+    async with tenant_context_for_tenant_id("") as resolved:
+        assert resolved is None
+        assert tenant_context.get(None) is None
+
+
+@pytest.mark.asyncio
 async def test_context_resets_even_when_body_raises() -> None:
     """If the route handler raises mid-request, the context must still pop —
     otherwise the next request on this asyncio task / thread inherits the
