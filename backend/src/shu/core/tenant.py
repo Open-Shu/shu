@@ -287,6 +287,15 @@ async def _tenant_context_for_credential(
                 "Multi-tenant tenant resolution requires a credential identifier; none was provided."
             )
 
+    # Normalize to str so tenant_context honors its ``str | None`` annotation
+    # regardless of what a credential resolver returned. The SD lookups already
+    # ``RETURNS text`` and the deployment constants are str, but an explicit
+    # tenant_id (worker dispatch, fan-out) can arrive as a uuid.UUID — coercing
+    # here is the single boundary that keeps a UUID out of the contextvar, so the
+    # before_flush guard never compares a str column against a UUID context.
+    if tid is not None:
+        tid = str(tid)
+
     token = tenant_context.set(tid)
     try:
         yield tid

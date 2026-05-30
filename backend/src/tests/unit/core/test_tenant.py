@@ -12,11 +12,11 @@ Coverage focus:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from sqlalchemy.exc import DBAPIError, NoResultFound
 
 from shu.core.config import SELF_HOSTED_TENANT_UUID
@@ -190,6 +190,25 @@ async def test_context_resets_to_prior_value_on_clean_exit() -> None:
         async with tenant_context_for_email("x@example.com"):
             assert tenant_context.get(None) == SELF_HOSTED_TENANT_UUID
     assert tenant_context.get(None) == prior
+
+
+@pytest.mark.asyncio
+async def test_uuid_tenant_id_is_normalized_to_str_in_context() -> None:
+    """SHU-823 regression: a uuid.UUID tenant_id (e.g. from a raw SELECT over
+    the uuid-typed tenants.id, or a worker job payload) must be coerced to str
+    before landing in tenant_context. The contextvar is ``str | None`` and the
+    before_flush guard compares it against the str ``Uuid(as_uuid=False)``
+    column; a UUID context made `str != UUID` true on every tenant-scoped flush
+    and broke the scheduler fan-out."""
+    tid = uuid.UUID(SELF_HOSTED_TENANT_UUID)
+    async with tenant_context_for_tenant_id(tid) as resolved:
+        ctx = tenant_context.get(None)
+        assert isinstance(ctx, str)
+        assert ctx == SELF_HOSTED_TENANT_UUID
+        # The yielded value is normalized too, so callers that capture it
+        # (e.g. for logging or as a dict key) get the same str representation.
+        assert isinstance(resolved, str)
+        assert resolved == SELF_HOSTED_TENANT_UUID
 
 
 @pytest.mark.asyncio
