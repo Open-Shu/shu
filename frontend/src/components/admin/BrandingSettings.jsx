@@ -343,13 +343,14 @@ const BrandingSettings = () => {
           TransitionProps={{ onExited: () => setSnackContent(null) }}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
           sx={{
-            // AdminLayout has a persistent left drawer on desktop. Default
-            // horizontal: 'center' centers on the viewport, which lands the
-            // toast left of the visible content center by half the drawer
-            // width. Shift right by half DRAWER_WIDTH on sm+ to recenter on
-            // the content. Mobile (xs) keeps the default — the drawer there
-            // is a temporary overlay and doesn't push content.
-            transform: { sm: `translateX(calc(-50% + ${DRAWER_CONTENT_CENTER_OFFSET}px))` },
+            // AdminLayout switches the drawer from temporary overlay to
+            // persistent push at the md breakpoint
+            // (`useMediaQuery(theme.breakpoints.down('md'))` — see
+            // AdminLayout.js). Apply the centering offset at the same
+            // breakpoint so xs+sm (where the drawer is overlay) keep the
+            // default viewport-centered position, and md+ (where the
+            // drawer pushes content) gets the half-drawer compensation.
+            transform: { md: `translateX(calc(-50% + ${DRAWER_CONTENT_CENTER_OFFSET}px))` },
           }}
         >
           <Alert

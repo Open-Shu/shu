@@ -130,8 +130,12 @@ class BrandingService:
             and final_avatar_mode == "custom"
             and final_avatar_url == prior_avatar_asset_url
         )
+        # Defer the file deletion until AFTER the DB upsert succeeds — if the
+        # upsert raises, the DB still points to prior_avatar_asset_url and we
+        # must not delete its file or we'd leave a broken-image URL behind.
+        orphan_to_delete: str | None = None
         if prior_avatar_asset_url and not prior_still_active:
-            self._remove_local_asset(prior_avatar_asset_url)
+            orphan_to_delete = prior_avatar_asset_url
             # Keep stored state coherent: when mode is no longer "custom"
             # the URL field shouldn't carry a stale value either.
             if final_avatar_mode != "custom":
@@ -143,6 +147,10 @@ class BrandingService:
             stored["updated_by"] = user_id
 
         await self._system_settings.upsert(self.SETTINGS_KEY, stored)
+
+        if orphan_to_delete:
+            self._remove_local_asset(orphan_to_delete)
+
         return await self.get_branding()
 
     async def save_asset(
@@ -187,10 +195,15 @@ class BrandingService:
 
         public_url = f"{self.settings.api_v1_prefix}/settings/branding/assets/{asset_filename}"
 
-        # Get current branding to find old asset
+        # Get current branding to find old asset. Defer the file deletion
+        # until AFTER update_branding succeeds — otherwise a DB write failure
+        # would leave the DB pointing at the now-deleted old_url (broken
+        # image in chat). Note: for assistant_avatar, update_branding's own
+        # orphan-cleanup also targets old_url, so this post-success call is
+        # redundant-but-harmless (idempotent via missing_ok=True). For
+        # favicon/dark_favicon, this is the only cleanup path.
         current = await self.get_branding()
         old_url = self._get_old_asset_url(current, asset_type)
-        self._remove_local_asset(old_url, exclude_filename=asset_filename)
 
         # Update configuration
         field_name = self._asset_type_to_field_name(asset_type)
@@ -203,11 +216,14 @@ class BrandingService:
         update = BrandingSettingsUpdate(**update_fields)
 
         try:
-            return await self.update_branding(update, user_id=user_id)
+            branding = await self.update_branding(update, user_id=user_id)
         except Exception:
             # Roll back to prior state and delete uploaded asset if update fails.
             asset_path.unlink(missing_ok=True)
             raise
+
+        self._remove_local_asset(old_url, exclude_filename=asset_filename)
+        return branding
 
     def resolve_asset_path(self, filename: str) -> Path:
         safe_name = Path(filename).name

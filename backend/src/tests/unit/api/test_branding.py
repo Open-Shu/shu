@@ -448,6 +448,45 @@ class TestAvatarAssetOrphanCleanup:
         assert stored.get("assistant_avatar_mode") == "custom"
 
     @pytest.mark.asyncio
+    async def test_db_failure_during_replacement_preserves_prior_file(self, tmp_path) -> None:
+        # CodeRabbit review case: if the DB upsert fails while replacing an
+        # avatar, the prior file must NOT be deleted — otherwise the DB
+        # still points to a now-missing URL (broken image in chat). Drives
+        # save_asset against an upsert that raises and asserts the prior
+        # file survives.
+        service = self._service(tmp_path)
+        seed_url, seed_path = self._seed_asset(service)
+        stored_before = {
+            "assistant_avatar_mode": "custom",
+            "assistant_avatar_asset_url": seed_url,
+        }
+
+        async def fake_get_value(_key: str, default):
+            return dict(stored_before)
+
+        async def fake_upsert(_key: str, _value: dict):
+            raise RuntimeError("simulated DB failure during upsert")
+
+        service._system_settings.get_value = fake_get_value  # type: ignore[assignment]
+        service._system_settings.upsert = fake_upsert  # type: ignore[assignment]
+
+        with patch.object(service, "get_branding", new=AsyncMock(return_value=MagicMock())):
+            with pytest.raises(RuntimeError, match="simulated DB failure"):
+                await service.save_asset(
+                    filename="replacement.png",
+                    file_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 200,
+                    asset_type="assistant_avatar",
+                    user_id="admin-1",
+                )
+
+        # Prior file must still exist — DB write failed, so we must not
+        # have deleted it. The newly-uploaded file is rolled back by
+        # save_asset's existing except handler.
+        assert seed_path.exists(), "prior file must survive a failed upsert"
+        new_uploads = [p for p in service.assets_dir.glob("assistant_avatar_*.png") if p != seed_path]
+        assert new_uploads == [], "new upload must be rolled back on DB failure"
+
+    @pytest.mark.asyncio
     async def test_unchanged_custom_url_is_preserved(self, tmp_path) -> None:
         # Regression guard: a no-op PATCH (or one that touches unrelated
         # fields) must NOT delete the in-use avatar file. Without the

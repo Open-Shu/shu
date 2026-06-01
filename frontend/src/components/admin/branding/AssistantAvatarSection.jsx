@@ -175,6 +175,7 @@ const AssistantAvatarSection = ({ branding, setBranding, setStatus }) => {
                 <ButtonBase
                   key={entry.id}
                   aria-label={entry.label}
+                  aria-pressed={selected}
                   onClick={() => handleCuratedSelect(entry.id)}
                   sx={{
                     p: 1,
