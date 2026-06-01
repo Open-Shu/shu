@@ -61,6 +61,14 @@ const InputBar = React.memo(function InputBar({
   onUploadToPersonalKB,
   onRetryPersonalKBFile,
   onDismissPersonalKBError,
+  personalKBDocs = [],
+  personalKBDocsLoading = false,
+  personalKBDocsFetching = false,
+  personalKBIndexing = false,
+  personalKBHasMoreDocs = false,
+  onFetchMorePersonalKBDocs,
+  personalKBFetchingMoreDocs = false,
+  onRefreshPersonalKBDocs,
   // SHU-803: Send button morphs into Stop while the current conversation
   // has an in-flight stream. `canStop` is false during the ~10-50ms
   // window after Send before stream_start arrives — disabled state with
@@ -385,6 +393,7 @@ const InputBar = React.memo(function InputBar({
         <BrainIcon
           kb={personalKB}
           uploading={personalKBUploading}
+          indexing={personalKBIndexing}
           errorCount={personalKBErrors.length}
           dragActive={dragActive}
           onClick={handleBrainClick}
@@ -513,6 +522,13 @@ const InputBar = React.memo(function InputBar({
         onUpload={handleBrainUpload}
         onRetry={onRetryPersonalKBFile}
         onDismissError={onDismissPersonalKBError}
+        docs={personalKBDocs}
+        docsLoading={personalKBDocsLoading}
+        docsFetching={personalKBDocsFetching}
+        hasMoreDocs={personalKBHasMoreDocs}
+        fetchMoreDocs={onFetchMorePersonalKBDocs}
+        fetchingMoreDocs={personalKBFetchingMoreDocs}
+        onRefreshDocs={onRefreshPersonalKBDocs}
       />
 
       <Snackbar

@@ -199,7 +199,8 @@ const ModernChat = () => {
     ensureKBAttached,
   } = useKBPicker();
 
-  // Personal Knowledge — v1 in-chat upload entry point.
+  // Personal Knowledge — in-chat upload entry point. Documents + indexing state
+  // are React Query-backed in the hook so the brain badge stays live (SHU-817 F4).
   const {
     personalKB,
     loading: personalKBLoading,
@@ -208,6 +209,14 @@ const ModernChat = () => {
     uploadFiles: uploadToPersonalKB,
     retryFile: retryPersonalKBFile,
     dismissError: dismissPersonalKBError,
+    docs: personalKBDocs,
+    docsLoading: personalKBDocsLoading,
+    docsFetching: personalKBDocsFetching,
+    indexing: personalKBIndexing,
+    hasMoreDocs: personalKBHasMoreDocs,
+    fetchMoreDocs: fetchMorePersonalKBDocs,
+    fetchingMoreDocs: personalKBFetchingMoreDocs,
+    refetchDocs: refetchPersonalKBDocs,
   } = usePersonalKB();
 
   // Auto-attach Personal Knowledge once on initial discovery.
@@ -1370,6 +1379,14 @@ const ModernChat = () => {
     onUploadToPersonalKB: uploadToPersonalKB,
     onRetryPersonalKBFile: retryPersonalKBFile,
     onDismissPersonalKBError: dismissPersonalKBError,
+    personalKBDocs,
+    personalKBDocsLoading,
+    personalKBDocsFetching,
+    personalKBIndexing,
+    personalKBHasMoreDocs,
+    onFetchMorePersonalKBDocs: fetchMorePersonalKBDocs,
+    personalKBFetchingMoreDocs,
+    onRefreshPersonalKBDocs: refetchPersonalKBDocs,
     isStreaming: isStreamingForSelectedConversation,
     canStop: Boolean(activeStreamingMessage),
     onStop: handleInputBarStop,

@@ -347,11 +347,18 @@ export const knowledgeBaseAPI = {
   // Idempotent ensure for the caller's Personal Knowledge KB. Server derives
   // the display name from the user's identity; no body needed.
   ensurePersonal: () => api.post('/knowledge-bases/personal'),
+  // Owner-scoped direct lookup of the caller's Personal Knowledge KB (returns
+  // {data: <kb>|null}). Avoids scanning the full KB list, which can paginate the
+  // personal KB out for users who can see many KBs (SHU-817 R5).
+  getPersonal: () => api.get('/knowledge-bases/personal'),
   update: (id, data) => api.put(`/knowledge-bases/${id}`, data),
   delete: (id) => api.delete(`/knowledge-bases/${id}`),
   getDocuments: (id, params = {}) => api.get(`/knowledge-bases/${id}/documents`, { params }),
   getDocument: (id, docId) => api.get(`/knowledge-bases/${id}/documents/${docId}`),
   deleteDocument: (id, docId) => api.delete(`/knowledge-bases/${id}/documents/${docId}`),
+  // Re-run the embed/profile pipeline for a manually-uploaded document from its
+  // stored content (SHU-817 R3): 409 if still processing, 422 if no content, 404 if missing.
+  reingestDocument: (id, docId) => api.post(`/knowledge-bases/${id}/documents/${docId}/reingest`),
   getDocumentChunks: (kbId, docId, params = {}) =>
     api.get(`/knowledge-bases/${kbId}/documents/${docId}/chunks`, { params }),
   // Document upload
