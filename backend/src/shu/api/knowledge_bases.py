@@ -169,6 +169,42 @@ async def get_knowledge_base_stats(current_user: User = Depends(require_admin), 
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
+@router.get(
+    "/personal",
+    summary="Get the caller's Personal Knowledge KB",
+    description=(
+        "Return the caller's Personal Knowledge KB directly (owner-scoped), or null if it "
+        "has not been provisioned yet. Avoids scanning the full KB list, which can paginate "
+        "the personal KB out for users who can see many KBs."
+    ),
+)
+async def get_personal_knowledge_base_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the caller's Personal Knowledge KB, or null if not yet provisioned.
+
+    Registered before GET /{kb_id} so the literal "personal" path is not captured
+    as a kb_id path parameter.
+    """
+    try:
+        service = KnowledgeBaseService(db)
+        kb = await service.get_personal_knowledge_base(owner_id=current_user.id)
+        return ShuResponse.success(_serialize_kb_create_response(kb) if kb is not None else None)
+    except ShuException as e:
+        logger.error(
+            "API: Failed to get personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
+        return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_GET_ERROR", status_code=e.status_code)
+    except Exception as e:
+        logger.error(
+            "API: Failed to get personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
 @router.get("/{kb_id}")
 async def get_knowledge_base(
     kb_id: str,
@@ -868,6 +904,19 @@ async def delete_document(
         # Adjust KB stats (decrement by 1 doc and its chunks)
         await kb_service.adjust_document_stats(kb_id, doc_delta=-1, chunk_delta=-chunk_count)
 
+        # Best-effort cleanup of any staged bytes not yet consumed by the worker
+        # (e.g. deleting a doc that is still PENDING). Non-fatal — a worker that
+        # later finds the document gone also cleans up (SHU-817 R6).
+        try:
+            from ..services.file_staging_service import FileStagingService
+
+            await FileStagingService().delete_staged_files_for_document(document_id)
+        except Exception as cleanup_err:
+            logger.warning(
+                "Failed to clean staged files for deleted document",
+                extra={"document_id": document_id, "error": str(cleanup_err)},
+            )
+
         logger.info(
             "Deleted document",
             extra={"kb_id": kb_id, "document_id": document_id, "deleted_by": current_user.id},
@@ -880,6 +929,45 @@ async def delete_document(
     except Exception as e:
         logger.error(f"Error deleting document: {e}", exc_info=True)
         return ShuResponse.error(message="Failed to delete document", code="DOCUMENT_DELETE_ERROR", status_code=500)
+
+
+@router.post(
+    "/{kb_id}/documents/{document_id}/reingest",
+    summary="Re-ingest a document",
+    description=(
+        "Re-run the embed/profile pipeline for a manually-uploaded document from its stored "
+        "extracted content. Recovers failed or stale documents without a re-upload. Requires "
+        "kb.write access."
+    ),
+)
+async def reingest_document(
+    kb_id: str,
+    document_id: str,
+    current_user: User = Depends(require_kb_write_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-ingest a manually-uploaded document from its stored extracted content.
+
+    Documents still processing return 409; documents with no extracted content
+    (extraction failed) return 422 with guidance to re-upload the file.
+    """
+    try:
+        service = KnowledgeBaseService(db)
+        result = await service.reingest_document(kb_id, document_id, user_id=str(current_user.id))
+        return ShuResponse.success(result)
+    except ShuException as e:
+        logger.error(
+            "API: Failed to re-ingest document",
+            extra={"kb_id": kb_id, "document_id": document_id, "error": str(e)},
+        )
+        return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error(
+            "API: Failed to re-ingest document",
+            extra={"kb_id": kb_id, "document_id": document_id, "error": str(e)},
+            exc_info=True,
+        )
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 @router.get("/{kb_id}/documents/extraction-summary")

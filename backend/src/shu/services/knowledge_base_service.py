@@ -566,6 +566,16 @@ class KnowledgeBaseService:
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
+    async def get_personal_knowledge_base(self, owner_id: str) -> KnowledgeBase | None:
+        """Return the caller's Personal Knowledge KB, or ``None`` if not yet provisioned.
+
+        Owner-scoped lookup with no creation — the personal KB is lazily created on
+        first upload via ``ensure_personal_knowledge_base``. Used by the in-chat brain
+        surface to resolve the personal KB directly instead of scanning the full KB
+        list, which can paginate the row out for users who can see >100 KBs (SHU-817 R5).
+        """
+        return await self._get_personal_kb_by_owner(owner_id)
+
     async def _return_or_heal_existing_personal_kb(self, existing: KnowledgeBase, owner_id: str) -> KnowledgeBase:
         """Idempotent return for ensure-style personal-KB creates.
 
@@ -1047,7 +1057,77 @@ class KnowledgeBaseService:
             raise
         except Exception as e:
             logger.error(f"Failed to get document {document_id} from KB {kb_id}: {e}")
-            raise ShuException(f"Failed to get document: {e!s}")
+            raise ShuException(f"Failed to get document: {e!s}", "DOCUMENT_GET_ERROR")
+
+    async def reingest_document(self, kb_id: str, document_id: str, *, user_id: str | None = None) -> dict:
+        """Re-run the embed → profile pipeline for an already-extracted document.
+
+        Recovers a manually-uploaded document that failed (or is otherwise stale)
+        without forcing a re-upload, by re-enqueuing an embed job from the stored
+        extracted content. Authorization is enforced upstream by the route's
+        ``require_kb_write_access`` dependency, so this fetches the document
+        directly rather than through the kb.read-gated getter (mirroring the
+        upload route, which also bypasses the read gate after write auth).
+
+        Raises:
+            NotFoundError: Document not found in the KB.
+            ShuException: Document is not a manual upload (400), is still
+                processing (409), or has no extracted content to re-embed (422).
+
+        """
+        from ..core.queue_backend import get_queue_backend
+        from ..core.workload_routing import WorkloadType, enqueue_job
+        from ..models.document import DocumentStatus
+
+        result = await self.db.execute(
+            select(Document).where(Document.knowledge_base_id == kb_id, Document.id == document_id)
+        )
+        document = result.scalar_one_or_none()
+        if document is None:
+            raise NotFoundError(f"Document '{document_id}' not found in knowledge base '{kb_id}'")
+
+        if document.source_type != "plugin:manual_upload":
+            raise ShuException(
+                "Only manually uploaded documents can be re-ingested.",
+                "DOCUMENT_REINGEST_NOT_ALLOWED",
+                status_code=400,
+            )
+        if not document.is_processed and not document.has_error:
+            raise ShuException(
+                "Document is still processing — wait for it to finish before re-ingesting.",
+                "DOCUMENT_BUSY",
+                status_code=409,
+            )
+        if not (document.content or "").strip():
+            raise ShuException(
+                "This document has no extracted content to re-ingest; please re-upload the file.",
+                "REINGEST_REQUIRES_REUPLOAD",
+                status_code=422,
+            )
+
+        # Reset to an in-progress state for immediate UI feedback, then re-enqueue
+        # the embed stage — chunks + embeddings are regenerated from the stored
+        # content and profiling re-runs. Extraction is skipped (content exists).
+        document.update_status(DocumentStatus.EMBEDDING)
+        document.processing_error = None
+        await self.db.commit()
+
+        queue = await get_queue_backend()
+        await enqueue_job(
+            queue,
+            WorkloadType.INGESTION_EMBED,
+            payload={
+                "document_id": document_id,
+                "knowledge_base_id": kb_id,
+                "user_id": user_id,
+                "action": "embed_document",
+            },
+            max_attempts=3,
+            visibility_timeout=300,
+        )
+
+        logger.info("Re-ingest enqueued for document", extra={"kb_id": kb_id, "document_id": document_id})
+        return {"status": "queued", "document_id": document_id}
 
     async def get_knowledge_base_summary(self, kb_id: str, *, user_id: str):
         """Build a high-level summary for a knowledge base including distinct source types
