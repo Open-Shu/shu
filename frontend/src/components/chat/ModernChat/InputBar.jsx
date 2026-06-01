@@ -72,6 +72,8 @@ const InputBar = React.memo(function InputBar({
   onRefreshPersonalKBDocs,
   onDeletePersonalKBDoc,
   onReingestPersonalKBDoc,
+  personalKBAutoAttach = true,
+  onTogglePersonalKBAutoAttach,
   // SHU-803: Send button morphs into Stop while the current conversation
   // has an in-flight stream. `canStop` is false during the ~10-50ms
   // window after Send before stream_start arrives — disabled state with
@@ -539,6 +541,8 @@ const InputBar = React.memo(function InputBar({
         onRefreshDocs={onRefreshPersonalKBDocs}
         onDeleteDoc={onDeletePersonalKBDoc}
         onReingestDoc={onReingestPersonalKBDoc}
+        autoAttach={personalKBAutoAttach}
+        onToggleAutoAttach={onTogglePersonalKBAutoAttach}
       />
 
       <Snackbar

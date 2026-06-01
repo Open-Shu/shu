@@ -6,12 +6,14 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  FormControlLabel,
   IconButton,
   List,
   ListItem,
   ListItemText,
   Popover,
   Stack,
+  Switch,
   SwipeableDrawer,
   Tooltip,
   Typography,
@@ -346,6 +348,8 @@ const BrainPopover = React.memo(function BrainPopover({
   onRefreshDocs,
   onDeleteDoc,
   onReingestDoc,
+  autoAttach = true,
+  onToggleAutoAttach,
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
@@ -418,6 +422,28 @@ const BrainPopover = React.memo(function BrainPopover({
     </Box>
   );
 
+  // SHU-817 S4 — durable per-user toggle (server-persisted). When off, the
+  // personal KB isn't auto-attached to new chats; the user can still attach it
+  // manually via the KB picker.
+  const autoAttachToggle = onToggleAutoAttach ? (
+    <FormControlLabel
+      sx={{ ml: 0, mt: 0.5 }}
+      control={
+        <Switch
+          size="small"
+          checked={autoAttach}
+          onChange={(event) => onToggleAutoAttach(event.target.checked)}
+          inputProps={{ 'aria-label': 'Auto-attach Personal Knowledge to new chats' }}
+        />
+      }
+      label={
+        <Typography variant="caption" color="text.secondary">
+          Auto-attach to new chats
+        </Typography>
+      }
+    />
+  ) : null;
+
   const firstSession = (
     <Stack spacing={2}>
       <Box>
@@ -439,6 +465,7 @@ const BrainPopover = React.memo(function BrainPopover({
       >
         {uploading ? 'Uploading…' : 'Choose files'}
       </Button>
+      {autoAttachToggle}
     </Stack>
   );
 
@@ -513,6 +540,7 @@ const BrainPopover = React.memo(function BrainPopover({
       >
         {uploading ? 'Uploading…' : 'Add files'}
       </Button>
+      {autoAttachToggle}
     </Stack>
   );
 

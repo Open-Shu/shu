@@ -129,6 +129,7 @@ const ModernChat = () => {
     theme: 'light',
     language: 'en',
     timezone: 'UTC',
+    auto_attach_personal_kb: true,
     advanced_settings: {},
     summary_search_min_token_length: DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
     summary_search_max_tokens: DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
@@ -221,15 +222,39 @@ const ModernChat = () => {
     reingestDoc: reingestPersonalKBDoc,
   } = usePersonalKB();
 
-  // Auto-attach Personal Knowledge once on initial discovery.
-  // Refs let users detach via the chip × without re-attaching on every render.
-  const personalKBAutoAttachedRef = useRef(false);
+  // Auto-attach Personal Knowledge per the user's preference (SHU-817 S4).
+  // Re-keyed on the conversation id so each new/switched conversation re-applies
+  // the default — a manual chip-× detach is therefore per-conversation and
+  // transient. Toggling the preference off detaches it from the current chat;
+  // on re-attaches it. ensureKBAttached/removeKB are idempotent (dedupe by id).
+  const autoAttachPersonalKB = userPreferences.auto_attach_personal_kb !== false;
   useEffect(() => {
-    if (personalKB && !personalKBAutoAttachedRef.current) {
-      ensureKBAttached(personalKB);
-      personalKBAutoAttachedRef.current = true;
+    if (!personalKB) {
+      return;
     }
-  }, [personalKB, ensureKBAttached]);
+    if (autoAttachPersonalKB) {
+      ensureKBAttached(personalKB);
+    } else {
+      removeKB(personalKB.id);
+    }
+  }, [personalKB, autoAttachPersonalKB, selectedConversation?.id, ensureKBAttached, removeKB]);
+
+  // Optimistically flip the auto-attach preference (popover + Settings share it).
+  // PATCH so other prefs aren't clobbered; roll the local state back on failure (M4).
+  const setAutoAttachPersonalKB = useCallback(
+    (enabled) => {
+      setUserPreferences((prev) => ({ ...prev, auto_attach_personal_kb: enabled }));
+      userPreferencesAPI
+        .patchPreferences({ auto_attach_personal_kb: enabled })
+        .then(() => queryClient.invalidateQueries('user-preferences'))
+        .catch((err) => {
+          log.warn('Failed to update auto-attach preference:', formatError(err).message);
+          setUserPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
+        });
+    },
+    [queryClient]
+  );
+
   useEffect(() => {
     clearEnsembleModeRef.current = clearEnsembleSelection;
   }, [clearEnsembleSelection]);
@@ -1391,6 +1416,8 @@ const ModernChat = () => {
     onRefreshPersonalKBDocs: refetchPersonalKBDocs,
     onDeletePersonalKBDoc: deletePersonalKBDoc,
     onReingestPersonalKBDoc: reingestPersonalKBDoc,
+    personalKBAutoAttach: autoAttachPersonalKB,
+    onTogglePersonalKBAutoAttach: setAutoAttachPersonalKB,
     isStreaming: isStreamingForSelectedConversation,
     canStop: Boolean(activeStreamingMessage),
     onStop: handleInputBarStop,

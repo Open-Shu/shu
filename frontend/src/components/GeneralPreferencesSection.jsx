@@ -6,11 +6,13 @@ import {
   Button,
   Grid,
   FormControl,
+  FormControlLabel,
   InputLabel,
   Select,
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -156,6 +158,9 @@ export default function GeneralPreferencesSection() {
     changeFontScale(normalized);
   };
 
+  const handleAutoAttachChange = (event) =>
+    setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: event.target.checked }));
+
   const inheritLabel = brandFontKey
     ? `Default — Team Brand (${FONT_FAMILIES[brandFontKey]?.label ?? brandFontKey})`
     : 'Default (Inter)';
@@ -224,6 +229,24 @@ export default function GeneralPreferencesSection() {
           </Box>
         </Grid>
       </Grid>
+
+      <Typography variant="h6" gutterBottom sx={{ mt: 4, mb: 2 }}>
+        Chat
+      </Typography>
+      <FormControlLabel
+        control={
+          <Switch
+            checked={preferences.auto_attach_personal_kb !== false}
+            onChange={handleAutoAttachChange}
+            inputProps={{ 'aria-label': 'Auto-attach Personal Knowledge to new chats' }}
+          />
+        }
+        label="Auto-attach my Personal Knowledge to new chats"
+      />
+      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+        When on, your Personal Knowledge is searched in every new conversation. Turn it off to attach it manually per
+        chat.
+      </Typography>
 
       <Typography variant="h6" gutterBottom sx={{ mt: 4, mb: 2 }}>
         Typography
