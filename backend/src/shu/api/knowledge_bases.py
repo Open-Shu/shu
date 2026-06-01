@@ -4,19 +4,21 @@ This module provides REST API endpoints for managing knowledge bases,
 including CRUD operations, statistics, and multi-source support.
 """
 
+import hashlib
 import mimetypes
 import os
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.rbac import (
     get_current_user,
     require_admin,
+    require_kb_delete_access,
     require_kb_write_access,
     require_power_user,
 )
@@ -32,7 +34,10 @@ from ..core.response import ShuResponse
 from ..ingestion.filetypes import MAGIC_BYTES
 from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, RAGConfig
 from ..services.document_service import DocumentService
-from ..services.ingestion_service import ingest_document as ingest_document_service
+from ..services.ingestion_service import (
+    ingest_document as ingest_document_service,
+)
+from ..services.ingestion_service import manual_upload_source_id
 from ..services.kb_import_export_service import KBImportExportService
 from ..services.knowledge_base_service import (
     KnowledgeBaseService,
@@ -371,18 +376,30 @@ async def update_knowledge_base(
 @router.delete("/{kb_id}")
 async def delete_knowledge_base(
     kb_id: str,
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_delete_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a knowledge base.
 
     Deletes a knowledge base and all its documents and chunks.
     This operation cannot be undone.
+
+    Gated by require_kb_delete_access (admin, KB owner, or explicit kb.delete PBAC).
+    Personal Knowledge KBs are auto-provisioned singletons and cannot be deleted via
+    this endpoint.
     """
     logger.info("API: Delete knowledge base", extra={"kb_id": kb_id})
 
     try:
         service = KnowledgeBaseService(db)
+        kb = await service.get_knowledge_base(kb_id, user_id=str(current_user.id))
+        if kb.is_personal:
+            return ShuResponse.error(
+                message="Personal Knowledge cannot be deleted.",
+                code="PERSONAL_KB_DELETE_NOT_ALLOWED",
+                status_code=403,
+            )
+
         await service.delete_knowledge_base(kb_id)
 
         logger.info("API: Deleted knowledge base", extra={"kb_id": kb_id})
@@ -812,12 +829,12 @@ async def list_documents(
 @router.delete(
     "/{kb_id}/documents/{document_id}",
     summary="Delete a document from knowledge base",
-    description="Delete a manually uploaded document. Power user or admin only. Feed-sourced documents cannot be deleted via this endpoint.",
+    description="Delete a manually uploaded document. Requires kb.delete access (admin, KB owner, or explicit kb.delete grant). Feed-sourced documents cannot be deleted via this endpoint.",
 )
 async def delete_document(
     kb_id: str,
     document_id: str,
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_delete_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a document from a knowledge base.
@@ -825,7 +842,9 @@ async def delete_document(
     Only manually uploaded documents (source_type='plugin:manual_upload') can be deleted.
     Feed-sourced documents must be managed through their respective feeds.
 
-    Requires power_user or admin role. Access to the specific KB is still enforced via PBAC.
+    Gated by require_kb_delete_access: admin, the KB owner, or a user with an explicit
+    kb.delete PBAC grant. Unlike upload (kb.write), power_user does NOT have blanket
+    delete — admins can grant write-without-delete.
     """
     try:
         kb_service = KnowledgeBaseService(db)
@@ -951,7 +970,7 @@ def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
         "or has a PBAC kb.write grant on the target KB."
     ),
 )
-async def upload_documents(
+async def upload_documents(  # noqa: PLR0915
     kb_id: str,
     files: list[UploadFile] = File(..., description="Files to upload"),
     current_user: User = Depends(require_kb_write_access),
@@ -982,7 +1001,10 @@ async def upload_documents(
         allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]
         max_size = settings.kb_upload_max_size
 
-        results = []
+        doc_service = DocumentService(db)
+        results: list[dict[str, Any]] = []
+        created_count = 0
+        seen_source_ids: set[str] = set()
 
         for file in files:
             filename = file.filename or "upload"
@@ -1052,8 +1074,45 @@ async def upload_documents(
             mime_type, _ = mimetypes.guess_type(filename)
             mime_type = mime_type or "application/octet-stream"
 
-            # Generate unique source_id for manual uploads
-            source_id = f"manual-upload-{uuid.uuid4().hex[:12]}"
+            # Stable, per-KB source_id derived from the filename so re-uploading the
+            # same file updates the existing document in place instead of creating a
+            # duplicate (SHU-817). The raw-bytes hash is passed as source_hash so an
+            # unchanged re-upload of an already-processed doc is skipped, not reprocessed.
+            source_id = manual_upload_source_id(filename)
+            source_hash = hashlib.sha256(file_bytes).hexdigest()
+
+            # M1 — the same filename appearing twice in one batch maps to one
+            # source_id; keep the first, flag the rest instead of silently
+            # collapsing them into a single update.
+            if source_id in seen_source_ids:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": True,
+                        "skipped": True,
+                        "action": "duplicate_in_batch",
+                        "message": "Duplicate filename in this upload — only the first copy was kept.",
+                    }
+                )
+                continue
+            seen_source_ids.add(source_id)
+
+            # Scenario A — a same-named document still mid-pipeline must not be
+            # reprocessed concurrently (process_and_update_chunks is not
+            # concurrency-safe). Report it as busy without starting a new pipeline.
+            existing_doc = await doc_service.get_document_by_source_id(kb_id, source_id)
+            if existing_doc is not None and not existing_doc.is_processed and not existing_doc.has_error:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": True,
+                        "skipped": True,
+                        "action": "processing",
+                        "document_id": existing_doc.id,
+                        "message": "Already being added — re-upload once it's ready to update it.",
+                    }
+                )
+                continue
 
             try:
                 result = await ingest_document_service(
@@ -1066,18 +1125,49 @@ async def upload_documents(
                     mime_type=mime_type,
                     source_id=source_id,
                     source_url=None,
-                    attributes={"uploaded_by": current_user.email or current_user.id},
+                    attributes={
+                        "uploaded_by": current_user.email or current_user.id,
+                        "source_hash": source_hash,
+                    },
                 )
+
+                skipped = bool(result.get("skipped"))
+                created = bool(result.get("created"))
+                if created:
+                    created_count += 1
+                action = "skipped" if skipped else ("added" if created else "updated")
 
                 results.append(
                     {
                         "filename": filename,
                         "success": True,
+                        "skipped": skipped,
+                        "action": action,
                         "document_id": result.get("document_id"),
                         "word_count": result.get("word_count", 0),
                         "character_count": result.get("character_count", 0),
                         "chunk_count": result.get("chunk_count", 0),
                         "extraction_method": result.get("extraction", {}).get("method"),
+                    }
+                )
+            except IntegrityError:
+                # M2 — a concurrent upload of the same new file won the
+                # (kb_id, source_type, source_id) unique race. Roll back the
+                # poisoned transaction and report the document as already added.
+                await db.rollback()
+                logger.info(
+                    "Concurrent manual upload resolved to existing document",
+                    extra={"kb_id": kb_id, "source_id": source_id, "filename": filename},
+                )
+                winner = await doc_service.get_document_by_source_id(kb_id, source_id)
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": True,
+                        "skipped": True,
+                        "action": "skipped",
+                        "document_id": winner.id if winner else None,
+                        "message": "Already added.",
                     }
                 )
             except Exception as e:
@@ -1094,13 +1184,13 @@ async def upload_documents(
         successful = sum(1 for r in results if r.get("success"))
         failed = len(results) - successful
 
-        # Adjust KB stats once at the end for all successful uploads
-        # Note: We only adjust doc_delta here because chunks are created asynchronously
-        # by the worker. The chunk count will be updated when:
-        # 1. The worker finishes and updates Document.chunk_count
-        # 2. A feed sync runs recalculate_kb_stats()
-        if successful > 0:
-            await kb_service.adjust_document_stats(kb_id, doc_delta=successful, chunk_delta=0)
+        # Adjust KB stats once at the end. Only NEWLY-CREATED documents bump the
+        # count — skipped (unchanged) and updated-in-place re-uploads must not
+        # inflate document_count (SHU-817). chunk_delta stays 0 because chunks are
+        # created asynchronously by the worker; recalculate_kb_stats() reconciles
+        # total_chunks (and document_count) authoritatively after embedding.
+        if created_count > 0:
+            await kb_service.adjust_document_stats(kb_id, doc_delta=created_count, chunk_delta=0)
 
         return ShuResponse.success(
             {

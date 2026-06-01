@@ -154,6 +154,22 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
     return "txt"
 
 
+def manual_upload_source_id(filename: str) -> str:
+    """Derive a stable, per-KB ``source_id`` for a manual file upload from its filename.
+
+    Re-uploading a file with the same name (NFC-normalized, surrounding whitespace
+    trimmed, case preserved) resolves to the same ``source_id``, so the ingestion
+    upsert updates the existing document in place instead of creating a duplicate
+    (SHU-817 dedup-on-update). The filename is hashed rather than embedded to stay
+    within the ``source_id`` column width and avoid leaking raw names / odd characters.
+    """
+    import unicodedata
+
+    normalized = unicodedata.normalize("NFC", (filename or "").strip())
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"manual-upload-{digest}"
+
+
 def _safe_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -635,6 +651,7 @@ async def ingest_document(  # noqa: PLR0915
         "document_id": document.id,
         "status": DocumentStatus.PENDING.value,
         "skipped": False,
+        "created": existing is None,
     }
 
 
