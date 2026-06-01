@@ -259,10 +259,10 @@ const InputBar = React.memo(function InputBar({
             position: 'absolute',
             inset: 0,
             zIndex: 10,
-            bgcolor: 'rgba(25, 118, 210, 0.08)',
+            bgcolor: 'action.hover',
             border: 2,
             borderStyle: 'dashed',
-            borderColor: 'primary.main',
+            borderColor: 'secondary.main',
             borderRadius: 2,
             display: 'flex',
             alignItems: 'center',
@@ -270,7 +270,7 @@ const InputBar = React.memo(function InputBar({
             pointerEvents: 'none',
           }}
         >
-          <Typography variant="h6" color="primary.main" fontWeight={600}>
+          <Typography variant="h6" color="secondary.main" fontWeight={600}>
             Drop to add to Personal Knowledge
           </Typography>
         </Box>

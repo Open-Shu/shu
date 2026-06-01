@@ -5,6 +5,7 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Collapse,
   Divider,
   FormControlLabel,
   IconButton,
@@ -32,6 +33,7 @@ import {
   UploadFile as UploadFileIcon,
 } from '@mui/icons-material';
 import { useQuery } from 'react-query';
+import { TransitionGroup } from 'react-transition-group';
 import { extractDataFromResponse, knowledgeBaseAPI } from '../../../services/api';
 
 const dropzoneSx = (active) => ({
@@ -509,15 +511,18 @@ const BrainPopover = React.memo(function BrainPopover({
         </Box>
       ) : docs.length > 0 ? (
         <List dense disablePadding sx={{ maxHeight: 280, overflowY: 'auto' }}>
-          {docs.map((doc) => (
-            <DocRow
-              key={doc.id}
-              doc={doc}
-              onDeleteDoc={onDeleteDoc}
-              onReingestDoc={onReingestDoc}
-              onOpenPreview={setPreviewDoc}
-            />
-          ))}
+          <TransitionGroup>
+            {docs.map((doc) => (
+              <Collapse key={doc.id}>
+                <DocRow
+                  doc={doc}
+                  onDeleteDoc={onDeleteDoc}
+                  onReingestDoc={onReingestDoc}
+                  onOpenPreview={setPreviewDoc}
+                />
+              </Collapse>
+            ))}
+          </TransitionGroup>
         </List>
       ) : null}
       {hasMoreDocs && (
