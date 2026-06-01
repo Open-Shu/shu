@@ -13,6 +13,7 @@ import sys
 from collections.abc import Callable
 
 from integ.base_integration_test import BaseIntegrationTestSuite
+from integ.helpers.auth import create_active_user_headers
 from integ.response_utils import extract_data
 
 # Test Data (only legitimate user preferences)
@@ -36,24 +37,29 @@ CUSTOM_PREFERENCES = {
 
 
 async def test_user_preferences_auto_creation(client, db, auth_headers):
-    """Test that user preferences are automatically created for new users."""
-    # Check if preferences exist for the test user
+    """A new user gets a complete, valid preferences object on first access.
+
+    Asserts the shape and validity of the auto-provided preferences rather than
+    specific default values — the concrete defaults (theme, memory_depth, ...)
+    are deployment-configurable (branding, settings), so hardcoding them makes
+    the test brittle across environments.
+    """
     response = await client.get("/api/v1/user/preferences", headers=auth_headers)
 
     if response.status_code == 404:
-        # Preferences don't exist yet - this is expected for new users
-        # They should be created on first access or when user updates them
+        # Preferences don't exist yet - acceptable for a brand-new user.
         return True
 
     assert response.status_code == 200, f"Expected 200 or 404, got {response.status_code}: {response.text}"
 
-    # If preferences exist, verify they have default values
     preferences = extract_data(response)
 
-    # Check key default values (only legitimate user preferences)
-    assert preferences["memory_depth"] == 5
-    assert preferences["memory_similarity_threshold"] == 0.6
-    assert preferences["theme"] == "light"
+    # Verify the auto-provided preferences object is complete and well-typed,
+    # without coupling to environment-specific default values.
+    assert isinstance(preferences["memory_depth"], int) and preferences["memory_depth"] >= 1
+    assert 0.0 <= preferences["memory_similarity_threshold"] <= 1.0
+    assert preferences["theme"] in {"light", "dark", "auto"}
+    assert isinstance(preferences["auto_attach_personal_kb"], bool)
 
     return True
 
@@ -171,9 +177,33 @@ async def test_preferences_advanced_settings(client, db, auth_headers):
     preferences = extract_data(get_response)
 
     assert preferences["advanced_settings"]["custom_rag_settings"]["chunk_overlap_ratio"] == 0.15
-    assert preferences["advanced_settings"]["ui_customizations"]["sidebar_collapsed"] == True
+    assert preferences["advanced_settings"]["ui_customizations"]["sidebar_collapsed"] is True
     assert "feature_a" in preferences["advanced_settings"]["experimental_features"]
 
+    return True
+
+
+async def test_auto_attach_personal_kb_preference(client, db, auth_headers):
+    """auto_attach_personal_kb defaults true, toggles via PATCH, and PATCH leaves other prefs intact (SHU-817)."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+
+    # Seed a non-default theme so we can prove PATCH is partial (doesn't clobber).
+    seed = await client.patch("/api/v1/user/preferences", json={"theme": "dark"}, headers=reg)
+    assert seed.status_code == 200, seed.text
+
+    g = await client.get("/api/v1/user/preferences", headers=reg)
+    assert extract_data(g)["auto_attach_personal_kb"] is True, "default should be True"
+
+    p = await client.patch(
+        "/api/v1/user/preferences", json={"auto_attach_personal_kb": False}, headers=reg
+    )
+    assert p.status_code == 200, p.text
+    data = extract_data(p)
+    assert data["auto_attach_personal_kb"] is False, data
+    assert data["theme"] == "dark", f"PATCH must not clobber theme: {data}"
+
+    g2 = await client.get("/api/v1/user/preferences", headers=reg)
+    assert extract_data(g2)["auto_attach_personal_kb"] is False, "toggle must persist"
     return True
 
 
@@ -189,6 +219,7 @@ class UserPreferencesIntegrationTestSuite(BaseIntegrationTestSuite):
             test_update_partial_preferences,
             test_preferences_validation,
             test_preferences_advanced_settings,
+            test_auto_attach_personal_kb_preference,
         ]
 
     def get_suite_name(self) -> str:

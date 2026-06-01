@@ -101,6 +101,7 @@ class TestResponseSchemaValidators:
             "timezone": "UTC",
             "font_family": None,
             "font_size_scale": None,
+            "auto_attach_personal_kb": True,
             "advanced_settings": {},
             # System-provided read-only fields surfaced in the response envelope.
             "summary_search_min_token_length": 4,

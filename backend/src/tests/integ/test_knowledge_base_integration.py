@@ -5,8 +5,8 @@ These tests cover knowledge base CRUD operations, document management,
 and the complete knowledge base lifecycle.
 """
 
-from shu.core.logging import get_logger
 import sys
+import uuid
 from collections.abc import Callable
 
 from sqlalchemy import text
@@ -15,8 +15,39 @@ from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.expected_error_context import (
     expect_duplicate_errors,
 )
+from integ.helpers.auth import create_active_user_headers
+from integ.response_utils import extract_data
+from shu.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+# SHU-817: personal-KB document management (delete authz, re-ingest, GET /personal)
+# exercised through the real API.
+_TXT = ("kbnotes.txt", b"Personal Knowledge management test content.\n", "text/plain")
+
+
+async def _kb_create(client, headers, name):
+    resp = await client.post(
+        "/api/v1/knowledge-bases",
+        json={"name": name, "description": "SHU-817 test KB", "sync_enabled": False},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return extract_data(resp)["id"]
+
+
+async def _kb_upload(client, headers, kb_id, file_tuple=_TXT):
+    return await client.post(
+        f"/api/v1/knowledge-bases/{kb_id}/documents/upload",
+        files={"files": file_tuple},
+        headers=headers,
+    )
+
+
+async def _kb_doc_total(client, headers, kb_id):
+    resp = await client.get(f"/api/v1/knowledge-bases/{kb_id}/documents", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return extract_data(resp).get("total", 0)
 
 
 async def test_health_endpoint(client, db, auth_headers):
@@ -273,6 +304,102 @@ async def test_knowledge_base_embedding_models(client, db, auth_headers):
         assert data["embedding_model"] == model
 
 
+async def test_personal_kb_owner_regular_user_can_delete_own_document(client, db, auth_headers):
+    """SHU-817 S1: a regular-user KB owner can delete their own document (previously 403)."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    up = await _kb_upload(client, reg, kb_id)
+    assert up.status_code == 200, up.text
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}", headers=reg)
+    assert d.status_code == 204, f"owner delete should succeed without 403: {d.status_code} {d.text}"
+    assert await _kb_doc_total(client, reg, kb_id) == 0
+    logger.info("Test passed: regular-user owner deleted their own personal-KB doc (no 403)")
+
+
+async def test_kb_delete_denied_for_power_user_without_grant(client, db, auth_headers):
+    """SHU-817 S1: power_user without kb.delete is denied (404) on a KB they don't own."""
+    logger.info(
+        "=== EXPECTED TEST OUTPUT: a 404 is expected when a power_user without kb.delete "
+        "deletes another user's document ==="
+    )
+    kb_id = await _kb_create(client, auth_headers, f"Test KBDelete Authz KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    assert up.status_code == 200, up.text
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    pu = await create_active_user_headers(client, auth_headers, role="power_user")
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}", headers=pu)
+    assert d.status_code == 404, f"power_user without kb.delete must be denied (404): {d.status_code} {d.text}"
+    assert await _kb_doc_total(client, auth_headers, kb_id) == 1, "document must survive the denied delete"
+    logger.info("=== EXPECTED TEST OUTPUT: power_user delete correctly denied with 404 ===")
+
+
+async def test_personal_kb_cannot_be_deleted(client, db, auth_headers):
+    """SHU-817: a personal KB is an auto-provisioned singleton and cannot be deleted."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 403 PERSONAL_KB_DELETE_NOT_ALLOWED is expected ===")
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    kb_id = extract_data(ensure)["id"]
+
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=reg)
+    assert d.status_code == 403, f"personal KB delete should be 403: {d.status_code} {d.text}"
+    assert d.json().get("error", {}).get("code") == "PERSONAL_KB_DELETE_NOT_ALLOWED", d.text
+    logger.info("=== EXPECTED TEST OUTPUT: personal KB delete correctly rejected with 403 ===")
+
+
+async def test_reingest_missing_document_returns_404(client, db, auth_headers):
+    """SHU-817 R3: re-ingesting a non-existent document is a clean 404."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 404 is expected for re-ingesting a missing document ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest 404 KB {uuid.uuid4().hex[:8]}")
+    r = await client.post(
+        f"/api/v1/knowledge-bases/{kb_id}/documents/{uuid.uuid4().hex}/reingest", headers=auth_headers
+    )
+    assert r.status_code == 404, f"expected 404, got {r.status_code}: {r.text}"
+    logger.info("=== EXPECTED TEST OUTPUT: reingest of missing document correctly returned 404 ===")
+
+
+async def test_reingest_busy_document_returns_409(client, db, auth_headers):
+    """SHU-817 R3 / Scenario A: a still-processing document cannot be re-ingested (409)."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 409 DOCUMENT_BUSY is expected for a processing document ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest Busy KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    # Force a clearly non-terminal state so the result is independent of any worker.
+    await db.execute(text("UPDATE documents SET processing_status='extracting' WHERE id=:id"), {"id": doc_id})
+    await db.commit()
+
+    r = await client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest", headers=auth_headers)
+    assert r.status_code == 409, f"expected 409 busy, got {r.status_code}: {r.text}"
+    assert r.json().get("error", {}).get("code") == "DOCUMENT_BUSY", r.text
+    logger.info("=== EXPECTED TEST OUTPUT: reingest of busy document correctly returned 409 ===")
+
+
+async def test_get_personal_knowledge_base_returns_null_then_kb(client, db, auth_headers):
+    """SHU-817 R5: GET /personal returns null before provisioning, then the ensured KB."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+
+    g0 = await client.get("/api/v1/knowledge-bases/personal", headers=reg)
+    assert g0.status_code == 200, g0.text
+    assert g0.json().get("data") is None, f"fresh user should have no personal KB yet: {g0.text}"
+
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    g1 = await client.get("/api/v1/knowledge-bases/personal", headers=reg)
+    assert g1.status_code == 200, g1.text
+    data = extract_data(g1)
+    assert data and data["id"] == kb_id, f"GET /personal should return the ensured KB: {data}"
+    assert data["is_personal"] is True, data
+    logger.info("Test passed: GET /personal returns null then the ensured personal KB")
+
+
 class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for knowledge base functionality."""
 
@@ -289,6 +416,12 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_create_knowledge_base_invalid_data,
             test_unauthorized_access,
             test_knowledge_base_embedding_models,
+            test_personal_kb_owner_regular_user_can_delete_own_document,
+            test_kb_delete_denied_for_power_user_without_grant,
+            test_personal_kb_cannot_be_deleted,
+            test_reingest_missing_document_returns_404,
+            test_reingest_busy_document_returns_409,
+            test_get_personal_knowledge_base_returns_null_then_kb,
         ]
 
     def get_suite_name(self) -> str:
