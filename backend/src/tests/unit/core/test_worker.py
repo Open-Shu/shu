@@ -1145,3 +1145,37 @@ class TestWorkerDispatchTenantContext:
         backend.reject.assert_awaited_once()
         _args, kwargs = backend.reject.call_args
         assert kwargs.get("requeue") is False, "poison pill must not be requeued"
+
+
+@pytest.mark.asyncio
+async def test_list_all_tenant_ids_returns_str_not_uuid():
+    """SHU-823 regression: ``tenants.id`` is SQL ``uuid``, so a raw text() query
+    can hand back native ``uuid.UUID`` objects. ``list_all_tenant_ids`` must return
+    plain ``str`` (its declared ``list[str]``), or a UUID poisons ``tenant_context``
+    and the before_flush guard compares str-vs-UUID on every fan-out flush. Mock the
+    session returning the un-cast UUID shape and assert it comes out stringified."""
+    import uuid
+
+    from shu.core.config import DeploymentMode
+    from shu.core.worker import list_all_tenant_ids
+
+    u = uuid.UUID("a9c8d3e2-1f4b-4c7e-9a0d-5b6e7f8a9b0c")
+    mock_result = MagicMock()
+    mock_result.all.return_value = [(u,)]
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("shu.core.worker.get_async_session_local", return_value=mock_session_local),
+        patch(
+            "shu.core.worker.get_settings_instance",
+            return_value=SimpleNamespace(deployment_mode=DeploymentMode.MULTI_TENANT),
+        ),
+    ):
+        ids = await list_all_tenant_ids()
+
+    assert ids == ["a9c8d3e2-1f4b-4c7e-9a0d-5b6e7f8a9b0c"]
+    assert all(isinstance(i, str) for i in ids), f"expected str, got {[type(i) for i in ids]}"

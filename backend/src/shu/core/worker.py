@@ -695,8 +695,18 @@ async def list_all_tenant_ids() -> list[str]:
     """
     session_factory = get_async_session_local()
     async with session_factory() as session:
-        result = await session.execute(text("SELECT id FROM tenants"))
-        tenant_ids = [row[0] for row in result.all()]
+        # ``id::text`` is load-bearing: ``tenants.id`` is SQL ``uuid``, and a raw
+        # textual query carries no result-type info, so without the cast asyncpg
+        # decodes it to a native ``uuid.UUID`` — violating this function's
+        # ``list[str]`` contract and putting a UUID into ``tenant_context`` (which
+        # is ``str | None``). That mismatches the str ``tenant_id`` on every
+        # tenant-scoped ORM row in the ``before_flush`` guard. Cast here so every
+        # fan-out consumer sees a str, mirroring the SD functions' ``RETURNS text``.
+        result = await session.execute(text("SELECT id::text FROM tenants"))
+        # ``str(...)`` is belt-and-suspenders with the cast: PG already returns
+        # text, but stringifying here keeps the ``list[str]`` contract intact even
+        # if the cast is ever dropped, so a ``uuid.UUID`` can never reach a caller.
+        tenant_ids = [str(row[0]) for row in result.all()]
 
     # Self-hosted and silo always have at least the deployment's own row in
     # the catalog (seeded by migration 009 from the deployment mode). An

@@ -196,6 +196,22 @@ class TestSetTenantOnBeginHook:
             "transaction begun without tenant context" in r.getMessage() for r in caplog.records
         )
 
+    def test_inert_when_context_empty_string(self, caplog: pytest.LogCaptureFixture) -> None:
+        """SHU-825: a falsy ('') context must be treated exactly like None — no
+        set_config. Writing '' would make ``current_setting('app.tenant_id', true)``
+        return '' (not NULL), and the RLS policy's ``::uuid`` cast then 500s on ''
+        instead of the harmless NULL -> 0-rows path."""
+        conn = _pg_conn_mock()
+        token = tenant_context.set("")
+        try:
+            with caplog.at_level(logging.DEBUG, logger="shu.core.database"):
+                database._set_tenant_on_begin(conn)
+        finally:
+            tenant_context.reset(token)
+
+        conn.execute.assert_not_called()
+        assert any("transaction begun without tenant context" in r.getMessage() for r in caplog.records)
+
     def test_inert_on_non_postgres_dialect(self) -> None:
         """SQLite test fixtures must not trip the hook — set_config doesn't
         exist on SQLite and would raise OperationalError mid-test."""
