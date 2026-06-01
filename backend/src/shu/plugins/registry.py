@@ -31,13 +31,24 @@ class PluginRegistry:
         self._manifest = self._loader.discover()
         self._cache.clear()
 
-    async def full_refresh(self, session: AsyncSession) -> None:
-        """Async refresh: discover filesystem plugins and MCP connections."""
-        self.refresh()
-        await self._refresh_mcp(session)
+    async def full_refresh(self, session: AsyncSession) -> bool:
+        """Async refresh: discover filesystem plugins and MCP connections.
 
-    async def _refresh_mcp(self, session: AsyncSession) -> None:
-        """Load MCP plugin records from the database and merge into the manifest."""
+        Returns True if the refresh completed fully (including MCP), False if
+        the MCP portion failed. Callers that gate destructive operations (e.g.
+        purging stale DB rows) on a complete view of the world should check
+        the return value and skip those operations when False is returned.
+        """
+        self.refresh()
+        return await self._refresh_mcp(session)
+
+    async def _refresh_mcp(self, session: AsyncSession) -> bool:
+        """Load MCP plugin records from the database and merge into the manifest.
+
+        Returns True on success, False if the MCP query failed (in which case
+        the manifest contains only filesystem-discovered plugins — MCP entries
+        are absent, so callers must not treat their absence as "deleted").
+        """
         from ..services.mcp_service import McpService
 
         try:
@@ -51,9 +62,10 @@ class PluginRegistry:
             # not a detail-less "Failed to refresh MCP plugin records".
             logger.warning("Failed to refresh MCP plugin records", exc_info=True)
             await session.rollback()
-            return
+            return False
         for record in records:
             self._manifest[record.name] = record
+        return True
 
     def get_manifest(self, refresh_if_empty: bool = True) -> dict[str, PluginRecord]:
         """Return current manifest; optionally refresh if empty.
@@ -77,7 +89,7 @@ class PluginRegistry:
         created = 0
         updated = 0
         purged = 0
-        await self.full_refresh(session)
+        refresh_ok = await self.full_refresh(session)
         discovered_names = set(self._manifest.keys())
         # Upsert discovered plugins. Each plugin is isolated in its own try/except:
         # on failure we log the real error (with traceback) and roll back so the
@@ -132,7 +144,18 @@ class PluginRegistry:
                 logger.warning("Failed to sync plugin '%s'", name, exc_info=True)
                 await session.rollback()
                 continue
-        # Purge DB rows not present on disk or MCP anymore
+        # Purge DB rows not present on disk or MCP anymore.
+        # Skip when the MCP refresh didn't complete: discovered_names would be
+        # missing all mcp:* entries, and purging now would delete valid MCP
+        # plugin rows simply because the refresh failed to enumerate them.
+        if refresh_ok is False:
+            logger.warning("Skipping plugin purge because MCP refresh did not complete")
+            return {
+                "created": created,
+                "updated": updated,
+                "purged": purged,
+                "discovered": len(self._manifest),
+            }
         try:
             res = await session.execute(select(PluginDefinition))
             all_rows = res.scalars().all()

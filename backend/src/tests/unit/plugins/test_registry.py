@@ -74,6 +74,37 @@ class TestSyncIsolation:
         assert session.commit.await_count == 2, "second plugin must still be attempted after the first fails"
         assert stats["created"] == 1, "exactly the surviving plugin should be created"
 
+    @pytest.mark.asyncio
+    async def test_purge_skipped_when_mcp_refresh_fails(self):
+        """When _refresh_mcp returns False (MCP query failed), sync must not purge
+        any DB rows. Without this guard, every mcp:* plugin would be absent from
+        discovered_names (because the refresh didn't populate them) and the purge
+        step would delete valid MCP PluginDefinition rows that simply couldn't be
+        enumerated due to a transient MCP connectivity failure."""
+        registry = PluginRegistry()
+        # Filesystem plugins only — no mcp:* entries because refresh failed.
+        registry._manifest = {}
+        # _refresh_mcp failed: returns False and does NOT populate the manifest.
+        registry.full_refresh = AsyncMock(return_value=False)
+
+        # Purge query would find a stale-looking mcp: row if it ran.
+        stale_mcp_row = MagicMock()
+        stale_mcp_row.name = "mcp:still-valid-server"
+        scalars_all = MagicMock()
+        scalars_all.all.return_value = [stale_mcp_row]
+        exec_result_all = MagicMock()
+        exec_result_all.scalars.return_value = scalars_all
+
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=exec_result_all)
+        session.delete = AsyncMock()
+        session.rollback = AsyncMock()
+
+        stats = await registry.sync(session)
+
+        session.delete.assert_not_awaited()
+        assert stats["purged"] == 0, "no rows should be purged when the refresh did not complete"
+
 
 class TestResolveMcp:
     """Verify resolve() handles mcp: plugins via McpPluginAdapter."""
