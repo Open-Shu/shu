@@ -21,6 +21,7 @@ from sqlalchemy.exc import DBAPIError, NoResultFound
 
 from shu.core.config import SELF_HOSTED_TENANT_UUID
 from shu.core.tenant import (
+    MissingTenantContextError,
     UnknownStripeCustomerError,
     UserTenantNotFoundError,
     _is_no_data_found,
@@ -212,15 +213,24 @@ async def test_uuid_tenant_id_is_normalized_to_str_in_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_string_tenant_id_collapses_to_none() -> None:
-    """SHU-825 regression: an empty-string tenant_id (stray caller / empty job
-    payload) must collapse to None ("no tenant"), never a literal "". If "" reached
-    the contextvar, the engine begin hook would run set_config('app.tenant_id', '')
-    and every tenant-scoped query on that connection would 500 on ''::uuid instead
-    of behaving like "no context -> 0 rows"."""
-    async with tenant_context_for_tenant_id("") as resolved:
-        assert resolved is None
-        assert tenant_context.get(None) is None
+async def test_empty_string_tenant_id_routes_like_none() -> None:
+    """SHU-825 + review: an empty-string tenant_id must be treated exactly like None
+    — routed to deployment-mode resolution, NOT taken as a literal explicit tenant
+    (which previously collapsed to a None context that silently mis-ran jobs). In
+    self-hosted it resolves to the deployment tenant; in multi-tenant it raises the
+    same MissingTenantContextError that makes an empty-tenant worker job a poison
+    pill. Either way it never lands a literal '' in the contextvar (which would 500
+    on ''::uuid via the begin hook)."""
+    # Self-hosted: '' resolves to the deployment tenant, identical to None.
+    with patch("shu.core.tenant.get_settings_instance", return_value=_settings("self_hosted")):
+        async with tenant_context_for_tenant_id("") as resolved:
+            assert resolved == SELF_HOSTED_TENANT_UUID
+            assert tenant_context.get(None) == SELF_HOSTED_TENANT_UUID
+    # Multi-tenant: '' carries no credential, so it raises (poison-pill path), same as None.
+    with patch("shu.core.tenant.get_settings_instance", return_value=_settings("multi_tenant")):
+        with pytest.raises(MissingTenantContextError):
+            async with tenant_context_for_tenant_id(""):
+                pytest.fail("empty-string tenant must not yield a usable context in multi-tenant")
 
 
 @pytest.mark.asyncio

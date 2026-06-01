@@ -250,7 +250,13 @@ async def _tenant_context_for_credential(
     # Lazy import to avoid duplicating the constant — config.py is the source of truth.
     from .config import SELF_HOSTED_TENANT_UUID
 
-    if tenant_id is not None:
+    # ``if tenant_id`` (not ``is not None``): an empty string is "no tenant", so it
+    # routes to deployment-mode resolution exactly like ``None`` — self-hosted/silo
+    # resolve to the deployment tenant, and multi-tenant falls through to the
+    # ``MissingTenantContextError`` raise below. This is what makes an empty-tenant
+    # worker job a clean poison pill instead of one that silently runs under no
+    # tenant context (or, in self-hosted, fails to pick up the deployment tenant).
+    if tenant_id:
         tid = tenant_id
     else:
         settings = get_settings_instance()
@@ -291,11 +297,11 @@ async def _tenant_context_for_credential(
     #   - a uuid.UUID (explicit tenant_id from worker dispatch / fan-out) becomes a
     #     str so the contextvar honors its ``str | None`` annotation and the
     #     before_flush guard never compares a str column against a UUID context;
-    #   - any falsy value (``""`` from an empty job payload or a stray caller)
-    #     collapses to ``None`` — "no tenant", not a literal empty string. Without
-    #     this, the begin hook would write ``set_config('app.tenant_id', '')`` and
-    #     every tenant-scoped query on that connection would 500 on ``''::uuid``
-    #     instead of behaving like "no context → no rows".
+    #   - a resolver that returned ``None`` (e.g. an email/token miss) stays ``None``,
+    #     and any other falsy value is coerced to ``None`` so the begin hook can never
+    #     write ``set_config('app.tenant_id', '')`` — which would 500 on ``''::uuid``
+    #     instead of behaving like "no context → no rows". (Empty-string *inputs* are
+    #     already routed to deployment resolution by the ``if tenant_id`` guard above.)
     tid = str(tid) if tid else None
 
     token = tenant_context.set(tid)

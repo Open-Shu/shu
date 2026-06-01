@@ -31,13 +31,23 @@ class PluginRegistry:
         self._manifest = self._loader.discover()
         self._cache.clear()
 
-    async def full_refresh(self, session: AsyncSession) -> None:
-        """Async refresh: discover filesystem plugins and MCP connections."""
-        self.refresh()
-        await self._refresh_mcp(session)
+    async def full_refresh(self, session: AsyncSession) -> bool:
+        """Async refresh: discover filesystem plugins and MCP connections.
 
-    async def _refresh_mcp(self, session: AsyncSession) -> None:
-        """Load MCP plugin records from the database and merge into the manifest."""
+        Returns the MCP-refresh success flag so ``sync()`` can avoid purging
+        ``mcp:`` definitions it was unable to enumerate.
+        """
+        self.refresh()
+        return await self._refresh_mcp(session)
+
+    async def _refresh_mcp(self, session: AsyncSession) -> bool:
+        """Load MCP plugin records from the database and merge into the manifest.
+
+        Returns True on success, False if the load failed — so a transient MCP
+        failure leaves the manifest without ``mcp:`` entries but does NOT make the
+        sync purge mistake that absence for "deleted on disk" and wipe every
+        MCP plugin definition.
+        """
         from ..services.mcp_service import McpService
 
         try:
@@ -51,9 +61,10 @@ class PluginRegistry:
             # not a detail-less "Failed to refresh MCP plugin records".
             logger.warning("Failed to refresh MCP plugin records", exc_info=True)
             await session.rollback()
-            return
+            return False
         for record in records:
             self._manifest[record.name] = record
+        return True
 
     def get_manifest(self, refresh_if_empty: bool = True) -> dict[str, PluginRecord]:
         """Return current manifest; optionally refresh if empty.
@@ -77,7 +88,7 @@ class PluginRegistry:
         created = 0
         updated = 0
         purged = 0
-        await self.full_refresh(session)
+        mcp_ok = await self.full_refresh(session)
         discovered_names = set(self._manifest.keys())
         # Upsert discovered plugins. Each plugin is isolated in its own try/except:
         # on failure we log the real error (with traceback) and roll back so the
@@ -132,20 +143,27 @@ class PluginRegistry:
                 logger.warning("Failed to sync plugin '%s'", name, exc_info=True)
                 await session.rollback()
                 continue
-        # Purge DB rows not present on disk or MCP anymore
+        # Purge DB rows not present on disk or MCP anymore. If the MCP refresh
+        # failed, the manifest has no ``mcp:`` entries — so skip purging ``mcp:``
+        # rows, otherwise a transient MCP load failure would delete every MCP
+        # plugin definition (their absence from ``discovered_names`` is a refresh
+        # failure, not a real "removed" signal). Filesystem rows are unaffected.
         try:
             res = await session.execute(select(PluginDefinition))
             all_rows = res.scalars().all()
             for r in all_rows:
-                if r.name not in discovered_names:
-                    try:
-                        await session.delete(r)
-                        await session.commit()
-                        purged += 1
-                    except Exception:
-                        # best-effort purge
-                        logger.warning("Failed to purge stale plugin '%s'", r.name, exc_info=True)
-                        await session.rollback()
+                if r.name in discovered_names:
+                    continue
+                if r.name.startswith("mcp:") and not mcp_ok:
+                    continue
+                try:
+                    await session.delete(r)
+                    await session.commit()
+                    purged += 1
+                except Exception:
+                    # best-effort purge
+                    logger.warning("Failed to purge stale plugin '%s'", r.name, exc_info=True)
+                    await session.rollback()
         except Exception:
             logger.warning("Plugin purge scan failed", exc_info=True)
 
