@@ -105,20 +105,36 @@ class BrandingService:
             ):
                 raise ValueError(f"Invalid hex color format for {color_field}")
 
+        # Snapshot the prior asset URL BEFORE the merge loop. The loop pops
+        # the key when the update sets it to None, which would otherwise hide
+        # the URL from the cleanup logic below and leave the file orphaned.
+        prior_avatar_asset_url = stored.get("assistant_avatar_asset_url")
+
         for key, value in update_data.items():
             if value is None:
                 stored.pop(key, None)
             else:
                 stored[key] = value
 
-        # Mode-switch cleanup: when the finalized assistant_avatar_mode is no
-        # longer "custom", the previously-uploaded asset becomes orphaned. Delete
-        # the file and drop the URL so disk space doesn't accumulate over time.
+        # Avatar asset cleanup: the prior custom-mode upload is orphaned
+        # unless the final state still references it. Covers three cases:
+        #   - mode goes from "custom" to "curated"/"none"
+        #   - assistant_avatar_asset_url is explicitly set to None while
+        #     mode stays "custom"
+        #   - assistant_avatar_asset_url is replaced with a different URL
+        #     (the prior URL's file is no longer referenced)
         final_avatar_mode = stored.get("assistant_avatar_mode")
-        if final_avatar_mode is not None and final_avatar_mode != "custom":
-            orphan_url = stored.get("assistant_avatar_asset_url")
-            if orphan_url:
-                self._remove_local_asset(orphan_url)
+        final_avatar_url = stored.get("assistant_avatar_asset_url")
+        prior_still_active = (
+            prior_avatar_asset_url is not None
+            and final_avatar_mode == "custom"
+            and final_avatar_url == prior_avatar_asset_url
+        )
+        if prior_avatar_asset_url and not prior_still_active:
+            self._remove_local_asset(prior_avatar_asset_url)
+            # Keep stored state coherent: when mode is no longer "custom"
+            # the URL field shouldn't carry a stale value either.
+            if final_avatar_mode != "custom":
                 stored.pop("assistant_avatar_asset_url", None)
 
         now = datetime.now(UTC).isoformat()

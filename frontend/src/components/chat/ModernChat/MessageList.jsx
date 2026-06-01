@@ -41,19 +41,28 @@ const MessageList = React.memo(
   ) {
     const items = useMemo(() => (Array.isArray(messages) ? messages : []), [messages]);
     const { branding } = useAppTheme();
-    // Read branding once at this level and derive a memo-stable avatarConfig so
-    // MessageItem's React.memo doesn't churn on unrelated branding context
-    // updates. The avatar fields are the only branding state MessageItem cares
-    // about.
-    const avatarConfig = useMemo(() => {
-      const resolved = resolveBranding(branding);
-      return {
+    // Read branding once at this level and derive a memo-stable avatarConfig
+    // so MessageItem's React.memo doesn't churn on unrelated branding context
+    // updates. resolveBranding runs every render (it's cheap) but the memo
+    // deps are the resolved PRIMITIVES (string/null) — not the parent branding
+    // object — so unrelated changes (font, color, favicon) don't invalidate
+    // the memo. avatarConfig keeps the same reference across renders unless
+    // one of these four backing values actually changes.
+    const resolved = resolveBranding(branding);
+    const avatarConfig = useMemo(
+      () => ({
         mode: resolved.assistantAvatarMode || 'curated',
         curatedId: resolved.assistantAvatarCuratedId || 'shu_feather',
         assetUrl: resolved.assistantAvatarAssetUrl || null,
         appName: resolved.appName || 'Assistant',
-      };
-    }, [branding]);
+      }),
+      [
+        resolved.assistantAvatarMode,
+        resolved.assistantAvatarCuratedId,
+        resolved.assistantAvatarAssetUrl,
+        resolved.appName,
+      ]
+    );
     const scrollRef = useRef(null);
     const lastBottomStateRef = useRef(true);
     const topLoadArmedRef = useRef(false);

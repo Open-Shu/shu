@@ -201,6 +201,12 @@ const BrandingSettings = () => {
     setStatus(null);
     setSaving(true);
     try {
+      // Every branding field this UI manages must be nulled here. Forgetting
+      // one means "Reset to Defaults" silently leaves it untouched and the
+      // success message lies. Avatar fields specifically: passing
+      // assistant_avatar_mode: null removes the key from stored — backend's
+      // update_branding then sees final_mode !== 'custom' and triggers the
+      // orphan-asset cleanup (deletes any uploaded file from disk).
       const response = await brandingAPI.updateBranding({
         app_name: null,
         favicon_url: null,
@@ -211,6 +217,9 @@ const BrandingSettings = () => {
         dark_theme_overrides: null,
         brand_font_family: null,
         brand_heading_font_family: null,
+        assistant_avatar_mode: null,
+        assistant_avatar_curated_id: null,
+        assistant_avatar_asset_url: null,
       });
       const data = extractDataFromResponse(response);
       const resolved = resolveBranding(data);
