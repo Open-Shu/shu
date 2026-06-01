@@ -703,7 +703,10 @@ async def list_all_tenant_ids() -> list[str]:
         # tenant-scoped ORM row in the ``before_flush`` guard. Cast here so every
         # fan-out consumer sees a str, mirroring the SD functions' ``RETURNS text``.
         result = await session.execute(text("SELECT id::text FROM tenants"))
-        tenant_ids = [row[0] for row in result.all()]
+        # ``str(...)`` is belt-and-suspenders with the cast: PG already returns
+        # text, but stringifying here keeps the ``list[str]`` contract intact even
+        # if the cast is ever dropped, so a ``uuid.UUID`` can never reach a caller.
+        tenant_ids = [str(row[0]) for row in result.all()]
 
     # Self-hosted and silo always have at least the deployment's own row in
     # the catalog (seeded by migration 009 from the deployment mode). An
