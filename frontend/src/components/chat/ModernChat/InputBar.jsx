@@ -22,6 +22,7 @@ import {
   Stop as StopIcon,
   Hub as EnsembleIcon,
   LibraryBooks as LibraryBooksIcon,
+  Psychology as PsychologyIcon,
 } from '@mui/icons-material';
 import BrainIcon from './BrainIcon';
 import BrainPopover from './BrainPopover';
@@ -69,6 +70,8 @@ const InputBar = React.memo(function InputBar({
   onFetchMorePersonalKBDocs,
   personalKBFetchingMoreDocs = false,
   onRefreshPersonalKBDocs,
+  onDeletePersonalKBDoc,
+  onReingestPersonalKBDoc,
   // SHU-803: Send button morphs into Stop while the current conversation
   // has an in-flight stream. `canStop` is false during the ~10-50ms
   // window after Send before stream_start arrives — disabled state with
@@ -297,16 +300,21 @@ const InputBar = React.memo(function InputBar({
 
       {selectedKBs && selectedKBs.length > 0 && (
         <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-          {selectedKBs.map((kb) => (
-            <Chip
-              key={kb.id}
-              label={kb.name}
-              color="secondary"
-              onDelete={onRemoveKB ? () => onRemoveKB(kb.id) : undefined}
-              variant="outlined"
-              icon={<LibraryBooksIcon />}
-            />
-          ))}
+          {selectedKBs.map((kb) => {
+            // Distinguish the auto-attached Personal Knowledge chip from other
+            // attached KBs with the brain glyph + a filled variant (SHU-817 R4).
+            const isPersonal = kb.is_personal === true || (personalKB && kb.id === personalKB.id);
+            return (
+              <Chip
+                key={kb.id}
+                label={kb.name}
+                color="secondary"
+                onDelete={onRemoveKB ? () => onRemoveKB(kb.id) : undefined}
+                variant={isPersonal ? 'filled' : 'outlined'}
+                icon={isPersonal ? <PsychologyIcon /> : <LibraryBooksIcon />}
+              />
+            );
+          })}
         </Box>
       )}
 
@@ -529,6 +537,8 @@ const InputBar = React.memo(function InputBar({
         fetchMoreDocs={onFetchMorePersonalKBDocs}
         fetchingMoreDocs={personalKBFetchingMoreDocs}
         onRefreshDocs={onRefreshPersonalKBDocs}
+        onDeleteDoc={onDeletePersonalKBDoc}
+        onReingestDoc={onReingestPersonalKBDoc}
       />
 
       <Snackbar

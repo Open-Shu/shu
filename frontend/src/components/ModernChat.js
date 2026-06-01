@@ -217,6 +217,8 @@ const ModernChat = () => {
     fetchMoreDocs: fetchMorePersonalKBDocs,
     fetchingMoreDocs: personalKBFetchingMoreDocs,
     refetchDocs: refetchPersonalKBDocs,
+    deleteDoc: deletePersonalKBDoc,
+    reingestDoc: reingestPersonalKBDoc,
   } = usePersonalKB();
 
   // Auto-attach Personal Knowledge once on initial discovery.
@@ -1387,6 +1389,8 @@ const ModernChat = () => {
     onFetchMorePersonalKBDocs: fetchMorePersonalKBDocs,
     personalKBFetchingMoreDocs,
     onRefreshPersonalKBDocs: refetchPersonalKBDocs,
+    onDeletePersonalKBDoc: deletePersonalKBDoc,
+    onReingestPersonalKBDoc: reingestPersonalKBDoc,
     isStreaming: isStreamingForSelectedConversation,
     canStop: Boolean(activeStreamingMessage),
     onStop: handleInputBarStop,

@@ -220,6 +220,68 @@ const usePersonalKB = () => {
     setErrors((prev) => prev.filter((e) => e.clientKey !== clientKey));
   }, []);
 
+  // Optimistically remove a document, then reconcile (SHU-817 S1). Note: upload
+  // errors (keyed by clientKey) and document rows are separate stores, so a
+  // delete never needs to touch the errors list.
+  const deleteDoc = useCallback(
+    async (docId) => {
+      if (!kbId || !docId) {
+        return;
+      }
+      const key = personalDocsKey(kbId);
+      await queryClient.cancelQueries(key);
+      const previous = queryClient.getQueryData(key);
+      queryClient.setQueryData(key, (old) => {
+        if (!old?.pages) {
+          return old;
+        }
+        return {
+          ...old,
+          pages: old.pages.map((page) => ({
+            ...page,
+            items: (page.items || []).filter((d) => d.id !== docId),
+          })),
+        };
+      });
+      try {
+        await knowledgeBaseAPI.deleteDocument(kbId, docId);
+        // Refresh the badge count + picker; the doc list is reconciled in finally.
+        queryClient.invalidateQueries(PERSONAL_KB_KEY);
+        queryClient.invalidateQueries(PICKER_KEY);
+      } catch (err) {
+        log.error('usePersonalKB: delete failed', err);
+        if (previous) {
+          queryClient.setQueryData(key, previous); // rollback
+        }
+        throw err;
+      } finally {
+        queryClient.invalidateQueries(key);
+      }
+    },
+    [kbId, queryClient]
+  );
+
+  // Re-run the embed/profile pipeline for a failed/stale document from its stored
+  // content (SHU-817 R3). Returns { ok, message } so the caller can surface the
+  // 409 (busy) / 422 (re-upload required) message inline.
+  const reingestDoc = useCallback(
+    async (docId) => {
+      if (!kbId || !docId) {
+        return { ok: false, message: 'No document' };
+      }
+      try {
+        await knowledgeBaseAPI.reingestDocument(kbId, docId);
+        queryClient.invalidateQueries(personalDocsKey(kbId));
+        return { ok: true };
+      } catch (err) {
+        log.error('usePersonalKB: reingest failed', err);
+        const message = err?.response?.data?.error?.message || 'Could not re-ingest this document.';
+        return { ok: false, message };
+      }
+    },
+    [kbId, queryClient]
+  );
+
   const refetchDocs = useCallback(() => {
     if (kbId) {
       queryClient.invalidateQueries(personalDocsKey(kbId));
@@ -244,6 +306,8 @@ const usePersonalKB = () => {
     fetchMoreDocs: docsQuery.fetchNextPage,
     fetchingMoreDocs: docsQuery.isFetchingNextPage,
     refetchDocs,
+    deleteDoc,
+    reingestDoc,
   };
 };
 

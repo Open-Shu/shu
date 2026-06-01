@@ -355,6 +355,10 @@ export const knowledgeBaseAPI = {
   delete: (id) => api.delete(`/knowledge-bases/${id}`),
   getDocuments: (id, params = {}) => api.get(`/knowledge-bases/${id}/documents`, { params }),
   getDocument: (id, docId) => api.get(`/knowledge-bases/${id}/documents/${docId}`),
+  // Content preview + profiling synopsis/type + extraction metadata for the in-chat
+  // document preview slide-over (SHU-817 F2).
+  getDocumentPreview: (id, docId, maxChars = 2000) =>
+    api.get(`/knowledge-bases/${id}/documents/${docId}/preview`, { params: { max_chars: maxChars } }),
   deleteDocument: (id, docId) => api.delete(`/knowledge-bases/${id}/documents/${docId}`),
   // Re-run the embed/profile pipeline for a manually-uploaded document from its
   // stored content (SHU-817 R3): 409 if still processing, 422 if no content, 404 if missing.

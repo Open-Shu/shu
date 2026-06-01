@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Divider,
   IconButton,
@@ -16,13 +17,20 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  ArrowBack as ArrowBackIcon,
+  Check as CheckIcon,
+  CheckCircleOutline as CheckCircleIcon,
   Close as CloseIcon,
+  DeleteOutline as DeleteIcon,
   Description as DescriptionIcon,
   ErrorOutline as ErrorOutlineIcon,
   Refresh as RefreshIcon,
+  Replay as ReplayIcon,
   Sync as SyncIcon,
   UploadFile as UploadFileIcon,
 } from '@mui/icons-material';
+import { useQuery } from 'react-query';
+import { extractDataFromResponse, knowledgeBaseAPI } from '../../../services/api';
 
 const dropzoneSx = (active) => ({
   border: 2,
@@ -38,35 +46,284 @@ const dropzoneSx = (active) => ({
 
 // Mirrors backend DocumentStatus enum (backend/src/shu/models/document.py).
 const TERMINAL_SUCCESS_STATUSES = new Set(['content_processed', 'rag_processed', 'profile_processed']);
-const TERMINAL_FAILURE_STATUSES = new Set(['error']);
 
-const docStatus = (doc) => doc?.processing_status || 'pending';
-
-const docStatusLabel = (doc) => {
-  const status = docStatus(doc);
+// Collapse the 9-value pipeline status into the 3 stages users care about
+// (SHU-817 S3): Ingesting → Profiling → Ready, plus a terminal Failed. Any
+// terminal-success value is sticky "Ready" so a doc never looks stuck.
+const docStage = (doc) => {
+  const status = doc?.processing_status || 'pending';
+  if (status === 'error') {
+    return { kind: 'failed' };
+  }
   if (TERMINAL_SUCCESS_STATUSES.has(status)) {
-    return { label: 'Ready', color: 'success.main' };
+    return { kind: 'ready' };
   }
-  if (TERMINAL_FAILURE_STATUSES.has(status)) {
-    return { label: 'Failed', color: 'error.main' };
+  if (status === 'profiling' || status === 'artifact_embedding') {
+    return { kind: 'progress', step: 1, coverage: doc?.profiling_coverage_percent };
   }
-  return { label: 'Indexing…', color: 'text.secondary' };
+  return { kind: 'progress', step: 0 };
+};
+
+// Compact 3-segment progress bar (P2) in the secondary accent, filled up to the
+// current stage.
+const StageBar = ({ step }) => (
+  <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4 }} aria-hidden>
+    {[0, 1, 2].map((i) => (
+      <Box
+        key={i}
+        sx={{
+          height: 3,
+          width: 12,
+          borderRadius: 1,
+          bgcolor: i <= step ? 'secondary.main' : 'divider',
+          transition: 'background-color 0.3s ease',
+        }}
+      />
+    ))}
+  </Box>
+);
+
+/**
+ * One document row: title + stage indicator, a delete control with inline
+ * confirm (S1), and a re-ingest action for failed documents (R3). Per-row
+ * confirm/busy state is local so it doesn't churn the whole list.
+ */
+const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [reingestMsg, setReingestMsg] = useState(null);
+
+  const stage = docStage(doc);
+  const canDelete = doc.source_type === 'plugin:manual_upload' && Boolean(onDeleteDoc);
+
+  const handleDelete = useCallback(async () => {
+    setBusy(true);
+    try {
+      await onDeleteDoc(doc.id);
+    } catch {
+      // The hook logs and rolls back the optimistic removal; keep the row.
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  }, [doc.id, onDeleteDoc]);
+
+  const handleRetry = useCallback(async () => {
+    if (!onReingestDoc) {
+      return;
+    }
+    setBusy(true);
+    setReingestMsg(null);
+    const res = await onReingestDoc(doc.id);
+    if (res && !res.ok) {
+      setReingestMsg(res.message);
+    }
+    setBusy(false);
+  }, [doc.id, onReingestDoc]);
+
+  let secondary;
+  if (stage.kind === 'ready') {
+    secondary = (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} />
+        <Typography variant="caption" sx={{ color: 'success.main' }}>
+          Ready
+        </Typography>
+      </Box>
+    );
+  } else if (stage.kind === 'failed') {
+    secondary = (
+      <Box>
+        <Typography variant="caption" sx={{ color: 'error.main' }}>
+          Failed
+        </Typography>
+        {reingestMsg && (
+          <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+            {reingestMsg}
+          </Typography>
+        )}
+      </Box>
+    );
+  } else {
+    const coveragePct = stage.step === 1 && typeof stage.coverage === 'number' ? ` ${Math.round(stage.coverage)}%` : '';
+    secondary = (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <StageBar step={stage.step} />
+        <Typography variant="caption" color="text.secondary">
+          {stage.step === 0 ? 'Ingesting…' : `Profiling…${coveragePct}`}
+        </Typography>
+      </Box>
+    );
+  }
+
+  const actions = (
+    <Stack direction="row" spacing={0.25} alignItems="center">
+      {stage.kind === 'failed' && onReingestDoc && (
+        <Tooltip title="Re-ingest">
+          <span>
+            <IconButton
+              size="small"
+              onClick={handleRetry}
+              disabled={busy}
+              aria-label={`Re-ingest ${doc.title || 'document'}`}
+            >
+              {busy ? <CircularProgress size={14} /> : <ReplayIcon fontSize="small" />}
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      {canDelete &&
+        (confirming ? (
+          <>
+            <Tooltip title="Confirm delete">
+              <span>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={handleDelete}
+                  disabled={busy}
+                  aria-label="Confirm delete"
+                >
+                  {busy ? <CircularProgress size={14} /> : <CheckIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Cancel">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => setConfirming(false)}
+                  disabled={busy}
+                  aria-label="Cancel delete"
+                >
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </>
+        ) : (
+          <Tooltip title="Delete">
+            <span>
+              <IconButton
+                size="small"
+                onClick={() => setConfirming(true)}
+                aria-label={`Delete ${doc.title || 'document'}`}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ))}
+    </Stack>
+  );
+
+  return (
+    <ListItem disablePadding sx={{ py: 0.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', gap: 1 }}>
+        <Box
+          onClick={onOpenPreview ? () => onOpenPreview(doc) : undefined}
+          sx={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 1,
+            flex: 1,
+            minWidth: 0,
+            cursor: onOpenPreview ? 'pointer' : 'default',
+          }}
+        >
+          <DescriptionIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.25, flexShrink: 0 }} />
+          <ListItemText
+            sx={{ flex: 1, minWidth: 0, my: 0 }}
+            primary={doc.title || 'Untitled'}
+            primaryTypographyProps={{ variant: 'body2', noWrap: true }}
+            secondary={secondary}
+            secondaryTypographyProps={{ component: 'div' }}
+          />
+        </Box>
+        <Box sx={{ flexShrink: 0 }}>{actions}</Box>
+      </Box>
+    </ListItem>
+  );
+};
+
+/**
+ * In-popover document preview (SHU-817 F2). A back-button sub-view (no modal,
+ * per the north-star) showing the profiling synopsis ("what's in here"), the
+ * document type, key stats, and an extracted-text snippet. One GET /preview call
+ * supplies the synopsis + extracted text; the rest comes from the list item.
+ */
+const DocPreview = ({ kbId, doc, onBack }) => {
+  const { data, isLoading, isError } = useQuery(
+    ['personalKBDocPreview', kbId, doc.id],
+    () => knowledgeBaseAPI.getDocumentPreview(kbId, doc.id, 2000).then(extractDataFromResponse),
+    { enabled: Boolean(kbId && doc?.id), staleTime: 30000 }
+  );
+
+  const documentType = doc.document_type || data?.document_type;
+  const synopsis = data?.synopsis;
+  const previewText = data?.preview;
+
+  return (
+    <Stack spacing={1.5}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <IconButton size="small" onClick={onBack} aria-label="Back to documents">
+          <ArrowBackIcon fontSize="small" />
+        </IconButton>
+        <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }} noWrap title={doc.title || 'Untitled'}>
+          {doc.title || 'Untitled'}
+        </Typography>
+      </Box>
+      <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+        {documentType && <Chip size="small" label={documentType} />}
+        {typeof doc.word_count === 'number' && doc.word_count > 0 && (
+          <Chip size="small" variant="outlined" label={`${doc.word_count.toLocaleString()} words`} />
+        )}
+        {typeof doc.chunk_count === 'number' && doc.chunk_count > 0 && (
+          <Chip size="small" variant="outlined" label={`${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`} />
+        )}
+        {typeof doc.profiling_coverage_percent === 'number' && (
+          <Chip size="small" variant="outlined" label={`${Math.round(doc.profiling_coverage_percent)}% profiled`} />
+        )}
+      </Stack>
+      {isLoading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+          <CircularProgress size={22} />
+        </Box>
+      ) : isError ? (
+        <Typography variant="body2" color="text.secondary">
+          Couldn&apos;t load this document&apos;s preview.
+        </Typography>
+      ) : (
+        <>
+          {synopsis && (
+            <Box>
+              <Typography variant="caption" fontWeight={600} color="text.secondary">
+                What&apos;s in here
+              </Typography>
+              <Typography variant="body2">{synopsis}</Typography>
+            </Box>
+          )}
+          <Box>
+            <Typography variant="caption" fontWeight={600} color="text.secondary">
+              Extracted text
+            </Typography>
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto', mt: 0.5 }}>
+              {previewText || 'No extracted text yet.'}
+            </Typography>
+          </Box>
+        </>
+      )}
+    </Stack>
+  );
 };
 
 /**
  * BrainPopover — desktop popover / mobile bottom sheet for Personal Knowledge.
  *
- * Strictly Personal Knowledge — no destination override. The document list,
- * its loading/pagination state, and the upload errors are owned by usePersonalKB
- * (React Query) and passed in as props (SHU-817 F4), so the brain badge and the
- * popover stay consistent and the poll self-stops when nothing is indexing.
- *
- * Props of note:
- *   - loading: pass true while the parent's initial KB lookup is in flight, so
- *     the popover shows a skeleton instead of the first-session prompt.
- *   - docs / docsLoading / docsFetching / hasMoreDocs / fetchMoreDocs /
- *     fetchingMoreDocs / onRefreshDocs: the personal-KB document list, supplied
- *     by usePersonalKB.
+ * Strictly Personal Knowledge — no destination override. The document list, its
+ * loading/pagination state, and the upload errors are owned by usePersonalKB
+ * (React Query) and passed in as props (SHU-817 F4); this component renders them
+ * and surfaces per-document delete (S1), 3-stage feedback (S3), and re-ingest (R3).
  */
 const BrainPopover = React.memo(function BrainPopover({
   open,
@@ -87,14 +344,19 @@ const BrainPopover = React.memo(function BrainPopover({
   fetchMoreDocs,
   fetchingMoreDocs = false,
   onRefreshDocs,
+  onDeleteDoc,
+  onReingestDoc,
 }) {
   const [dragOver, setDragOver] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const fileInputRef = useRef(null);
 
-  // While the initial KB lookup is in flight (kb still null), show a brief
-  // loading skeleton instead of the first-session prompt — otherwise users with
-  // an existing Personal Knowledge see the onboarding content flash before the
-  // popover swaps to "returning" view.
+  // Reset the preview sub-view when the popover closes so it reopens on the list.
+  const handleClose = useCallback(() => {
+    setPreviewDoc(null);
+    onClose?.();
+  }, [onClose]);
+
   const isLoadingKB = loading && !kb;
   const isEmpty = !kb || (kb.document_count || 0) === 0;
 
@@ -220,20 +482,15 @@ const BrainPopover = React.memo(function BrainPopover({
         </Box>
       ) : docs.length > 0 ? (
         <List dense disablePadding sx={{ maxHeight: 280, overflowY: 'auto' }}>
-          {docs.map((doc) => {
-            const status = docStatusLabel(doc);
-            return (
-              <ListItem key={doc.id} disablePadding sx={{ py: 0.5 }}>
-                <DescriptionIcon sx={{ fontSize: 18, color: 'text.secondary', mr: 1 }} />
-                <ListItemText
-                  primary={doc.title || 'Untitled'}
-                  primaryTypographyProps={{ variant: 'body2', noWrap: true }}
-                  secondary={status.label}
-                  secondaryTypographyProps={{ variant: 'caption', sx: { color: status.color } }}
-                />
-              </ListItem>
-            );
-          })}
+          {docs.map((doc) => (
+            <DocRow
+              key={doc.id}
+              doc={doc}
+              onDeleteDoc={onDeleteDoc}
+              onReingestDoc={onReingestDoc}
+              onOpenPreview={setPreviewDoc}
+            />
+          ))}
         </List>
       ) : null}
       {hasMoreDocs && (
@@ -306,8 +563,14 @@ const BrainPopover = React.memo(function BrainPopover({
   const content = (
     <Box sx={{ p: 2, width: { xs: '100%', sm: 360 } }}>
       <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
-      {isLoadingKB ? loadingSkeleton : isEmpty ? firstSession : returning}
-      {errorList}
+      {previewDoc ? (
+        <DocPreview kbId={kb?.id} doc={previewDoc} onBack={() => setPreviewDoc(null)} />
+      ) : (
+        <>
+          {isLoadingKB ? loadingSkeleton : isEmpty ? firstSession : returning}
+          {errorList}
+        </>
+      )}
     </Box>
   );
 
@@ -316,7 +579,7 @@ const BrainPopover = React.memo(function BrainPopover({
       <SwipeableDrawer
         anchor="bottom"
         open={open}
-        onClose={onClose}
+        onClose={handleClose}
         onOpen={() => {}}
         disableSwipeToOpen
         PaperProps={{ sx: { borderTopLeftRadius: 16, borderTopRightRadius: 16 } }}
@@ -331,7 +594,7 @@ const BrainPopover = React.memo(function BrainPopover({
     <Popover
       open={open}
       anchorEl={anchorEl}
-      onClose={onClose}
+      onClose={handleClose}
       anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
       transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
     >

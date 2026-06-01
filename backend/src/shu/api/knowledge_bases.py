@@ -691,6 +691,11 @@ async def get_document_preview(
                 "source_url": document.source_url,
                 "source_id": document.source_id,
                 "source_type": document.source_type,
+                # Profiling outputs surfaced for the in-chat preview slide-over (SHU-817 F2):
+                # the synopsis is the LLM "what's in here" summary; document_type is the
+                # inferred class (narrative/transactional/technical/conversational).
+                "document_type": document.document_type,
+                "synopsis": document.synopsis,
                 "preview": preview_text,
                 "full_content_length": len(content_text),
                 "extraction_metadata": {
