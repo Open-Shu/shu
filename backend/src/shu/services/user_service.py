@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,6 +107,21 @@ class UserService:
 
         if not user:
             raise ValueError("User not found")
+
+        # Cascade-delete the user's Personal Knowledge KB(s) before the user.
+        # owner_id is ON DELETE SET NULL (org KBs intentionally outlive their
+        # owner), so deleting the user would otherwise orphan their personal KB —
+        # which can then only be removed by an admin (SHU-817). A Core DELETE
+        # relies on the documents/chunks ON DELETE CASCADE and avoids an async
+        # lazy-load of the documents relationship; same transaction as the user
+        # delete, so it's atomic.
+        from ..models.knowledge_base import KnowledgeBase
+
+        await db.execute(
+            delete(KnowledgeBase)
+            .where(KnowledgeBase.owner_id == user_id, KnowledgeBase.is_personal.is_(True))
+            .execution_options(synchronize_session=False)
+        )
 
         # Delete the user
         await db.delete(user)

@@ -15,7 +15,7 @@ from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.expected_error_context import (
     expect_duplicate_errors,
 )
-from integ.helpers.auth import create_active_user_headers
+from integ.helpers.auth import create_active_user_headers, create_active_user_with_id
 from integ.response_utils import extract_data
 from shu.core.logging import get_logger
 
@@ -339,17 +339,58 @@ async def test_kb_delete_denied_for_power_user_without_grant(client, db, auth_he
     logger.info("=== EXPECTED TEST OUTPUT: power_user delete correctly denied with 404 ===")
 
 
-async def test_personal_kb_cannot_be_deleted(client, db, auth_headers):
-    """SHU-817: a personal KB is an auto-provisioned singleton and cannot be deleted."""
+async def test_personal_kb_delete_denied_for_owner(client, db, auth_headers):
+    """SHU-817: a personal KB is an owner-scoped singleton; its owner (a non-admin) cannot
+    delete it (403). Only admins can — see test_personal_kb_deletable_by_admin."""
     logger.info("=== EXPECTED TEST OUTPUT: a 403 PERSONAL_KB_DELETE_NOT_ALLOWED is expected ===")
     reg = await create_active_user_headers(client, auth_headers, role="regular_user")
     ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
     kb_id = extract_data(ensure)["id"]
 
     d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=reg)
-    assert d.status_code == 403, f"personal KB delete should be 403: {d.status_code} {d.text}"
+    assert d.status_code == 403, f"owner delete of personal KB should be 403: {d.status_code} {d.text}"
     assert d.json().get("error", {}).get("code") == "PERSONAL_KB_DELETE_NOT_ALLOWED", d.text
-    logger.info("=== EXPECTED TEST OUTPUT: personal KB delete correctly rejected with 403 ===")
+    logger.info("=== EXPECTED TEST OUTPUT: owner delete of personal KB correctly rejected with 403 ===")
+
+
+async def test_personal_kb_deletable_by_admin(client, db, auth_headers):
+    """SHU-817: an admin CAN delete a personal KB (offboarding / cleanup). Without this
+    path the KB is un-deletable and orphans on owner deletion."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    # Admin (auth_headers) deletes another user's personal KB.
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
+    assert d.status_code == 204, f"admin should be able to delete a personal KB (204): {d.status_code} {d.text}"
+
+    # It's gone — the owner's GET /personal returns null again.
+    g = await client.get("/api/v1/knowledge-bases/personal", headers=reg)
+    assert g.status_code == 200 and g.json().get("data") is None, f"personal KB should be gone: {g.text}"
+    logger.info("Test passed: admin deleted a user's personal KB")
+
+
+async def test_deleting_user_cascades_personal_kb(client, db, auth_headers):
+    """SHU-817: deleting a user removes their personal KB instead of orphaning it.
+
+    owner_id is ON DELETE SET NULL (org KBs intentionally outlive their owner), so without
+    the explicit cascade in user_service.delete_user the personal KB would be left behind
+    with a NULL owner and could only be removed by an admin.
+    """
+    headers, user_id = await create_active_user_with_id(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=headers)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    d = await client.delete(f"/api/v1/auth/users/{user_id}", headers=auth_headers)
+    assert d.status_code in (200, 204), f"admin user delete should succeed: {d.status_code} {d.text}"
+
+    # Fresh snapshot, then confirm the personal KB was deleted with its owner, not orphaned.
+    await db.rollback()
+    row = await db.execute(text("SELECT id FROM knowledge_bases WHERE id = :id"), {"id": kb_id})
+    assert row.scalar_one_or_none() is None, "personal KB must be deleted with its owner, not orphaned"
+    logger.info("Test passed: deleting a user cascades their personal KB")
 
 
 async def test_reingest_missing_document_returns_404(client, db, auth_headers):
@@ -437,7 +478,9 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_knowledge_base_embedding_models,
             test_personal_kb_owner_regular_user_can_delete_own_document,
             test_kb_delete_denied_for_power_user_without_grant,
-            test_personal_kb_cannot_be_deleted,
+            test_personal_kb_delete_denied_for_owner,
+            test_personal_kb_deletable_by_admin,
+            test_deleting_user_cascades_personal_kb,
             test_reingest_missing_document_returns_404,
             test_reingest_busy_document_returns_409,
             test_get_personal_knowledge_base_returns_null_then_kb,

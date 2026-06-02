@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth.models import User
+from ..auth.models import User, UserRole
 from ..auth.rbac import (
     get_current_user,
     require_admin,
@@ -421,17 +421,21 @@ async def delete_knowledge_base(
     This operation cannot be undone.
 
     Gated by require_kb_delete_access (admin, KB owner, or explicit kb.delete PBAC).
-    Personal Knowledge KBs are auto-provisioned singletons and cannot be deleted via
-    this endpoint.
+    Personal Knowledge KBs are auto-provisioned singletons; only an admin may delete
+    one (e.g. user offboarding / cleanup). The owner and kb.delete grantees are blocked.
     """
     logger.info("API: Delete knowledge base", extra={"kb_id": kb_id})
 
     try:
         service = KnowledgeBaseService(db)
         kb = await service.get_knowledge_base(kb_id, user_id=str(current_user.id))
-        if kb.is_personal:
+        # Personal Knowledge is an owner-scoped singleton the in-chat UX never
+        # exposes a "delete KB" action for (users manage individual documents).
+        # Only admins may delete it — without an admin path these KBs are
+        # un-deletable and orphan when their owner is deleted (SHU-817).
+        if kb.is_personal and not current_user.has_role(UserRole.ADMIN):
             return ShuResponse.error(
-                message="Personal Knowledge cannot be deleted.",
+                message="Personal Knowledge can only be deleted by an administrator.",
                 code="PERSONAL_KB_DELETE_NOT_ALLOWED",
                 status_code=403,
             )

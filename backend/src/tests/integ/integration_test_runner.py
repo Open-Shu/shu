@@ -346,6 +346,64 @@ class IntegrationTestRunner:
             except Exception as rollback_error:
                 logger.warning(f"Rollback error: {rollback_error}")
 
+    async def _cleanup_residual_test_data_sql(self):
+        """SQL sweep for test data the API-based cleanup cannot remove.
+
+        ``TestDataCleaner`` runs as the framework admin and is structurally unable
+        to delete two things, so each suite run leaks them:
+
+        * The admin user itself — ``user_service.delete_user`` blocks
+          self-deletion, so the API leaves ``test-admin-<uuid>@example.com``
+          behind (it's only cleared at the *next* run's setup).
+        * Personal KBs — the ``is_personal`` guard 403s
+          ``DELETE /knowledge-bases/{id}``. Worse, personal KBs don't cascade
+          when their owner is deleted (``owner_id`` is ``ON DELETE SET NULL``),
+          so every test user's auto-provisioned "<name>'s Knowledge" orphans
+          once ``_cleanup_test_users`` removes the user.
+
+        Documents (and chunks/embeddings) cascade on KB deletion
+        (``ON DELETE CASCADE``), so deleting the KB row by SQL is clean. Scoped
+        to ``is_personal`` and the framework's test-name conventions so a real
+        dev KB is never touched. Wrapped in tenant_context to mirror
+        ``_create_admin_user`` (tenant stamping / RLS). Best-effort: logged,
+        never raised.
+        """
+        from shu.core.tenant import tenant_context_for_tenant_id
+
+        try:
+            async with tenant_context_for_tenant_id(None):
+                # Personal test KBs the API can't delete (documents cascade).
+                await self.db.execute(
+                    text(
+                        "DELETE FROM knowledge_bases WHERE is_personal = true AND ("
+                        "name ILIKE '%test%' OR name ILIKE '%integration%' "
+                        "OR name ILIKE '%dummy%' OR name ILIKE '%sample%')"
+                    )
+                )
+                # Framework admin (can't self-delete via API) + dependent rows,
+                # mirroring the pre-run cleanup in _create_admin_user.
+                await self.db.execute(
+                    text(
+                        "DELETE FROM plugin_subscriptions WHERE user_id IN "
+                        "(SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+                    )
+                )
+                await self.db.execute(
+                    text(
+                        "DELETE FROM provider_credentials WHERE user_id IN "
+                        "(SELECT id FROM users WHERE email LIKE 'test-admin-%@example.com')"
+                    )
+                )
+                await self.db.execute(text("DELETE FROM users WHERE email LIKE 'test-admin-%@example.com'"))
+                await self.db.commit()
+            logger.info("✅ Residual SQL cleanup (personal KBs + framework admin) complete")
+        except Exception as exc:
+            logger.warning(f"⚠️  Residual SQL cleanup failed: {exc}")
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+
     async def run_test(self, test_func: Callable, test_name: str = None) -> TestResult:
         """Run a single integration test."""
         if test_name is None:
@@ -476,6 +534,13 @@ class IntegrationTestRunner:
                 await self._cleanup_test_data(quick=False)  # Use comprehensive cleanup for suite-level
             except Exception as e:
                 logger.warning(f"⚠️  Error during final cleanup: {e}")
+
+        # SQL sweep for what the API cleanup structurally can't remove: the
+        # framework admin (self-deletion is blocked) and personal KBs (the
+        # is_personal guard 403s the API DELETE, and they don't cascade on owner
+        # deletion). Runs after the API cleanup, while the db session is open.
+        if self.db:
+            await self._cleanup_residual_test_data_sql()
 
         # Close client after cleanup
         if self.client:
