@@ -35,6 +35,7 @@ import {
 import { useQuery } from 'react-query';
 import { TransitionGroup } from 'react-transition-group';
 import { extractDataFromResponse, knowledgeBaseAPI } from '../../../services/api';
+import { docStage } from './utils/docStage';
 
 const dropzoneSx = (active) => ({
   border: 2,
@@ -47,26 +48,6 @@ const dropzoneSx = (active) => ({
   transition: 'border-color 0.2s, background-color 0.2s',
   cursor: 'pointer',
 });
-
-// Mirrors backend DocumentStatus enum (backend/src/shu/models/document.py).
-const TERMINAL_SUCCESS_STATUSES = new Set(['content_processed', 'rag_processed', 'profile_processed']);
-
-// Collapse the 9-value pipeline status into the 3 stages users care about
-// (SHU-817 S3): Ingesting → Profiling → Ready, plus a terminal Failed. Any
-// terminal-success value is sticky "Ready" so a doc never looks stuck.
-const docStage = (doc) => {
-  const status = doc?.processing_status || 'pending';
-  if (status === 'error') {
-    return { kind: 'failed' };
-  }
-  if (TERMINAL_SUCCESS_STATUSES.has(status)) {
-    return { kind: 'ready' };
-  }
-  if (status === 'profiling' || status === 'artifact_embedding') {
-    return { kind: 'progress', step: 1, coverage: doc?.profiling_coverage_percent };
-  }
-  return { kind: 'progress', step: 0 };
-};
 
 // Compact 3-segment progress bar (P2) in the secondary accent, filled up to the
 // current stage.

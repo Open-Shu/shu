@@ -14,6 +14,8 @@ vi.mock('../../../../../services/api', () => ({
     getDocuments: vi.fn(),
     ensurePersonal: vi.fn(),
     uploadDocuments: vi.fn(),
+    deleteDocument: vi.fn(),
+    reingestDocument: vi.fn(),
   },
   // Pass-through helpers that mirror what the production helpers do for the
   // (double-wrapped axios → envelope) shapes our tests pass through them.
@@ -70,6 +72,7 @@ describe('usePersonalKB hook', () => {
   // envelope, envelope.data is the payload.
   const personalResponse = (kb) => ({ data: { data: kb } });
   const uploadResponse = (results) => ({ data: { data: { results } } });
+  const docsResponse = (items) => ({ data: { data: { items, total: items.length } } });
 
   it('loads the Personal KB from GET /personal on mount', async () => {
     const personal = {
@@ -267,5 +270,78 @@ describe('usePersonalKB hook', () => {
       'usePersonalKB: unexpected upload response shape',
       expect.objectContaining({ unexpected: 'shape' })
     );
+  });
+
+  it('optimistically removes a deleted document, then reconciles to the server list', async () => {
+    const personal = { id: 'kb-pk', is_personal: true, owner_id: TEST_USER_ID, document_count: 2 };
+    knowledgeBaseAPI.getPersonal.mockResolvedValue(personalResponse(personal));
+    // Initial load returns both; the post-delete invalidation refetch returns only d2.
+    knowledgeBaseAPI.getDocuments
+      .mockResolvedValueOnce(
+        docsResponse([
+          { id: 'd1', title: 'A', processing_status: 'content_processed' },
+          { id: 'd2', title: 'B', processing_status: 'content_processed' },
+        ])
+      )
+      .mockResolvedValue(docsResponse([{ id: 'd2', title: 'B', processing_status: 'content_processed' }]));
+    knowledgeBaseAPI.deleteDocument.mockResolvedValueOnce({});
+
+    const { result } = renderPersonalKB();
+    await waitFor(() => expect(result.current.docs.length).toBe(2));
+
+    await act(async () => {
+      await result.current.deleteDoc('d1');
+    });
+
+    expect(knowledgeBaseAPI.deleteDocument).toHaveBeenCalledWith('kb-pk', 'd1');
+    await waitFor(() => expect(result.current.docs.map((d) => d.id)).toEqual(['d2']));
+  });
+
+  it('rolls back the optimistic removal when delete fails', async () => {
+    const personal = { id: 'kb-pk', is_personal: true, owner_id: TEST_USER_ID, document_count: 2 };
+    knowledgeBaseAPI.getPersonal.mockResolvedValue(personalResponse(personal));
+    knowledgeBaseAPI.getDocuments.mockResolvedValue(
+      docsResponse([
+        { id: 'd1', title: 'A', processing_status: 'content_processed' },
+        { id: 'd2', title: 'B', processing_status: 'content_processed' },
+      ])
+    );
+    knowledgeBaseAPI.deleteDocument.mockRejectedValueOnce(new Error('boom'));
+
+    const { result } = renderPersonalKB();
+    await waitFor(() => expect(result.current.docs.length).toBe(2));
+
+    await act(async () => {
+      await expect(result.current.deleteDoc('d1')).rejects.toThrow('boom');
+    });
+
+    // Rollback + reconcile leaves both documents present.
+    await waitFor(() => expect(result.current.docs.map((d) => d.id).sort()).toEqual(['d1', 'd2']));
+  });
+
+  it('reingestDoc returns {ok:true} on success and {ok:false, message} on failure', async () => {
+    const personal = { id: 'kb-pk', is_personal: true, owner_id: TEST_USER_ID, document_count: 1 };
+    knowledgeBaseAPI.getPersonal.mockResolvedValue(personalResponse(personal));
+    knowledgeBaseAPI.getDocuments.mockResolvedValue(
+      docsResponse([{ id: 'd1', title: 'A', processing_status: 'error' }])
+    );
+
+    const { result } = renderPersonalKB();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    knowledgeBaseAPI.reingestDocument.mockResolvedValueOnce({});
+    let res;
+    await act(async () => {
+      res = await result.current.reingestDoc('d1');
+    });
+    expect(res).toEqual({ ok: true });
+
+    knowledgeBaseAPI.reingestDocument.mockRejectedValueOnce({
+      response: { data: { error: { message: 'still processing' } } },
+    });
+    await act(async () => {
+      res = await result.current.reingestDoc('d1');
+    });
+    expect(res).toEqual({ ok: false, message: 'still processing' });
   });
 });

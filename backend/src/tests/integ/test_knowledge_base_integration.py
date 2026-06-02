@@ -400,6 +400,25 @@ async def test_get_personal_knowledge_base_returns_null_then_kb(client, db, auth
     logger.info("Test passed: GET /personal returns null then the ensured personal KB")
 
 
+async def test_document_preview_exposes_synopsis_and_type(client, db, auth_headers):
+    """SHU-817 F2: GET /preview exposes synopsis + document_type for the preview slide-over."""
+    kb_id = await _kb_create(client, auth_headers, f"Test Preview KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    assert up.status_code == 200, up.text
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    r = await client.get(
+        f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/preview", headers=auth_headers
+    )
+    assert r.status_code == 200, r.text
+    data = extract_data(r)
+    # Keys are present even before profiling completes (values may be null).
+    assert "synopsis" in data, data
+    assert "document_type" in data, data
+    assert "preview" in data and "processing_info" in data, data
+    logger.info("Test passed: /preview exposes synopsis + document_type")
+
+
 class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for knowledge base functionality."""
 
@@ -422,6 +441,7 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_reingest_missing_document_returns_404,
             test_reingest_busy_document_returns_409,
             test_get_personal_knowledge_base_returns_null_then_kb,
+            test_document_preview_exposes_synopsis_and_type,
         ]
 
     def get_suite_name(self) -> str:
