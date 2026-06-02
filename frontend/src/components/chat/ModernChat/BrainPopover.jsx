@@ -8,6 +8,7 @@ import {
   Collapse,
   Divider,
   FormControlLabel,
+  Grow,
   IconButton,
   List,
   ListItem,
@@ -23,6 +24,7 @@ import {
   ArrowBack as ArrowBackIcon,
   Check as CheckIcon,
   CheckCircleOutline as CheckCircleIcon,
+  ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
   DeleteOutline as DeleteIcon,
   Description as DescriptionIcon,
@@ -207,13 +209,36 @@ const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
       <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', gap: 1 }}>
         <Box
           onClick={onOpenPreview ? () => onOpenPreview(doc) : undefined}
+          role={onOpenPreview ? 'button' : undefined}
+          tabIndex={onOpenPreview ? 0 : undefined}
+          onKeyDown={
+            onOpenPreview
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpenPreview(doc);
+                  }
+                }
+              : undefined
+          }
+          aria-label={onOpenPreview ? `View details for ${doc.title || 'document'}` : undefined}
           sx={{
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
             flex: 1,
             minWidth: 0,
+            px: 0.5,
+            mx: -0.5,
+            borderRadius: 1,
             cursor: onOpenPreview ? 'pointer' : 'default',
+            transition: 'background-color 0.15s ease',
+            '&:hover': onOpenPreview ? { bgcolor: 'action.hover' } : undefined,
+            '&:hover .doc-row-chevron, &:focus-visible .doc-row-chevron': {
+              color: 'secondary.main',
+              transform: 'translateX(2px)',
+            },
+            '&:focus-visible': { outline: 'none', bgcolor: 'action.hover' },
           }}
         >
           <DescriptionIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.25, flexShrink: 0 }} />
@@ -224,6 +249,19 @@ const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
             secondary={secondary}
             secondaryTypographyProps={{ component: 'div' }}
           />
+          {onOpenPreview && (
+            <ChevronRightIcon
+              className="doc-row-chevron"
+              aria-hidden
+              sx={{
+                fontSize: 18,
+                color: 'text.disabled',
+                alignSelf: 'center',
+                flexShrink: 0,
+                transition: 'color 0.15s ease, transform 0.15s ease',
+              }}
+            />
+          )}
         </Box>
         <Box sx={{ flexShrink: 0 }}>{actions}</Box>
       </Box>
@@ -248,9 +286,13 @@ const DocPreview = ({ kbId, doc, onBack }) => {
   const synopsis = data?.synopsis;
   const previewText = data?.preview;
 
+  // Fixed back-header + a single bounded, scrolling body. The whole preview is
+  // capped to the viewport (min(70vh, …)) so a long synopsis/extracted text can
+  // never run off the bottom of the popover (SHU-817 item 1 — the prior layout
+  // had no outer height bound and clipped). The back control stays pinned.
   return (
-    <Stack spacing={1.5}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', maxHeight: 'min(70vh, 560px)' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
         <IconButton size="small" onClick={onBack} aria-label="Back to documents">
           <ArrowBackIcon fontSize="small" />
         </IconButton>
@@ -258,47 +300,53 @@ const DocPreview = ({ kbId, doc, onBack }) => {
           {doc.title || 'Untitled'}
         </Typography>
       </Box>
-      <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-        {documentType && <Chip size="small" label={documentType} />}
-        {typeof doc.word_count === 'number' && doc.word_count > 0 && (
-          <Chip size="small" variant="outlined" label={`${doc.word_count.toLocaleString()} words`} />
-        )}
-        {typeof doc.chunk_count === 'number' && doc.chunk_count > 0 && (
-          <Chip size="small" variant="outlined" label={`${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`} />
-        )}
-        {typeof doc.profiling_coverage_percent === 'number' && (
-          <Chip size="small" variant="outlined" label={`${Math.round(doc.profiling_coverage_percent)}% profiled`} />
-        )}
-      </Stack>
-      {isLoading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-          <CircularProgress size={22} />
-        </Box>
-      ) : isError ? (
-        <Typography variant="body2" color="text.secondary">
-          Couldn&apos;t load this document&apos;s preview.
-        </Typography>
-      ) : (
-        <>
-          {synopsis && (
+      <Stack spacing={1.5} sx={{ overflowY: 'auto', mt: 1, pr: 0.5 }}>
+        <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+          {documentType && <Chip size="small" label={documentType} />}
+          {typeof doc.word_count === 'number' && doc.word_count > 0 && (
+            <Chip size="small" variant="outlined" label={`${doc.word_count.toLocaleString()} words`} />
+          )}
+          {typeof doc.chunk_count === 'number' && doc.chunk_count > 0 && (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`}
+            />
+          )}
+          {typeof doc.profiling_coverage_percent === 'number' && (
+            <Chip size="small" variant="outlined" label={`${Math.round(doc.profiling_coverage_percent)}% profiled`} />
+          )}
+        </Stack>
+        {isLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+            <CircularProgress size={22} />
+          </Box>
+        ) : isError ? (
+          <Typography variant="body2" color="text.secondary">
+            Couldn&apos;t load this document&apos;s preview.
+          </Typography>
+        ) : (
+          <>
+            {synopsis && (
+              <Box>
+                <Typography variant="caption" fontWeight={600} color="text.secondary">
+                  What&apos;s in here
+                </Typography>
+                <Typography variant="body2">{synopsis}</Typography>
+              </Box>
+            )}
             <Box>
               <Typography variant="caption" fontWeight={600} color="text.secondary">
-                What&apos;s in here
+                Extracted text
               </Typography>
-              <Typography variant="body2">{synopsis}</Typography>
+              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
+                {previewText || 'No extracted text yet.'}
+              </Typography>
             </Box>
-          )}
-          <Box>
-            <Typography variant="caption" fontWeight={600} color="text.secondary">
-              Extracted text
-            </Typography>
-            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto', mt: 0.5 }}>
-              {previewText || 'No extracted text yet.'}
-            </Typography>
-          </Box>
-        </>
-      )}
-    </Stack>
+          </>
+        )}
+      </Stack>
+    </Box>
   );
 };
 
@@ -336,11 +384,22 @@ const BrainPopover = React.memo(function BrainPopover({
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
+  // The preview panel keeps rendering its doc while it slides back out, so the
+  // detail view doesn't blank mid-transition. Set synchronously on open (same
+  // batch as previewDoc) so the panel never paints empty as it slides in, and
+  // retained on back so it stays filled while sliding out — cleared only on close.
+  const [renderedPreviewDoc, setRenderedPreviewDoc] = useState(null);
   const fileInputRef = useRef(null);
+
+  const openPreview = useCallback((doc) => {
+    setRenderedPreviewDoc(doc);
+    setPreviewDoc(doc);
+  }, []);
 
   // Reset the preview sub-view when the popover closes so it reopens on the list.
   const handleClose = useCallback(() => {
     setPreviewDoc(null);
+    setRenderedPreviewDoc(null);
     onClose?.();
   }, [onClose]);
 
@@ -401,6 +460,50 @@ const BrainPopover = React.memo(function BrainPopover({
       <UploadFileIcon sx={{ fontSize: 32, color: 'text.secondary', mb: 1 }} />
       <Typography variant="body2" color="text.secondary">
         {dragOver ? 'Drop to add to Personal Knowledge' : 'Drop files here or click to choose'}
+      </Typography>
+    </Box>
+  );
+
+  // SHU-817 (item 4): for returning users the full dropzone + a separate "Add
+  // files" button wasted ~110px the doc list could use. Fold both into one
+  // compact control that is simultaneously the click target and the drop target,
+  // surfacing the drag-over state inline.
+  const compactDropTarget = (
+    <Box
+      role="button"
+      tabIndex={0}
+      aria-label="Add files to Personal Knowledge"
+      onClick={handleChooseFiles}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleChooseFiles();
+        }
+      }}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 1,
+        border: 1,
+        borderStyle: 'dashed',
+        borderColor: dragOver ? 'secondary.main' : 'divider',
+        bgcolor: dragOver ? 'action.hover' : 'transparent',
+        color: dragOver ? 'secondary.main' : 'text.secondary',
+        borderRadius: 2,
+        py: 1,
+        cursor: uploading ? 'default' : 'pointer',
+        transition: 'border-color 0.2s, background-color 0.2s, color 0.2s',
+        '&:hover': uploading ? undefined : { borderColor: 'secondary.main', bgcolor: 'action.hover' },
+        '&:focus-visible': { outline: 'none', borderColor: 'secondary.main', bgcolor: 'action.hover' },
+      }}
+    >
+      {uploading ? <CircularProgress size={16} color="inherit" /> : <UploadFileIcon fontSize="small" />}
+      <Typography variant="body2" fontWeight={500}>
+        {uploading ? 'Uploading…' : dragOver ? 'Drop to add' : 'Add files or drop here'}
       </Typography>
     </Box>
   );
@@ -495,12 +598,7 @@ const BrainPopover = React.memo(function BrainPopover({
           <TransitionGroup>
             {docs.map((doc) => (
               <Collapse key={doc.id}>
-                <DocRow
-                  doc={doc}
-                  onDeleteDoc={onDeleteDoc}
-                  onReingestDoc={onReingestDoc}
-                  onOpenPreview={setPreviewDoc}
-                />
+                <DocRow doc={doc} onDeleteDoc={onDeleteDoc} onReingestDoc={onReingestDoc} onOpenPreview={openPreview} />
               </Collapse>
             ))}
           </TransitionGroup>
@@ -516,16 +614,7 @@ const BrainPopover = React.memo(function BrainPopover({
           {fetchingMoreDocs ? 'Loading…' : 'Show more'}
         </Button>
       )}
-      {dropzone}
-      <Button
-        variant="outlined"
-        startIcon={uploading ? <CircularProgress size={18} color="inherit" /> : <UploadFileIcon />}
-        onClick={handleChooseFiles}
-        disabled={uploading}
-        fullWidth
-      >
-        {uploading ? 'Uploading…' : 'Add files'}
-      </Button>
+      {compactDropTarget}
       {autoAttachToggle}
     </Stack>
   );
@@ -574,17 +663,62 @@ const BrainPopover = React.memo(function BrainPopover({
     </Box>
   );
 
+  // List and preview share one panel and push horizontally past each other
+  // (SHU-817 item 1 — "swipe over on the same panel"). The ACTIVE panel stays in
+  // normal flow so the container always has its real height immediately (no
+  // measurement, no race with the Popover's positioning pass); the off-screen one
+  // is absolutely overlaid and slid out. `visibility` flips only after the 0.32s
+  // slide so the hidden panel still animates but drops out of the tab order / AT
+  // tree. The outer box clips the off-screen panel.
+  const panelTransition = (active) =>
+    active
+      ? 'transform 0.32s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, visibility 0s'
+      : 'transform 0.32s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, visibility 0s 0.32s';
+  const listActive = !previewDoc;
   const content = (
-    <Box sx={{ p: 2, width: { xs: '100%', sm: 360 } }}>
+    <Box sx={{ width: { xs: '100%', sm: 360 }, overflow: 'hidden' }}>
       <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
-      {previewDoc ? (
-        <DocPreview kbId={kb?.id} doc={previewDoc} onBack={() => setPreviewDoc(null)} />
-      ) : (
-        <>
+      <Box sx={{ position: 'relative' }}>
+        <Box
+          aria-hidden={!listActive}
+          sx={{
+            position: listActive ? 'relative' : 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            p: 2,
+            maxHeight: 'min(70vh, 560px)',
+            overflowY: 'auto',
+            transform: listActive ? 'translateX(0)' : 'translateX(-100%)',
+            opacity: listActive ? 1 : 0,
+            visibility: listActive ? 'visible' : 'hidden',
+            pointerEvents: listActive ? 'auto' : 'none',
+            transition: panelTransition(listActive),
+          }}
+        >
           {isLoadingKB ? loadingSkeleton : isEmpty ? firstSession : returning}
           {errorList}
-        </>
-      )}
+        </Box>
+        <Box
+          aria-hidden={listActive}
+          sx={{
+            position: listActive ? 'absolute' : 'relative',
+            top: 0,
+            left: 0,
+            width: '100%',
+            p: 2,
+            transform: listActive ? 'translateX(100%)' : 'translateX(0)',
+            opacity: listActive ? 0 : 1,
+            visibility: listActive ? 'hidden' : 'visible',
+            pointerEvents: listActive ? 'none' : 'auto',
+            transition: panelTransition(!listActive),
+          }}
+        >
+          {renderedPreviewDoc && (
+            <DocPreview kbId={kb?.id} doc={renderedPreviewDoc} onBack={() => setPreviewDoc(null)} />
+          )}
+        </Box>
+      </Box>
     </Box>
   );
 
@@ -604,6 +738,10 @@ const BrainPopover = React.memo(function BrainPopover({
     );
   }
 
+  // Emanate from the brain (SHU-817 item 3): Popover pins the Paper's
+  // transform-origin to the icon corner (anchor top-left / transform bottom-left),
+  // so a Grow scale+fade visibly springs out of the brain on open — with a slight
+  // back-out overshoot — and collapses back into it on close.
   return (
     <Popover
       open={open}
@@ -611,6 +749,14 @@ const BrainPopover = React.memo(function BrainPopover({
       onClose={handleClose}
       anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
       transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      TransitionComponent={Grow}
+      transitionDuration={{ appear: 260, enter: 260, exit: 150 }}
+      TransitionProps={{
+        easing: {
+          enter: 'cubic-bezier(0.34, 1.42, 0.5, 1)',
+          exit: 'cubic-bezier(0.4, 0, 1, 1)',
+        },
+      }}
     >
       {content}
     </Popover>
