@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -8,7 +8,6 @@ import {
   Collapse,
   Divider,
   FormControlLabel,
-  Grow,
   IconButton,
   List,
   ListItem,
@@ -19,6 +18,7 @@ import {
   SwipeableDrawer,
   Tooltip,
   Typography,
+  Zoom,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -279,19 +279,38 @@ const DocPreview = ({ kbId, doc, onBack }) => {
   const { data, isLoading, isError } = useQuery(
     ['personalKBDocPreview', kbId, doc.id],
     () => knowledgeBaseAPI.getDocumentPreview(kbId, doc.id, 2000).then(extractDataFromResponse),
-    { enabled: Boolean(kbId && doc?.id), staleTime: 30000 }
+    {
+      enabled: Boolean(kbId && doc?.id),
+      staleTime: 30000,
+      // While the document is still processing, poll so the panel fills in live
+      // (stage + extracted text + stats). Stops the moment it reaches a terminal
+      // state. For the non-profiling pipeline that's Ingesting → Ready.
+      refetchInterval: (latest) => {
+        const status = latest?.processing_info?.status || doc.processing_status;
+        return docStage({ processing_status: status }).kind === 'progress' ? 2500 : false;
+      },
+    }
   );
 
+  // Prefer the freshest values from the polled preview; fall back to the list row.
+  const info = data?.processing_info;
+  const stage = docStage({
+    processing_status: info?.status || doc.processing_status,
+    profiling_coverage_percent: doc.profiling_coverage_percent,
+  });
   const documentType = doc.document_type || data?.document_type;
   const synopsis = data?.synopsis;
   const previewText = data?.preview;
+  const wordCount = info?.word_count ?? doc.word_count;
+  const chunkCount = info?.chunk_count ?? doc.chunk_count;
+  const coveragePct = stage.step === 1 && typeof stage.coverage === 'number' ? ` ${Math.round(stage.coverage)}%` : '';
 
-  // Fixed back-header + a single bounded, scrolling body. The whole preview is
-  // capped to the viewport (min(70vh, …)) so a long synopsis/extracted text can
-  // never run off the bottom of the popover (SHU-817 item 1 — the prior layout
-  // had no outer height bound and clipped). The back control stays pinned.
+  // Fixed back-header + a single scrolling body. Fills 100% of the preview panel,
+  // which is sized to match the list (SHU-817 item 1), so a long synopsis/extracted
+  // text scrolls internally instead of growing the popover and running off the
+  // bottom. The back control stays pinned.
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', maxHeight: 'min(70vh, 560px)' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
         <IconButton size="small" onClick={onBack} aria-label="Back to documents">
           <ArrowBackIcon fontSize="small" />
@@ -300,18 +319,32 @@ const DocPreview = ({ kbId, doc, onBack }) => {
           {doc.title || 'Untitled'}
         </Typography>
       </Box>
-      <Stack spacing={1.5} sx={{ overflowY: 'auto', mt: 1, pr: 0.5 }}>
+      <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', mt: 1, pr: 0.5 }}>
+        {/* Live processing stage. Shown only while the doc is still working; once
+            Ready the chips + extracted text convey completion. Mirrors the list row. */}
+        {stage.kind === 'progress' && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <StageBar step={stage.step} />
+            <Typography variant="caption" color="text.secondary">
+              {stage.step === 0 ? 'Ingesting…' : `Profiling…${coveragePct}`}
+            </Typography>
+          </Box>
+        )}
+        {stage.kind === 'failed' && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <ErrorOutlineIcon sx={{ fontSize: 14, color: 'error.main' }} />
+            <Typography variant="caption" color="error.main">
+              Processing failed
+            </Typography>
+          </Box>
+        )}
         <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
           {documentType && <Chip size="small" label={documentType} />}
-          {typeof doc.word_count === 'number' && doc.word_count > 0 && (
-            <Chip size="small" variant="outlined" label={`${doc.word_count.toLocaleString()} words`} />
+          {typeof wordCount === 'number' && wordCount > 0 && (
+            <Chip size="small" variant="outlined" label={`${wordCount.toLocaleString()} words`} />
           )}
-          {typeof doc.chunk_count === 'number' && doc.chunk_count > 0 && (
-            <Chip
-              size="small"
-              variant="outlined"
-              label={`${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`}
-            />
+          {typeof chunkCount === 'number' && chunkCount > 0 && (
+            <Chip size="small" variant="outlined" label={`${chunkCount} chunk${chunkCount === 1 ? '' : 's'}`} />
           )}
           {typeof doc.profiling_coverage_percent === 'number' && (
             <Chip size="small" variant="outlined" label={`${Math.round(doc.profiling_coverage_percent)}% profiled`} />
@@ -327,6 +360,10 @@ const DocPreview = ({ kbId, doc, onBack }) => {
           </Typography>
         ) : (
           <>
+            {/* Profiling summary ("What's in here") renders only when a synopsis
+                exists. Profiling is off in the current shipping config, so nothing
+                shows here; the section returns automatically once profiling ships
+                and populates the synopsis — no further change needed. */}
             {synopsis && (
               <Box>
                 <Typography variant="caption" fontWeight={600} color="text.secondary">
@@ -340,7 +377,7 @@ const DocPreview = ({ kbId, doc, onBack }) => {
                 Extracted text
               </Typography>
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
-                {previewText || 'No extracted text yet.'}
+                {previewText || (stage.kind === 'progress' ? 'Still extracting…' : 'No extracted text.')}
               </Typography>
             </Box>
           </>
@@ -395,6 +432,27 @@ const BrainPopover = React.memo(function BrainPopover({
     setRenderedPreviewDoc(doc);
     setPreviewDoc(doc);
   }, []);
+
+  // MUI Popover fixes the Paper's position once (at open, against the list
+  // height) and never again except on window resize. Switching to the taller
+  // preview — or the async /preview fetch growing the panel after that single
+  // measurement — would otherwise leave the Paper anchored too low and spill off
+  // the bottom (only on the first open; later opens hit the query cache). Observe
+  // the content and re-run the Popover's own positioning on any size change.
+  const popoverActionRef = useRef(null);
+  const contentRef = useRef(null);
+  useEffect(() => {
+    if (!open || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const node = contentRef.current;
+    if (!node) {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => popoverActionRef.current?.updatePosition());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [open]);
 
   // Reset the preview sub-view when the popover closes so it reopens on the list.
   const handleClose = useCallback(() => {
@@ -676,15 +734,19 @@ const BrainPopover = React.memo(function BrainPopover({
       : 'transform 0.32s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, visibility 0s 0.32s';
   const listActive = !previewDoc;
   const content = (
-    <Box sx={{ width: { xs: '100%', sm: 360 }, overflow: 'hidden' }}>
+    <Box ref={contentRef} sx={{ width: { xs: '100%', sm: 360 }, overflow: 'hidden' }}>
       <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
       <Box sx={{ position: 'relative' }}>
+        {/* The list panel ALWAYS stays in normal flow — it alone defines the
+            popover's height (capped at min(70vh, 560px), scrolls internally). The
+            preview panel is absolutely overlaid and fills that exact box (inset
+            0), so switching views never changes the Paper size. That keeps MUI's
+            one-time open-measurement valid — no reposition, no first-click spill,
+            and the detail view is the same size as the list (it scrolls too). */}
         <Box
           aria-hidden={!listActive}
           sx={{
-            position: listActive ? 'relative' : 'absolute',
-            top: 0,
-            left: 0,
+            position: 'relative',
             width: '100%',
             p: 2,
             maxHeight: 'min(70vh, 560px)',
@@ -702,10 +764,11 @@ const BrainPopover = React.memo(function BrainPopover({
         <Box
           aria-hidden={listActive}
           sx={{
-            position: listActive ? 'absolute' : 'relative',
+            position: 'absolute',
             top: 0,
             left: 0,
-            width: '100%',
+            right: 0,
+            bottom: 0,
             p: 2,
             transform: listActive ? 'translateX(100%)' : 'translateX(0)',
             opacity: listActive ? 0 : 1,
@@ -739,21 +802,24 @@ const BrainPopover = React.memo(function BrainPopover({
   }
 
   // Emanate from the brain (SHU-817 item 3): Popover pins the Paper's
-  // transform-origin to the icon corner (anchor top-left / transform bottom-left),
-  // so a Grow scale+fade visibly springs out of the brain on open — with a slight
-  // back-out overshoot — and collapses back into it on close.
+  // transform-origin to the icon corner (anchor top-left / transform bottom-left).
+  // Zoom scales the panel from a point at that corner up to full size, so it
+  // visibly springs out of the brain — Grow's 0.75 start scale was too small to
+  // read. A back-out overshoot on the (longer) enter gives the spring; a quick
+  // ease-in collapse pulls it back into the brain on close.
   return (
     <Popover
       open={open}
+      action={popoverActionRef}
       anchorEl={anchorEl}
       onClose={handleClose}
       anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
       transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-      TransitionComponent={Grow}
-      transitionDuration={{ appear: 260, enter: 260, exit: 150 }}
+      TransitionComponent={Zoom}
+      transitionDuration={{ appear: 300, enter: 300, exit: 190 }}
       TransitionProps={{
         easing: {
-          enter: 'cubic-bezier(0.34, 1.42, 0.5, 1)',
+          enter: 'cubic-bezier(0.34, 1.4, 0.6, 1)',
           exit: 'cubic-bezier(0.4, 0, 1, 1)',
         },
       }}
