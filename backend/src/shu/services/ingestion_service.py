@@ -533,6 +533,7 @@ async def ingest_document(  # noqa: PLR0915
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
 
+    was_created = False
     if existing is None:
         # New document - create it with PENDING status
         doc_create = DocumentCreate(
@@ -548,17 +549,24 @@ async def ingest_document(  # noqa: PLR0915
             source_hash=source_hash,
             source_modified_at=source_modified_at,
         )
-        created = await svc.create_document(doc_create)
+        created_resp, was_created = await svc.create_or_get_document(doc_create)
         from sqlalchemy import select
 
-        res = await db.execute(select(Document).where(Document.id == created.id))
-        document = res.scalar_one()
-        # Set status to PENDING atomically with creation
+        res = await db.execute(select(Document).where(Document.id == created_resp.id))
+        # If a concurrent same-source upload won the insert race, create_or_get
+        # returned ITS row (was_created False). Fall through to the update branch
+        # so our metadata + bytes are applied in place rather than silently dropped
+        # (SHU-817 concurrent same-name), and the count isn't double-incremented.
+        existing = res.scalar_one()
+
+    document = existing
+    if was_created:
+        # Freshly created - flip to PENDING atomically with creation.
         document.update_status(DocumentStatus.PENDING)
         await db.commit()
     else:
-        # Existing document - update for re-ingestion with PENDING status
-        document = existing
+        # Existing document (normal re-ingestion OR a concurrent insert-race loser)
+        # - update for re-ingestion with PENDING status.
         document.title = title
         document.file_type = file_type
         document.source_type = source_type
@@ -651,7 +659,11 @@ async def ingest_document(  # noqa: PLR0915
         "document_id": document.id,
         "status": DocumentStatus.PENDING.value,
         "skipped": False,
-        "created": existing is None,
+        # Derive from create_or_get_document's real outcome, not the entry-time
+        # `existing` snapshot — under a concurrent same-source race the row may have
+        # been created by another request, so reporting created here would
+        # double-count document_count (SHU-817).
+        "created": was_created,
     }
 
 

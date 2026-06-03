@@ -76,6 +76,9 @@ class TestAPIImmediateReturnProperty:
         mock_doc_service = MagicMock()
         mock_doc_service.get_document_by_source_id = AsyncMock(return_value=None)
         mock_doc_service.create_document = AsyncMock(return_value=mock_document)
+        # ingest_document's manual-upload path now uses create_or_get_document, which
+        # returns (document, created) — created=True for a fresh insert.
+        mock_doc_service.create_or_get_document = AsyncMock(return_value=(mock_document, True))
 
         # Create mock cache backend
         mock_cache = AsyncMock()

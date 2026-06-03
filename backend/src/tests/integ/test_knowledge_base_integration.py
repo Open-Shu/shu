@@ -5,9 +5,12 @@ These tests cover knowledge base CRUD operations, document management,
 and the complete knowledge base lifecycle.
 """
 
+import asyncio
+import hashlib
 import sys
 import uuid
 from collections.abc import Callable
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import text
 
@@ -18,6 +21,8 @@ from integ.expected_error_context import (
 from integ.helpers.auth import create_active_user_headers, create_active_user_with_id
 from integ.response_utils import extract_data
 from shu.core.logging import get_logger
+from shu.services.document_service import DocumentService
+from shu.services.ingestion_service import manual_upload_source_id
 
 logger = get_logger(__name__)
 
@@ -613,6 +618,88 @@ async def test_reingest_from_content_requeues_embedding(client, db, auth_headers
     logger.info("Test passed: reingest from stored content re-queued the embed pipeline")
 
 
+async def test_concurrent_same_name_upload_counts_once(client, db, auth_headers):
+    """SHU-817: two concurrent same-name uploads leave exactly ONE document and bump
+    the KB's denormalized document_count by 1, not 2.
+
+    Patching get_document_by_source_id to None drives both requests past the
+    'still processing' / existing pre-checks into create_or_get_document, so the
+    unique constraint + idempotent return resolve the race. The loser must report
+    created=False so adjust_document_stats isn't bumped twice (Claim 2).
+    """
+    logger.info("=== EXPECTED TEST OUTPUT: an IntegrityError may be logged when the losing insert races ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Concurrent Upload {uuid.uuid4().hex[:8]}")
+
+    await db.rollback()
+    base = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+
+    with (
+        patch.object(DocumentService, "get_document_by_source_id", AsyncMock(return_value=None)),
+        expect_duplicate_errors(),
+    ):
+        r1, r2 = await asyncio.gather(
+            _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT),
+            _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT),
+        )
+    assert r1.status_code == 200 and r2.status_code == 200, (r1.text, r2.text)
+
+    sid = manual_upload_source_id(_TXT[0])
+    await db.rollback()
+    rows = (
+        await db.execute(
+            text("SELECT count(*) FROM documents WHERE knowledge_base_id = :kb AND source_id = :sid"),
+            {"kb": kb_id, "sid": sid},
+        )
+    ).scalar_one()
+    assert rows == 1, f"concurrent same-name uploads must leave exactly one row, got {rows}"
+
+    count = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+    assert count == base + 1, f"document_count must increment by 1, not {count - base} (Claim 2 over-count)"
+    logger.info("=== EXPECTED TEST OUTPUT: concurrent same-name upload counted exactly once ===")
+
+
+async def test_concurrent_loser_different_bytes_not_dropped(client, db, auth_headers):
+    """SHU-817: a same-name upload that loses the insert race (create_or_get returns the
+    existing row) must apply ITS bytes via the update path — not be silently dropped
+    behind 'Already added' (Claim 1) — and must not double-count (Claim 2).
+
+    Seeding the row then patching get_document_by_source_id to None deterministically
+    drives the second upload into the create_or_get idempotent-return (loser) branch.
+    """
+    kb_id = await _kb_create(client, auth_headers, f"Test Concurrent Diff {uuid.uuid4().hex[:8]}")
+    winner = ("dup.txt", b"winner-bytes-original", "text/plain")
+    loser = ("dup.txt", b"loser-bytes-CHANGED-and-longer", "text/plain")
+
+    up = await _kb_upload(client, auth_headers, kb_id, file_tuple=winner)
+    assert up.status_code == 200, up.text
+
+    await db.rollback()
+    base = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+
+    # Force the loser past the route + ingest entry checks into create_or_get_document,
+    # which finds the seeded row by the dedup key and returns (existing, created=False).
+    with patch.object(DocumentService, "get_document_by_source_id", AsyncMock(return_value=None)):
+        up2 = await _kb_upload(client, auth_headers, kb_id, file_tuple=loser)
+    assert up2.status_code == 200, up2.text
+    res2 = extract_data(up2)["results"][0]
+    assert res2["action"] == "updated", f"race-loser with different bytes must update, not '{res2.get('action')}': {res2}"
+
+    sid = manual_upload_source_id("dup.txt")
+    await db.rollback()
+    row = (
+        await db.execute(
+            text("SELECT count(*), max(source_hash) FROM documents WHERE knowledge_base_id = :kb AND source_id = :sid"),
+            {"kb": kb_id, "sid": sid},
+        )
+    ).first()
+    assert row[0] == 1, f"still exactly one row, got {row[0]}"
+    assert row[1] == hashlib.sha256(loser[1]).hexdigest(), "the loser's bytes must be applied, not dropped"
+
+    count = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+    assert count == base, f"an idempotent-return update must not increment document_count (was +{count - base})"
+    logger.info("Test passed: concurrent-loser different-bytes upload applied in place, not dropped or double-counted")
+
+
 class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for knowledge base functionality."""
 
@@ -642,6 +729,8 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_reingest_from_content_requeues_embedding,
             test_get_personal_knowledge_base_returns_null_then_kb,
             test_document_preview_exposes_synopsis_and_type,
+            test_concurrent_same_name_upload_counts_once,
+            test_concurrent_loser_different_bytes_not_dropped,
         ]
 
     def get_suite_name(self) -> str:

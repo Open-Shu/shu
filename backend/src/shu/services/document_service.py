@@ -5,6 +5,7 @@ including CRUD operations, processing, and multi-source support.
 """
 
 from sqlalchemy import and_, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..billing.enforcement import assert_document_count_under_limit
@@ -34,7 +35,30 @@ class DocumentService:
         self.db = db
 
     async def create_document(self, doc_data: DocumentCreate) -> DocumentResponse:
-        """Create a new document."""
+        """Create a document, idempotently returning the existing row on a
+        (kb, source_type, source_id) collision.
+
+        Callers that need to know whether a NEW row was actually inserted (vs an
+        existing one returned) must use :meth:`create_or_get_document` — inferring
+        it from a separate pre-check is racy under concurrent same-source uploads.
+        """
+        document, _created = await self.create_or_get_document(doc_data)
+        return document
+
+    async def create_or_get_document(self, doc_data: DocumentCreate) -> tuple[DocumentResponse, bool]:
+        """Create a document, or idempotently return the existing one on a
+        (kb, source_type, source_id) collision.
+
+        Returns ``(document, created)`` where ``created`` is True only when a new
+        row was actually inserted. The unique constraint
+        ``uq_documents_kb_source_sourceid`` is handled two ways: a row already
+        visible to our SELECT returns ``(existing, False)`` directly; a row that a
+        concurrent request commits in the gap between our SELECT and INSERT raises
+        IntegrityError, which we catch, roll back, re-resolve, and likewise return
+        ``(existing, False)``. Either way the caller gets the truth about whether
+        it created the row, so it never double-counts an already-existing document
+        (SHU-817 concurrent same-name).
+        """
         logger.debug(
             "Creating document",
             extra={
@@ -49,22 +73,8 @@ class DocumentService:
 
         await KnowledgeBaseVerifier.verify_exists(self.db, doc_data.knowledge_base_id)
 
-        # Legacy SourceType validation removed; source_type is now a free-form string tied to plugin or system-defined source families.
-
-        # Check if document already exists
-        existing_result = await self.db.execute(
-            select(Document).where(
-                and_(
-                    Document.knowledge_base_id == doc_data.knowledge_base_id,
-                    Document.source_type == doc_data.source_type,
-                    Document.source_id == doc_data.source_id,
-                )
-            )
-        )
-        existing = existing_result.scalar_one_or_none()
-
-        if existing:
-            # Return existing document instead of failing - makes operation idempotent
+        existing = await self._get_by_dedup_key(doc_data)
+        if existing is not None:
             logger.warning(
                 "Document already exists, returning existing",
                 extra={
@@ -74,14 +84,32 @@ class DocumentService:
                     "source_type": doc_data.source_type,
                 },
             )
-            return DocumentResponse.from_orm(existing)
+            return DocumentResponse.from_orm(existing), False
 
         await self._assert_room_for_new_document()
 
-        # Create document
+        # Create document. The pre-check above is not atomic with the insert, so a
+        # concurrent request can win the unique constraint between them — treat that
+        # IntegrityError as the same "already exists" outcome rather than failing.
         document = Document(**doc_data.dict())
         self.db.add(document)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            raced = await self._get_by_dedup_key(doc_data)
+            if raced is not None:
+                logger.info(
+                    "Concurrent insert won the unique race; returning existing document",
+                    extra={
+                        "doc_id": raced.id,
+                        "source_id": doc_data.source_id,
+                        "kb_id": doc_data.knowledge_base_id,
+                        "source_type": doc_data.source_type,
+                    },
+                )
+                return DocumentResponse.from_orm(raced), False
+            raise  # not the dedup collision we expected — surface it
         await self.db.refresh(document)
 
         logger.debug(
@@ -94,7 +122,20 @@ class DocumentService:
             },
         )
 
-        return DocumentResponse.from_orm(document)
+        return DocumentResponse.from_orm(document), True
+
+    async def _get_by_dedup_key(self, doc_data: DocumentCreate) -> Document | None:
+        """Look up a document by the unique dedup key (kb, source_type, source_id)."""
+        result = await self.db.execute(
+            select(Document).where(
+                and_(
+                    Document.knowledge_base_id == doc_data.knowledge_base_id,
+                    Document.source_type == doc_data.source_type,
+                    Document.source_id == doc_data.source_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def _assert_room_for_new_document(self) -> None:
         """Block when the tenant is already at its document cap.

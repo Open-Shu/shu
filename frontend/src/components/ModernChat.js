@@ -134,6 +134,11 @@ const ModernChat = () => {
     summary_search_min_token_length: DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
     summary_search_max_tokens: DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
   });
+  // True once the user-preferences query has settled (success or error). The
+  // auto-attach effect must wait for this: userPreferences defaults to
+  // auto-attach ON, so acting before the real value arrives would briefly attach
+  // the Personal KB for a user who saved OFF (Codex review fix).
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
 
   // Side-caller state used to gate automation and show header warnings
   const [isSideCallConfigured, setIsSideCallConfigured] = useState(true);
@@ -231,7 +236,11 @@ const ModernChat = () => {
   // on re-attaches it. ensureKBAttached/removeKB are idempotent (dedupe by id).
   const autoAttachPersonalKB = userPreferences.auto_attach_personal_kb !== false;
   useEffect(() => {
-    if (!personalKB) {
+    // Wait until the preference has actually loaded — personalKB can resolve from
+    // cache before the prefs query does, and acting on the optimistic default
+    // would attach the PK for a user who saved auto-attach OFF (and send it in
+    // knowledge_base_ids if they submit during that window).
+    if (!preferencesLoaded || !personalKB) {
       return;
     }
     if (autoAttachPersonalKB) {
@@ -239,7 +248,7 @@ const ModernChat = () => {
     } else {
       removeKB(personalKB.id);
     }
-  }, [personalKB, autoAttachPersonalKB, selectedConversation?.id, ensureKBAttached, removeKB]);
+  }, [preferencesLoaded, personalKB, autoAttachPersonalKB, selectedConversation?.id, ensureKBAttached, removeKB]);
 
   // Optimistically flip the auto-attach preference (popover + Settings share it).
   // PATCH so other prefs aren't clobbered; roll the local state back on failure (M4).
@@ -408,10 +417,13 @@ const ModernChat = () => {
           summary_search_max_tokens: preferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
         }));
       }
+      // The real preference is now applied — let the auto-attach effect act.
+      setPreferencesLoaded(true);
     },
     onError: (err) => {
       log.warn('Failed to load user preferences:', formatError(err).message);
-      // Don't show error to user for preferences - use defaults
+      // Don't show error to user for preferences - use defaults (auto-attach ON).
+      setPreferencesLoaded(true);
     },
   });
 
