@@ -13,11 +13,16 @@
 // Mirrors backend DocumentStatus enum (backend/src/shu/models/document.py).
 export const TERMINAL_SUCCESS_STATUSES = new Set(['content_processed', 'rag_processed', 'profile_processed']);
 
-// The pre-ready pipeline, in order, for the 3-segment StageBar fill: the journey
-// to "searchable" (content_processed = Ready). Profiling is deliberately NOT here
-// — it runs AFTER Ready and surfaces via the additive 'enhancing' state, so the
-// bar only ever advances toward usable and never regresses once Ready.
-const PROGRESS_STEP = { pending: 0, extracting: 1, embedding: 2 };
+// The pre-ready pipeline, in order, for the 3-segment StageBar fill + its label:
+// the journey to "searchable" (content_processed = Ready). Profiling is
+// deliberately NOT here — it runs AFTER Ready and surfaces via the additive
+// 'enhancing' state, so the bar only ever advances toward usable and never
+// regresses once Ready. step drives the bar; label drives the row/preview text.
+const PROGRESS_STAGE = {
+  pending: { step: 0, label: 'Queued…' },
+  extracting: { step: 1, label: 'Extracting text…' },
+  embedding: { step: 2, label: 'Indexing…' },
+};
 
 export const docStage = (doc) => {
   const status = doc?.processing_status || 'pending';
@@ -30,6 +35,7 @@ export const docStage = (doc) => {
   if (status === 'profiling' || status === 'artifact_embedding') {
     return { kind: 'enhancing', coverage: doc?.profiling_coverage_percent };
   }
-  // Unknown / future pre-ready statuses fall back to the first segment.
-  return { kind: 'progress', step: PROGRESS_STEP[status] ?? 0 };
+  // Unknown / future pre-ready statuses fall back to the first segment + the
+  // generic umbrella label.
+  return { kind: 'progress', ...(PROGRESS_STAGE[status] ?? { step: 0, label: 'Ingesting…' }) };
 };

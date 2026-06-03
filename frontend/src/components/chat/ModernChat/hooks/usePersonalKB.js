@@ -14,7 +14,12 @@ const personalDocsKey = (kbId) => ['personalKBDocuments', kbId];
 const PICKER_KEY = ['knowledge-bases-for-chat'];
 
 const DOC_PAGE_LIMIT = 50;
-const POLL_INTERVAL_MS = 4000;
+// Poll fast enough while a doc is non-terminal to actually catch the short-lived
+// pipeline stages (pending → extracting → embedding) so the stage bar/label
+// advance visibly rather than jumping; the poll self-stops once all docs are
+// terminal (refetchInterval returns false), so the faster cadence costs nothing
+// at rest.
+const POLL_INTERVAL_MS = 1500;
 const STALE_MS = 10000;
 
 // A document hasn't reached a terminal pipeline status yet. Drives the

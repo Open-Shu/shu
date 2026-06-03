@@ -151,7 +151,7 @@ const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
         <StageBar step={stage.step} />
         <Typography variant="caption" color="text.secondary">
-          Ingesting…
+          {stage.label}
         </Typography>
       </Box>
     );
@@ -348,7 +348,7 @@ const DocPreview = ({ kbId, doc, active, onBack }) => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <StageBar step={stage.step} />
             <Typography variant="caption" color="text.secondary">
-              Ingesting…
+              {stage.label}
             </Typography>
           </Box>
         )}

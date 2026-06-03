@@ -5,15 +5,21 @@ import { docStage } from '../docStage';
 // nuance (profiling-disabled docs); these cases catch a mis-mapping that the
 // component/integration tests wouldn't isolate.
 describe('docStage', () => {
-  it('advances the Ingesting bar through pending(0) / extracting(1) / embedding(2)', () => {
-    expect(docStage({ processing_status: 'pending' })).toEqual({ kind: 'progress', step: 0 });
-    expect(docStage({ processing_status: 'extracting' })).toEqual({ kind: 'progress', step: 1 });
-    expect(docStage({ processing_status: 'embedding' })).toEqual({ kind: 'progress', step: 2 });
+  it('advances the bar + label through pending / extracting / embedding', () => {
+    expect(docStage({ processing_status: 'pending' })).toEqual({ kind: 'progress', step: 0, label: 'Queued…' });
+    expect(docStage({ processing_status: 'extracting' })).toEqual({
+      kind: 'progress',
+      step: 1,
+      label: 'Extracting text…',
+    });
+    expect(docStage({ processing_status: 'embedding' })).toEqual({ kind: 'progress', step: 2, label: 'Indexing…' });
   });
 
-  it('falls back to the first Ingesting step for unknown / empty statuses', () => {
-    [undefined, 'something_new'].forEach((status) => {
-      expect(docStage({ processing_status: status })).toEqual({ kind: 'progress', step: 0 });
+  it('falls back to the generic Ingesting label for a truthy unknown / future status', () => {
+    expect(docStage({ processing_status: 'something_new' })).toEqual({
+      kind: 'progress',
+      step: 0,
+      label: 'Ingesting…',
     });
   });
 
@@ -40,8 +46,10 @@ describe('docStage', () => {
     expect(docStage({ processing_status: 'error' })).toEqual({ kind: 'failed' });
   });
 
-  it('defaults a null/empty document to Ingesting', () => {
-    expect(docStage(null)).toEqual({ kind: 'progress', step: 0 });
-    expect(docStage({})).toEqual({ kind: 'progress', step: 0 });
+  it('defaults a null/empty/absent-status document to the first stage (Queued)', () => {
+    // doc?.processing_status || 'pending' means missing/empty resolves to pending.
+    expect(docStage(null)).toEqual({ kind: 'progress', step: 0, label: 'Queued…' });
+    expect(docStage({})).toEqual({ kind: 'progress', step: 0, label: 'Queued…' });
+    expect(docStage({ processing_status: undefined })).toEqual({ kind: 'progress', step: 0, label: 'Queued…' });
   });
 });
