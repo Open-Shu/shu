@@ -715,6 +715,9 @@ async def get_document_preview(
                     "word_count": document.word_count,
                     "character_count": document.character_count,
                     "chunk_count": document.chunk_count,
+                    # F2: coverage is a named key-stat for the preview slide-over and lets
+                    # the in-panel Profiling stage advance its % alongside the live status.
+                    "profiling_coverage_percent": document.profiling_coverage_percent,
                 },
             }
         )

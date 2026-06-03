@@ -460,6 +460,131 @@ async def test_document_preview_exposes_synopsis_and_type(client, db, auth_heade
     logger.info("Test passed: /preview exposes synopsis + document_type")
 
 
+_TXT2 = ("kbnotes2.txt", b"Second personal-knowledge management test doc.\n", "text/plain")
+
+
+async def test_kb_delete_pbac_grant_matrix(client, db, auth_headers):
+    """SHU-817 Risk 7: an explicit kb.delete grant lets a non-owner delete; kb.write alone does NOT."""
+    from shu.services.policy_engine import POLICY_CACHE
+
+    logger.info("=== EXPECTED TEST OUTPUT: a 404 is expected when a kb.write-only user (no kb.delete) deletes ===")
+    # Admin creates a KB with two distinct docs; look up the slug (the PBAC resource).
+    kb_id = await _kb_create(client, auth_headers, f"Test PBAC Delete KB {uuid.uuid4().hex[:8]}")
+    up1 = await _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT)
+    up2 = await _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT2)
+    assert up1.status_code == 200 and up2.status_code == 200, (up1.text, up2.text)
+    doc1 = extract_data(up1)["results"][0]["document_id"]
+    doc2 = extract_data(up2)["results"][0]["document_id"]
+
+    await db.rollback()
+    slug = (await db.execute(text("SELECT slug FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+
+    # One user, two grant phases (avoids consuming two billing seats): we add
+    # kb.write first (delete denied), then add kb.delete (delete allowed).
+    headers, user_id = await create_active_user_with_id(client, auth_headers, role="regular_user")
+
+    async def _grant(actions):
+        resp = await client.post(
+            "/api/v1/policies",
+            json={
+                "name": f"Test grant {'-'.join(a.replace('.', '') for a in actions)} {uuid.uuid4().hex[:8]}",
+                "effect": "allow",
+                "bindings": [{"actor_type": "user", "actor_id": user_id}],
+                "statements": [{"actions": actions, "resources": [f"kb:{slug}"]}],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        POLICY_CACHE.invalidate()  # mirror the framework's own cache reset so the grant takes effect
+
+    # (1) kb.write ONLY (+read) must NOT grant delete → 404; the doc survives.
+    await _grant(["kb.read", "kb.write"])
+    d_denied = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc2}", headers=headers)
+    assert d_denied.status_code == 404, f"kb.write-only must NOT grant delete (404): {d_denied.status_code} {d_denied.text}"
+    assert await _kb_doc_total(client, auth_headers, kb_id) == 2, "doc must survive the denied delete"
+    logger.info("=== EXPECTED TEST OUTPUT: kb.write-only delete correctly denied with 404 ===")
+
+    # (2) Adding an explicit kb.delete grant to the same user → delete now succeeds (204).
+    await _grant(["kb.delete"])
+    d_ok = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc1}", headers=headers)
+    assert d_ok.status_code == 204, f"kb.delete grantee should delete (204): {d_ok.status_code} {d_ok.text}"
+
+
+async def test_delete_while_indexing_leaves_no_orphans(client, db, auth_headers):
+    """SHU-817 Risk 2 / Scenario B: deleting a non-terminal doc is allowed and leaves no orphan chunks."""
+    kb_id = await _kb_create(client, auth_headers, f"Test DeleteMidPipeline KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    # Force a clearly non-terminal (mid-pipeline) status, independent of any worker.
+    await db.execute(text("UPDATE documents SET processing_status='embedding' WHERE id = :id"), {"id": doc_id})
+    await db.commit()
+
+    # Delete is allowed anytime (Decision 14) — the non-terminal state must not block it.
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}", headers=auth_headers)
+    assert d.status_code == 204, f"delete of a mid-pipeline doc should succeed (204): {d.status_code} {d.text}"
+
+    # The doc and any chunks it owned are gone — no orphans (documents→chunks ON DELETE CASCADE).
+    await db.rollback()
+    doc_row = (await db.execute(text("SELECT id FROM documents WHERE id = :id"), {"id": doc_id})).scalar_one_or_none()
+    assert doc_row is None, "document row must be deleted"
+    orphans = (
+        await db.execute(text("SELECT count(*) FROM document_chunks WHERE document_id = :id"), {"id": doc_id})
+    ).scalar_one()
+    assert orphans == 0, f"no orphan chunks should remain, found {orphans}"
+    logger.info("Test passed: deleting a mid-pipeline doc is allowed and leaves no orphan chunks")
+
+
+async def test_reingest_no_content_returns_422(client, db, auth_headers):
+    """SHU-817 R3: re-ingesting a doc with no extracted content asks for a re-upload (422)."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 422 REINGEST_REQUIRES_REUPLOAD is expected for an empty-content doc ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest NoContent KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    await db.execute(
+        text("UPDATE documents SET processing_status='error', content='' WHERE id = :id"), {"id": doc_id}
+    )
+    await db.commit()
+
+    r = await client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest", headers=auth_headers)
+    assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text}"
+    assert r.json().get("error", {}).get("code") == "REINGEST_REQUIRES_REUPLOAD", r.text
+    logger.info("=== EXPECTED TEST OUTPUT: reingest of empty-content doc correctly returned 422 ===")
+
+
+async def test_reingest_from_content_requeues_embedding(client, db, auth_headers):
+    """SHU-817 R3: a failed doc that still has stored content re-runs the embed pipeline (no re-upload)."""
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest FromContent KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    # Errored doc that retains extracted content → re-ingestable from stored content.
+    await db.execute(
+        text(
+            "UPDATE documents SET processing_status='error', processing_error='boom', "
+            "content='Some extracted content.' WHERE id = :id"
+        ),
+        {"id": doc_id},
+    )
+    await db.commit()
+
+    r = await client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest", headers=auth_headers)
+    assert r.status_code in (200, 201, 202), f"reingest from content should succeed: {r.status_code} {r.text}"
+
+    # The doc was reset out of the error state and re-queued (workers-off leaves it at
+    # 'embedding'; workers-on may advance it) — either way it left 'error' and cleared the error.
+    await db.rollback()
+    row = (
+        await db.execute(
+            text("SELECT processing_status, processing_error FROM documents WHERE id = :id"), {"id": doc_id}
+        )
+    ).first()
+    assert row is not None and row[0] != "error", f"reingest should reset the doc out of error, got {row}"
+    assert row[1] is None, "reingest should clear processing_error"
+    logger.info("Test passed: reingest from stored content re-queued the embed pipeline")
+
+
 class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for knowledge base functionality."""
 
@@ -481,8 +606,12 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_personal_kb_delete_denied_for_owner,
             test_personal_kb_deletable_by_admin,
             test_deleting_user_cascades_personal_kb,
+            test_kb_delete_pbac_grant_matrix,
+            test_delete_while_indexing_leaves_no_orphans,
             test_reingest_missing_document_returns_404,
             test_reingest_busy_document_returns_409,
+            test_reingest_no_content_returns_422,
+            test_reingest_from_content_requeues_embedding,
             test_get_personal_knowledge_base_returns_null_then_kb,
             test_document_preview_exposes_synopsis_and_type,
         ]

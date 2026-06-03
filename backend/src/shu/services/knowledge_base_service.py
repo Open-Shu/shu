@@ -1079,8 +1079,13 @@ class KnowledgeBaseService:
         from ..core.workload_routing import WorkloadType, enqueue_job
         from ..models.document import DocumentStatus
 
+        # Lock the row so concurrent re-ingests (or a re-ingest racing a draining
+        # embed job) serialize: the first claims it and flips it to EMBEDDING
+        # (committed below, releasing the lock); a second then reads the non-terminal
+        # status and hits the 409 busy guard instead of both enqueuing overlapping
+        # embed jobs into the not-concurrency-safe process_and_update_chunks.
         result = await self.db.execute(
-            select(Document).where(Document.knowledge_base_id == kb_id, Document.id == document_id)
+            select(Document).where(Document.knowledge_base_id == kb_id, Document.id == document_id).with_for_update()
         )
         document = result.scalar_one_or_none()
         if document is None:
