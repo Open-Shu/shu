@@ -65,6 +65,7 @@ const InputBar = React.memo(function InputBar({
   personalKBDocs = [],
   personalKBDocsLoading = false,
   personalKBDocsFetching = false,
+  personalKBDocsError = false,
   personalKBIndexing = false,
   personalKBHasMoreDocs = false,
   onFetchMorePersonalKBDocs,
@@ -535,6 +536,7 @@ const InputBar = React.memo(function InputBar({
         docs={personalKBDocs}
         docsLoading={personalKBDocsLoading}
         docsFetching={personalKBDocsFetching}
+        docsError={personalKBDocsError}
         hasMoreDocs={personalKBHasMoreDocs}
         fetchMoreDocs={onFetchMorePersonalKBDocs}
         fetchingMoreDocs={personalKBFetchingMoreDocs}

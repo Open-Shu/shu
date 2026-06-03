@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from 'react-query';
 import { extractDataFromResponse, knowledgeBaseAPI } from '../../../../services/api';
 import { useAuth } from '../../../../hooks/useAuth';
 import { log } from '../../../../utils/log';
+import { docStage, TERMINAL_SUCCESS_STATUSES } from '../utils/docStage';
 
 // React Query keys (react-query v3 — positional API). Documents are parameterized
 // by KB id so switching/clearing the personal KB re-keys cleanly.
@@ -16,9 +17,11 @@ const DOC_PAGE_LIMIT = 50;
 const POLL_INTERVAL_MS = 4000;
 const STALE_MS = 10000;
 
-// A document is still being processed (any non-terminal pipeline status). Drives
-// the brain "indexing" signal and the self-stopping doc-list refetch (SHU-817 R7).
-const TERMINAL_SUCCESS_STATUSES = new Set(['content_processed', 'rag_processed', 'profile_processed']);
+// A document hasn't reached a terminal pipeline status yet. Drives the
+// self-stopping doc-list refetch (SHU-817 R7) — it stays true through the
+// post-Ready 'enhancing'/profiling phase so the panel keeps polling until
+// profiling finishes. TERMINAL_SUCCESS_STATUSES is the single source of truth,
+// shared with docStage so the stage label and the poll-stop can't diverge.
 const TERMINAL_FAILURE_STATUSES = new Set(['error']);
 const isDocNonTerminal = (doc) => {
   const status = doc?.processing_status || 'pending';
@@ -98,7 +101,10 @@ const usePersonalKB = () => {
   );
 
   const docs = useMemo(() => flattenPages(docsQuery.data), [docsQuery.data]);
-  const indexing = useMemo(() => docs.some(isDocNonTerminal), [docs]);
+  // The brain "indexing" spinner reflects work BEFORE a doc is usable (Ingesting).
+  // Profiling is post-Ready ('enhancing'), so it must NOT pull the badge back to
+  // indexing — the doc is already searchable (Decision 17 / sticky-Ready).
+  const indexing = useMemo(() => docs.some((doc) => docStage(doc).kind === 'progress'), [docs]);
 
   const invalidatePersonalKB = useCallback(() => {
     queryClient.invalidateQueries(PERSONAL_KB_KEY);
@@ -301,6 +307,7 @@ const usePersonalKB = () => {
     docs,
     docsLoading: docsQuery.isLoading,
     docsFetching: docsQuery.isFetching,
+    docsError: docsQuery.isError,
     indexing,
     hasMoreDocs: !!docsQuery.hasNextPage,
     fetchMoreDocs: docsQuery.fetchNextPage,

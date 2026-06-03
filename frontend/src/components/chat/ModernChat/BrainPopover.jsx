@@ -118,6 +118,21 @@ const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
         </Typography>
       </Box>
     );
+  } else if (stage.kind === 'enhancing') {
+    // Profiling runs after the doc is already searchable, so it reads as Ready
+    // with a quiet, non-blocking "Enhancing" note — never a regression off Ready.
+    const coveragePct = typeof stage.coverage === 'number' ? ` ${Math.round(stage.coverage)}%` : '';
+    secondary = (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} />
+        <Typography variant="caption" sx={{ color: 'success.main' }}>
+          Ready
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          · Enhancing…{coveragePct}
+        </Typography>
+      </Box>
+    );
   } else if (stage.kind === 'failed') {
     secondary = (
       <Box>
@@ -132,12 +147,11 @@ const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
       </Box>
     );
   } else {
-    const coveragePct = stage.step === 1 && typeof stage.coverage === 'number' ? ` ${Math.round(stage.coverage)}%` : '';
     secondary = (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
         <StageBar step={stage.step} />
         <Typography variant="caption" color="text.secondary">
-          {stage.step === 0 ? 'Ingesting…' : `Profiling…${coveragePct}`}
+          Ingesting…
         </Typography>
       </Box>
     );
@@ -275,19 +289,26 @@ const DocRow = ({ doc, onDeleteDoc, onReingestDoc, onOpenPreview }) => {
  * document type, key stats, and an extracted-text snippet. One GET /preview call
  * supplies the synopsis + extracted text; the rest comes from the list item.
  */
-const DocPreview = ({ kbId, doc, onBack }) => {
+const DocPreview = ({ kbId, doc, active, onBack }) => {
   const { data, isLoading, isError } = useQuery(
     ['personalKBDocPreview', kbId, doc.id],
     () => knowledgeBaseAPI.getDocumentPreview(kbId, doc.id, 2000).then(extractDataFromResponse),
     {
-      enabled: Boolean(kbId && doc?.id),
+      // Gate on `active`: the panel stays mounted (translated off-screen) after
+      // "back" so it can slide out, but a disabled query stops the refetchInterval
+      // from polling /preview in the background for a still-processing doc. Cached
+      // data keeps rendering during the slide-out.
+      enabled: active && Boolean(kbId && doc?.id),
       staleTime: 30000,
       // While the document is still processing, poll so the panel fills in live
       // (stage + extracted text + stats). Stops the moment it reaches a terminal
       // state. For the non-profiling pipeline that's Ingesting → Ready.
       refetchInterval: (latest) => {
         const status = latest?.processing_info?.status || doc.processing_status;
-        return docStage({ processing_status: status }).kind === 'progress' ? 2500 : false;
+        // Keep polling through 'enhancing' (profiling) too, so the synopsis +
+        // coverage fill in live; stop once terminal.
+        const { kind } = docStage({ processing_status: status });
+        return kind === 'progress' || kind === 'enhancing' ? 2500 : false;
       },
     }
   );
@@ -296,14 +317,15 @@ const DocPreview = ({ kbId, doc, onBack }) => {
   const info = data?.processing_info;
   const stage = docStage({
     processing_status: info?.status || doc.processing_status,
-    profiling_coverage_percent: doc.profiling_coverage_percent,
+    profiling_coverage_percent: info?.profiling_coverage_percent ?? doc.profiling_coverage_percent,
   });
   const documentType = doc.document_type || data?.document_type;
   const synopsis = data?.synopsis;
   const previewText = data?.preview;
   const wordCount = info?.word_count ?? doc.word_count;
   const chunkCount = info?.chunk_count ?? doc.chunk_count;
-  const coveragePct = stage.step === 1 && typeof stage.coverage === 'number' ? ` ${Math.round(stage.coverage)}%` : '';
+  const coveragePct =
+    stage.kind === 'enhancing' && typeof stage.coverage === 'number' ? ` ${Math.round(stage.coverage)}%` : '';
 
   // Fixed back-header + a single scrolling body. Fills 100% of the preview panel,
   // which is sized to match the list (SHU-817 item 1), so a long synopsis/extracted
@@ -326,7 +348,18 @@ const DocPreview = ({ kbId, doc, onBack }) => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <StageBar step={stage.step} />
             <Typography variant="caption" color="text.secondary">
-              {stage.step === 0 ? 'Ingesting…' : `Profiling…${coveragePct}`}
+              Ingesting…
+            </Typography>
+          </Box>
+        )}
+        {stage.kind === 'enhancing' && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} />
+            <Typography variant="caption" sx={{ color: 'success.main' }}>
+              Ready
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              · Enhancing…{coveragePct}
             </Typography>
           </Box>
         )}
@@ -410,6 +443,7 @@ const BrainPopover = React.memo(function BrainPopover({
   docs = [],
   docsLoading = false,
   docsFetching = false,
+  docsError = false,
   hasMoreDocs = false,
   fetchMoreDocs,
   fetchingMoreDocs = false,
@@ -651,6 +685,19 @@ const BrainPopover = React.memo(function BrainPopover({
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
           <CircularProgress size={20} />
         </Box>
+      ) : docsError && docs.length === 0 ? (
+        <Alert
+          severity="error"
+          icon={<ErrorOutlineIcon fontSize="small" />}
+          action={
+            <Button color="inherit" size="small" onClick={onRefreshDocs}>
+              Retry
+            </Button>
+          }
+          sx={{ py: 0.25 }}
+        >
+          <Typography variant="caption">Couldn&apos;t load your documents.</Typography>
+        </Alert>
       ) : docs.length > 0 ? (
         <List dense disablePadding sx={{ maxHeight: 280, overflowY: 'auto' }}>
           <TransitionGroup>
@@ -778,7 +825,12 @@ const BrainPopover = React.memo(function BrainPopover({
           }}
         >
           {renderedPreviewDoc && (
-            <DocPreview kbId={kb?.id} doc={renderedPreviewDoc} onBack={() => setPreviewDoc(null)} />
+            <DocPreview
+              kbId={kb?.id}
+              doc={renderedPreviewDoc}
+              active={Boolean(previewDoc)}
+              onBack={() => setPreviewDoc(null)}
+            />
           )}
         </Box>
       </Box>

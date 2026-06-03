@@ -158,8 +158,19 @@ export default function GeneralPreferencesSection() {
     changeFontScale(normalized);
   };
 
-  const handleAutoAttachChange = (event) =>
-    setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: event.target.checked }));
+  // Persist immediately via PATCH (mirroring the brain-popover toggle) rather than
+  // riding the full-PUT "Save Settings" path, which sends the whole coerced payload
+  // and could clobber other prefs from a partially-loaded / cross-device state
+  // (SHU-817 S4 — PATCH-so-other-prefs-aren't-clobbered). Optimistic with rollback.
+  const handleAutoAttachChange = (event) => {
+    const enabled = event.target.checked;
+    setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: enabled }));
+    userPreferencesAPI.patchPreferences({ auto_attach_personal_kb: enabled }).catch((err) => {
+      log.warn('Failed to update auto-attach preference:', formatError(err).message);
+      setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
+      setError("Couldn't save your auto-attach preference. Please try again.");
+    });
+  };
 
   const inheritLabel = brandFontKey
     ? `Default — Team Brand (${FONT_FAMILIES[brandFontKey]?.label ?? brandFontKey})`

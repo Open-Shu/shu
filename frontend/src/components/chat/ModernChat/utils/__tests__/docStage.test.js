@@ -11,15 +11,15 @@ describe('docStage', () => {
     });
   });
 
-  it('maps profiling / artifact_embedding to Profiling (step 1), carrying coverage', () => {
+  it('maps profiling / artifact_embedding to the additive Enhancing state (Ready stays sticky), carrying coverage', () => {
+    // Profiling runs after content_processed (Ready), so it is non-blocking
+    // 'enhancing', not a regression to a pre-Ready progress step (Decision 17).
     expect(docStage({ processing_status: 'profiling', profiling_coverage_percent: 42 })).toEqual({
-      kind: 'progress',
-      step: 1,
+      kind: 'enhancing',
       coverage: 42,
     });
     expect(docStage({ processing_status: 'artifact_embedding' })).toEqual({
-      kind: 'progress',
-      step: 1,
+      kind: 'enhancing',
       coverage: undefined,
     });
   });

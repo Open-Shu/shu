@@ -213,6 +213,7 @@ const ModernChat = () => {
     docs: personalKBDocs,
     docsLoading: personalKBDocsLoading,
     docsFetching: personalKBDocsFetching,
+    docsError: personalKBDocsError,
     indexing: personalKBIndexing,
     hasMoreDocs: personalKBHasMoreDocs,
     fetchMoreDocs: fetchMorePersonalKBDocs,
@@ -250,9 +251,10 @@ const ModernChat = () => {
         .catch((err) => {
           log.warn('Failed to update auto-attach preference:', formatError(err).message);
           setUserPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
+          setError("Couldn't save your auto-attach preference. Please try again.");
         });
     },
-    [queryClient]
+    [queryClient, setError]
   );
 
   useEffect(() => {
@@ -1409,6 +1411,7 @@ const ModernChat = () => {
     personalKBDocs,
     personalKBDocsLoading,
     personalKBDocsFetching,
+    personalKBDocsError,
     personalKBIndexing,
     personalKBHasMoreDocs,
     onFetchMorePersonalKBDocs: fetchMorePersonalKBDocs,
