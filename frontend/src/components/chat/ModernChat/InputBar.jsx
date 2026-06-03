@@ -59,6 +59,7 @@ const InputBar = React.memo(function InputBar({
   personalKBLoading = false,
   personalKBUploading = false,
   personalKBErrors = [],
+  personalKBLastUploadSummary = null,
   onUploadToPersonalKB,
   onRetryPersonalKBFile,
   onDismissPersonalKBError,
@@ -235,16 +236,26 @@ const InputBar = React.memo(function InputBar({
     } else if (!personalKBUploading && wasUploadingRef.current) {
       wasUploadingRef.current = false;
       const newErrors = Math.max(0, personalKBErrors.length - errorCountAtStartRef.current);
-      if (newErrors === 0) {
-        setToast({ severity: 'success', message: 'Got it — ask me about this anytime' });
-      } else {
+      if (newErrors > 0) {
         setToast({
           severity: 'error',
           message: `${newErrors} file${newErrors === 1 ? '' : 's'} need attention — check the brain icon`,
         });
+      } else {
+        // Report what happened without over-promising readiness (Decision 15): the
+        // file is received + indexing here. The "now searchable" moment is signaled
+        // separately by the row flipping to Ready + the brain success-pulse.
+        const s = personalKBLastUploadSummary;
+        let message = 'Added — indexing now';
+        if (s && s.added === 0 && s.updated === 0 && s.skipped > 0) {
+          message = 'Already saved — no changes';
+        } else if (s && s.added === 0 && s.updated > 0) {
+          message = s.updated === 1 ? 'Updated — re-indexing now' : `Updated ${s.updated} files — re-indexing now`;
+        }
+        setToast({ severity: 'success', message });
       }
     }
-  }, [personalKBUploading, personalKBErrors]);
+  }, [personalKBUploading, personalKBErrors, personalKBLastUploadSummary]);
 
   return (
     <Box

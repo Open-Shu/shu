@@ -59,6 +59,10 @@ const usePersonalKB = () => {
   // retry fired mid drag-drop) only flip `uploading` false when the LAST settles.
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState([]); // Array<{ clientKey, filename, message, file }>
+  // Per-action counts from the most recent settled upload batch, so the toast can
+  // report Added / Updated / Already saved (SHU-817 S2 / Decision 15) instead of a
+  // single generic success message.
+  const [lastUploadSummary, setLastUploadSummary] = useState(null); // { added, updated, skipped, failed }
   const ensurePromiseRef = useRef(null);
   const inFlightUploadsRef = useRef(0);
 
@@ -185,6 +189,22 @@ const usePersonalKB = () => {
         });
         setErrors((prev) => [...prev.filter((e) => !batchKeys.has(e.clientKey)), ...newErrors]);
 
+        // Tally per-action outcomes for the toast (added / updated / already-saved).
+        const summary = { added: 0, updated: 0, skipped: 0, failed: newErrors.length };
+        results.forEach((r) => {
+          if (!r || r.success === false) {
+            return; // failures are counted via newErrors
+          }
+          if (r.skipped) {
+            summary.skipped += 1;
+          } else if (r.action === 'updated') {
+            summary.updated += 1;
+          } else {
+            summary.added += 1;
+          }
+        });
+        setLastUploadSummary(summary);
+
         // Refresh KB doc count, the doc list, and the picker.
         invalidatePersonalKB();
         return results;
@@ -198,6 +218,7 @@ const usePersonalKB = () => {
           file: t.file,
         }));
         setErrors((prev) => [...prev.filter((e) => !batchKeys.has(e.clientKey)), ...newErrors]);
+        setLastUploadSummary({ added: 0, updated: 0, skipped: 0, failed: tagged.length });
         return [];
       } finally {
         inFlightUploadsRef.current = Math.max(0, inFlightUploadsRef.current - 1);
@@ -299,6 +320,7 @@ const usePersonalKB = () => {
     loading: personalKbQuery.isLoading,
     uploading,
     errors,
+    lastUploadSummary,
     uploadFiles,
     retryFile,
     dismissError,
