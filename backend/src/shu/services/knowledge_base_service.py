@@ -1101,6 +1101,7 @@ class KnowledgeBaseService:
         from ..core.queue_backend import get_queue_backend
         from ..core.workload_routing import WorkloadType, enqueue_job
         from ..models.document import DocumentStatus
+        from .ingestion_service import _ERR_ENQUEUE_EMBEDDING
 
         # Lock the row so concurrent re-ingests (or a re-ingest racing a draining
         # embed job) serialize: the first claims it and flips it to EMBEDDING
@@ -1140,19 +1141,38 @@ class KnowledgeBaseService:
         document.processing_error = None
         await self.db.commit()
 
-        queue = await get_queue_backend()
-        await enqueue_job(
-            queue,
-            WorkloadType.INGESTION_EMBED,
-            payload={
-                "document_id": document_id,
-                "knowledge_base_id": kb_id,
-                "user_id": user_id,
-                "action": "embed_document",
-            },
-            max_attempts=3,
-            visibility_timeout=300,
-        )
+        # Guard the enqueue: the EMBEDDING commit above has already landed, so if the
+        # queue is unreachable (Redis blip / OOM / failover) the doc would be stranded
+        # in non-terminal EMBEDDING with no job behind it. Both the 409 busy guard
+        # above and the same-name re-upload skip key on `not is_processed and not
+        # has_error`, and there is no document-level reaper — so it would wedge
+        # permanently with no self-service recovery. On failure flip to ERROR
+        # (mirroring ingest_document's stage/enqueue handler) so the row is terminal
+        # and retryable; the _ERR_ENQUEUE_EMBEDDING prefix marks it transient so a
+        # re-upload re-ingests rather than being skipped as a deterministic failure.
+        try:
+            queue = await get_queue_backend()
+            await enqueue_job(
+                queue,
+                WorkloadType.INGESTION_EMBED,
+                payload={
+                    "document_id": document_id,
+                    "knowledge_base_id": kb_id,
+                    "user_id": user_id,
+                    "action": "embed_document",
+                },
+                max_attempts=3,
+                visibility_timeout=300,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to enqueue re-ingest embed job",
+                extra={"kb_id": kb_id, "document_id": document_id, "error": str(e)},
+            )
+            document.update_status(DocumentStatus.ERROR)
+            document.processing_error = f"{_ERR_ENQUEUE_EMBEDDING} {e}"
+            await self.db.commit()
+            raise
 
         logger.info("Re-ingest enqueued for document", extra={"kb_id": kb_id, "document_id": document_id})
         return {"status": "queued", "document_id": document_id}

@@ -13,6 +13,12 @@
 // Mirrors backend DocumentStatus enum (backend/src/shu/models/document.py).
 export const TERMINAL_SUCCESS_STATUSES = new Set(['content_processed', 'rag_processed', 'profile_processed']);
 
+// The pre-ready pipeline, in order, for the 3-segment StageBar fill: the journey
+// to "searchable" (content_processed = Ready). Profiling is deliberately NOT here
+// — it runs AFTER Ready and surfaces via the additive 'enhancing' state, so the
+// bar only ever advances toward usable and never regresses once Ready.
+const PROGRESS_STEP = { pending: 0, extracting: 1, embedding: 2 };
+
 export const docStage = (doc) => {
   const status = doc?.processing_status || 'pending';
   if (status === 'error') {
@@ -24,5 +30,6 @@ export const docStage = (doc) => {
   if (status === 'profiling' || status === 'artifact_embedding') {
     return { kind: 'enhancing', coverage: doc?.profiling_coverage_percent };
   }
-  return { kind: 'progress', step: 0 };
+  // Unknown / future pre-ready statuses fall back to the first segment.
+  return { kind: 'progress', step: PROGRESS_STEP[status] ?? 0 };
 };

@@ -226,6 +226,51 @@ describe('usePersonalKB hook', () => {
     expect(e2.message).toBe('second failed');
   });
 
+  it('tallies distinct skip reasons in lastUploadSummary (SHU-817)', async () => {
+    const personal = {
+      id: 'kb-pk',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 0,
+    };
+    knowledgeBaseAPI.getPersonal.mockResolvedValue(personalResponse(personal));
+    // One of each backend outcome: added, updated, and the three distinct skips
+    // (still-indexing re-upload, in-batch duplicate, unchanged already-saved).
+    knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(
+      uploadResponse([
+        { filename: 'new.txt', success: true, action: 'added' },
+        { filename: 'changed.txt', success: true, action: 'updated' },
+        { filename: 'busy.txt', success: true, skipped: true, action: 'processing' },
+        { filename: 'dup.txt', success: true, skipped: true, action: 'duplicate_in_batch' },
+        { filename: 'same.txt', success: true, skipped: true, action: 'skipped' },
+      ])
+    );
+
+    const { result } = renderPersonalKB();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.uploadFiles([
+        new File(['a'], 'new.txt'),
+        new File(['b'], 'changed.txt'),
+        new File(['c'], 'busy.txt'),
+        new File(['d'], 'dup.txt'),
+        new File(['e'], 'same.txt'),
+      ]);
+    });
+
+    // Each skip reason is counted separately — none collapsed into "already saved".
+    expect(result.current.lastUploadSummary).toEqual({
+      added: 1,
+      updated: 1,
+      alreadySaved: 1,
+      processing: 1,
+      duplicateInBatch: 1,
+      failed: 0,
+    });
+  });
+
   it('handles upload response in bare-array shape', async () => {
     const personal = {
       id: 'kb-pk',

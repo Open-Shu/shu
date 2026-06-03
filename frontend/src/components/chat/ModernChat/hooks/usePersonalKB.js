@@ -62,7 +62,7 @@ const usePersonalKB = () => {
   // Per-action counts from the most recent settled upload batch, so the toast can
   // report Added / Updated / Already saved (SHU-817 S2 / Decision 15) instead of a
   // single generic success message.
-  const [lastUploadSummary, setLastUploadSummary] = useState(null); // { added, updated, skipped, failed }
+  const [lastUploadSummary, setLastUploadSummary] = useState(null); // { added, updated, alreadySaved, processing, duplicateInBatch, failed }
   const ensurePromiseRef = useRef(null);
   const inFlightUploadsRef = useRef(0);
 
@@ -189,14 +189,29 @@ const usePersonalKB = () => {
         });
         setErrors((prev) => [...prev.filter((e) => !batchKeys.has(e.clientKey)), ...newErrors]);
 
-        // Tally per-action outcomes for the toast (added / updated / already-saved).
-        const summary = { added: 0, updated: 0, skipped: 0, failed: newErrors.length };
+        // Tally per-action outcomes for the toast. The backend distinguishes several
+        // "skipped" reasons (a still-indexing re-upload -> action 'processing', the
+        // same filename twice in one batch -> 'duplicate_in_batch', and unchanged /
+        // already-added content -> 'skipped'). Keep them apart so the toast reports
+        // the real outcome instead of collapsing them all into "Already saved".
+        const summary = {
+          added: 0,
+          updated: 0,
+          alreadySaved: 0,
+          processing: 0,
+          duplicateInBatch: 0,
+          failed: newErrors.length,
+        };
         results.forEach((r) => {
           if (!r || r.success === false) {
             return; // failures are counted via newErrors
           }
-          if (r.skipped) {
-            summary.skipped += 1;
+          if (r.action === 'processing') {
+            summary.processing += 1;
+          } else if (r.action === 'duplicate_in_batch') {
+            summary.duplicateInBatch += 1;
+          } else if (r.skipped) {
+            summary.alreadySaved += 1; // action 'skipped' — unchanged content / already added
           } else if (r.action === 'updated') {
             summary.updated += 1;
           } else {
@@ -218,7 +233,14 @@ const usePersonalKB = () => {
           file: t.file,
         }));
         setErrors((prev) => [...prev.filter((e) => !batchKeys.has(e.clientKey)), ...newErrors]);
-        setLastUploadSummary({ added: 0, updated: 0, skipped: 0, failed: tagged.length });
+        setLastUploadSummary({
+          added: 0,
+          updated: 0,
+          alreadySaved: 0,
+          processing: 0,
+          duplicateInBatch: 0,
+          failed: tagged.length,
+        });
         return [];
       } finally {
         inFlightUploadsRef.current = Math.max(0, inFlightUploadsRef.current - 1);

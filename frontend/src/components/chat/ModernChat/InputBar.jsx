@@ -246,11 +246,22 @@ const InputBar = React.memo(function InputBar({
         // file is received + indexing here. The "now searchable" moment is signaled
         // separately by the row flipping to Ready + the brain success-pulse.
         const s = personalKBLastUploadSummary;
+        // Priority: lead with the positive action, then the specific skip reason —
+        // never collapse a still-indexing re-upload ('processing') or an in-batch
+        // duplicate into "Already saved", which means something different to the user.
         let message = 'Added — indexing now';
-        if (s && s.added === 0 && s.updated === 0 && s.skipped > 0) {
-          message = 'Already saved — no changes';
-        } else if (s && s.added === 0 && s.updated > 0) {
-          message = s.updated === 1 ? 'Updated — re-indexing now' : `Updated ${s.updated} files — re-indexing now`;
+        if (s) {
+          if (s.added > 0) {
+            message = 'Added — indexing now';
+          } else if (s.updated > 0) {
+            message = s.updated === 1 ? 'Updated — re-indexing now' : `Updated ${s.updated} files — re-indexing now`;
+          } else if (s.processing > 0) {
+            message = "Already being added — re-upload once it's ready";
+          } else if (s.duplicateInBatch > 0) {
+            message = 'Skipped a duplicate filename — kept one copy';
+          } else if (s.alreadySaved > 0) {
+            message = 'Already saved — no changes';
+          }
         }
         setToast({ severity: 'success', message });
       }

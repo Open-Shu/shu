@@ -131,6 +131,7 @@ export default function GeneralPreferencesSection() {
     changeFontScale,
   } = useTheme();
   const { preferences, setPreferences, error, setError, mutation } = useUserPreferences(themeMode);
+  const queryClient = useQueryClient();
 
   const brandFontKey = branding?.brandFontFamily ?? null;
 
@@ -165,11 +166,19 @@ export default function GeneralPreferencesSection() {
   const handleAutoAttachChange = (event) => {
     const enabled = event.target.checked;
     setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: enabled }));
-    userPreferencesAPI.patchPreferences({ auto_attach_personal_kb: enabled }).catch((err) => {
-      log.warn('Failed to update auto-attach preference:', formatError(err).message);
-      setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
-      setError("Couldn't save your auto-attach preference. Please try again.");
-    });
+    userPreferencesAPI
+      .patchPreferences({ auto_attach_personal_kb: enabled })
+      // Refresh the shared 'user-preferences' cache so the chat — which seeds its
+      // own copy from this same query — picks up the new value on its next read
+      // instead of briefly applying the stale one. Mirrors the popover path (M4).
+      .then(() => queryClient.invalidateQueries('user-preferences'))
+      .catch((err) => {
+        log.warn('Failed to update auto-attach preference:', formatError(err).message);
+        // !enabled is the pre-click toggle state (the switch was at !enabled before
+        // this change), i.e. the correct value to restore for a single failed toggle.
+        setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
+        setError("Couldn't save your auto-attach preference. Please try again.");
+      });
   };
 
   const inheritLabel = brandFontKey

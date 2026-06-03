@@ -5,8 +5,14 @@ import { docStage } from '../docStage';
 // nuance (profiling-disabled docs); these cases catch a mis-mapping that the
 // component/integration tests wouldn't isolate.
 describe('docStage', () => {
-  it('maps pending / extracting / embedding (and unknown) to Ingesting (step 0)', () => {
-    ['pending', 'extracting', 'embedding', undefined, 'something_new'].forEach((status) => {
+  it('advances the Ingesting bar through pending(0) / extracting(1) / embedding(2)', () => {
+    expect(docStage({ processing_status: 'pending' })).toEqual({ kind: 'progress', step: 0 });
+    expect(docStage({ processing_status: 'extracting' })).toEqual({ kind: 'progress', step: 1 });
+    expect(docStage({ processing_status: 'embedding' })).toEqual({ kind: 'progress', step: 2 });
+  });
+
+  it('falls back to the first Ingesting step for unknown / empty statuses', () => {
+    [undefined, 'something_new'].forEach((status) => {
       expect(docStage({ processing_status: status })).toEqual({ kind: 'progress', step: 0 });
     });
   });
