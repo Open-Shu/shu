@@ -310,6 +310,77 @@ class TestSubscriptionTrialAndEntitlements:
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
+    async def test_self_hosted_cache_none_suppresses_trial(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        """SHU-822: cache=None (no control plane) → is_trial is False and the
+        trial/grant fields are omitted entirely, mirroring the entitlement /
+        limit / usage omission. Without this, HEALTHY_DEFAULT.is_trial=True
+        leaks a phantom $0 trial onto every self-hosted deployment.
+        """
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        # Don't install a cache → endpoint sees None (self-hosted).
+
+        response = await get_subscription_status(
+            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        assert body["is_trial"] is False
+        for key in ("trial_deadline", "total_grant_amount", "remaining_grant_amount", "seat_price_usd"):
+            assert key not in body, f"trial field leaked on self-hosted: {key}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("remaining", "period_start", "expected_remaining"),
+        [
+            # Grant exhausted: CP-backed remaining reads $0. A naive "$0 → hide"
+            # rule would strip the upgrade surface from a paying-path trial user.
+            (Decimal("0.00"), datetime(2026, 1, 1, tzinfo=UTC), "0.00"),
+            # Cold start: remaining unpopulated before the first poll; with no
+            # period anchor the displayed remaining falls back to the full grant.
+            (None, None, "50.00"),
+        ],
+    )
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_trialing_tenant_keeps_is_trial_when_grant_zero_or_unpopulated(
+        self, mock_config, mock_count, install_stub_cache, remaining, period_start, expected_remaining
+    ):
+        """SHU-822 regression: with CP configured (cache present) and a genuine
+        trial, is_trial stays True and the trial fields render even when the
+        remaining grant is $0 (exhausted) or None (cold start). Guards against a
+        drift where a dollar-value gate, instead of `cache is None`, would mask
+        the paywall surface.
+        """
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        install_stub_cache(
+            _make_state(
+                is_trial=True,
+                trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+                total_grant_amount=Decimal("50.00"),
+                remaining_grant_amount=remaining,
+                seat_price_usd=Decimal("20.00"),
+                current_period_start=period_start,
+            )
+        )
+
+        response = await get_subscription_status(
+            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        assert body["is_trial"] is True
+        assert body["trial_deadline"] == "2026-05-30T12:00:00+00:00"
+        assert body["total_grant_amount"] == "50.00"
+        assert body["remaining_grant_amount"] == expected_remaining
+        assert body["seat_price_usd"] == "20.00"
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
     async def test_trial_deadline_serializes_to_null_when_absent(
         self, mock_config, mock_count, install_stub_cache
     ):

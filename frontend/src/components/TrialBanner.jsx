@@ -8,11 +8,14 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  IconButton,
   LinearProgress,
+  Popover,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useBillingStatus } from '../contexts/BillingStatusContext';
 import { useAuth } from '../hooks/useAuth';
 import { billingAPI } from '../services/api';
@@ -22,13 +25,20 @@ import log from '../utils/log';
 // gate against accidental cancel clicks. Server enforces admin role.
 const CANCEL_CONFIRM_PHRASE = 'CONFIRM';
 
+// Percent of the trial grant consumed at which the banner flips to a warning
+// hue (remaining text + mini-bar). Tunable: lower it to warn earlier. $0
+// remaining always counts as exhausted regardless of this threshold.
+const TRIAL_USAGE_WARNING_PERCENT = 90;
+
 /**
- * TrialBanner surfaces trial-state to the user with the budget bar and
- * exit actions (upgrade-now / cancel-trial).
+ * TrialBanner surfaces trial-state to the user as a single compact row:
+ * "Free trial" label, remaining/total budget, an inline mini usage bar, the
+ * deadline, and the exit actions (upgrade-now / cancel-trial). The secondary
+ * detail (shared-pool note + projected post-trial cost) lives behind a
+ * click-to-open info popover so the banner stays one line tall (SHU-822).
  *
- * Renders only while `is_trial=true`. Styled to match PaymentBanner
- * (full-width, in-flow, no overlap) so the two banners share a visual
- * language for billing-status surfaces.
+ * Renders only while `is_trial=true`. Full-width and in-flow like PaymentBanner
+ * so the two share a billing-status visual language.
  */
 const TrialBanner = () => {
   const { isTrial, trialDeadline, totalGrantAmount, remainingGrantAmount, seatPriceUsd, userCount, loading, refetch } =
@@ -47,6 +57,12 @@ const TrialBanner = () => {
   const [cancelInput, setCancelInput] = useState('');
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [cancelError, setCancelError] = useState('');
+
+  // Detail popover (shared-pool note + post-trial estimate). Driven by an
+  // anchorEl so it closes cleanly when the banner unmounts after upgrade/cancel
+  // — a dangling anchor would otherwise mis-position or warn.
+  const [detailAnchor, setDetailAnchor] = useState(null);
+  const detailOpen = Boolean(detailAnchor);
 
   // Non-admins don't see the trial banner. Spec calls for "trial state always
   // visible to admins"; non-admins have no exit actions available (endpoints
@@ -69,6 +85,13 @@ const TrialBanner = () => {
   // at 100 so a temporary state-skew (used > total) doesn't render bizarrely.
   const percentUsed = total > 0 ? Math.min(Math.max((used / total) * 100, 0), 100) : 0;
 
+  // At/near the cap, switch the remaining text + mini-bar to a warning hue so
+  // the paywall moment is unmistakable in a slim banner. Guarded on total > 0
+  // so the cold-start "$0 of $0" state (grants not yet populated) doesn't false
+  // -trigger. The text emphasis survives even when the mini-bar is hidden on
+  // narrow widths.
+  const exhausted = total > 0 && (remaining <= 0 || percentUsed >= TRIAL_USAGE_WARNING_PERCENT);
+
   const deadlineText = trialDeadline ? new Date(trialDeadline).toLocaleDateString() : null;
 
   // Projected monthly cost after conversion = current seat count × per-seat
@@ -87,6 +110,9 @@ const TrialBanner = () => {
     try {
       await billingAPI.upgradeNow();
       setUpgradeOpen(false);
+      // Close the detail popover before refetch flips is_trial false and
+      // unmounts the banner, so its anchor never dangles.
+      setDetailAnchor(null);
       // Pull fresh state immediately rather than waiting for the next
       // 60s polling tick — the banner should disappear right after the
       // action succeeds.
@@ -106,6 +132,9 @@ const TrialBanner = () => {
       await billingAPI.cancelTrial();
       setCancelStep('closed');
       setCancelInput('');
+      // Mirror the upgrade path: drop the popover anchor before the banner
+      // unmounts on refetch.
+      setDetailAnchor(null);
       await refetch();
     } catch (err) {
       log.error('Cancel-trial failed:', err);
@@ -131,66 +160,113 @@ const TrialBanner = () => {
   // who'd otherwise hit a moving target.
   const cancelSubmitDisabled = cancelInput !== CANCEL_CONFIRM_PHRASE || cancelSubmitting;
 
+  // Single compact row. py:0.75 + zeroed message padding keep it one line
+  // tall; the actions right-align against a flex spacer.
   const sx = {
     flexShrink: 0,
     borderRadius: 0,
-    fontSize: '1.05rem',
-    fontWeight: 500,
-    py: 2,
-    '& .MuiAlert-message': { width: '100%' },
-    '& .MuiAlert-icon': { fontSize: '1.75rem', alignItems: 'center' },
+    py: 0.75,
+    '& .MuiAlert-message': { width: '100%', py: 0 },
   };
 
   return (
     <>
-      <Alert severity="info" sx={sx}>
-        <Stack spacing={1.5}>
-          <Box>
-            <Typography variant="body1" component="span" sx={{ fontWeight: 600 }}>
-              Free trial
-            </Typography>
-            {deadlineText && (
-              <Typography variant="body2" component="span" sx={{ ml: 1 }}>
-                · ends {deadlineText}
-              </Typography>
-            )}
-          </Box>
+      {/* icon={false}: the row carries its own trailing info button as the
+          popover trigger; the info severity tint is the at-a-glance cue. */}
+      <Alert severity="info" icon={false} sx={sx}>
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
+          <Typography variant="body2" component="span" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+            Free trial
+          </Typography>
 
-          <Box>
-            <Typography variant="body2">
-              ${remaining.toFixed(2)} of ${total.toFixed(2)} usage remaining
-            </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={percentUsed}
-              aria-label="Trial usage progress"
-              sx={{ mt: 0.5, height: 8, borderRadius: 1 }}
-            />
-          </Box>
+          <Typography
+            variant="body2"
+            component="span"
+            sx={{
+              whiteSpace: 'nowrap',
+              fontWeight: exhausted ? 600 : 400,
+              color: exhausted ? 'warning.main' : 'inherit',
+            }}
+          >
+            ${remaining.toFixed(2)} of ${total.toFixed(2)} left
+          </Typography>
 
+          {/* Inline mini-bar — hidden below sm where horizontal room is scarce;
+              the dollar text stays the precise source of truth. */}
+          <LinearProgress
+            variant="determinate"
+            value={percentUsed}
+            color={exhausted ? 'warning' : 'primary'}
+            aria-label="Trial usage progress"
+            sx={{ width: 64, height: 6, borderRadius: 1, flexShrink: 0, display: { xs: 'none', sm: 'block' } }}
+          />
+
+          {deadlineText && (
+            <Typography
+              variant="body2"
+              component="span"
+              sx={{ whiteSpace: 'nowrap', display: { xs: 'none', sm: 'inline' } }}
+            >
+              · ends {deadlineText}
+            </Typography>
+          )}
+
+          {/* Spacer pushes the actions to the right edge of the row. */}
+          <Box sx={{ flexGrow: 1 }} />
+
+          <Button variant="contained" size="small" aria-label="Upgrade now" onClick={() => setUpgradeOpen(true)}>
+            Upgrade now
+          </Button>
+          <Button variant="outlined" size="small" aria-label="Cancel trial" onClick={() => setCancelStep('warning')}>
+            Cancel trial
+          </Button>
+
+          {/* Detail trigger: the shared-pool note + post-trial estimate (both
+              mandated by SHU-757) live in the popover so the row stays compact
+              while the content stays keyboard- and touch-reachable. */}
+          <IconButton
+            size="small"
+            aria-label="Trial budget details"
+            aria-haspopup="dialog"
+            aria-expanded={detailOpen}
+            aria-controls={detailOpen ? 'trial-budget-detail' : undefined}
+            onClick={(e) => setDetailAnchor(e.currentTarget)}
+          >
+            <InfoOutlinedIcon fontSize="small" />
+          </IconButton>
+        </Stack>
+      </Alert>
+
+      <Popover
+        open={detailOpen}
+        anchorEl={detailAnchor}
+        onClose={() => setDetailAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Stack
+          id="trial-budget-detail"
+          component="section"
+          aria-label="Trial budget details"
+          spacing={1}
+          sx={{ p: 2, maxWidth: 320 }}
+        >
+          {/* Deadline also lives here so it stays reachable below the sm
+             breakpoint, where it's hidden from the inline row. */}
+          {deadlineText && <Typography variant="body2">Trial ends {deadlineText}.</Typography>}
           {/* Shared-pool messaging per R10.AC2: customers can invite teammates
              during trial without multiplying the budget. Worth saying explicitly
              because the natural assumption is per-seat allocation. */}
           <Typography variant="body2">
             All users share a single ${total.toFixed(2)} pool — adding teammates does not multiply the budget.
           </Typography>
-
           {projectedMonthly !== null && (
             <Typography variant="body2">
               After trial: ~${projectedMonthly.toFixed(2)}/month at {userCount} {userCount === 1 ? 'seat' : 'seats'}.
             </Typography>
           )}
-
-          <Stack direction="row" spacing={1}>
-            <Button variant="contained" size="small" aria-label="Upgrade now" onClick={() => setUpgradeOpen(true)}>
-              Upgrade now
-            </Button>
-            <Button variant="outlined" size="small" aria-label="Cancel trial" onClick={() => setCancelStep('warning')}>
-              Cancel trial
-            </Button>
-          </Stack>
         </Stack>
-      </Alert>
+      </Popover>
 
       {/* Upgrade-now: single confirm. The financial commitment is shown
          inline so the customer sees what they're agreeing to. */}

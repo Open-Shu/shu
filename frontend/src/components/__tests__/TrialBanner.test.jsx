@@ -90,7 +90,7 @@ describe('TrialBanner', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders trial state with deadline, remaining/total budget, and shared-pool messaging', () => {
+  it('renders trial state with deadline and remaining/total budget inline', () => {
     useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
     render(<TrialBanner />);
 
@@ -102,28 +102,54 @@ describe('TrialBanner', () => {
     const expectedDate = new Date('2026-06-15T00:00:00Z').toLocaleDateString();
     expect(alert).toHaveTextContent(`ends ${expectedDate}`);
 
-    // Remaining and total dollars surface so the customer can see the budget.
-    expect(alert).toHaveTextContent('$3.00 of $5.00 usage remaining');
-
-    // Shared-pool messaging per R10.AC2 — explicit because the natural
-    // assumption is per-seat. Asserting the substring rather than the exact
-    // sentence lets us tweak wording without churning the test.
-    expect(alert).toHaveTextContent(/share a single \$5\.00 pool/);
+    // Remaining and total dollars surface inline so the customer sees the budget.
+    expect(alert).toHaveTextContent('$3.00 of $5.00 left');
   });
 
-  it('computes the projected post-trial monthly cost from userCount × seatPriceUsd', () => {
+  it('reveals shared-pool messaging in the detail popover', async () => {
+    // Shared-pool note is mandated by SHU-757 but lives behind the info
+    // popover to keep the banner one line tall. Open it, then assert.
+    const user = userEvent.setup();
     useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
     render(<TrialBanner />);
 
-    // 2 seats × $20/seat = $40/month
-    expect(screen.getByRole('alert')).toHaveTextContent('~$40.00/month at 2 seats');
+    await user.click(screen.getByRole('button', { name: 'Trial budget details' }));
+
+    // Asserting the substring rather than the exact sentence lets us tweak
+    // wording without churning the test.
+    expect(screen.getByText(/share a single \$5\.00 pool/)).toBeInTheDocument();
   });
 
-  it('uses singular "seat" copy when userCount is 1', () => {
+  it('also surfaces the deadline in the popover so it survives below the sm breakpoint', async () => {
+    // The inline deadline is hidden on narrow widths; the popover copy is the
+    // mobile-reachable fallback (AC#12).
+    const user = userEvent.setup();
+    useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
+    render(<TrialBanner />);
+
+    await user.click(screen.getByRole('button', { name: 'Trial budget details' }));
+
+    const expectedDate = new Date('2026-06-15T00:00:00Z').toLocaleDateString();
+    expect(screen.getByText(`Trial ends ${expectedDate}.`)).toBeInTheDocument();
+  });
+
+  it('computes the projected post-trial monthly cost from userCount × seatPriceUsd', async () => {
+    const user = userEvent.setup();
+    useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
+    render(<TrialBanner />);
+
+    await user.click(screen.getByRole('button', { name: 'Trial budget details' }));
+    // 2 seats × $20/seat = $40/month
+    expect(screen.getByText(/~\$40\.00\/month at 2 seats/)).toBeInTheDocument();
+  });
+
+  it('uses singular "seat" copy when userCount is 1', async () => {
+    const user = userEvent.setup();
     useBillingStatus.mockReturnValue({ ...ACTIVE_TRIAL, userCount: 1 });
     render(<TrialBanner />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent('~$20.00/month at 1 seat');
+    await user.click(screen.getByRole('button', { name: 'Trial budget details' }));
+    expect(screen.getByText(/~\$20\.00\/month at 1 seat/)).toBeInTheDocument();
   });
 
   it('renders both exit-action buttons with aria labels', () => {
@@ -137,14 +163,91 @@ describe('TrialBanner', () => {
     expect(screen.getByRole('button', { name: 'Cancel trial' })).toBeInTheDocument();
   });
 
-  it('omits the projected cost line when seat-price is missing', () => {
+  it('omits the projected cost line in the popover when seat-price is missing', async () => {
     // Self-hosted / dev or pre-population path — seatPriceUsd may be null
     // before the first poll resolves with a value. Rendering "NaN/month"
-    // would be ugly; skipping the line is the safer default.
+    // would be ugly; skipping the line is the safer default. Open the popover
+    // first so the assertion isn't vacuous — the line is portal-rendered, not
+    // inline, so it would be absent even when it should show.
+    const user = userEvent.setup();
     useBillingStatus.mockReturnValue({ ...ACTIVE_TRIAL, seatPriceUsd: null });
     render(<TrialBanner />);
 
+    await user.click(screen.getByRole('button', { name: 'Trial budget details' }));
+
+    // Pool note still shows; only the projected-cost line is gone.
+    expect(screen.getByText(/share a single/)).toBeInTheDocument();
     expect(screen.queryByText(/\/month at/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the pool note and projected cost out of the collapsed row by default', () => {
+    // The secondary detail must not be in the DOM until the popover is opened
+    // — that absence is precisely what keeps the banner a single row.
+    useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
+    render(<TrialBanner />);
+
+    expect(screen.queryByText(/share a single/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\/month at/)).not.toBeInTheDocument();
+  });
+
+  it('emphasizes both the mini-bar and the remaining text when the grant is exhausted ($0)', () => {
+    // remaining $0 → paywall moment. The mini-bar hue AND the text weight flip.
+    // The text emphasis is the signal that survives below sm where the mini-bar
+    // is hidden, so assert it explicitly — not just the bar (AC: "the text
+    // emphasis persists even when the mini-bar is hidden").
+    useBillingStatus.mockReturnValue({ ...ACTIVE_TRIAL, remainingGrantAmount: 0 });
+    render(<TrialBanner />);
+
+    expect(screen.getByRole('progressbar')).toHaveClass('MuiLinearProgress-colorWarning');
+    expect(screen.getByText('$0.00 of $5.00 left')).toHaveStyle({ fontWeight: 600 });
+  });
+
+  it('warns via the ≥90%-used branch even when remaining is above $0', () => {
+    // $0.40 of $5 = 92% used: trips percentUsed >= TRIAL_USAGE_WARNING_PERCENT
+    // with remaining > 0, isolating the percentage disjunct from the
+    // remaining<=0 path so the threshold/constant is pinned.
+    useBillingStatus.mockReturnValue({ ...ACTIVE_TRIAL, totalGrantAmount: 5, remainingGrantAmount: 0.4 });
+    render(<TrialBanner />);
+
+    expect(screen.getByRole('progressbar')).toHaveClass('MuiLinearProgress-colorWarning');
+    expect(screen.getByText('$0.40 of $5.00 left')).toHaveStyle({ fontWeight: 600 });
+  });
+
+  it('keeps the primary treatment just under the warning threshold', () => {
+    // $0.60 of $5 = 88% used: below the 90% threshold and remaining > 0, so no
+    // warning. Guards the just-under side of the boundary.
+    useBillingStatus.mockReturnValue({ ...ACTIVE_TRIAL, totalGrantAmount: 5, remainingGrantAmount: 0.6 });
+    render(<TrialBanner />);
+
+    expect(screen.getByRole('progressbar')).toHaveClass('MuiLinearProgress-colorPrimary');
+    expect(screen.getByText('$0.60 of $5.00 left')).toHaveStyle({ fontWeight: 400 });
+  });
+
+  it('keeps the primary treatment and normal text weight while the grant is healthy', () => {
+    // $3 of $5 → 40% used, far from the boundary. Guards against the exhaustion
+    // tests passing for the wrong reason.
+    useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
+    render(<TrialBanner />);
+
+    expect(screen.getByRole('progressbar')).toHaveClass('MuiLinearProgress-colorPrimary');
+    expect(screen.getByText('$3.00 of $5.00 left')).toHaveStyle({ fontWeight: 400 });
+  });
+
+  it('unmounts cleanly (popover included) when the trial ends', async () => {
+    // Opening the popover then flipping is_trial false (upgrade/cancel success
+    // or a poll tick) must tear the banner — and its popover — down without a
+    // detached-anchor error.
+    const user = userEvent.setup();
+    useBillingStatus.mockReturnValue(ACTIVE_TRIAL);
+    const { rerender } = render(<TrialBanner />);
+
+    await user.click(screen.getByRole('button', { name: 'Trial budget details' }));
+    expect(screen.getByText(/share a single/)).toBeInTheDocument();
+
+    useBillingStatus.mockReturnValue(HEALTHY_NON_TRIAL);
+    rerender(<TrialBanner />);
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
 
