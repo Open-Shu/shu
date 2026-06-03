@@ -127,6 +127,40 @@ describe('usePersonalKB hook', () => {
     expect(result.current.errors).toEqual([]);
   });
 
+  it('invalidates the freshly-created KB doc list after the first upload (SHU-817 F4)', async () => {
+    // First upload auto-provisions the KB, so kbId is still null in the closure
+    // when invalidatePersonalKB runs. It must invalidate with the fresh kb.id, or
+    // the new KB's ['personalKBDocuments', newKbId] cache never refetches and the
+    // just-uploaded doc fails to appear in the popover.
+    const ensured = {
+      id: 'kb-new',
+      name: "Test User's Knowledge",
+      is_personal: true,
+      owner_id: TEST_USER_ID,
+      document_count: 0,
+    };
+    knowledgeBaseAPI.getPersonal.mockResolvedValue(personalResponse(null));
+    knowledgeBaseAPI.ensurePersonal.mockResolvedValueOnce(personalResponse(ensured));
+    knowledgeBaseAPI.uploadDocuments.mockResolvedValueOnce(
+      uploadResponse([{ filename: 'doc.pdf', success: true, action: 'added' }])
+    );
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, cacheTime: 0 } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    // eslint-disable-next-line react/prop-types
+    const wrapper = ({ children }) => React.createElement(QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(() => usePersonalKB(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.uploadFiles([new File(['x'], 'doc.pdf')]);
+    });
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual(['personalKBDocuments', 'kb-new']);
+  });
+
   it('deduplicates concurrent ensurePersonalKB calls — only one ensure call', async () => {
     knowledgeBaseAPI.getPersonal.mockResolvedValue(personalResponse(null));
 

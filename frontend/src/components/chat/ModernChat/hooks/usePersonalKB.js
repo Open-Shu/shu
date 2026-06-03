@@ -115,13 +115,22 @@ const usePersonalKB = () => {
   // indexing — the doc is already searchable (Decision 17 / sticky-Ready).
   const indexing = useMemo(() => docs.some((doc) => docStage(doc).kind === 'progress'), [docs]);
 
-  const invalidatePersonalKB = useCallback(() => {
-    queryClient.invalidateQueries(PERSONAL_KB_KEY);
-    if (kbId) {
-      queryClient.invalidateQueries(personalDocsKey(kbId));
-    }
-    queryClient.invalidateQueries(PICKER_KEY);
-  }, [queryClient, kbId]);
+  const invalidatePersonalKB = useCallback(
+    (explicitKbId) => {
+      // Prefer an explicitly-passed id over the closed-over kbId. On the FIRST
+      // upload — the call that auto-provisions the KB — kbId is still null in this
+      // closure, so without the explicit id the new KB's doc list
+      // (['personalKBDocuments', newKbId]) is never invalidated and the
+      // just-uploaded doc fails to appear until a reload (SHU-817 F4).
+      const targetKbId = explicitKbId ?? kbId;
+      queryClient.invalidateQueries(PERSONAL_KB_KEY);
+      if (targetKbId) {
+        queryClient.invalidateQueries(personalDocsKey(targetKbId));
+      }
+      queryClient.invalidateQueries(PICKER_KEY);
+    },
+    [queryClient, kbId]
+  );
 
   const ensurePersonalKB = useCallback(async () => {
     if (personalKB) {
@@ -225,8 +234,10 @@ const usePersonalKB = () => {
         });
         setLastUploadSummary(summary);
 
-        // Refresh KB doc count, the doc list, and the picker.
-        invalidatePersonalKB();
+        // Refresh KB doc count, the doc list, and the picker. Pass the freshly
+        // ensured kb.id so the first upload (which just created the KB) invalidates
+        // the new KB's doc list rather than the stale null kbId in this closure.
+        invalidatePersonalKB(kb.id);
         return results;
       } catch (err) {
         log.error('usePersonalKB: upload failed', err);

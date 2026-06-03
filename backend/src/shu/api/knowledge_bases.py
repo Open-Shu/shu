@@ -1084,7 +1084,7 @@ def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
         "or has a PBAC kb.write grant on the target KB."
     ),
 )
-async def upload_documents(  # noqa: PLR0915
+async def upload_documents(  # noqa: PLR0915, PLR0912
     kb_id: str,
     files: list[UploadFile] = File(..., description="Files to upload"),
     current_user: User = Depends(require_kb_write_access),
@@ -1264,26 +1264,42 @@ async def upload_documents(  # noqa: PLR0915
                         "extraction_method": result.get("extraction", {}).get("method"),
                     }
                 )
-            except IntegrityError:
-                # M2 — a concurrent upload of the same new file won the
-                # (kb_id, source_type, source_id) unique race. Roll back the
-                # poisoned transaction and report the document as already added.
+            except IntegrityError as e:
+                # A constraint violation reached us. Roll back the poisoned
+                # transaction first so the rest of the batch can keep querying.
                 await db.rollback()
-                logger.info(
-                    "Concurrent manual upload resolved to existing document",
-                    extra={"kb_id": kb_id, "source_id": source_id, "filename": filename},
-                )
-                winner = await doc_service.get_document_by_source_id(kb_id, source_id)
-                results.append(
-                    {
-                        "filename": filename,
-                        "success": True,
-                        "skipped": True,
-                        "action": "skipped",
-                        "document_id": winner.id if winner else None,
-                        "message": "Already added.",
-                    }
-                )
+                constraint_name = (getattr(getattr(e, "orig", None), "constraint_name", "") or "").lower()
+                if "uq_documents_kb_source_sourceid" in constraint_name:
+                    # M2 — a concurrent upload of the same new file won the
+                    # (kb_id, source_type, source_id) unique race. The dedup race
+                    # is normally resolved inside create_or_get_document; this is
+                    # the defensive catch. Report it as already added, not a failure.
+                    logger.info(
+                        "Concurrent manual upload resolved to existing document",
+                        extra={"kb_id": kb_id, "source_id": source_id, "filename": filename},
+                    )
+                    winner = await doc_service.get_document_by_source_id(kb_id, source_id)
+                    results.append(
+                        {
+                            "filename": filename,
+                            "success": True,
+                            "skipped": True,
+                            "action": "skipped",
+                            "document_id": winner.id if winner else None,
+                            "message": "Already added.",
+                        }
+                    )
+                else:
+                    # A different constraint failed — surface it as a real error for
+                    # this file instead of masking it as a successful skip.
+                    logger.error(f"Unexpected integrity error ingesting '{filename}': {e}", exc_info=True)
+                    results.append(
+                        {
+                            "filename": filename,
+                            "success": False,
+                            "error": "Failed to process file",
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Failed to ingest document '{filename}': {e}", exc_info=True)
                 results.append(

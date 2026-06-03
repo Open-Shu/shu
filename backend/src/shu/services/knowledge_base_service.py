@@ -1172,7 +1172,14 @@ class KnowledgeBaseService:
             document.update_status(DocumentStatus.ERROR)
             document.processing_error = f"{_ERR_ENQUEUE_EMBEDDING} {e}"
             await self.db.commit()
-            raise
+            # The doc is now terminal + retryable; translate the raw queue error into a
+            # structured 503 so the API returns a retryable envelope rather than a generic
+            # 500 INTERNAL_SERVER_ERROR — the enqueue failure (Redis blip/failover) is transient.
+            raise ShuException(
+                "Failed to queue document re-ingest. Please retry.",
+                "DOCUMENT_REINGEST_ENQUEUE_ERROR",
+                status_code=503,
+            ) from e
 
         logger.info("Re-ingest enqueued for document", extra={"kb_id": kb_id, "document_id": document_id})
         return {"status": "queued", "document_id": document_id}

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..billing.enforcement import assert_document_count_under_limit
+from ..billing.entitlements import LimitExceededError
 from ..core.exceptions import DocumentNotFoundError, KnowledgeBaseNotFoundError
 from ..core.logging import get_logger
 from ..models.document import Document, DocumentChunk, DocumentStatus
@@ -86,7 +87,27 @@ class DocumentService:
             )
             return DocumentResponse.from_orm(existing), False
 
-        await self._assert_room_for_new_document()
+        try:
+            await self._assert_room_for_new_document()
+        except LimitExceededError:
+            # A concurrent request may have inserted our dedup key in the gap
+            # between the lookup above and this cap check, tipping the tenant to
+            # its limit. Re-ingesting an existing document never counts against
+            # the cap, so return it idempotently rather than a spurious quota
+            # error (mirrors the commit-time IntegrityError race below).
+            raced = await self._get_by_dedup_key(doc_data)
+            if raced is not None:
+                logger.info(
+                    "Concurrent insert filled the cap; returning existing document instead of quota error",
+                    extra={
+                        "doc_id": raced.id,
+                        "source_id": doc_data.source_id,
+                        "kb_id": doc_data.knowledge_base_id,
+                        "source_type": doc_data.source_type,
+                    },
+                )
+                return DocumentResponse.from_orm(raced), False
+            raise
 
         # Create document. The pre-check above is not atomic with the insert, so a
         # concurrent request can win the unique constraint between them — treat that

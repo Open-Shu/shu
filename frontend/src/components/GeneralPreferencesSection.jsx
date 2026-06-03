@@ -173,7 +173,7 @@ export default function GeneralPreferencesSection() {
       // instead of briefly applying the stale one. Mirrors the popover path (M4).
       .then(() => queryClient.invalidateQueries('user-preferences'))
       .catch((err) => {
-        log.warn('Failed to update auto-attach preference:', formatError(err).message);
+        log.warn('Failed to update auto-attach preference:', formatError(err));
         // !enabled is the pre-click toggle state (the switch was at !enabled before
         // this change), i.e. the correct value to restore for a single failed toggle.
         setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));

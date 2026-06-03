@@ -259,7 +259,7 @@ const ModernChat = () => {
         .patchPreferences({ auto_attach_personal_kb: enabled })
         .then(() => queryClient.invalidateQueries('user-preferences'))
         .catch((err) => {
-          log.warn('Failed to update auto-attach preference:', formatError(err).message);
+          log.warn('Failed to update auto-attach preference:', formatError(err));
           setUserPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
           setError("Couldn't save your auto-attach preference. Please try again.");
         });
@@ -380,7 +380,7 @@ const ModernChat = () => {
     onError: (err) => {
       // For non-admin users this will typically be 403; log but do not
       // treat it as "not configured" so we don't block automation.
-      log.warn('Failed to fetch side-call config:', formatError(err).message);
+      log.warn('Failed to fetch side-call config:', formatError(err));
     },
   });
 
@@ -421,7 +421,7 @@ const ModernChat = () => {
       setPreferencesLoaded(true);
     },
     onError: (err) => {
-      log.warn('Failed to load user preferences:', formatError(err).message);
+      log.warn('Failed to load user preferences:', formatError(err));
       // Don't show error to user for preferences - use defaults (auto-attach ON).
       setPreferencesLoaded(true);
     },
@@ -543,7 +543,7 @@ const ModernChat = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
       closeDeleteDialog();
     },
   });
@@ -600,7 +600,7 @@ const ModernChat = () => {
         setError(null);
       },
       onError: (err) => {
-        setError(formatError(err).message);
+        setError(formatError(err));
       },
     }
   );
@@ -1281,7 +1281,7 @@ const ModernChat = () => {
       } catch (err) {
         // Revert optimistic update on error
         queryClient.invalidateQueries('conversations');
-        setError(formatError(err).message);
+        setError(formatError(err));
       }
     },
     [conversationQueryKey, queryClient, selectedConversation, setError]

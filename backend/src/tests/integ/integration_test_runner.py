@@ -372,12 +372,18 @@ class IntegrationTestRunner:
 
         try:
             async with tenant_context_for_tenant_id(None):
-                # Personal test KBs the API can't delete (documents cascade).
+                # Personal test KBs the API can't delete (documents cascade). Gate the
+                # name match on test ownership so a live real user's "<name>'s Knowledge"
+                # is never deleted even if its name contains a test substring: real users
+                # have a non-null, non-@example.com owner, while framework KBs are either
+                # @example.com-owned or already orphaned (owner_id SET NULL on user delete).
                 await self.db.execute(
                     text(
                         "DELETE FROM knowledge_bases WHERE is_personal = true AND ("
                         "name ILIKE '%test%' OR name ILIKE '%integration%' "
-                        "OR name ILIKE '%dummy%' OR name ILIKE '%sample%')"
+                        "OR name ILIKE '%dummy%' OR name ILIKE '%sample%') "
+                        "AND (owner_id IS NULL OR owner_id IN "
+                        "(SELECT id FROM users WHERE email LIKE '%@example.com'))"
                     )
                 )
                 # Framework admin (can't self-delete via API) + dependent rows,

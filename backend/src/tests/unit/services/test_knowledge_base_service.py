@@ -1001,10 +1001,12 @@ class TestReingestDocumentEnqueueFailure:
     async def test_enqueue_failure_marks_error_and_reraises(self):
         """If enqueue_job raises after the EMBEDDING commit, reingest_document must
         flip the document to a terminal ERROR (with the transient embed-enqueue
-        prefix, so a re-upload retries) and re-raise — never leave it wedged in
-        EMBEDDING with no job behind it (which the 409 busy guard / re-upload skip
-        would then lock out permanently, with no document-level reaper to recover).
+        prefix, so a re-upload retries) and surface a structured retryable 503 — never
+        leave it wedged in EMBEDDING with no job behind it (which the 409 busy guard /
+        re-upload skip would then lock out permanently, with no document-level reaper
+        to recover).
         """
+        from shu.core.exceptions import ShuException
         from shu.models.document import DocumentStatus
         from shu.services.ingestion_service import _ERR_ENQUEUE_EMBEDDING, _is_transient_error
 
@@ -1033,9 +1035,15 @@ class TestReingestDocumentEnqueueFailure:
                 "shu.core.workload_routing.enqueue_job",
                 AsyncMock(side_effect=RuntimeError("Redis unavailable")),
             ),
-            pytest.raises(RuntimeError, match="Redis unavailable"),
+            pytest.raises(ShuException) as exc_info,
         ):
             await service.reingest_document("kb-1", "doc-1", user_id="user-1")
+
+        # The raw queue error is translated into a structured, retryable 503 envelope
+        # (not a generic 500), with the original cause preserved for logs/debugging.
+        assert exc_info.value.error_code == "DOCUMENT_REINGEST_ENQUEUE_ERROR"
+        assert exc_info.value.status_code == 503
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
 
         # The doc is set EMBEDDING for immediate UI feedback, then flipped to terminal
         # ERROR when the enqueue fails — not left stranded in EMBEDDING.
