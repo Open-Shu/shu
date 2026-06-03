@@ -428,7 +428,17 @@ async def delete_knowledge_base(
 
     try:
         service = KnowledgeBaseService(db)
-        kb = await service.get_knowledge_base(kb_id, user_id=str(current_user.id))
+        # require_kb_delete_access already authorized this delete and confirmed the
+        # KB exists; re-running the kb.read-gated getter here would deny a
+        # kb.delete-only grantee that holds no kb.read (SHU-817) — mirroring the
+        # post-auth read-gate bypass in get_document_unrestricted / reingest.
+        kb = await service.fetch_raw_knowledge_base(kb_id)
+        if kb is None:
+            return ShuResponse.error(
+                message=f"Knowledge base '{kb_id}' not found",
+                code="KNOWLEDGE_BASE_DELETE_ERROR",
+                status_code=404,
+            )
         # Personal Knowledge is an owner-scoped singleton the in-chat UX never
         # exposes a "delete KB" action for (users manage individual documents).
         # Only admins may delete it — without an admin path these KBs are
@@ -896,7 +906,11 @@ async def delete_document(
     """
     try:
         kb_service = KnowledgeBaseService(db)
-        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
+        # Authorization was already enforced by require_kb_delete_access. Routing
+        # the fetch through the kb.read-gated get_document would force a kb.delete
+        # grantee to *also* hold kb.read (SHU-817) — the same reason reingest and
+        # upload bypass the read gate after their write-auth dependency.
+        document = await kb_service.get_document_unrestricted(kb_id, document_id)
 
         # Only allow deletion of manually uploaded documents
         if document.source_type != "plugin:manual_upload":

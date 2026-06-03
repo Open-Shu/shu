@@ -241,8 +241,11 @@ async def test_create_knowledge_base_duplicate_name(client, db, auth_headers):
         }
 
         response2 = await client.post("/api/v1/knowledge-bases", json=kb_data2, headers=auth_headers)
-        # Should fail since duplicate names aren't allowed
-        assert response2.status_code in [400, 500]  # Accept either 400 or 500 for duplicate names
+        # A duplicate name collides on the derived slug, which the service rejects with
+        # ConflictError -> 409 (knowledge_base_service.create raises "...already exists").
+        assert response2.status_code == 409, (
+            f"duplicate KB name must be rejected with 409 CONFLICT: {response2.status_code} {response2.text}"
+        )
 
     logger.info("=== EXPECTED TEST OUTPUT: Duplicate name test completed successfully ===")
 
@@ -483,14 +486,14 @@ async def test_kb_delete_pbac_grant_matrix(client, db, auth_headers):
     # kb.write first (delete denied), then add kb.delete (delete allowed).
     headers, user_id = await create_active_user_with_id(client, auth_headers, role="regular_user")
 
-    async def _grant(actions):
+    async def _grant(actions, resource_slug=None):
         resp = await client.post(
             "/api/v1/policies",
             json={
                 "name": f"Test grant {'-'.join(a.replace('.', '') for a in actions)} {uuid.uuid4().hex[:8]}",
                 "effect": "allow",
                 "bindings": [{"actor_type": "user", "actor_id": user_id}],
-                "statements": [{"actions": actions, "resources": [f"kb:{slug}"]}],
+                "statements": [{"actions": actions, "resources": [f"kb:{resource_slug or slug}"]}],
             },
             headers=auth_headers,
         )
@@ -508,6 +511,31 @@ async def test_kb_delete_pbac_grant_matrix(client, db, auth_headers):
     await _grant(["kb.delete"])
     d_ok = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc1}", headers=headers)
     assert d_ok.status_code == 204, f"kb.delete grantee should delete (204): {d_ok.status_code} {d_ok.text}"
+
+    # (3) Regression (SHU-817): a kb.delete-only grant WITHOUT kb.read must still
+    # work. The delete routes authorize via require_kb_delete_access and must not
+    # re-enter the kb.read-gated getter (which would 404 a delete-only grantee).
+    # A fresh KB isolates the grant — PBAC resources are per-slug, so the KB-A
+    # grants above don't leak onto it, leaving this user with delete-and-nothing-else.
+    kb_b = await _kb_create(client, auth_headers, f"Test PBAC DeleteOnly KB {uuid.uuid4().hex[:8]}")
+    up_b = await _kb_upload(client, auth_headers, kb_b, file_tuple=_TXT)
+    assert up_b.status_code == 200, up_b.text
+    doc_b = extract_data(up_b)["results"][0]["document_id"]
+
+    await db.rollback()
+    slug_b = (await db.execute(text("SELECT slug FROM knowledge_bases WHERE id = :id"), {"id": kb_b})).scalar_one()
+
+    await _grant(["kb.delete"], resource_slug=slug_b)  # delete ONLY — no kb.read/kb.write on KB-B
+    d_doc = await client.delete(f"/api/v1/knowledge-bases/{kb_b}/documents/{doc_b}", headers=headers)
+    assert d_doc.status_code == 204, (
+        f"kb.delete-only (no kb.read) must delete a doc (204), not 404: {d_doc.status_code} {d_doc.text}"
+    )
+    # The same delete-only grant must also delete the (non-personal) KB itself.
+    d_kb = await client.delete(f"/api/v1/knowledge-bases/{kb_b}", headers=headers)
+    assert d_kb.status_code == 204, (
+        f"kb.delete-only (no kb.read) must delete the KB (204), not 404: {d_kb.status_code} {d_kb.text}"
+    )
+    logger.info("kb.delete-only grant (no kb.read) correctly deleted both a doc and the KB")
 
 
 async def test_delete_while_indexing_leaves_no_orphans(client, db, auth_headers):

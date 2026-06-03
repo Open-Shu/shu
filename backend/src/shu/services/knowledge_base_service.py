@@ -1059,6 +1059,29 @@ class KnowledgeBaseService:
             logger.error(f"Failed to get document {document_id} from KB {kb_id}: {e}")
             raise ShuException(f"Failed to get document: {e!s}", "DOCUMENT_GET_ERROR")
 
+    async def get_document_unrestricted(self, kb_id: str, document_id: str) -> Document:
+        """Fetch a document by (kb_id, document_id) WITHOUT enforcing kb.read.
+
+        For routes whose own dependency already authorized a privileged mutation
+        (document delete via ``require_kb_delete_access``). Routing the fetch
+        through the read-gated :meth:`get_document` would force a ``kb.delete``
+        grantee to *also* hold ``kb.read`` — the same reason
+        :meth:`reingest_document` and the upload route bypass the read gate after
+        their write-auth dependency (SHU-817). Callers MUST have already
+        authorized access; this performs no permission check.
+
+        Raises:
+            NotFoundError: Document not found in the KB.
+
+        """
+        result = await self.db.execute(
+            select(Document).where(Document.knowledge_base_id == kb_id, Document.id == document_id)
+        )
+        doc = result.scalar_one_or_none()
+        if doc is None:
+            raise NotFoundError(f"Document '{document_id}' not found in knowledge base '{kb_id}'")
+        return doc
+
     async def reingest_document(self, kb_id: str, document_id: str, *, user_id: str | None = None) -> dict:
         """Re-run the embed → profile pipeline for an already-extracted document.
 
