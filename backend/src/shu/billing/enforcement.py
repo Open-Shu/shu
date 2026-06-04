@@ -68,26 +68,32 @@ class SubscriptionInactiveError(ShuException):
         )
 
 
-class TrialCapExhaustedError(ShuException):
-    """Raised when a trial tenant has spent through their grant pool.
+class HardCapExhaustedError(ShuException):
+    """Raised when a hard-capped tenant has spent through their grant pool.
 
-    Distinct from `SubscriptionInactiveError` so the frontend can render
-    the trial-exhausted surface (Upgrade now / Cancel trial) instead of
-    the payment-failure surface (Update payment method).
+    Hard-capped covers both trial subscriptions (any tier) and the free
+    tier whether trialing or not — CP unifies both via `hard_cap` on the
+    wire (SHU-813). Distinct from `SubscriptionInactiveError` so the
+    frontend can render the cap-exhausted surface (Upgrade now / Cancel
+    trial) instead of the payment-failure surface (Update payment method).
     """
 
     def __init__(
         self,
         *,
-        trial_deadline: datetime | None,
+        period_end: datetime | None,
         total_grant_amount: Decimal,
     ) -> None:
+        # `period_end` (was `trial_deadline` pre-SHU-813) is the "budget
+        # resets on …" anchor for both surfaces: during `trialing` it equals
+        # the trial deadline, on the free tier it's the regular cycle end.
+        # Either way the frontend has a non-null datetime to render.
         super().__init__(
-            message="Trial usage budget exhausted.",
-            error_code="trial_usage_exhausted",
+            message="Usage budget exhausted.",
+            error_code="hard_cap_exhausted",
             status_code=402,
             details={
-                "trial_deadline": trial_deadline.isoformat() if trial_deadline else None,
+                "period_end": period_end.isoformat() if period_end else None,
                 "total_grant_amount": str(total_grant_amount),
             },
         )
@@ -111,24 +117,24 @@ async def get_current_billing_state() -> BillingState:
 
 
 async def assert_subscription_active() -> None:
-    """Gate every billable chokepoint on payment-status AND trial-cap.
+    """Gate every billable chokepoint on payment-status AND hard-cap usage.
 
     Two independent failure modes share this single entry point so call
     sites (chat / embed / OCR / KB upload / worker handlers) get both
-    checks without per-site wiring. Trialing subscriptions are still
+    checks without per-site wiring. Hard-capped subscriptions are still
     "active" in Stripe's sense; treating cap-exhaustion as another mode
     of "not active right now" keeps the assertion semantically honest.
 
     Precedence: payment failure raises first. A `past_due` tenant who
-    happens to be trialing should see the payment-failure surface (it's
-    the binding gate), not the trial-exhausted one.
+    happens to be hard-capped should see the payment-failure surface
+    (it's the binding gate), not the cap-exhausted one.
     """
     cache = await get_billing_state_cache()
 
     # Self-hosted / dev: cache singleton missing → no enforcement at all.
-    # Without this guard, `HEALTHY_DEFAULT.is_trial=True` (the cold-start
+    # Without this guard, `HEALTHY_DEFAULT.hard_cap=True` (the cold-start
     # fail-closed posture) would route self-hosted dev tenants into the
-    # trial-cap branch.
+    # hard-cap branch.
     if cache is None:
         return
 
@@ -146,21 +152,21 @@ async def assert_subscription_active() -> None:
             grace_deadline=state.grace_deadline,
         )
 
-    if not state.is_trial:
+    if not state.hard_cap:
         return
 
-    # Trial-cap path: precise per-period DB query rather than reading
+    # Hard-cap path: precise per-period DB query rather than reading
     # `state.remaining_grant_amount` from the cache. The cache value is
-    # the snapshot CP held at last poll — too loose for trial-spend
+    # the snapshot CP held at last poll — too loose for cap-spend
     # enforcement where minutes of overage are real cost the company eats.
     # The period anchor (`current_period_start`) comes from the wire too,
     # with the cache's period_end freshness guard ensuring the anchor is
     # current right after Stripe rolls (trial conversion / cycle rollover).
     if state.current_period_start is None:
         # Fail-closed on missing period info: silent bypass would
-        # let unbounded trial spend through on a data anomaly.
-        raise TrialCapExhaustedError(
-            trial_deadline=state.trial_deadline,
+        # let unbounded spend through on a data anomaly.
+        raise HardCapExhaustedError(
+            period_end=state.current_period_end,
             total_grant_amount=state.total_grant_amount,
         )
     session_local = get_async_session_local()
@@ -171,12 +177,12 @@ async def assert_subscription_active() -> None:
         )
     # `total_cost_usd` is raw provider cost; `total_grant_amount` is
     # customer-billed (from CP/Stripe credit grant). Apply the markup
-    # before comparing so the trial-cap triggers on the billed dollar
-    # the customer would have been charged, not the raw provider dollar.
+    # before comparing so the cap triggers on the billed dollar the
+    # customer would have been charged, not the raw provider dollar.
     billed_cost = summary.total_cost_usd * resolve_markup(state)
     if billed_cost >= state.total_grant_amount:
-        raise TrialCapExhaustedError(
-            trial_deadline=state.trial_deadline,
+        raise HardCapExhaustedError(
+            period_end=state.current_period_end,
             total_grant_amount=state.total_grant_amount,
         )
 
