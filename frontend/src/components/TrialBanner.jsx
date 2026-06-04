@@ -166,6 +166,7 @@ const TrialBanner = () => {
     flexShrink: 0,
     borderRadius: 0,
     py: 0.75,
+    px: { xs: 1.5, sm: 2 },
     '& .MuiAlert-message': { width: '100%', py: 0 },
   };
 
@@ -174,50 +175,88 @@ const TrialBanner = () => {
       {/* icon={false}: the row carries its own trailing info button as the
           popover trigger; the info severity tint is the at-a-glance cue. */}
       <Alert severity="info" icon={false} sx={sx}>
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
-          <Typography variant="body2" component="span" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
-            Free trial
-          </Typography>
+        <Stack direction="row" spacing={{ xs: 1, sm: 1.5 }} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
+          {/* Text cluster shares a baseline so the larger "Free trial" heading
+              lines up with the smaller status text regardless of the font. */}
+          <Stack direction="row" spacing={{ xs: 1, sm: 1.5 }} alignItems="baseline" sx={{ minWidth: 0 }}>
+            <Typography
+              variant="subtitle1"
+              component="span"
+              sx={{ fontWeight: 700, fontSize: '1.25rem', lineHeight: 1.2, whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              Free trial
+            </Typography>
 
-          <Typography
-            variant="body2"
-            component="span"
-            sx={{
-              whiteSpace: 'nowrap',
-              fontWeight: exhausted ? 600 : 400,
-              color: exhausted ? 'warning.main' : 'inherit',
-            }}
-          >
-            ${remaining.toFixed(2)} of ${total.toFixed(2)} left
-          </Typography>
-
-          {/* Inline mini-bar — hidden below sm where horizontal room is scarce;
-              the dollar text stays the precise source of truth. */}
-          <LinearProgress
-            variant="determinate"
-            value={percentUsed}
-            color={exhausted ? 'warning' : 'primary'}
-            aria-label="Trial usage progress"
-            sx={{ width: 64, height: 6, borderRadius: 1, flexShrink: 0, display: { xs: 'none', sm: 'block' } }}
-          />
-
-          {deadlineText && (
             <Typography
               variant="body2"
               component="span"
-              sx={{ whiteSpace: 'nowrap', display: { xs: 'none', sm: 'inline' } }}
+              sx={{
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                fontWeight: exhausted ? 600 : 400,
+                color: exhausted ? 'warning.main' : 'inherit',
+              }}
             >
-              · ends {deadlineText}
+              ${remaining.toFixed(2)} of ${total.toFixed(2)} left
             </Typography>
-          )}
+
+            {/* Mini-bar + deadline are non-essential; hide them below md so the
+                row sheds width BEFORE it would overflow into a scrollbar, not
+                only at the sm/mobile breakpoint. alignSelf centers the bar
+                against the baseline-aligned text. */}
+            <LinearProgress
+              variant="determinate"
+              value={percentUsed}
+              color={exhausted ? 'warning' : 'primary'}
+              aria-label="Trial usage progress"
+              sx={{
+                width: 64,
+                height: 6,
+                borderRadius: 1,
+                flexShrink: 0,
+                alignSelf: 'center',
+                display: { xs: 'none', md: 'block' },
+              }}
+            />
+
+            {deadlineText && (
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{ whiteSpace: 'nowrap', display: { xs: 'none', md: 'inline' } }}
+              >
+                · ends {deadlineText}
+              </Typography>
+            )}
+          </Stack>
 
           {/* Spacer pushes the actions to the right edge of the row. */}
           <Box sx={{ flexGrow: 1 }} />
 
-          <Button variant="contained" size="small" aria-label="Upgrade now" onClick={() => setUpgradeOpen(true)}>
-            Upgrade now
+          <Button
+            variant="contained"
+            size="small"
+            aria-label="Upgrade now"
+            onClick={() => setUpgradeOpen(true)}
+            sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+          >
+            {/* "Upgrade" on xs, "Upgrade now" on >=sm so the price and CTA don't
+                collide on the narrowest phones. aria-label keeps the accessible
+                name "Upgrade now" regardless of the visible text. */}
+            Upgrade
+            <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+              &nbsp;now
+            </Box>
           </Button>
-          <Button variant="outlined" size="small" aria-label="Cancel trial" onClick={() => setCancelStep('warning')}>
+          {/* Cancel is inline on >=sm; on xs it folds into the popover (below) so
+              the narrow row keeps the primary Upgrade CTA on a single line. */}
+          <Button
+            variant="outlined"
+            size="small"
+            aria-label="Cancel trial"
+            onClick={() => setCancelStep('warning')}
+            sx={{ flexShrink: 0, whiteSpace: 'nowrap', display: { xs: 'none', sm: 'inline-flex' } }}
+          >
             Cancel trial
           </Button>
 
@@ -231,6 +270,7 @@ const TrialBanner = () => {
             aria-expanded={detailOpen}
             aria-controls={detailOpen ? 'trial-budget-detail' : undefined}
             onClick={(e) => setDetailAnchor(e.currentTarget)}
+            sx={{ flexShrink: 0 }}
           >
             <InfoOutlinedIcon fontSize="small" />
           </IconButton>
@@ -265,6 +305,21 @@ const TrialBanner = () => {
               After trial: ~${projectedMonthly.toFixed(2)}/month at {userCount} {userCount === 1 ? 'seat' : 'seats'}.
             </Typography>
           )}
+
+          {/* Cancel folds in here on xs (it's inline on >=sm). Close the popover
+              first so the confirm dialog doesn't stack behind it. */}
+          <Button
+            variant="outlined"
+            size="small"
+            aria-label="Cancel trial"
+            onClick={() => {
+              setDetailAnchor(null);
+              setCancelStep('warning');
+            }}
+            sx={{ display: { xs: 'inline-flex', sm: 'none' }, alignSelf: 'flex-start', mt: 0.5 }}
+          >
+            Cancel trial
+          </Button>
         </Stack>
       </Popover>
 
