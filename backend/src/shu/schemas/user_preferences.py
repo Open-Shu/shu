@@ -47,6 +47,11 @@ class UserPreferencesBase(BaseModel):
     font_family: FontFamilyKey = Field(default=None, description="Body font family")
     font_size_scale: FontSizeScaleKey = Field(default=None, description="Font size scale tier")
 
+    # Chat behavior (SHU-817)
+    auto_attach_personal_kb: bool = Field(
+        default=True, description="Auto-attach the user's Personal Knowledge KB to new chats"
+    )
+
     # Advanced Settings
     advanced_settings: dict[str, Any] | None = Field(
         default_factory=dict, description="Additional custom settings as JSON"
@@ -87,6 +92,9 @@ class UserPreferencesUpdate(BaseModel):
     font_family: FontFamilyKey = None
     font_size_scale: FontSizeScaleKey = None
 
+    # Chat behavior (SHU-817)
+    auto_attach_personal_kb: bool | None = None
+
     # Advanced Settings
     advanced_settings: dict[str, Any] | None = None
 
@@ -120,6 +128,9 @@ class UserPreferencesResponse(BaseModel):
     # the curated list so the frontend Select never sees an unknown option.
     font_family: FontFamilyKey
     font_size_scale: FontSizeScaleKey
+
+    # Chat behavior (SHU-817)
+    auto_attach_personal_kb: bool
 
     # Advanced Settings
     advanced_settings: dict[str, Any]

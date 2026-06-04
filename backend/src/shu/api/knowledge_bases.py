@@ -4,19 +4,21 @@ This module provides REST API endpoints for managing knowledge bases,
 including CRUD operations, statistics, and multi-source support.
 """
 
+import hashlib
 import mimetypes
 import os
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth.models import User
+from ..auth.models import User, UserRole
 from ..auth.rbac import (
     get_current_user,
     require_admin,
+    require_kb_delete_access,
     require_kb_write_access,
     require_power_user,
 )
@@ -32,7 +34,10 @@ from ..core.response import ShuResponse
 from ..ingestion.filetypes import MAGIC_BYTES
 from ..schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, RAGConfig
 from ..services.document_service import DocumentService
-from ..services.ingestion_service import ingest_document as ingest_document_service
+from ..services.ingestion_service import (
+    ingest_document as ingest_document_service,
+)
+from ..services.ingestion_service import manual_upload_source_id
 from ..services.kb_import_export_service import KBImportExportService
 from ..services.knowledge_base_service import (
     KnowledgeBaseService,
@@ -161,6 +166,42 @@ async def get_knowledge_base_stats(current_user: User = Depends(require_admin), 
         return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_STATS_ERROR", status_code=e.status_code)
     except Exception as e:
         logger.error("Unexpected error getting knowledge base statistics", extra={"error": str(e)})
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
+
+
+@router.get(
+    "/personal",
+    summary="Get the caller's Personal Knowledge KB",
+    description=(
+        "Return the caller's Personal Knowledge KB directly (owner-scoped), or null if it "
+        "has not been provisioned yet. Avoids scanning the full KB list, which can paginate "
+        "the personal KB out for users who can see many KBs."
+    ),
+)
+async def get_personal_knowledge_base(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the caller's Personal Knowledge KB, or null if not yet provisioned.
+
+    Registered before GET /{kb_id} so the literal "personal" path is not captured
+    as a kb_id path parameter.
+    """
+    try:
+        service = KnowledgeBaseService(db)
+        kb = await service.get_personal_knowledge_base(owner_id=current_user.id)
+        return ShuResponse.success(_serialize_kb_create_response(kb) if kb is not None else None)
+    except ShuException as e:
+        logger.error(
+            "API: Failed to get personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
+        return ShuResponse.error(message=str(e), code="KNOWLEDGE_BASE_GET_ERROR", status_code=e.status_code)
+    except Exception as e:
+        logger.error(
+            "API: Failed to get personal knowledge base",
+            extra={"user_id": current_user.id, "error": str(e)},
+        )
         return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
@@ -371,18 +412,44 @@ async def update_knowledge_base(
 @router.delete("/{kb_id}")
 async def delete_knowledge_base(
     kb_id: str,
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_delete_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a knowledge base.
 
     Deletes a knowledge base and all its documents and chunks.
     This operation cannot be undone.
+
+    Gated by require_kb_delete_access (admin, KB owner, or explicit kb.delete PBAC).
+    Personal Knowledge KBs are auto-provisioned singletons; only an admin may delete
+    one (e.g. user offboarding / cleanup). The owner and kb.delete grantees are blocked.
     """
     logger.info("API: Delete knowledge base", extra={"kb_id": kb_id})
 
     try:
         service = KnowledgeBaseService(db)
+        # require_kb_delete_access already authorized this delete and confirmed the
+        # KB exists; re-running the kb.read-gated getter here would deny a
+        # kb.delete-only grantee that holds no kb.read (SHU-817) — mirroring the
+        # post-auth read-gate bypass in get_document_unrestricted / reingest.
+        kb = await service.fetch_raw_knowledge_base(kb_id)
+        if kb is None:
+            return ShuResponse.error(
+                message=f"Knowledge base '{kb_id}' not found",
+                code="KNOWLEDGE_BASE_DELETE_ERROR",
+                status_code=404,
+            )
+        # Personal Knowledge is an owner-scoped singleton the in-chat UX never
+        # exposes a "delete KB" action for (users manage individual documents).
+        # Only admins may delete it — without an admin path these KBs are
+        # un-deletable and orphan when their owner is deleted (SHU-817).
+        if kb.is_personal and not current_user.has_role(UserRole.ADMIN):
+            return ShuResponse.error(
+                message="Personal Knowledge can only be deleted by an administrator.",
+                code="PERSONAL_KB_DELETE_NOT_ALLOWED",
+                status_code=403,
+            )
+
         await service.delete_knowledge_base(kb_id)
 
         logger.info("API: Deleted knowledge base", extra={"kb_id": kb_id})
@@ -638,6 +705,11 @@ async def get_document_preview(
                 "source_url": document.source_url,
                 "source_id": document.source_id,
                 "source_type": document.source_type,
+                # Profiling outputs surfaced for the in-chat preview slide-over (SHU-817 F2):
+                # the synopsis is the LLM "what's in here" summary; document_type is the
+                # inferred class (narrative/transactional/technical/conversational).
+                "document_type": document.document_type,
+                "synopsis": document.synopsis,
                 "preview": preview_text,
                 "full_content_length": len(content_text),
                 "extraction_metadata": {
@@ -653,6 +725,9 @@ async def get_document_preview(
                     "word_count": document.word_count,
                     "character_count": document.character_count,
                     "chunk_count": document.chunk_count,
+                    # F2: coverage is a named key-stat for the preview slide-over and lets
+                    # the in-panel Profiling stage advance its % alongside the live status.
+                    "profiling_coverage_percent": document.profiling_coverage_percent,
                 },
             }
         )
@@ -812,12 +887,12 @@ async def list_documents(
 @router.delete(
     "/{kb_id}/documents/{document_id}",
     summary="Delete a document from knowledge base",
-    description="Delete a manually uploaded document. Power user or admin only. Feed-sourced documents cannot be deleted via this endpoint.",
+    description="Delete a manually uploaded document. Requires kb.delete access (admin, KB owner, or explicit kb.delete grant). Feed-sourced documents cannot be deleted via this endpoint.",
 )
 async def delete_document(
     kb_id: str,
     document_id: str,
-    current_user: User = Depends(require_power_user),
+    current_user: User = Depends(require_kb_delete_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a document from a knowledge base.
@@ -825,11 +900,17 @@ async def delete_document(
     Only manually uploaded documents (source_type='plugin:manual_upload') can be deleted.
     Feed-sourced documents must be managed through their respective feeds.
 
-    Requires power_user or admin role. Access to the specific KB is still enforced via PBAC.
+    Gated by require_kb_delete_access: admin, the KB owner, or a user with an explicit
+    kb.delete PBAC grant. Unlike upload (kb.write), power_user does NOT have blanket
+    delete — admins can grant write-without-delete.
     """
     try:
         kb_service = KnowledgeBaseService(db)
-        document = await kb_service.get_document(kb_id, document_id, user_id=str(current_user.id))
+        # Authorization was already enforced by require_kb_delete_access. Routing
+        # the fetch through the kb.read-gated get_document would force a kb.delete
+        # grantee to *also* hold kb.read (SHU-817) — the same reason reingest and
+        # upload bypass the read gate after their write-auth dependency.
+        document = await kb_service.get_document_unrestricted(kb_id, document_id)
 
         # Only allow deletion of manually uploaded documents
         if document.source_type != "plugin:manual_upload":
@@ -849,6 +930,19 @@ async def delete_document(
         # Adjust KB stats (decrement by 1 doc and its chunks)
         await kb_service.adjust_document_stats(kb_id, doc_delta=-1, chunk_delta=-chunk_count)
 
+        # Best-effort cleanup of any staged bytes not yet consumed by the worker
+        # (e.g. deleting a doc that is still PENDING). Non-fatal — a worker that
+        # later finds the document gone also cleans up (SHU-817 R6).
+        try:
+            from ..services.file_staging_service import FileStagingService
+
+            await FileStagingService().delete_staged_files_for_document(document_id)
+        except Exception as cleanup_err:
+            logger.warning(
+                "Failed to clean staged files for deleted document",
+                extra={"document_id": document_id, "error": str(cleanup_err)},
+            )
+
         logger.info(
             "Deleted document",
             extra={"kb_id": kb_id, "document_id": document_id, "deleted_by": current_user.id},
@@ -861,6 +955,45 @@ async def delete_document(
     except Exception as e:
         logger.error(f"Error deleting document: {e}", exc_info=True)
         return ShuResponse.error(message="Failed to delete document", code="DOCUMENT_DELETE_ERROR", status_code=500)
+
+
+@router.post(
+    "/{kb_id}/documents/{document_id}/reingest",
+    summary="Re-ingest a document",
+    description=(
+        "Re-run the embed/profile pipeline for a manually-uploaded document from its stored "
+        "extracted content. Recovers failed or stale documents without a re-upload. Requires "
+        "kb.write access."
+    ),
+)
+async def reingest_document(
+    kb_id: str,
+    document_id: str,
+    current_user: User = Depends(require_kb_write_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-ingest a manually-uploaded document from its stored extracted content.
+
+    Documents still processing return 409; documents with no extracted content
+    (extraction failed) return 422 with guidance to re-upload the file.
+    """
+    try:
+        service = KnowledgeBaseService(db)
+        result = await service.reingest_document(kb_id, document_id, user_id=str(current_user.id))
+        return ShuResponse.success(result)
+    except ShuException as e:
+        logger.error(
+            "API: Failed to re-ingest document",
+            extra={"kb_id": kb_id, "document_id": document_id, "error": str(e)},
+        )
+        return ShuResponse.error(message=str(e), code=e.error_code, status_code=e.status_code)
+    except Exception as e:
+        logger.error(
+            "API: Failed to re-ingest document",
+            extra={"kb_id": kb_id, "document_id": document_id, "error": str(e)},
+            exc_info=True,
+        )
+        return ShuResponse.error(message="Internal server error", code="INTERNAL_SERVER_ERROR", status_code=500)
 
 
 @router.get("/{kb_id}/documents/extraction-summary")
@@ -951,7 +1084,7 @@ def _check_content_type_mismatch(ext: str, file_bytes: bytes) -> str | None:
         "or has a PBAC kb.write grant on the target KB."
     ),
 )
-async def upload_documents(
+async def upload_documents(  # noqa: PLR0915, PLR0912
     kb_id: str,
     files: list[UploadFile] = File(..., description="Files to upload"),
     current_user: User = Depends(require_kb_write_access),
@@ -982,7 +1115,10 @@ async def upload_documents(
         allowed_types = [t.lower() for t in settings.kb_upload_allowed_types]
         max_size = settings.kb_upload_max_size
 
-        results = []
+        doc_service = DocumentService(db)
+        results: list[dict[str, Any]] = []
+        created_count = 0
+        seen_source_ids: set[str] = set()
 
         for file in files:
             filename = file.filename or "upload"
@@ -1052,8 +1188,45 @@ async def upload_documents(
             mime_type, _ = mimetypes.guess_type(filename)
             mime_type = mime_type or "application/octet-stream"
 
-            # Generate unique source_id for manual uploads
-            source_id = f"manual-upload-{uuid.uuid4().hex[:12]}"
+            # Stable, per-KB source_id derived from the filename so re-uploading the
+            # same file updates the existing document in place instead of creating a
+            # duplicate (SHU-817). The raw-bytes hash is passed as source_hash so an
+            # unchanged re-upload of an already-processed doc is skipped, not reprocessed.
+            source_id = manual_upload_source_id(filename)
+            source_hash = hashlib.sha256(file_bytes).hexdigest()
+
+            # M1 — the same filename appearing twice in one batch maps to one
+            # source_id; keep the first, flag the rest instead of silently
+            # collapsing them into a single update.
+            if source_id in seen_source_ids:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": True,
+                        "skipped": True,
+                        "action": "duplicate_in_batch",
+                        "message": "Duplicate filename in this upload — only the first copy was kept.",
+                    }
+                )
+                continue
+            seen_source_ids.add(source_id)
+
+            # Scenario A — a same-named document still mid-pipeline must not be
+            # reprocessed concurrently (process_and_update_chunks is not
+            # concurrency-safe). Report it as busy without starting a new pipeline.
+            existing_doc = await doc_service.get_document_by_source_id(kb_id, source_id)
+            if existing_doc is not None and not existing_doc.is_processed and not existing_doc.has_error:
+                results.append(
+                    {
+                        "filename": filename,
+                        "success": True,
+                        "skipped": True,
+                        "action": "processing",
+                        "document_id": existing_doc.id,
+                        "message": "Already being added — re-upload once it's ready to update it.",
+                    }
+                )
+                continue
 
             try:
                 result = await ingest_document_service(
@@ -1066,13 +1239,24 @@ async def upload_documents(
                     mime_type=mime_type,
                     source_id=source_id,
                     source_url=None,
-                    attributes={"uploaded_by": current_user.email or current_user.id},
+                    attributes={
+                        "uploaded_by": current_user.email or current_user.id,
+                        "source_hash": source_hash,
+                    },
                 )
+
+                skipped = bool(result.get("skipped"))
+                created = bool(result.get("created"))
+                if created:
+                    created_count += 1
+                action = "skipped" if skipped else ("added" if created else "updated")
 
                 results.append(
                     {
                         "filename": filename,
                         "success": True,
+                        "skipped": skipped,
+                        "action": action,
                         "document_id": result.get("document_id"),
                         "word_count": result.get("word_count", 0),
                         "character_count": result.get("character_count", 0),
@@ -1080,6 +1264,42 @@ async def upload_documents(
                         "extraction_method": result.get("extraction", {}).get("method"),
                     }
                 )
+            except IntegrityError as e:
+                # A constraint violation reached us. Roll back the poisoned
+                # transaction first so the rest of the batch can keep querying.
+                await db.rollback()
+                constraint_name = (getattr(getattr(e, "orig", None), "constraint_name", "") or "").lower()
+                if "uq_documents_kb_source_sourceid" in constraint_name:
+                    # M2 — a concurrent upload of the same new file won the
+                    # (kb_id, source_type, source_id) unique race. The dedup race
+                    # is normally resolved inside create_or_get_document; this is
+                    # the defensive catch. Report it as already added, not a failure.
+                    logger.info(
+                        "Concurrent manual upload resolved to existing document",
+                        extra={"kb_id": kb_id, "source_id": source_id, "filename": filename},
+                    )
+                    winner = await doc_service.get_document_by_source_id(kb_id, source_id)
+                    results.append(
+                        {
+                            "filename": filename,
+                            "success": True,
+                            "skipped": True,
+                            "action": "skipped",
+                            "document_id": winner.id if winner else None,
+                            "message": "Already added.",
+                        }
+                    )
+                else:
+                    # A different constraint failed — surface it as a real error for
+                    # this file instead of masking it as a successful skip.
+                    logger.error(f"Unexpected integrity error ingesting '{filename}': {e}", exc_info=True)
+                    results.append(
+                        {
+                            "filename": filename,
+                            "success": False,
+                            "error": "Failed to process file",
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Failed to ingest document '{filename}': {e}", exc_info=True)
                 results.append(
@@ -1094,13 +1314,13 @@ async def upload_documents(
         successful = sum(1 for r in results if r.get("success"))
         failed = len(results) - successful
 
-        # Adjust KB stats once at the end for all successful uploads
-        # Note: We only adjust doc_delta here because chunks are created asynchronously
-        # by the worker. The chunk count will be updated when:
-        # 1. The worker finishes and updates Document.chunk_count
-        # 2. A feed sync runs recalculate_kb_stats()
-        if successful > 0:
-            await kb_service.adjust_document_stats(kb_id, doc_delta=successful, chunk_delta=0)
+        # Adjust KB stats once at the end. Only NEWLY-CREATED documents bump the
+        # count — skipped (unchanged) and updated-in-place re-uploads must not
+        # inflate document_count (SHU-817). chunk_delta stays 0 because chunks are
+        # created asynchronously by the worker; recalculate_kb_stats() reconciles
+        # total_chunks (and document_count) authoritatively after embedding.
+        if created_count > 0:
+            await kb_service.adjust_document_stats(kb_id, doc_delta=created_count, chunk_delta=0)
 
         return ShuResponse.success(
             {

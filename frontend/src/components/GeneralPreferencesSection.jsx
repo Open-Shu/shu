@@ -6,11 +6,13 @@ import {
   Button,
   Grid,
   FormControl,
+  FormControlLabel,
   InputLabel,
   Select,
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -129,6 +131,7 @@ export default function GeneralPreferencesSection() {
     changeFontScale,
   } = useTheme();
   const { preferences, setPreferences, error, setError, mutation } = useUserPreferences(themeMode);
+  const queryClient = useQueryClient();
 
   const brandFontKey = branding?.brandFontFamily ?? null;
 
@@ -154,6 +157,28 @@ export default function GeneralPreferencesSection() {
     const normalized = value === INHERIT_VALUE || value === 'default' ? null : value;
     setPreferences((prev) => ({ ...prev, font_size_scale: normalized }));
     changeFontScale(normalized);
+  };
+
+  // Persist immediately via PATCH (mirroring the brain-popover toggle) rather than
+  // riding the full-PUT "Save Settings" path, which sends the whole coerced payload
+  // and could clobber other prefs from a partially-loaded / cross-device state
+  // (SHU-817 S4 — PATCH-so-other-prefs-aren't-clobbered). Optimistic with rollback.
+  const handleAutoAttachChange = (event) => {
+    const enabled = event.target.checked;
+    setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: enabled }));
+    userPreferencesAPI
+      .patchPreferences({ auto_attach_personal_kb: enabled })
+      // Refresh the shared 'user-preferences' cache so the chat — which seeds its
+      // own copy from this same query — picks up the new value on its next read
+      // instead of briefly applying the stale one. Mirrors the popover path (M4).
+      .then(() => queryClient.invalidateQueries('user-preferences'))
+      .catch((err) => {
+        log.warn('Failed to update auto-attach preference:', formatError(err));
+        // !enabled is the pre-click toggle state (the switch was at !enabled before
+        // this change), i.e. the correct value to restore for a single failed toggle.
+        setPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
+        setError("Couldn't save your auto-attach preference. Please try again.");
+      });
   };
 
   const inheritLabel = brandFontKey
@@ -224,6 +249,24 @@ export default function GeneralPreferencesSection() {
           </Box>
         </Grid>
       </Grid>
+
+      <Typography variant="h6" gutterBottom sx={{ mt: 4, mb: 2 }}>
+        Chat
+      </Typography>
+      <FormControlLabel
+        control={
+          <Switch
+            checked={preferences.auto_attach_personal_kb !== false}
+            onChange={handleAutoAttachChange}
+            inputProps={{ 'aria-label': 'Auto-attach Personal Knowledge to new chats' }}
+          />
+        }
+        label="Auto-attach my Personal Knowledge to new chats"
+      />
+      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+        When on, your Personal Knowledge is searched in every new conversation. Turn it off to attach it manually per
+        chat.
+      </Typography>
 
       <Typography variant="h6" gutterBottom sx={{ mt: 4, mb: 2 }}>
         Typography

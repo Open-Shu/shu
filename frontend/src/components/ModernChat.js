@@ -129,10 +129,16 @@ const ModernChat = () => {
     theme: 'light',
     language: 'en',
     timezone: 'UTC',
+    auto_attach_personal_kb: true,
     advanced_settings: {},
     summary_search_min_token_length: DEFAULT_SUMMARY_SEARCH_MIN_TERM_LENGTH,
     summary_search_max_tokens: DEFAULT_SUMMARY_SEARCH_MAX_TOKENS,
   });
+  // True once the user-preferences query has settled (success or error). The
+  // auto-attach effect must wait for this: userPreferences defaults to
+  // auto-attach ON, so acting before the real value arrives would briefly attach
+  // the Personal KB for a user who saved OFF (Codex review fix).
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
 
   // Side-caller state used to gate automation and show header warnings
   const [isSideCallConfigured, setIsSideCallConfigured] = useState(true);
@@ -199,26 +205,68 @@ const ModernChat = () => {
     ensureKBAttached,
   } = useKBPicker();
 
-  // Personal Knowledge — v1 in-chat upload entry point.
+  // Personal Knowledge — in-chat upload entry point. Documents + indexing state
+  // are React Query-backed in the hook so the brain badge stays live (SHU-817 F4).
   const {
     personalKB,
     loading: personalKBLoading,
     uploading: personalKBUploading,
     errors: personalKBErrors,
+    lastUploadSummary: personalKBLastUploadSummary,
     uploadFiles: uploadToPersonalKB,
     retryFile: retryPersonalKBFile,
     dismissError: dismissPersonalKBError,
+    docs: personalKBDocs,
+    docsLoading: personalKBDocsLoading,
+    docsFetching: personalKBDocsFetching,
+    docsError: personalKBDocsError,
+    indexing: personalKBIndexing,
+    hasMoreDocs: personalKBHasMoreDocs,
+    fetchMoreDocs: fetchMorePersonalKBDocs,
+    fetchingMoreDocs: personalKBFetchingMoreDocs,
+    refetchDocs: refetchPersonalKBDocs,
+    deleteDoc: deletePersonalKBDoc,
+    reingestDoc: reingestPersonalKBDoc,
   } = usePersonalKB();
 
-  // Auto-attach Personal Knowledge once on initial discovery.
-  // Refs let users detach via the chip × without re-attaching on every render.
-  const personalKBAutoAttachedRef = useRef(false);
+  // Auto-attach Personal Knowledge per the user's preference (SHU-817 S4).
+  // Re-keyed on the conversation id so each new/switched conversation re-applies
+  // the default — a manual chip-× detach is therefore per-conversation and
+  // transient. Toggling the preference off detaches it from the current chat;
+  // on re-attaches it. ensureKBAttached/removeKB are idempotent (dedupe by id).
+  const autoAttachPersonalKB = userPreferences.auto_attach_personal_kb !== false;
   useEffect(() => {
-    if (personalKB && !personalKBAutoAttachedRef.current) {
-      ensureKBAttached(personalKB);
-      personalKBAutoAttachedRef.current = true;
+    // Wait until the preference has actually loaded — personalKB can resolve from
+    // cache before the prefs query does, and acting on the optimistic default
+    // would attach the PK for a user who saved auto-attach OFF (and send it in
+    // knowledge_base_ids if they submit during that window).
+    if (!preferencesLoaded || !personalKB) {
+      return;
     }
-  }, [personalKB, ensureKBAttached]);
+    if (autoAttachPersonalKB) {
+      ensureKBAttached(personalKB);
+    } else {
+      removeKB(personalKB.id);
+    }
+  }, [preferencesLoaded, personalKB, autoAttachPersonalKB, selectedConversation?.id, ensureKBAttached, removeKB]);
+
+  // Optimistically flip the auto-attach preference (popover + Settings share it).
+  // PATCH so other prefs aren't clobbered; roll the local state back on failure (M4).
+  const setAutoAttachPersonalKB = useCallback(
+    (enabled) => {
+      setUserPreferences((prev) => ({ ...prev, auto_attach_personal_kb: enabled }));
+      userPreferencesAPI
+        .patchPreferences({ auto_attach_personal_kb: enabled })
+        .then(() => queryClient.invalidateQueries('user-preferences'))
+        .catch((err) => {
+          log.warn('Failed to update auto-attach preference:', formatError(err));
+          setUserPreferences((prev) => ({ ...prev, auto_attach_personal_kb: !enabled }));
+          setError("Couldn't save your auto-attach preference. Please try again.");
+        });
+    },
+    [queryClient, setError]
+  );
+
   useEffect(() => {
     clearEnsembleModeRef.current = clearEnsembleSelection;
   }, [clearEnsembleSelection]);
@@ -332,7 +380,7 @@ const ModernChat = () => {
     onError: (err) => {
       // For non-admin users this will typically be 403; log but do not
       // treat it as "not configured" so we don't block automation.
-      log.warn('Failed to fetch side-call config:', formatError(err).message);
+      log.warn('Failed to fetch side-call config:', formatError(err));
     },
   });
 
@@ -369,10 +417,13 @@ const ModernChat = () => {
           summary_search_max_tokens: preferences.summary_search_max_tokens ?? prev.summary_search_max_tokens,
         }));
       }
+      // The real preference is now applied — let the auto-attach effect act.
+      setPreferencesLoaded(true);
     },
     onError: (err) => {
-      log.warn('Failed to load user preferences:', formatError(err).message);
-      // Don't show error to user for preferences - use defaults
+      log.warn('Failed to load user preferences:', formatError(err));
+      // Don't show error to user for preferences - use defaults (auto-attach ON).
+      setPreferencesLoaded(true);
     },
   });
 
@@ -492,7 +543,7 @@ const ModernChat = () => {
       setError(null);
     },
     onError: (err) => {
-      setError(formatError(err).message);
+      setError(formatError(err));
       closeDeleteDialog();
     },
   });
@@ -549,7 +600,7 @@ const ModernChat = () => {
         setError(null);
       },
       onError: (err) => {
-        setError(formatError(err).message);
+        setError(formatError(err));
       },
     }
   );
@@ -1230,7 +1281,7 @@ const ModernChat = () => {
       } catch (err) {
         // Revert optimistic update on error
         queryClient.invalidateQueries('conversations');
-        setError(formatError(err).message);
+        setError(formatError(err));
       }
     },
     [conversationQueryKey, queryClient, selectedConversation, setError]
@@ -1367,9 +1418,23 @@ const ModernChat = () => {
     personalKBLoading,
     personalKBUploading,
     personalKBErrors,
+    personalKBLastUploadSummary,
     onUploadToPersonalKB: uploadToPersonalKB,
     onRetryPersonalKBFile: retryPersonalKBFile,
     onDismissPersonalKBError: dismissPersonalKBError,
+    personalKBDocs,
+    personalKBDocsLoading,
+    personalKBDocsFetching,
+    personalKBDocsError,
+    personalKBIndexing,
+    personalKBHasMoreDocs,
+    onFetchMorePersonalKBDocs: fetchMorePersonalKBDocs,
+    personalKBFetchingMoreDocs,
+    onRefreshPersonalKBDocs: refetchPersonalKBDocs,
+    onDeletePersonalKBDoc: deletePersonalKBDoc,
+    onReingestPersonalKBDoc: reingestPersonalKBDoc,
+    personalKBAutoAttach: autoAttachPersonalKB,
+    onTogglePersonalKBAutoAttach: setAutoAttachPersonalKB,
     isStreaming: isStreamingForSelectedConversation,
     canStop: Boolean(activeStreamingMessage),
     onStop: handleInputBarStop,
