@@ -66,6 +66,20 @@ class UsageSummaryImpl:
     by_model: dict[str, ModelUsageImpl]
 
 
+@dataclass
+class DailyModelUsageImpl:
+    """One (UTC day, model) bucket for the My Usage time-series (SHU-844)."""
+
+    day: datetime
+    model_id: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Decimal
+    request_count: int
+    # See UsageRecordImpl.model_name — same snapshot semantics.
+    model_name: str | None = None
+
+
 # =============================================================================
 # UsageProvider Implementation
 # =============================================================================
@@ -84,6 +98,28 @@ class UsageProviderImpl:
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
+
+    @staticmethod
+    def _billable_period_conditions(
+        period_start: datetime,
+        period_end: datetime,
+        user_id: str | None,
+    ) -> list:
+        """WHERE clauses shared by the period aggregations.
+
+        Filters to billable (Shu-managed) providers within the half-open
+        ``[start, end)`` window. When ``user_id`` is given, scopes to that one
+        user — the per-user "My Usage" path (SHU-844). Tenant isolation is
+        enforced by RLS regardless of this filter.
+        """
+        conditions = [
+            LLMUsage.created_at >= period_start,
+            LLMUsage.created_at < period_end,
+            LLMProvider.is_system_managed.is_(True),
+        ]
+        if user_id is not None:
+            conditions.append(LLMUsage.user_id == user_id)
+        return conditions
 
     async def get_usage_for_period(
         self,
@@ -124,10 +160,14 @@ class UsageProviderImpl:
         self,
         period_start: datetime,
         period_end: datetime,
+        *,
+        user_id: str | None = None,
     ) -> UsageSummaryImpl:
         """Get aggregated usage summary for a billing period.
 
-        Returns totals and breakdown by model.
+        Returns totals and breakdown by model. When ``user_id`` is provided the
+        summary is scoped to that single user (the per-user "My Usage" view,
+        SHU-844); otherwise it is the whole tenant (the admin dashboard).
         """
         # Aggregate by model. Group on the snapshot model_name as well so rows
         # whose model_id FK was nulled out (provider/model deleted — SHU-727)
@@ -143,11 +183,7 @@ class UsageProviderImpl:
                 func.count(LLMUsage.id).label("request_count"),
             )
             .join(LLMProvider, LLMUsage.provider_id == LLMProvider.id)
-            .where(
-                LLMUsage.created_at >= period_start,
-                LLMUsage.created_at < period_end,
-                LLMProvider.is_system_managed.is_(True),
-            )
+            .where(*self._billable_period_conditions(period_start, period_end, user_id))
             .group_by(LLMUsage.model_id, LLMUsage.model_name)
         )
 
@@ -190,6 +226,51 @@ class UsageProviderImpl:
             total_cost_usd=total_cost,
             by_model=by_model,
         )
+
+    async def get_daily_usage_for_user(
+        self,
+        user_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[DailyModelUsageImpl]:
+        """Per-(day, model) billable usage for one user over the period.
+
+        Powers the My Usage time-series chart (SHU-844). Days are bucketed with
+        ``date_trunc('day', created_at)``; ``created_at`` is stored UTC-naive,
+        so buckets are UTC calendar days — the frontend labels them as such.
+        Returns the raw per-(day, model) rows; the frontend pivots them into
+        per-model chart series.
+        """
+        day = func.date_trunc("day", LLMUsage.created_at).label("day")
+        result = await self._db.execute(
+            select(
+                day,
+                LLMUsage.model_id,
+                LLMUsage.model_name,
+                func.sum(LLMUsage.input_tokens).label("input_tokens"),
+                func.sum(LLMUsage.output_tokens).label("output_tokens"),
+                func.sum(LLMUsage.total_cost).label("total_cost"),
+                func.count(LLMUsage.id).label("request_count"),
+            )
+            .join(LLMProvider, LLMUsage.provider_id == LLMProvider.id)
+            .where(*self._billable_period_conditions(period_start, period_end, user_id))
+            .group_by(day, LLMUsage.model_id, LLMUsage.model_name)
+            .order_by(day)
+        )
+
+        return [
+            DailyModelUsageImpl(
+                day=row.day,
+                model_id=row.model_id or "unknown",
+                model_name=row.model_name,
+                input_tokens=int(row.input_tokens or 0),
+                output_tokens=int(row.output_tokens or 0),
+                # Decimal preserved to the API boundary, same as get_usage_summary.
+                cost_usd=row.total_cost if row.total_cost is not None else Decimal("0"),
+                request_count=int(row.request_count or 0),
+            )
+            for row in result
+        ]
 
 
 # =============================================================================

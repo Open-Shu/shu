@@ -458,6 +458,87 @@ async def get_current_usage(
     )
 
 
+@router.get(
+    "/usage/me",
+    summary="Get the current user's own usage",
+    description="Get the authenticated user's own token usage and cost for the current billing period.",
+)
+async def get_my_usage(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Get the requesting user's own usage for the current billing period.
+
+    Available to ANY authenticated user (SHU-844) — scoped server-side to
+    ``user.id`` with no client-supplied user parameter, so one user can never
+    read another's usage. RLS additionally scopes to the tenant. Mirrors the
+    admin ``/usage`` payload (so the frontend can reuse CostByModelTable) and
+    adds a ``by_day`` per-(day, model) series for the time chart. BYOK usage is
+    excluded — only Shu-managed (billable) providers count, matching ``/usage``.
+    """
+    state = await get_current_billing_state()
+    period_start = state.current_period_start
+    period_end = state.current_period_end
+
+    if not (period_start and period_end):
+        return ShuResponse.success(
+            {
+                "current_period_unknown": True,
+                "period_start": None,
+                "period_end": None,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cost_usd": 0.0,
+                "request_count": 0,
+                "by_model": [],
+                "by_day": [],
+            }
+        )
+
+    # llm_usage.user_id is stored as a string (the recorder str()s the owner id);
+    # str() here keeps the comparison aligned regardless of the User.id type.
+    scoped_user_id = str(user.id)
+    provider = UsageProviderImpl(db)
+    summary = await provider.get_usage_summary(period_start, period_end, user_id=scoped_user_id)
+    daily = await provider.get_daily_usage_for_user(scoped_user_id, period_start, period_end)
+    request_count = sum(m.request_count for m in summary.by_model.values())
+
+    return ShuResponse.success(
+        {
+            "current_period_unknown": False,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "total_input_tokens": summary.total_input_tokens,
+            "total_output_tokens": summary.total_output_tokens,
+            "total_cost_usd": float(summary.total_cost_usd),
+            "request_count": request_count,
+            "by_model": [
+                {
+                    "model_id": m.model_id,
+                    "model_name": m.model_name,
+                    "input_tokens": m.input_tokens,
+                    "output_tokens": m.output_tokens,
+                    "cost_usd": float(m.cost_usd),
+                    "request_count": m.request_count,
+                }
+                for m in summary.by_model.values()
+            ],
+            "by_day": [
+                {
+                    "date": d.day.date().isoformat(),
+                    "model_id": d.model_id,
+                    "model_name": d.model_name,
+                    "input_tokens": d.input_tokens,
+                    "output_tokens": d.output_tokens,
+                    "cost_usd": float(d.cost_usd),
+                    "request_count": d.request_count,
+                }
+                for d in daily
+            ],
+        }
+    )
+
+
 # =============================================================================
 # Seat management
 # =============================================================================
