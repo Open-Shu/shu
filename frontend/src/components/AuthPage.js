@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import GoogleLogin from './GoogleLogin';
 import PasswordLogin from './PasswordLogin';
 import PasswordRegistration from './PasswordRegistration';
 import ForgotPasswordPage from './ForgotPasswordPage';
 import configService from '../services/config';
 
-const AuthPage = () => {
-  const [authMode, setAuthMode] = useState('password'); // 'google', 'password', 'register', 'forgot-password'
+// `initialMode` lets a route open a specific pane (the /register route opens
+// 'register'); defaults to the login form. An `email` query param pre-fills the
+// registration form — the CP welcome email links to /register?email=<addr> so
+// the customer registers with the exact address ADMIN_EMAILS grants admin to.
+const AuthPage = ({ initialMode = 'password' }) => {
+  const [searchParams] = useSearchParams();
+  const prefilledEmail = searchParams.get('email') || '';
+  const [authMode, setAuthMode] = useState(initialMode); // 'google', 'password', 'register', 'forgot-password'
   const [googleSsoEnabled, setGoogleSsoEnabled] = useState(false);
   const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false);
 
@@ -74,7 +81,7 @@ const AuthPage = () => {
         />
       );
     case 'register':
-      return <PasswordRegistration onSwitchToLogin={handleSwitchToLogin} />;
+      return <PasswordRegistration onSwitchToLogin={handleSwitchToLogin} initialEmail={prefilledEmail} />;
     case 'forgot-password':
       return <ForgotPasswordPage onSwitchToLogin={handleSwitchToLogin} />;
     case 'password':

@@ -7,10 +7,10 @@ import log from '../utils/log';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
-const PasswordRegistration = ({ onSwitchToLogin }) => {
+const PasswordRegistration = ({ onSwitchToLogin, initialEmail = '' }) => {
   const { resendVerification } = useAuth();
   const [formData, setFormData] = useState({
-    email: '',
+    email: initialEmail,
     password: '',
     confirmPassword: '',
     name: '',
