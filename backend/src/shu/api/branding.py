@@ -105,6 +105,33 @@ async def upload_favicon(
     return SuccessResponse(data=branding)
 
 
+@router.post("/assistant-avatar", response_model=SuccessResponse[BrandingSettings])
+async def upload_assistant_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a custom assistant avatar image and switch the avatar mode to "custom"."""
+    if _is_multi_tenant():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MT_BRANDING_DETAIL)
+    service = BrandingService(db)
+    file_bytes = await _read_upload(file, service.settings.branding_max_asset_size_bytes)
+
+    ext = mimetypes.guess_extension(file.content_type or "") or ".png"
+    filename = file.filename or f"assistant_avatar{ext}"
+
+    try:
+        branding = await service.save_asset(
+            filename=filename,
+            file_bytes=file_bytes,
+            asset_type="assistant_avatar",
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return SuccessResponse(data=branding)
+
+
 @router.get("/assets/{filename}")
 async def get_branding_asset(filename: str, db: AsyncSession = Depends(get_db)):
     """Serve stored branding assets like favicons."""

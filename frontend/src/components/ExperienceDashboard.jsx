@@ -22,7 +22,7 @@ import {
   Add as AddIcon,
   PlayArrow as PlayIcon,
   Refresh as RefreshIcon,
-  SmartToy as BotIcon,
+  Science as ExperienceIcon,
 } from '@mui/icons-material';
 import { formatDistanceToNow } from 'date-fns';
 import { experiencesAPI, extractDataFromResponse, formatError } from '../services/api';
@@ -128,7 +128,7 @@ const ExperienceResultCard = ({ experience, onClick, onRun }) => {
                 mr: 1.5,
               }}
             >
-              <BotIcon />
+              <ExperienceIcon />
             </Box>
             <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>
               {experience.experience_name}
@@ -205,7 +205,7 @@ const DashboardEmptyState = ({ onCreateConversation, createConversationDisabled 
       py: 6,
     }}
   >
-    <BotIcon sx={{ fontSize: 80, color: 'grey.300', mb: 2 }} />
+    <ExperienceIcon sx={{ fontSize: 80, color: 'grey.300', mb: 2 }} />
     <Typography variant="h6" color="text.secondary" gutterBottom>
       No experiences available
     </Typography>
