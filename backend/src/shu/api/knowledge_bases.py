@@ -178,7 +178,7 @@ async def get_knowledge_base_stats(current_user: User = Depends(require_admin), 
         "the personal KB out for users who can see many KBs."
     ),
 )
-async def get_personal_knowledge_base_endpoint(
+async def get_personal_knowledge_base(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
