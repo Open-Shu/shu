@@ -32,7 +32,7 @@ from shu.billing.adapters import (
 )
 from shu.billing.billing_state_cache import get_billing_state_cache, get_cp_client
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
-from shu.billing.cp_client import BillingState, CpClientError, CpNoActiveTrial
+from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState, CpClientError, CpNoActiveTrial
 from shu.billing.enforcement import get_current_billing_state
 from shu.billing.markup import resolve_markup
 from shu.billing.router_envelope import verify_router_envelope_dep
@@ -209,12 +209,17 @@ async def get_subscription_status(
                 detail="Billing provider unavailable",
             )
 
-    state = await get_current_billing_state()
-
-    # Capture the cache singleton once: it gates both the trial/grant fields
-    # and the entitlement/limit/usage blocks below. None means no control plane
-    # is configured (self-hosted / CP-less).
+    # Derive the billing state AND the trial/entitlement gate from a SINGLE
+    # cache lookup. get_current_billing_state() does its own
+    # get_billing_state_cache() call; a second independent lookup here could
+    # disagree with it — a transient cache-build failure returns None WITHOUT
+    # memoizing (billing_state_cache.py:236), so lookup #1 could yield
+    # HEALTHY_DEFAULT (is_trial=True, $0 grants) while a retried lookup #2
+    # succeeds, recombining a default $0 trial state with "cache present" into a
+    # phantom trial on a configured-but-transiently-failing instance. One
+    # reference keeps the state and the gate consistent.
     billing_cache = await get_billing_state_cache()
+    state = await billing_cache.get() if billing_cache is not None else HEALTHY_DEFAULT
 
     # Markup is shipped on the wire by CP (SHU-774). When it's None (no
     # metered item, or tiered price without unit_amount_decimal), the

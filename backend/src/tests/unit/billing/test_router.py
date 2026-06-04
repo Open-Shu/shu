@@ -381,6 +381,42 @@ class TestSubscriptionTrialAndEntitlements:
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
     @patch(_P_BILLING_CONFIG)
+    async def test_state_and_gate_derive_from_one_cache_lookup(self, mock_config, mock_count):
+        """SHU-822 regression: the billing state and the trial gate must derive
+        from a SINGLE get_billing_state_cache() reference.
+
+        A transient cache-build failure returns None WITHOUT memoizing
+        (billing_state_cache.py), so two independent lookups can disagree:
+        lookup #1 → HEALTHY_DEFAULT (is_trial=True, $0 grants), a retried
+        lookup #2 → a live cache. The old code combined the first (via
+        get_current_billing_state) with a second gate lookup, reintroducing a
+        phantom $0 trial on a configured-but-transiently-failing instance.
+        """
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        # First lookup transient-fails (None); a retry would succeed. Patched in
+        # BOTH namespaces because get_current_billing_state reads its own
+        # reference — a regression to the two-lookup pattern would consume the
+        # second side_effect and leak the phantom trial.
+        flaky = AsyncMock(side_effect=[None, MagicMock()])
+        with (
+            patch("shu.billing.router.get_billing_state_cache", flaky),
+            patch("shu.billing.enforcement.get_billing_state_cache", flaky),
+        ):
+            response = await get_subscription_status(
+                db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
+            )
+        body = _decode(response)
+
+        assert body["is_trial"] is False
+        for key in ("trial_deadline", "total_grant_amount", "remaining_grant_amount", "seat_price_usd"):
+            assert key not in body, f"phantom trial field leaked under cache flakiness: {key}"
+        # Exactly one cache lookup — proves the state and the gate share it.
+        assert flaky.await_count == 1
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
     async def test_trial_deadline_serializes_to_null_when_absent(
         self, mock_config, mock_count, install_stub_cache
     ):

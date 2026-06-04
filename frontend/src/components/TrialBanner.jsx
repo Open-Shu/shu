@@ -14,7 +14,9 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useBillingStatus } from '../contexts/BillingStatusContext';
 import { useAuth } from '../hooks/useAuth';
@@ -64,6 +66,14 @@ const TrialBanner = () => {
   const [detailAnchor, setDetailAnchor] = useState(null);
   const detailOpen = Boolean(detailAnchor);
 
+  // Below sm, drop the total from the inline budget ("$3.00 left" vs
+  // "$3.00 of $5.00 left") so a large grant string can't overflow the narrow
+  // single-line row; the total stays reachable in the popover's pool note.
+  // Computed in JS (single text node) so getByText still matches; defaults to
+  // the full string in jsdom, where matchMedia is absent.
+  const theme = useTheme();
+  const isNarrow = useMediaQuery(theme.breakpoints.down('sm'));
+
   // Non-admins don't see the trial banner. Spec calls for "trial state always
   // visible to admins"; non-admins have no exit actions available (endpoints
   // are admin-gated), so the banner would be informational dead weight for
@@ -91,6 +101,10 @@ const TrialBanner = () => {
   // -trigger. The text emphasis survives even when the mini-bar is hidden on
   // narrow widths.
   const exhausted = total > 0 && (remaining <= 0 || percentUsed >= TRIAL_USAGE_WARNING_PERCENT);
+
+  const budgetText = isNarrow
+    ? `$${remaining.toFixed(2)} left`
+    : `$${remaining.toFixed(2)} of $${total.toFixed(2)} left`;
 
   const deadlineText = trialDeadline ? new Date(trialDeadline).toLocaleDateString() : null;
 
@@ -197,7 +211,7 @@ const TrialBanner = () => {
                 color: exhausted ? 'warning.main' : 'inherit',
               }}
             >
-              ${remaining.toFixed(2)} of ${total.toFixed(2)} left
+              {budgetText}
             </Typography>
 
             {/* Mini-bar + deadline are non-essential; hide them below md so the
