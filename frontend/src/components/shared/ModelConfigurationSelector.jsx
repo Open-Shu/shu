@@ -14,7 +14,7 @@ import {
   Box,
   Chip,
 } from '@mui/material';
-import { SmartToy as ModelIcon, Psychology as PromptIcon } from '@mui/icons-material';
+import { Memory as ModelIcon, Psychology as PromptIcon } from '@mui/icons-material';
 import { modelConfigAPI, extractDataFromResponse } from '../../services/api';
 
 // Constants

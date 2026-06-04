@@ -24,6 +24,11 @@ const HEALTHY_STATE = {
   servicePaused: false,
   isTrial: false,
   trialDeadline: null,
+  // SHU-813: free-tier (non-trialing) tenants still need a cap-aware surface
+  // when their grant pool exhausts. `hardCap` is the wire signal — true for
+  // free tier or trialing — and drives the UsageCapBanner for free-tier
+  // users who have no `isTrial=true` to key off of.
+  hardCap: false,
   totalGrantAmount: null,
   remainingGrantAmount: null,
   seatPriceUsd: null,
@@ -60,6 +65,7 @@ export const BillingStatusProvider = ({ children }) => {
         servicePaused: Boolean(data.service_paused),
         isTrial: Boolean(data.is_trial),
         trialDeadline: data.trial_deadline ?? null,
+        hardCap: Boolean(data.hard_cap),
         // Decimals are stringified by the backend (JSON has no Decimal type).
         // parseDecimalField normalises both null and non-finite strings to
         // null so the banner never renders "NaN" or "0" on a malformed value.
@@ -105,6 +111,7 @@ export const BillingStatusProvider = ({ children }) => {
     servicePaused: status.servicePaused,
     isTrial: status.isTrial,
     trialDeadline: status.trialDeadline,
+    hardCap: status.hardCap,
     totalGrantAmount: status.totalGrantAmount,
     remainingGrantAmount: status.remainingGrantAmount,
     seatPriceUsd: status.seatPriceUsd,

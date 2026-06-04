@@ -176,8 +176,6 @@ def disabled_billing_state(
         payment_failed_at=payment_failed_at or datetime(2026, 1, 1, tzinfo=UTC),
         payment_grace_days=grace_days,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -188,6 +186,7 @@ def disabled_billing_state(
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
 
 

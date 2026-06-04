@@ -195,6 +195,24 @@ class FileStagingService:
                 extra={"staging_key": staging_key, "error": str(e)},
             )
 
+    async def delete_staged_files_for_document(self, document_id: str) -> None:
+        """Delete any staged files belonging to *document_id*.
+
+        Staged files are named ``{document_id}_{uuid}.bin``; the uuid suffix is
+        not known at delete time, so files are matched by the document-id prefix.
+        Used to reclaim bytes when a document is deleted before a worker consumes
+        them (best-effort, non-fatal — a worker that later finds the document gone
+        also cleans up).
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _delete_files_for_document, self._staging_dir, document_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to delete staged files for document",
+                extra={"document_id": document_id, "error": str(e)},
+            )
+
 
 # ---------------------------------------------------------------------------
 # Sync helpers (run in executor to avoid blocking the event loop)
@@ -209,3 +227,11 @@ def _write_file(path: str, data: bytes) -> None:
 def _read_file(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
+
+
+def _delete_files_for_document(staging_dir: str, document_id: str) -> None:
+    for path in Path(staging_dir).glob(f"{document_id}_*.bin"):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass

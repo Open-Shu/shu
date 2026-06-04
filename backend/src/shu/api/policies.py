@@ -27,7 +27,8 @@ KNOWN_ACTIONS = [
     PolicyActionOption(value="experience.read", label="View experiences and their runs"),
     PolicyActionOption(value="experience.run", label="Execute experiences"),
     PolicyActionOption(value="kb.read", label="Read knowledge base content"),
-    PolicyActionOption(value="kb.write", label="Write knowledge base content (upload, update, delete documents)"),
+    PolicyActionOption(value="kb.write", label="Write knowledge base content (upload, update documents)"),
+    PolicyActionOption(value="kb.delete", label="Delete knowledge base documents"),
     PolicyActionOption(value="plugin.read", label="View plugins"),
     PolicyActionOption(value="plugin.execute", label="Execute plugins"),
 ]

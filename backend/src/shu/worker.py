@@ -41,8 +41,8 @@ from sqlalchemy import select
 
 from .auth.models import User
 from .billing.enforcement import (
+    HardCapExhaustedError,
     SubscriptionInactiveError,
-    TrialCapExhaustedError,
     assert_subscription_active,
 )
 from .core.config import get_settings_instance
@@ -1333,10 +1333,11 @@ async def process_job(job):  # noqa: PLR0912, PLR0915 — dispatch table by work
 
         else:
             raise ValueError(f"Unsupported workload type: {workload_type}")
-    except (SubscriptionInactiveError, TrialCapExhaustedError) as exc:
-        # SHU-703 / SHU-757: known billing-gate drops. SubscriptionInactiveError
-        # covers post-grace OR-key disable; TrialCapExhaustedError covers a
-        # trial tenant whose grant pool is spent. Both are deterministic outcomes
+    except (SubscriptionInactiveError, HardCapExhaustedError) as exc:
+        # SHU-703 / SHU-757 / SHU-813: known billing-gate drops.
+        # SubscriptionInactiveError covers post-grace OR-key disable;
+        # HardCapExhaustedError covers a hard-capped tenant (trial OR free
+        # tier) whose grant pool is spent. Both are deterministic outcomes
         # the queue should treat as "stop trying," not transient failures —
         # propagating would log a stack trace and requeue until max-attempts.
         payload = job.payload or {}

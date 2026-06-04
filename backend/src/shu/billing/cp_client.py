@@ -67,8 +67,6 @@ class BillingState:
     payment_failed_at: AwareDatetime | None
     payment_grace_days: Annotated[StrictInt, Field(ge=0)]
     entitlements: EntitlementSet
-    is_trial: StrictBool
-    trial_deadline: AwareDatetime | None
     total_grant_amount: Annotated[Decimal, Field(ge=0)]
     # None during trial: CP returns `None` as the wire signal "compute
     # locally" because Stripe doesn't bill metered usage during `trialing`,
@@ -100,10 +98,14 @@ class BillingState:
     # item / tiered pricing" signal; consumers fall back to the configured
     # default via `resolve_markup`.
     usage_markup_multiplier: Annotated[Decimal | None, Field(gt=0)]
+    # Single enforcement signal for the LLM-call cap (SHU-813). True when the
+    # tier intrinsically caps (free) OR the subscription is `trialing`. CP
+    # unifies both signals here so the tenant gate is one conditional:
+    # `if state.hard_cap and billed_cost >= state.total_grant_amount: block`.
+    hard_cap: StrictBool
 
     @field_validator(
         "payment_failed_at",
-        "trial_deadline",
         "current_period_start",
         "current_period_end",
         "canceled_at",
@@ -126,6 +128,22 @@ class BillingState:
             return None
         return self.payment_failed_at + timedelta(days=self.payment_grace_days)
 
+    # `is_trial` and `trial_deadline` were dropped from the wire shape in
+    # SHU-813. They survive as derived accessors so the few non-enforcement
+    # call sites (banner-state shaping, the local-usage path for the trial
+    # remaining-grant display) don't have to know how Stripe encodes "this
+    # subscription is in its trial window."
+    @property
+    def is_trial(self) -> bool:
+        return self.subscription_status == "trialing"
+
+    @property
+    def trial_deadline(self) -> datetime | None:
+        # Stripe sets `current_period_end == trial_end` during `trialing`;
+        # outside that window the field tracks the regular cycle end, which
+        # would be a misleading "trial deadline."
+        return self.current_period_end if self.is_trial else None
+
 
 _BILLING_STATE_ADAPTER = TypeAdapter(BillingState)
 
@@ -137,20 +155,17 @@ _BILLING_STATE_ADAPTER = TypeAdapter(BillingState)
 # Posture asymmetry:
 #   - OR-key path stays fail-open (`openrouter_key_disabled=False`) so OCR
 #     and embeddings keep working during a CP outage.
-#   - Trial-cap path fails CLOSED (`is_trial=True` with zero grant) so a
-#     trial tenant whose process restarts during a CP outage cannot rack
-#     up unbounded LLM costs while we wait for CP to come back. The cost
-#     of this asymmetry is that a standard tenant caught in the same
-#     window also sees chat blocked with a misleading "trial exhausted"
-#     message — bounded by the outage duration, and judged a much smaller
-#     exposure than uncapped trial spend across N tenants.
+#   - LLM-cap path fails CLOSED (`hard_cap=True` with zero grant) so a
+#     tenant whose process restarts during a CP outage cannot rack up
+#     unbounded LLM costs while we wait for CP to come back. The cost of
+#     this asymmetry is that a paid tenant caught in the same window also
+#     sees chat blocked — bounded by the outage duration, and judged a
+#     much smaller exposure than uncapped spend across N tenants.
 HEALTHY_DEFAULT = BillingState(
     openrouter_key_disabled=False,
     payment_failed_at=None,
     payment_grace_days=0,
     entitlements=EntitlementSet(),
-    is_trial=True,
-    trial_deadline=None,
     total_grant_amount=Decimal(0),
     # None matches the trial wire shape: tenant router computes locally
     # from period usage. With `total_grant_amount=0`, the local
@@ -166,6 +181,7 @@ HEALTHY_DEFAULT = BillingState(
     cancel_at_period_end=False,
     canceled_at=None,
     usage_markup_multiplier=None,
+    hard_cap=True,
 )
 
 

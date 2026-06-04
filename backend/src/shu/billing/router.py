@@ -32,7 +32,7 @@ from shu.billing.adapters import (
 )
 from shu.billing.billing_state_cache import get_billing_state_cache, get_cp_client
 from shu.billing.config import BillingSettings, get_billing_settings_dependency
-from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState, CpClientError, CpNoActiveTrial
+from shu.billing.cp_client import BillingState, CpClientError, CpNoActiveTrial
 from shu.billing.enforcement import get_current_billing_state
 from shu.billing.markup import resolve_markup
 from shu.billing.router_envelope import verify_router_envelope_dep
@@ -209,17 +209,13 @@ async def get_subscription_status(
                 detail="Billing provider unavailable",
             )
 
-    # Derive the billing state AND the trial/entitlement gate from a SINGLE
-    # cache lookup. get_current_billing_state() does its own
-    # get_billing_state_cache() call; a second independent lookup here could
-    # disagree with it — a transient cache-build failure returns None WITHOUT
-    # memoizing (billing_state_cache.py:236), so lookup #1 could yield
-    # HEALTHY_DEFAULT (is_trial=True, $0 grants) while a retried lookup #2
-    # succeeds, recombining a default $0 trial state with "cache present" into a
-    # phantom trial on a configured-but-transiently-failing instance. One
-    # reference keeps the state and the gate consistent.
-    billing_cache = await get_billing_state_cache()
-    state = await billing_cache.get() if billing_cache is not None else HEALTHY_DEFAULT
+    state = await get_current_billing_state()
+
+    # CP returns `remaining_grant_amount=None` during trial — Stripe's
+    # grant balance is useless because Stripe doesn't bill metered usage
+    # during `trialing`. Fill in the displayed remaining from local usage
+    # so the frontend always receives a number.
+    remaining_grant_amount = await _resolve_remaining_grant_amount(db, state)
 
     # Markup is shipped on the wire by CP (SHU-774). When it's None (no
     # metered item, or tiered price without unit_amount_decimal), the
@@ -238,30 +234,20 @@ async def get_subscription_status(
         "payment_grace_days": state.payment_grace_days,
         "grace_deadline": state.grace_deadline.isoformat() if state.grace_deadline else None,
         "service_paused": state.openrouter_key_disabled,
-        # SHU-822: report is_trial only when a control plane is configured. On a
-        # CP-less deployment the cache is None and HEALTHY_DEFAULT's fail-closed
-        # is_trial=True must not leak as a phantom $0 trial. Gated strictly on
-        # the cache reference — never on a dollar value — so a $0 or cold-start
-        # grant on a genuine trial still advertises the upgrade path.
-        "is_trial": state.is_trial if billing_cache is not None else False,
+        "is_trial": state.is_trial,
+        "trial_deadline": state.trial_deadline.isoformat() if state.trial_deadline else None,
+        "hard_cap": state.hard_cap,
+        "total_grant_amount": str(state.total_grant_amount),
+        "remaining_grant_amount": str(remaining_grant_amount),
+        "seat_price_usd": str(state.seat_price_usd),
     }
 
-    # SHU-773 / SHU-822: the trial/grant fields and the entitlement/limit/usage
-    # blocks ship only when CP is configured. On self-hosted (no cache
-    # singleton) they're omitted entirely — the frontend treats absence as "all
-    # enabled / unlimited / not trialing". Both admin and non-admin callers get
-    # these.
-    if billing_cache is not None:
-        # CP returns `remaining_grant_amount=None` during trial — Stripe's grant
-        # balance is useless because Stripe doesn't bill metered usage during
-        # `trialing`. Fill in the displayed remaining from local usage so the
-        # frontend always receives a number.
-        remaining_grant_amount = await _resolve_remaining_grant_amount(db, state)
+    # SHU-773: entitlement / limit / usage blocks ship only when CP is
+    # configured. On self-hosted (no cache singleton) they're omitted entirely
+    # — the frontend treats absence as "all enabled / unlimited" so every page
+    # stays visible. Both admin and non-admin callers get these.
+    if await get_billing_state_cache() is not None:
         kb_count, document_count = await _kb_and_document_counts(db)
-        payload["trial_deadline"] = state.trial_deadline.isoformat() if state.trial_deadline else None
-        payload["total_grant_amount"] = str(state.total_grant_amount)
-        payload["remaining_grant_amount"] = str(remaining_grant_amount)
-        payload["seat_price_usd"] = str(state.seat_price_usd)
         payload["entitlements"] = state.entitlements.model_dump()
         payload["limits"] = state.limits.model_dump()
         payload["usage"] = {"kb_count": kb_count, "document_count": document_count}

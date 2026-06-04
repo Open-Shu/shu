@@ -26,8 +26,6 @@ def _make_state(**overrides) -> BillingState:
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -38,12 +36,13 @@ def _make_state(**overrides) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
     base.update(overrides)
     return BillingState(**base)
 from shu.billing.enforcement import (
     SubscriptionInactiveError,
-    TrialCapExhaustedError,
+    HardCapExhaustedError,
     UserLimitStatus,
     assert_document_count_under_limit,
     assert_entitlement,
@@ -260,10 +259,10 @@ class TestAssertSubscriptionActive:
         await assert_subscription_active()
 
     @pytest.mark.asyncio
-    async def test_healthy_default_in_cache_fails_closed_via_trial_cap(self, install_stub_cache):
+    async def test_healthy_default_in_cache_fails_closed_via_hard_cap(self, install_stub_cache):
         """Cold-start CP outage on a configured tenant: cache hands out
-        `HEALTHY_DEFAULT`, which has `is_trial=True` and no period anchor
-        (Task 10.1 fail-closed posture). The trial-cap branch trips on the
+        `HEALTHY_DEFAULT`, which has `hard_cap=True` and no period anchor
+        (Task 10.1 fail-closed posture). The hard-cap branch trips on the
         missing-period-start guard before any usage query runs.
 
         Distinct from `test_no_cache_does_not_raise` — that's the
@@ -272,7 +271,7 @@ class TestAssertSubscriptionActive:
         """
         install_stub_cache(HEALTHY_DEFAULT)
 
-        with pytest.raises(TrialCapExhaustedError):
+        with pytest.raises(HardCapExhaustedError):
             await assert_subscription_active()
 
     @pytest.mark.asyncio
@@ -317,8 +316,8 @@ class TestAssertSubscriptionActive:
         assert err.details["grace_deadline"] == expected_deadline.isoformat()
 
 
-# Trial-cap branch — `assert_subscription_active` opens a short-lived
-# session via `get_async_session_local()` only when `state.is_trial=True`,
+# Hard-cap branch — `assert_subscription_active` opens a short-lived
+# session via `get_async_session_local()` only when `state.hard_cap=True`,
 # then aggregates `LLMUsage` totals via `UsageProviderImpl.get_usage_summary`
 # anchored on the wire's `current_period_start`. Patches below mock those two
 # touchpoints (DB session + usage provider) so the tests don't need a real DB.
@@ -337,15 +336,19 @@ def _trialing_state(
     # Default markup=1.0 keeps existing assertions in raw-dollar terms.
     # The markup-aware test class below passes an explicit multiplier
     # (or None to verify the configured-default fallback path).
+    #
+    # `current_period_end` is what HardCapExhaustedError now reports as the
+    # `period_end` detail (SHU-813 / L2 rename) — pinning it here keeps that
+    # error detail deterministic across tests.
     return _make_state(
-        is_trial=True,
-        trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
         total_grant_amount=total_grant,
         remaining_grant_amount=total_grant,
         seat_price_usd=Decimal("20.00"),
         usage_markup_multiplier=usage_markup_multiplier,
         current_period_start=current_period_start,
+        current_period_end=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
         subscription_status=subscription_status,
+        hard_cap=True,
     )
 
 
@@ -384,20 +387,55 @@ def _usage_provider_returning(total_cost: Decimal) -> MagicMock:
     return cls
 
 
-class TestAssertSubscriptionActiveTrialCap:
-    """Trial-cap branch of the consolidated assertion."""
+class TestAssertSubscriptionActiveHardCap:
+    """Hard-cap branch of the consolidated assertion."""
 
     @pytest.mark.asyncio
-    async def test_is_trial_false_with_active_status_does_not_raise(self, install_stub_cache):
-        """Non-trial tenant with an active subscription_status passes through
-        the cancel gate and short-circuits before the trial-cap branch.
+    async def test_hard_cap_false_with_active_status_does_not_raise(self, install_stub_cache):
+        """Non-capped tenant with an active subscription_status passes through
+        the cancel gate and short-circuits before the hard-cap branch.
         """
-        install_stub_cache(_make_state(subscription_status="active"))
+        install_stub_cache(_make_state(subscription_status="active", hard_cap=False))
 
-        # No session needed — non-trial short-circuits before the usage query.
+        # No session needed — non-capped short-circuits before the usage query.
         with patch(_P_SESSION_LOCAL) as session_local:
             await assert_subscription_active()
             session_local.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_free_tier_non_trialing_hard_cap_enforces_usage(self, install_stub_cache):
+        """Free-tier tenant past trial window: `subscription_status` is no
+        longer `trialing`, but the tier-intrinsic `hard_cap=True` (CP unifies
+        free + trialing into the same wire signal) must still trip the cap.
+
+        The pre-SHU-813 gate keyed on `is_trial` alone would have let this
+        tenant rack up unbounded LLM spend. This test pins the new behavior.
+        """
+        install_stub_cache(
+            _make_state(
+                subscription_status="active",
+                current_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+                current_period_end=datetime(2026, 6, 1, tzinfo=UTC),
+                total_grant_amount=Decimal("5.00"),
+                remaining_grant_amount=Decimal("5.00"),
+                usage_markup_multiplier=Decimal("1.0"),
+                hard_cap=True,
+            )
+        )
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("5.00"))),
+        ):
+            with pytest.raises(HardCapExhaustedError) as exc_info:
+                await assert_subscription_active()
+
+        # `period_end` (SHU-813 L2) — must be non-null for a free-tier
+        # non-trialing tenant so the frontend can render "budget resets on …"
+        # for the cap-exhausted surface. The pre-rename `trial_deadline` was
+        # always None outside `trialing`, which gave the free-tier UI nothing
+        # to anchor on.
+        assert exc_info.value.details["period_end"] == "2026-06-01T00:00:00+00:00"
 
     @pytest.mark.asyncio
     async def test_canceled_subscription_status_raises_subscription_inactive(self, install_stub_cache):
@@ -423,53 +461,56 @@ class TestAssertSubscriptionActiveTrialCap:
             await assert_subscription_active()
 
     @pytest.mark.asyncio
-    async def test_at_or_above_cap_raises_trial_cap_exhausted(self, install_stub_cache):
+    async def test_at_or_above_cap_raises_hard_cap_exhausted(self, install_stub_cache):
         """Boundary is `total >= grant` — equality blocks too. A tenant
         sitting exactly at the budget shouldn't get one more call through.
         """
         install_stub_cache(_trialing_state(total_grant=Decimal("50.00")))
-        trial_deadline = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
+        period_end = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("50.00"))),
         ):
-            with pytest.raises(TrialCapExhaustedError) as exc_info:
+            with pytest.raises(HardCapExhaustedError) as exc_info:
                 await assert_subscription_active()
 
         err = exc_info.value
-        assert err.error_code == "trial_usage_exhausted"
+        assert err.error_code == "hard_cap_exhausted"
         assert err.status_code == 402
-        assert err.details["trial_deadline"] == trial_deadline.isoformat()
+        # `period_end` (SHU-813 L2 rename, was `trial_deadline`) — sourced
+        # from `current_period_end` so it's non-null in the free-tier case too.
+        assert err.details["period_end"] == period_end.isoformat()
         assert err.details["total_grant_amount"] == "50.00"
 
     @pytest.mark.asyncio
     async def test_missing_period_start_fails_closed(self, install_stub_cache):
         """Wire-side `current_period_start` is None — usage summary needs a
         period boundary, can't compute. Silent bypass would let unbounded
-        trial spend through, so we treat this as exhausted.
+        spend through, so we treat this as exhausted.
         """
         install_stub_cache(_trialing_state(current_period_start=None))
 
-        with pytest.raises(TrialCapExhaustedError):
+        with pytest.raises(HardCapExhaustedError):
             await assert_subscription_active()
 
     @pytest.mark.asyncio
-    async def test_payment_failure_takes_precedence_over_trial_cap(self, install_stub_cache):
-        """A `past_due` tenant who's also trialing must see the
-        payment-failure surface (the binding gate), not the trial one.
-        Trial-cap branch must not even open a session.
+    async def test_payment_failure_takes_precedence_over_hard_cap(self, install_stub_cache):
+        """A `past_due` tenant who's also hard-capped must see the
+        payment-failure surface (the binding gate), not the cap one.
+        Hard-cap branch must not even open a session.
         """
         install_stub_cache(
             _make_state(
                 openrouter_key_disabled=True,
                 payment_failed_at=datetime(2026, 1, 1, tzinfo=UTC),
                 payment_grace_days=7,
-                is_trial=True,
-                trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
+                subscription_status="trialing",
+                current_period_end=datetime(2026, 5, 30, tzinfo=UTC),
                 total_grant_amount=Decimal("50.00"),
                 remaining_grant_amount=Decimal("50.00"),
                 seat_price_usd=Decimal("20.00"),
+                hard_cap=True,
             )
         )
 
@@ -480,8 +521,8 @@ class TestAssertSubscriptionActiveTrialCap:
 
     @pytest.mark.asyncio
     async def test_self_hosted_bypass_does_not_open_session(self, install_stub_cache):
-        """`HEALTHY_DEFAULT.is_trial=True` (cold-start fail-closed posture)
-        would route self-hosted dev tenants into the trial-cap branch
+        """`HEALTHY_DEFAULT.hard_cap=True` (cold-start fail-closed posture)
+        would route self-hosted dev tenants into the hard-cap branch
         without the explicit cache=None bypass at the top of the function.
         Pinning that bypass here keeps dev usable.
         """
@@ -507,7 +548,7 @@ class TestAssertSubscriptionActiveTrialCap:
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
         ):
-            with pytest.raises(TrialCapExhaustedError):
+            with pytest.raises(HardCapExhaustedError):
                 await assert_subscription_active()
 
     @pytest.mark.asyncio
@@ -555,7 +596,7 @@ class TestAssertSubscriptionActiveTrialCap:
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
         ):
-            with pytest.raises(TrialCapExhaustedError):
+            with pytest.raises(HardCapExhaustedError):
                 await assert_subscription_active()
 
 

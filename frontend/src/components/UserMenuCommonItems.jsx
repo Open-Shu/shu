@@ -2,7 +2,7 @@ import React from 'react';
 import { MenuItem, ListItemIcon, Divider } from '@mui/material';
 import {
   Security as SecurityIcon,
-  SmartToy as ChatIcon,
+  ChatBubbleOutline as ChatIcon,
   ManageAccounts as AccountsIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';

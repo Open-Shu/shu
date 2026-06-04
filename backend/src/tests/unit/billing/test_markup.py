@@ -18,8 +18,6 @@ def _state(*, markup: Decimal | None) -> BillingState:
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -30,6 +28,7 @@ def _state(*, markup: Decimal | None) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=markup,
+        hard_cap=False,
     )
 
 

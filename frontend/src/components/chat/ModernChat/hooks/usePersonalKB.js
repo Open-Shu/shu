@@ -1,62 +1,136 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { extractDataFromResponse, extractItemsFromResponse, knowledgeBaseAPI } from '../../../../services/api';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery, useQuery, useQueryClient } from 'react-query';
+import { extractDataFromResponse, knowledgeBaseAPI } from '../../../../services/api';
 import { useAuth } from '../../../../hooks/useAuth';
 import { log } from '../../../../utils/log';
-import { resolveUserId } from '../../../../utils/userHelpers';
+import { docStage, TERMINAL_SUCCESS_STATUSES } from '../utils/docStage';
 
-// Match BOTH the personal flag AND ownership. Admin users see every KB in the
-// system via the list endpoint (default-allow filtering), so a bare
-// kb.is_personal lookup would return whichever personal KB sorted first —
-// typically another user's. That would then auto-attach to the admin's chat
-// and silently inject someone else's documents into the LLM context.
-const findPersonalKB = (kbs, userId) => {
-  if (!userId) {
-    return null;
-  }
-  return kbs.find((kb) => kb.is_personal === true && String(kb.owner_id) === String(userId)) || null;
+// React Query keys (react-query v3 — positional API). Documents are parameterized
+// by KB id so switching/clearing the personal KB re-keys cleanly.
+const PERSONAL_KB_KEY = ['personalKB'];
+const personalDocsKey = (kbId) => ['personalKBDocuments', kbId];
+// The KB picker's own query; must be invalidated on any personal-KB mutation so
+// its attach-list and doc counts stay fresh.
+const PICKER_KEY = ['knowledge-bases-for-chat'];
+
+const DOC_PAGE_LIMIT = 50;
+// Poll fast enough while a doc is non-terminal to actually catch the short-lived
+// pipeline stages (pending → extracting → embedding) so the stage bar/label
+// advance visibly rather than jumping; the poll self-stops once all docs are
+// terminal (refetchInterval returns false), so the faster cadence costs nothing
+// at rest.
+const POLL_INTERVAL_MS = 1500;
+const STALE_MS = 10000;
+
+// A document hasn't reached a terminal pipeline status yet. Drives the
+// self-stopping doc-list refetch (SHU-817 R7) — it stays true through the
+// post-Ready 'enhancing'/profiling phase so the panel keeps polling until
+// profiling finishes. TERMINAL_SUCCESS_STATUSES is the single source of truth,
+// shared with docStage so the stage label and the poll-stop can't diverge.
+const TERMINAL_FAILURE_STATUSES = new Set(['error']);
+const isDocNonTerminal = (doc) => {
+  const status = doc?.processing_status || 'pending';
+  return !TERMINAL_SUCCESS_STATUSES.has(status) && !TERMINAL_FAILURE_STATUSES.has(status);
+};
+
+// Flatten the useInfiniteQuery pages (each is the {items,total,limit,offset}
+// envelope body) into a single newest-first document array.
+const flattenPages = (infiniteData) =>
+  (infiniteData?.pages || []).flatMap((page) => (Array.isArray(page?.items) ? page.items : []));
+
+// Stable per-file identity for the upload error list. Filename alone collides
+// when two same-named files are dropped together, so retry/dismiss would act on
+// the wrong row (SHU-817 R1).
+let clientKeyCounter = 0;
+const nextClientKey = (file) => {
+  clientKeyCounter += 1;
+  return `${file.name}:${file.size}:${file.lastModified}:${clientKeyCounter}`;
 };
 
 /**
- * Manage the user's Personal Knowledge KB and the unified upload code path
- * shared across drag/drop, clipboard paste, and the Choose-files file picker.
+ * Manage the user's Personal Knowledge KB, its documents, and the unified upload
+ * code path shared across drag/drop, clipboard paste, and the Choose-files picker.
+ *
+ * The personal KB and its documents are React Query-backed so the popover, the
+ * brain badge/indexing signal, and the KB picker stay consistent; mutations
+ * invalidate the shared keys (SHU-817 F4).
  */
 const usePersonalKB = () => {
   const { user } = useAuth();
-  const [personalKB, setPersonalKB] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  // `uploading` and `errors` are client-only UI state (not server state).
+  // inFlightUploadsRef is a counter, not a bool, so overlapping batches (e.g. a
+  // retry fired mid drag-drop) only flip `uploading` false when the LAST settles.
   const [uploading, setUploading] = useState(false);
-  const [errors, setErrors] = useState([]);
-
-  // Avoid concurrent ensure() calls racing to create two KBs.
+  const [errors, setErrors] = useState([]); // Array<{ clientKey, filename, message, file }>
+  // Per-action counts from the most recent settled upload batch, so the toast can
+  // report Added / Updated / Already saved (SHU-817 S2 / Decision 15) instead of a
+  // single generic success message.
+  const [lastUploadSummary, setLastUploadSummary] = useState(null); // { added, updated, alreadySaved, processing, duplicateInBatch, failed }
   const ensurePromiseRef = useRef(null);
-
-  // Counter, not a boolean, so concurrent uploadFiles() calls (e.g. a retry
-  // fired while a drag-drop batch is mid-flight) don't clobber each other:
-  // `uploading` only goes false when the LAST in-flight upload settles.
   const inFlightUploadsRef = useRef(0);
 
-  // /auth/me serializes the user via User.to_dict() which exposes the id as
-  // `user_id`, not `id`. Use the canonical resolveUserId() helper so we don't
-  // silently fall through to undefined and skip the ownership match.
-  const userId = resolveUserId(user);
+  // Owner-scoped direct lookup — the server returns {data: <kb>|null}, so we
+  // unwrap with extractDataFromResponse rather than the old list({limit:100}) +
+  // client-side ownership filter, which could paginate the KB out for users who
+  // see many KBs (SHU-817 R5).
+  const personalKbQuery = useQuery(
+    PERSONAL_KB_KEY,
+    () => knowledgeBaseAPI.getPersonal().then(extractDataFromResponse),
+    { enabled: !!user, staleTime: STALE_MS }
+  );
+  const personalKB = personalKbQuery.data ?? null;
+  const kbId = personalKB?.id ?? null;
 
-  const fetchPersonalKB = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await knowledgeBaseAPI.list({ limit: 100 });
-      const items = extractItemsFromResponse(response);
-      setPersonalKB(findPersonalKB(items, userId));
-    } catch (err) {
-      log.error('usePersonalKB: failed to fetch knowledge bases', err);
-      // Soft-fail: leave personalKB null. Empty state pulses; first upload will create it.
-    } finally {
-      setLoading(false);
+  // Lifted out of BrainPopover so the brain icon's doc count + "indexing" state
+  // stay live even when the popover is closed, and the poll self-stops once every
+  // document is terminal (SHU-817 R7/F1). refetchInterval returns false to stop.
+  const docsQuery = useInfiniteQuery(
+    personalDocsKey(kbId),
+    ({ pageParam = 0 }) =>
+      knowledgeBaseAPI.getDocuments(kbId, { limit: DOC_PAGE_LIMIT, offset: pageParam }).then(extractDataFromResponse),
+    {
+      enabled: !!kbId,
+      staleTime: STALE_MS,
+      getNextPageParam: (lastPage, allPages) => {
+        const loaded = allPages.reduce((n, p) => n + (Array.isArray(p?.items) ? p.items.length : 0), 0);
+        const lastCount = Array.isArray(lastPage?.items) ? lastPage.items.length : 0;
+        const total = typeof lastPage?.total === 'number' ? lastPage.total : null;
+        if (lastCount < DOC_PAGE_LIMIT) {
+          return undefined;
+        }
+        if (total !== null && loaded >= total) {
+          return undefined;
+        }
+        return loaded; // next offset
+      },
+      refetchInterval: (data) => (flattenPages(data).some(isDocNonTerminal) ? POLL_INTERVAL_MS : false),
     }
-  }, [userId]);
+  );
 
-  useEffect(() => {
-    fetchPersonalKB();
-  }, [fetchPersonalKB]);
+  const docs = useMemo(() => flattenPages(docsQuery.data), [docsQuery.data]);
+  // The brain "indexing" spinner reflects work BEFORE a doc is usable (Ingesting).
+  // Profiling is post-Ready ('enhancing'), so it must NOT pull the badge back to
+  // indexing — the doc is already searchable (Decision 17 / sticky-Ready).
+  const indexing = useMemo(() => docs.some((doc) => docStage(doc).kind === 'progress'), [docs]);
+
+  const invalidatePersonalKB = useCallback(
+    (explicitKbId) => {
+      // Prefer an explicitly-passed id over the closed-over kbId. On the FIRST
+      // upload — the call that auto-provisions the KB — kbId is still null in this
+      // closure, so without the explicit id the new KB's doc list
+      // (['personalKBDocuments', newKbId]) is never invalidated and the
+      // just-uploaded doc fails to appear until a reload (SHU-817 F4).
+      const targetKbId = explicitKbId ?? kbId;
+      queryClient.invalidateQueries(PERSONAL_KB_KEY);
+      if (targetKbId) {
+        queryClient.invalidateQueries(personalDocsKey(targetKbId));
+      }
+      queryClient.invalidateQueries(PICKER_KEY);
+    },
+    [queryClient, kbId]
+  );
 
   const ensurePersonalKB = useCallback(async () => {
     if (personalKB) {
@@ -65,44 +139,46 @@ const usePersonalKB = () => {
     if (ensurePromiseRef.current) {
       return ensurePromiseRef.current;
     }
-    // Server-side idempotent ensure. The display name is derived from the
-    // user's identity by the backend (mirrors the precedence we used to do
-    // here client-side); no body needed.
+    // Server-side idempotent ensure; the display name is derived from the user's
+    // identity by the backend. Seed the cache so the docs query enables immediately.
     const promise = (async () => {
       const response = await knowledgeBaseAPI.ensurePersonal();
       const kb = extractDataFromResponse(response);
-      setPersonalKB(kb);
+      queryClient.setQueryData(PERSONAL_KB_KEY, kb);
       return kb;
     })().finally(() => {
       ensurePromiseRef.current = null;
     });
     ensurePromiseRef.current = promise;
     return promise;
-  }, [personalKB]);
+  }, [personalKB, queryClient]);
 
   /**
-   * Upload an array of File objects to the user's Personal Knowledge KB.
-   * Auto-provisions the KB on first call. Returns the per-file results array
-   * from the backend.
-   *
-   * Errors are tracked by filename so retryFile() can re-upload the same File.
+   * Upload File objects to the user's Personal Knowledge KB, auto-provisioning it
+   * on first call. Returns the per-file results array. Failures are tracked by a
+   * stable clientKey so retry/dismiss act on the right row even for same-named files.
    */
   const uploadFiles = useCallback(
     async (files) => {
       if (!files || files.length === 0) {
         return [];
       }
+      // Tag each File with a stable clientKey up front; match results back by
+      // submission index (results preserve order) rather than filename (R1).
+      const tagged = Array.from(files).map((file) => ({ file, clientKey: nextClientKey(file) }));
+      const batchKeys = new Set(tagged.map((t) => t.clientKey));
       inFlightUploadsRef.current += 1;
       setUploading(true);
       try {
         const kb = await ensurePersonalKB();
-        const response = await knowledgeBaseAPI.uploadDocuments(kb.id, files);
+        const response = await knowledgeBaseAPI.uploadDocuments(
+          kb.id,
+          tagged.map((t) => t.file)
+        );
         const data = extractDataFromResponse(response) || {};
 
-        // Backend currently returns { results: [...] }, but earlier iterations
-        // returned a bare array. Accept either shape; warn loudly on anything
-        // else so a future API change surfaces in logs instead of silently
-        // looking like an empty success.
+        // Backend returns { results: [...] }; accept a bare array too and warn on
+        // anything else so a future API change surfaces in logs.
         let results;
         if (Array.isArray(data)) {
           results = data;
@@ -113,32 +189,74 @@ const usePersonalKB = () => {
           results = [];
         }
 
-        const failedByName = new Map(results.filter((r) => !r.success).map((r) => [r.filename, r.error]));
+        const newErrors = [];
+        tagged.forEach((t, i) => {
+          const result = results[i];
+          if (result && result.success === false) {
+            newErrors.push({
+              clientKey: t.clientKey,
+              filename: t.file.name,
+              message: result.error || 'Upload failed',
+              file: t.file,
+            });
+          }
+        });
+        setErrors((prev) => [...prev.filter((e) => !batchKeys.has(e.clientKey)), ...newErrors]);
 
-        const newErrors = files
-          .filter((file) => failedByName.has(file.name))
-          .map((file) => ({
-            filename: file.name,
-            message: failedByName.get(file.name),
-            file,
-          }));
+        // Tally per-action outcomes for the toast. The backend distinguishes several
+        // "skipped" reasons (a still-indexing re-upload -> action 'processing', the
+        // same filename twice in one batch -> 'duplicate_in_batch', and unchanged /
+        // already-added content -> 'skipped'). Keep them apart so the toast reports
+        // the real outcome instead of collapsing them all into "Already saved".
+        const summary = {
+          added: 0,
+          updated: 0,
+          alreadySaved: 0,
+          processing: 0,
+          duplicateInBatch: 0,
+          failed: newErrors.length,
+        };
+        results.forEach((r) => {
+          if (!r || r.success === false) {
+            return; // failures are counted via newErrors
+          }
+          if (r.action === 'processing') {
+            summary.processing += 1;
+          } else if (r.action === 'duplicate_in_batch') {
+            summary.duplicateInBatch += 1;
+          } else if (r.skipped) {
+            summary.alreadySaved += 1; // action 'skipped' — unchanged content / already added
+          } else if (r.action === 'updated') {
+            summary.updated += 1;
+          } else {
+            summary.added += 1;
+          }
+        });
+        setLastUploadSummary(summary);
 
-        const uploadedNames = new Set(files.map((f) => f.name));
-        setErrors((prev) => [...prev.filter((e) => !uploadedNames.has(e.filename)), ...newErrors]);
-
-        // Refresh doc count so brain icon badge updates.
-        await fetchPersonalKB();
+        // Refresh KB doc count, the doc list, and the picker. Pass the freshly
+        // ensured kb.id so the first upload (which just created the KB) invalidates
+        // the new KB's doc list rather than the stale null kbId in this closure.
+        invalidatePersonalKB(kb.id);
         return results;
       } catch (err) {
         log.error('usePersonalKB: upload failed', err);
         const message = err?.response?.data?.error?.message || 'Upload failed';
-        const newErrors = files.map((file) => ({
-          filename: file.name,
+        const newErrors = tagged.map((t) => ({
+          clientKey: t.clientKey,
+          filename: t.file.name,
           message,
-          file,
+          file: t.file,
         }));
-        const uploadedNames = new Set(files.map((f) => f.name));
-        setErrors((prev) => [...prev.filter((e) => !uploadedNames.has(e.filename)), ...newErrors]);
+        setErrors((prev) => [...prev.filter((e) => !batchKeys.has(e.clientKey)), ...newErrors]);
+        setLastUploadSummary({
+          added: 0,
+          updated: 0,
+          alreadySaved: 0,
+          processing: 0,
+          duplicateInBatch: 0,
+          failed: tagged.length,
+        });
         return [];
       } finally {
         inFlightUploadsRef.current = Math.max(0, inFlightUploadsRef.current - 1);
@@ -147,33 +265,116 @@ const usePersonalKB = () => {
         }
       }
     },
-    [ensurePersonalKB, fetchPersonalKB]
+    [ensurePersonalKB, invalidatePersonalKB]
   );
 
   const retryFile = useCallback(
-    async (filename) => {
-      const error = errors.find((e) => e.filename === filename);
+    async (clientKey) => {
+      const error = errors.find((e) => e.clientKey === clientKey);
       if (!error || !error.file) {
         return [];
       }
+      // Drop the stale error row; the retried upload adds a fresh one if it fails again.
+      setErrors((prev) => prev.filter((e) => e.clientKey !== clientKey));
       return uploadFiles([error.file]);
     },
     [errors, uploadFiles]
   );
 
-  const dismissError = useCallback((filename) => {
-    setErrors((prev) => prev.filter((e) => e.filename !== filename));
+  const dismissError = useCallback((clientKey) => {
+    setErrors((prev) => prev.filter((e) => e.clientKey !== clientKey));
   }, []);
+
+  // Optimistically remove a document, then reconcile (SHU-817 S1). Note: upload
+  // errors (keyed by clientKey) and document rows are separate stores, so a
+  // delete never needs to touch the errors list.
+  const deleteDoc = useCallback(
+    async (docId) => {
+      if (!kbId || !docId) {
+        return;
+      }
+      const key = personalDocsKey(kbId);
+      await queryClient.cancelQueries(key);
+      const previous = queryClient.getQueryData(key);
+      queryClient.setQueryData(key, (old) => {
+        if (!old?.pages) {
+          return old;
+        }
+        return {
+          ...old,
+          pages: old.pages.map((page) => ({
+            ...page,
+            items: (page.items || []).filter((d) => d.id !== docId),
+          })),
+        };
+      });
+      try {
+        await knowledgeBaseAPI.deleteDocument(kbId, docId);
+        // Refresh the badge count + picker; the doc list is reconciled in finally.
+        queryClient.invalidateQueries(PERSONAL_KB_KEY);
+        queryClient.invalidateQueries(PICKER_KEY);
+      } catch (err) {
+        log.error('usePersonalKB: delete failed', err);
+        if (previous) {
+          queryClient.setQueryData(key, previous); // rollback
+        }
+        throw err;
+      } finally {
+        queryClient.invalidateQueries(key);
+      }
+    },
+    [kbId, queryClient]
+  );
+
+  // Re-run the embed/profile pipeline for a failed/stale document from its stored
+  // content (SHU-817 R3). Returns { ok, message } so the caller can surface the
+  // 409 (busy) / 422 (re-upload required) message inline.
+  const reingestDoc = useCallback(
+    async (docId) => {
+      if (!kbId || !docId) {
+        return { ok: false, message: 'No document' };
+      }
+      try {
+        await knowledgeBaseAPI.reingestDocument(kbId, docId);
+        queryClient.invalidateQueries(personalDocsKey(kbId));
+        return { ok: true };
+      } catch (err) {
+        log.error('usePersonalKB: reingest failed', err);
+        const message = err?.response?.data?.error?.message || 'Could not re-ingest this document.';
+        return { ok: false, message };
+      }
+    },
+    [kbId, queryClient]
+  );
+
+  const refetchDocs = useCallback(() => {
+    if (kbId) {
+      queryClient.invalidateQueries(personalDocsKey(kbId));
+    }
+  }, [queryClient, kbId]);
 
   return {
     personalKB,
-    loading,
+    loading: personalKbQuery.isLoading,
     uploading,
     errors,
+    lastUploadSummary,
     uploadFiles,
     retryFile,
     dismissError,
-    refetch: fetchPersonalKB,
+    refetch: invalidatePersonalKB,
+    // Documents (lifted from BrainPopover — F4 / R7 / F1)
+    docs,
+    docsLoading: docsQuery.isLoading,
+    docsFetching: docsQuery.isFetching,
+    docsError: docsQuery.isError,
+    indexing,
+    hasMoreDocs: !!docsQuery.hasNextPage,
+    fetchMoreDocs: docsQuery.fetchNextPage,
+    fetchingMoreDocs: docsQuery.isFetchingNextPage,
+    refetchDocs,
+    deleteDoc,
+    reingestDoc,
   };
 };
 

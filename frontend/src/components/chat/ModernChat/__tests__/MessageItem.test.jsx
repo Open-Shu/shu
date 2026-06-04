@@ -169,3 +169,151 @@ describe('MessageItem — SHU-803 stopped-state caption (AC6/AC7/AC8)', () => {
     expect(screen.queryByText('Stopped by user')).toBeNull();
   });
 });
+
+// SHU-815: assistant avatar branches on avatarConfig.mode. The same
+// MessageItem is reused for "curated", "custom", and "none" modes; the
+// "none" mode hides both the assistant AND the user avatar symmetrically.
+describe('MessageItem — SHU-815 assistant avatar config', () => {
+  it('renders the Shu feather (default curated) when avatarConfig is omitted', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem message={message} {...baseProps()} />
+      </TestWrapper>
+    );
+    // The curated default ("shu_feather") sets aria-label="Shu feather" on the
+    // Avatar wrapper. Asserts the avatar is rendered without coupling to SVG
+    // path internals.
+    expect(screen.getByLabelText('Shu feather')).toBeInTheDocument();
+  });
+
+  it('renders the matching curated icon for a non-default curatedId', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem
+          message={message}
+          {...baseProps({
+            avatarConfig: { mode: 'curated', curatedId: 'cyclone', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByLabelText('Swirl')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Shu feather')).toBeNull();
+  });
+
+  it('falls back to the feather when curatedId is unknown (path scenario S3)', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem
+          message={message}
+          {...baseProps({
+            avatarConfig: { mode: 'curated', curatedId: 'definitely-not-a-real-id', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByLabelText('Shu feather')).toBeInTheDocument();
+  });
+
+  it('renders <Avatar src> for mode="custom" with an asset URL', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem
+          message={message}
+          {...baseProps({
+            avatarConfig: {
+              mode: 'custom',
+              curatedId: null,
+              assetUrl: 'https://example.com/avatar.png',
+              appName: 'Aria',
+            },
+          })}
+        />
+      </TestWrapper>
+    );
+    const img = screen.getByAltText('Aria');
+    expect(img).toBeInTheDocument();
+    expect(img.tagName).toBe('IMG');
+    expect(img).toHaveAttribute('src', 'https://example.com/avatar.png');
+  });
+
+  it('mode="none" suppresses the ASSISTANT avatar (path scenario S2)', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem
+          message={message}
+          {...baseProps({
+            avatarConfig: { mode: 'none', curatedId: 'shu_feather', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.queryByLabelText('Shu feather')).toBeNull();
+  });
+
+  it('mode="none" suppresses the USER avatar as well (path scenario S2 — symmetric removal)', () => {
+    const message = { ...makeAssistantMessage({ message_metadata: {} }), role: 'user', content: 'hi' };
+    render(
+      <TestWrapper>
+        <MessageItem
+          message={message}
+          {...baseProps({
+            avatarConfig: { mode: 'none', curatedId: 'shu_feather', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    // The UserAvatar mock at the top of this file renders an element with
+    // data-testid="user-avatar". When mode="none" the user-avatar render path
+    // is suppressed symmetrically with the assistant — neither speaker shows.
+    expect(screen.queryByTestId('user-avatar')).toBeNull();
+  });
+
+  it('mode="none" injects visually-hidden speaker prefixes for screen readers (AC a11y #3)', () => {
+    // With the avatars hidden, bubble alignment + colour become the only
+    // visual cue for speaker. Screen readers need an accessible label —
+    // a visually-hidden "Assistant said:" / "You said:" prefix on each
+    // bubble preserves speaker distinction without affecting layout.
+    const assistantMessage = makeAssistantMessage({ message_metadata: {} });
+    const { rerender } = render(
+      <TestWrapper>
+        <MessageItem
+          message={assistantMessage}
+          {...baseProps({
+            avatarConfig: { mode: 'none', curatedId: 'shu_feather', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByText('Assistant said:')).toBeInTheDocument();
+
+    const userMessage = { ...assistantMessage, role: 'user', content: 'hi' };
+    rerender(
+      <TestWrapper>
+        <MessageItem
+          message={userMessage}
+          {...baseProps({
+            avatarConfig: { mode: 'none', curatedId: 'shu_feather', assetUrl: null, appName: 'Shu' },
+          })}
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByText('You said:')).toBeInTheDocument();
+  });
+
+  it('curated mode does NOT inject speaker prefixes (icons already convey the cue)', () => {
+    const message = makeAssistantMessage({ message_metadata: {} });
+    render(
+      <TestWrapper>
+        <MessageItem message={message} {...baseProps()} />
+      </TestWrapper>
+    );
+    expect(screen.queryByText('Assistant said:')).toBeNull();
+    expect(screen.queryByText('You said:')).toBeNull();
+  });
+});

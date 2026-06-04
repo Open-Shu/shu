@@ -71,8 +71,6 @@ def _make_state(**overrides) -> BillingState:
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -83,6 +81,7 @@ def _make_state(**overrides) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
     base.update(overrides)
     return BillingState(**base)
@@ -253,6 +252,10 @@ class TestSubscriptionAdminBlock:
 _TRIAL_PAYLOAD_KEYS = (
     "is_trial",
     "trial_deadline",
+    # SHU-813: free-tier (non-trialing) tenants have `is_trial=false` but still
+    # need a cap-aware banner — `hard_cap` drives that. Must reach the non-admin
+    # session because the banner renders for all users, not just admins.
+    "hard_cap",
     "total_grant_amount",
     "remaining_grant_amount",
     "seat_price_usd",
@@ -275,12 +278,14 @@ class TestSubscriptionTrialAndEntitlements:
         install_stub_cache(
             _make_state(
                 entitlements=EntitlementSet(plugins=True, experiences=True),
-                is_trial=True,
-                trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+                subscription_status="trialing",
+                current_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+                current_period_end=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
                 total_grant_amount=Decimal("50.00"),
                 remaining_grant_amount=Decimal("12.34"),
                 seat_price_usd=Decimal("20.00"),
                 limits=LimitSet(document_count_limit=100, kb_count_limit=5),
+                hard_cap=True,
             )
         )
 
@@ -293,6 +298,7 @@ class TestSubscriptionTrialAndEntitlements:
             assert key in body, f"trial/entitlement payload missing field: {key}"
         assert body["is_trial"] is True
         assert body["trial_deadline"] == "2026-05-30T12:00:00+00:00"
+        assert body["hard_cap"] is True
         # Decimals stringified to dodge JSON-number precision loss.
         assert body["total_grant_amount"] == "50.00"
         assert body["remaining_grant_amount"] == "12.34"
@@ -306,113 +312,6 @@ class TestSubscriptionTrialAndEntitlements:
             "mcp_servers": False,
         }
         assert body["limits"] == {"document_count_limit": 100, "kb_count_limit": 5}
-
-    @pytest.mark.asyncio
-    @patch(_P_USER_COUNT)
-    @patch(_P_BILLING_CONFIG)
-    async def test_self_hosted_cache_none_suppresses_trial(
-        self, mock_config, mock_count, install_stub_cache
-    ):
-        """SHU-822: cache=None (no control plane) → is_trial is False and the
-        trial/grant fields are omitted entirely, mirroring the entitlement /
-        limit / usage omission. Without this, HEALTHY_DEFAULT.is_trial=True
-        leaks a phantom $0 trial onto every self-hosted deployment.
-        """
-        mock_config.return_value = _EMPTY_CONFIG
-        mock_count.return_value = 0
-        # Don't install a cache → endpoint sees None (self-hosted).
-
-        response = await get_subscription_status(
-            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
-        )
-        body = _decode(response)
-
-        assert body["is_trial"] is False
-        for key in ("trial_deadline", "total_grant_amount", "remaining_grant_amount", "seat_price_usd"):
-            assert key not in body, f"trial field leaked on self-hosted: {key}"
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("remaining", "period_start", "expected_remaining"),
-        [
-            # Grant exhausted: CP-backed remaining reads $0. A naive "$0 → hide"
-            # rule would strip the upgrade surface from a paying-path trial user.
-            (Decimal("0.00"), datetime(2026, 1, 1, tzinfo=UTC), "0.00"),
-            # Cold start: remaining unpopulated before the first poll; with no
-            # period anchor the displayed remaining falls back to the full grant.
-            (None, None, "50.00"),
-        ],
-    )
-    @patch(_P_USER_COUNT)
-    @patch(_P_BILLING_CONFIG)
-    async def test_trialing_tenant_keeps_is_trial_when_grant_zero_or_unpopulated(
-        self, mock_config, mock_count, install_stub_cache, remaining, period_start, expected_remaining
-    ):
-        """SHU-822 regression: with CP configured (cache present) and a genuine
-        trial, is_trial stays True and the trial fields render even when the
-        remaining grant is $0 (exhausted) or None (cold start). Guards against a
-        drift where a dollar-value gate, instead of `cache is None`, would mask
-        the paywall surface.
-        """
-        mock_config.return_value = _EMPTY_CONFIG
-        mock_count.return_value = 0
-        install_stub_cache(
-            _make_state(
-                is_trial=True,
-                trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
-                total_grant_amount=Decimal("50.00"),
-                remaining_grant_amount=remaining,
-                seat_price_usd=Decimal("20.00"),
-                current_period_start=period_start,
-            )
-        )
-
-        response = await get_subscription_status(
-            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
-        )
-        body = _decode(response)
-
-        assert body["is_trial"] is True
-        assert body["trial_deadline"] == "2026-05-30T12:00:00+00:00"
-        assert body["total_grant_amount"] == "50.00"
-        assert body["remaining_grant_amount"] == expected_remaining
-        assert body["seat_price_usd"] == "20.00"
-
-    @pytest.mark.asyncio
-    @patch(_P_USER_COUNT)
-    @patch(_P_BILLING_CONFIG)
-    async def test_state_and_gate_derive_from_one_cache_lookup(self, mock_config, mock_count):
-        """SHU-822 regression: the billing state and the trial gate must derive
-        from a SINGLE get_billing_state_cache() reference.
-
-        A transient cache-build failure returns None WITHOUT memoizing
-        (billing_state_cache.py), so two independent lookups can disagree:
-        lookup #1 → HEALTHY_DEFAULT (is_trial=True, $0 grants), a retried
-        lookup #2 → a live cache. The old code combined the first (via
-        get_current_billing_state) with a second gate lookup, reintroducing a
-        phantom $0 trial on a configured-but-transiently-failing instance.
-        """
-        mock_config.return_value = _EMPTY_CONFIG
-        mock_count.return_value = 0
-        # First lookup transient-fails (None); a retry would succeed. Patched in
-        # BOTH namespaces because get_current_billing_state reads its own
-        # reference — a regression to the two-lookup pattern would consume the
-        # second side_effect and leak the phantom trial.
-        flaky = AsyncMock(side_effect=[None, MagicMock()])
-        with (
-            patch("shu.billing.router.get_billing_state_cache", flaky),
-            patch("shu.billing.enforcement.get_billing_state_cache", flaky),
-        ):
-            response = await get_subscription_status(
-                db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
-            )
-        body = _decode(response)
-
-        assert body["is_trial"] is False
-        for key in ("trial_deadline", "total_grant_amount", "remaining_grant_amount", "seat_price_usd"):
-            assert key not in body, f"phantom trial field leaked under cache flakiness: {key}"
-        # Exactly one cache lookup — proves the state and the gate share it.
-        assert flaky.await_count == 1
 
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
@@ -432,6 +331,33 @@ class TestSubscriptionTrialAndEntitlements:
         body = _decode(response)
 
         assert body["trial_deadline"] is None
+
+    @pytest.mark.asyncio
+    @patch(_P_USER_COUNT)
+    @patch(_P_BILLING_CONFIG)
+    async def test_healthy_default_payload_reports_inert_trial_and_hard_cap_true(
+        self, mock_config, mock_count, install_stub_cache
+    ):
+        """Cold-start CP outage: HEALTHY_DEFAULT lands as the cached state.
+
+        Pins the wire shape the frontend sees in that window:
+        - `is_trial=False` (derived from `subscription_status=None`), so the
+          trial banner stays hidden.
+        - `hard_cap=True` (fail-closed posture), so the cap-aware surface
+          shows. Without this assertion a future change to either field on
+          HEALTHY_DEFAULT could silently flip the banner UX during outages.
+        """
+        mock_config.return_value = _EMPTY_CONFIG
+        mock_count.return_value = 0
+        install_stub_cache(HEALTHY_DEFAULT)
+
+        response = await get_subscription_status(
+            db=_subscription_db(), user=_mock_user(is_admin=False), settings=_mock_settings()
+        )
+        body = _decode(response)
+
+        assert body["is_trial"] is False
+        assert body["hard_cap"] is True
 
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
@@ -701,13 +627,14 @@ def _trial_state(
     # an explicit multiplier (or None to verify the configured-default
     # fallback path).
     return _make_state(
-        is_trial=True,
-        trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
+        subscription_status="trialing",
+        current_period_start=current_period_start,
+        current_period_end=datetime(2026, 5, 30, tzinfo=UTC),
         total_grant_amount=total_grant,
         remaining_grant_amount=None,
         seat_price_usd=Decimal("20"),
-        current_period_start=current_period_start,
         usage_markup_multiplier=usage_markup_multiplier,
+        hard_cap=True,
     )
 
 

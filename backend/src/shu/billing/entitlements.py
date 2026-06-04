@@ -64,7 +64,7 @@ class EntitlementDeniedError(ShuException):
 
     Inherits `ShuException` so the generic exception handler in `main.py`
     routes it to a 403 with the standard nested-error body — same shape
-    as `SubscriptionInactiveError` / `TrialCapExhaustedError`, so the
+    as `SubscriptionInactiveError` / `HardCapExhaustedError`, so the
     frontend has one error-parsing path.
     """
 

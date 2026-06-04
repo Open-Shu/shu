@@ -154,6 +154,22 @@ def _infer_file_type(filename: str, mime_type: str) -> str:
     return "txt"
 
 
+def manual_upload_source_id(filename: str) -> str:
+    """Derive a stable, per-KB ``source_id`` for a manual file upload from its filename.
+
+    Re-uploading a file with the same name (NFC-normalized, surrounding whitespace
+    trimmed, case preserved) resolves to the same ``source_id``, so the ingestion
+    upsert updates the existing document in place instead of creating a duplicate
+    (SHU-817 dedup-on-update). The filename is hashed rather than embedded to stay
+    within the ``source_id`` column width and avoid leaking raw names / odd characters.
+    """
+    import unicodedata
+
+    normalized = unicodedata.normalize("NFC", (filename or "").strip())
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"manual-upload-{digest}"
+
+
 def _safe_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -517,6 +533,7 @@ async def ingest_document(  # noqa: PLR0915
     source_modified_at = _safe_dt(attrs.get("modified_at"))
     effective_source_url = source_url or attrs.get("source_url")
 
+    was_created = False
     if existing is None:
         # New document - create it with PENDING status
         doc_create = DocumentCreate(
@@ -532,17 +549,24 @@ async def ingest_document(  # noqa: PLR0915
             source_hash=source_hash,
             source_modified_at=source_modified_at,
         )
-        created = await svc.create_document(doc_create)
+        created_resp, was_created = await svc.create_or_get_document(doc_create)
         from sqlalchemy import select
 
-        res = await db.execute(select(Document).where(Document.id == created.id))
-        document = res.scalar_one()
-        # Set status to PENDING atomically with creation
+        res = await db.execute(select(Document).where(Document.id == created_resp.id))
+        # If a concurrent same-source upload won the insert race, create_or_get
+        # returned ITS row (was_created False). Fall through to the update branch
+        # so our metadata + bytes are applied in place rather than silently dropped
+        # (SHU-817 concurrent same-name), and the count isn't double-incremented.
+        existing = res.scalar_one()
+
+    document = existing
+    if was_created:
+        # Freshly created - flip to PENDING atomically with creation.
         document.update_status(DocumentStatus.PENDING)
         await db.commit()
     else:
-        # Existing document - update for re-ingestion with PENDING status
-        document = existing
+        # Existing document (normal re-ingestion OR a concurrent insert-race loser)
+        # - update for re-ingestion with PENDING status.
         document.title = title
         document.file_type = file_type
         document.source_type = source_type
@@ -635,6 +659,11 @@ async def ingest_document(  # noqa: PLR0915
         "document_id": document.id,
         "status": DocumentStatus.PENDING.value,
         "skipped": False,
+        # Derive from create_or_get_document's real outcome, not the entry-time
+        # `existing` snapshot — under a concurrent same-source race the row may have
+        # been created by another request, so reporting created here would
+        # double-count document_count (SHU-817).
+        "created": was_created,
     }
 
 
