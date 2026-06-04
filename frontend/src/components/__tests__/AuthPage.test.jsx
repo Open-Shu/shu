@@ -1,21 +1,23 @@
-/* eslint-disable react/display-name -- jest.mock factory stubs need no display name */
+/* eslint-disable react/display-name -- vi.mock factory stubs need no display name */
 import React from 'react';
+import { vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import AuthPage from '../AuthPage';
 
 // Isolate AuthPage's routing/prefill logic from the child panes' own plumbing
 // (useAuth, api, MUI). Each stub surfaces the props AuthPage passes it.
-jest.mock('../PasswordRegistration', () => (props) => (
-  <div data-testid="register-form" data-initial-email={props.initialEmail || ''} />
-));
-jest.mock('../PasswordLogin', () => () => <div data-testid="login-form" />);
-jest.mock('../GoogleLogin', () => () => <div data-testid="google-login" />);
-jest.mock('../ForgotPasswordPage', () => () => <div data-testid="forgot-form" />);
-jest.mock('../../services/config', () => ({
-  __esModule: true,
+// vi.mock is hoisted by vitest above the imports, so AuthPage picks up the
+// stubs rather than the real components.
+vi.mock('../PasswordRegistration', () => ({
+  default: (props) => <div data-testid="register-form" data-initial-email={props.initialEmail || ''} />,
+}));
+vi.mock('../PasswordLogin', () => ({ default: () => <div data-testid="login-form" /> }));
+vi.mock('../GoogleLogin', () => ({ default: () => <div data-testid="google-login" /> }));
+vi.mock('../ForgotPasswordPage', () => ({ default: () => <div data-testid="forgot-form" /> }));
+vi.mock('../../services/config', () => ({
   default: {
-    fetchConfig: jest.fn().mockResolvedValue(undefined),
+    fetchConfig: vi.fn().mockResolvedValue(undefined),
     isGoogleSsoEnabled: () => false,
     isMicrosoftSsoEnabled: () => false,
   },
