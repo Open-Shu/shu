@@ -116,10 +116,18 @@ class UserService:
         return True
 
     def determine_user_role(self, email: str, is_first_user: bool) -> UserRole:
-        # Determine user role
-        is_admin_email = email.lower() in [admin_email.lower() for admin_email in self.settings.admin_emails]
+        admin_emails = self.settings.admin_emails
+        is_admin_email = email.lower() in [admin_email.lower() for admin_email in admin_emails]
+        if is_admin_email:
+            return UserRole.ADMIN
 
-        if is_first_user or is_admin_email:
+        # First-user-becomes-admin is a bootstrap convenience for self-hosted
+        # installs with NO configured admins. When ADMIN_EMAILS is set — every
+        # hosted silo tenant, where the control plane seeds the customer's email
+        # into it at provision — that list is authoritative: a stranger who
+        # races to register first on a fresh tenant must NOT inherit admin
+        # (SHU-840). The configured admin still gets admin via is_admin_email.
+        if is_first_user and not admin_emails:
             return UserRole.ADMIN
         return UserRole.REGULAR_USER
 
@@ -129,7 +137,14 @@ class UserService:
         return result.scalar_one_or_none() is None
 
     def is_active(self, user_role: UserRole, is_first_user: bool) -> bool:
-        return is_first_user or user_role == UserRole.ADMIN or self.settings.auto_activate_users
+        if user_role == UserRole.ADMIN or self.settings.auto_activate_users:
+            return True
+        # First-user auto-activation is the same self-hosted bootstrap as the
+        # admin grant above: only when no admins are configured. Otherwise a
+        # stranger who registers first on a hosted tenant (now a regular_user,
+        # not admin) would still land ACTIVE — they must instead wait for the
+        # configured admin to activate them (SHU-840).
+        return is_first_user and not self.settings.admin_emails
 
     async def get_user_auth_method(self, db: AsyncSession, email: str) -> str | None:
         auth_method_result = await db.execute(select(User.auth_method).where(func.lower(User.email) == email.lower()))
