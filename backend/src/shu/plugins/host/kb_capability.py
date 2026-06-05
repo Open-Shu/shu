@@ -74,7 +74,7 @@ class KbCapability(ImmutableCapabilityMixin):
         ko_obj = ko if isinstance(ko, KnowledgeObject) else KnowledgeObject(**ko)
         db = await get_db_session()
         try:
-            ko_id = await _host_upsert_knowledge_object(db, knowledge_base_id, ko_obj)
+            ko_id = await _host_upsert_knowledge_object(db, knowledge_base_id, ko_obj, user_id=self._user_id)
             logger.info(
                 "host.kb.upsert",
                 extra={

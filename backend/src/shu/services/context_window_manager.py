@@ -45,6 +45,7 @@ class ContextWindowManager:
         conversation: Conversation,
         max_tokens: int,
         recent_message_limit_override: int | None = None,
+        user_id: str | None = None,
     ) -> list[ChatMessage]:
         """Apply pruning/summarization to the message list."""
 
@@ -85,7 +86,7 @@ class ContextWindowManager:
         managed_messages: list[ChatMessage] = []
 
         if older_messages:
-            summary = await self._summarize_conversation_history(older_messages)
+            summary = await self._summarize_conversation_history(older_messages, user_id=user_id)
             if summary:
                 # Use 'user' role instead of 'system' to avoid adapter compatibility issues.
                 # Adapters like Anthropic/Gemini expect system content via ChatContext.system_prompt,
@@ -115,6 +116,7 @@ class ContextWindowManager:
     async def _summarize_conversation_history(
         self,
         messages: list[ChatMessage],
+        user_id: str | None = None,
     ) -> str | None:
         if not messages:
             return None
@@ -134,7 +136,7 @@ class ContextWindowManager:
                 result = await self.side_call_service.call(
                     message_sequence=[{"role": "user", "content": summary_prompt}],
                     system_prompt=None,
-                    user_id="system",
+                    user_id=user_id,
                 )
                 if result.success:
                     logger.info("Generated conversation summary via side-call service")

@@ -76,7 +76,9 @@ def _choose_file_type(ko: KnowledgeObject) -> str:
     return "txt"
 
 
-async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: KnowledgeObject) -> str:
+async def upsert_knowledge_object(
+    db: AsyncSession, knowledge_base_id: str, ko: KnowledgeObject, user_id: str | None = None
+) -> str:
     """Upsert a KnowledgeObject into the KB-backed storage and trigger indexing.
 
     - Creates or updates a Document row using KO fields
@@ -160,6 +162,7 @@ async def upsert_knowledge_object(db: AsyncSession, knowledge_base_id: str, ko: 
         document=document,
         title=title,
         content=content,
+        user_id=user_id,
     )
 
     from ..models.document import DocumentStatus
