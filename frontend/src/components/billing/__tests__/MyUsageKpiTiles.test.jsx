@@ -32,7 +32,7 @@ describe('MyUsageKpiTiles', () => {
   describe('without a pool', () => {
     it('renders exactly 3 volume tiles', () => {
       const { container } = renderTiles(usage(), false, null);
-      expect(container.querySelectorAll('.MuiGrid-item')).toHaveLength(3);
+      expect(container.querySelectorAll('.MuiCard-root')).toHaveLength(3);
       expect(screen.getByText('Your Usage Cost')).toBeInTheDocument();
       expect(screen.getByText('Requests')).toBeInTheDocument();
       expect(screen.getByText('Tokens')).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe('MyUsageKpiTiles', () => {
   describe('with a positive pool', () => {
     it('renders a 4th Shared Pool tile with used / total', () => {
       const { container } = renderTiles(usage(), false, { total: 500, remaining: 100 });
-      expect(container.querySelectorAll('.MuiGrid-item')).toHaveLength(4);
+      expect(container.querySelectorAll('.MuiCard-root')).toHaveLength(4);
       expect(screen.getByText('Shared Pool')).toBeInTheDocument();
       expect(screen.getByText('$400.00 / $500.00')).toBeInTheDocument();
       expect(screen.getByText(/across all seats & shared activity/)).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe('MyUsageKpiTiles', () => {
 
     it('omits the pool tile when total is zero', () => {
       const { container } = renderTiles(usage(), false, { total: 0, remaining: 0 });
-      expect(container.querySelectorAll('.MuiGrid-item')).toHaveLength(3);
+      expect(container.querySelectorAll('.MuiCard-root')).toHaveLength(3);
     });
 
     it('clamps remaining above total so used never goes negative', () => {

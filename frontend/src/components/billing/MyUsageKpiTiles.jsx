@@ -1,4 +1,4 @@
-import { Grid, LinearProgress, Skeleton, Tooltip } from '@mui/material';
+import { Box, LinearProgress, Skeleton, Tooltip } from '@mui/material';
 
 import { KpiTile, pickUsedColor } from './KpiTiles';
 import { formatCompactTokens, formatCurrency, formatFullTokens } from '../../utils/billingFormatters';
@@ -79,26 +79,33 @@ export default function MyUsageKpiTiles({ usageData, isLoading, pool }) {
     });
   }
 
-  // 4 tiles → 4-up on md; 3 tiles → 3-up so the row stays balanced.
-  const md = tiles.length >= 4 ? 3 : 4;
+  // 1-up on xs, 2-up on sm, all-in-one-row on md+. CSS grid with `gap` (not MUI
+  // Grid `spacing`) so there are no negative container margins — the tiles stay
+  // symmetric on thin mobile widths instead of drifting right.
+  const columns = tiles.length;
 
   return (
-    <Grid container spacing={2}>
-      {tiles.map((tile) => (
-        <Grid item xs={12} sm={6} md={md} key={tile.key}>
-          {isLoading ? (
-            <Skeleton variant="rounded" height={108} />
-          ) : (
-            <KpiTile
-              label={tile.label}
-              value={tile.value}
-              ariaLabel={tile.ariaLabel}
-              subline={tile.subline}
-              bottom={tile.bottom}
-            />
-          )}
-        </Grid>
-      ))}
-    </Grid>
+    <Box
+      sx={{
+        display: 'grid',
+        gap: 2,
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: `repeat(${columns}, 1fr)` },
+      }}
+    >
+      {tiles.map((tile) =>
+        isLoading ? (
+          <Skeleton key={tile.key} variant="rounded" height={108} />
+        ) : (
+          <KpiTile
+            key={tile.key}
+            label={tile.label}
+            value={tile.value}
+            ariaLabel={tile.ariaLabel}
+            subline={tile.subline}
+            bottom={tile.bottom}
+          />
+        )
+      )}
+    </Box>
   );
 }
