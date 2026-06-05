@@ -296,6 +296,9 @@ export const authAPI = {
 // Billing endpoints (subscription state, seat management, Cost & Usage dashboard)
 export const billingAPI = {
   getUsage: () => api.get('/billing/usage'),
+  // Per-user self usage for the "My Usage" dashboard (SHU-844). Scoped
+  // server-side to the caller — no user id param.
+  getMyUsage: () => api.get('/billing/usage/me'),
   getSubscription: () => api.get('/billing/subscription'),
   getPortalUrl: () => api.get('/billing/portal'),
   releaseSeat: () => api.post('/billing/seats/release'),

@@ -5,6 +5,7 @@ import {
   ChatBubbleOutline as ChatIcon,
   ManageAccounts as AccountsIcon,
   Settings as SettingsIcon,
+  Insights as UsageIcon,
 } from '@mui/icons-material';
 import { useFeatureEnabled } from '../config/featureFlags';
 
@@ -30,6 +31,12 @@ export default function UserMenuCommonItems({ onNavigate }) {
           <SecurityIcon fontSize="small" />
         </ListItemIcon>
         My Permissions
+      </MenuItem>
+      <MenuItem onClick={go('/usage')}>
+        <ListItemIcon>
+          <UsageIcon fontSize="small" />
+        </ListItemIcon>
+        My Usage
       </MenuItem>
       {canPlugins && (
         <MenuItem onClick={go('/settings/connected-accounts')}>

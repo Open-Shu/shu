@@ -34,6 +34,7 @@ import ModernChat from './components/ModernChat';
 import UserPermissionsDashboard from './components/UserPermissionsDashboard';
 import ConnectedAccountsPage from './components/ConnectedAccountsPage';
 import UserPreferencesPage from './components/UserPreferencesPage';
+import MyUsagePage from './pages/MyUsagePage';
 
 // Auth Components
 import AuthPage from './components/AuthPage';
@@ -215,6 +216,16 @@ const AuthenticatedApp = () => {
                   element={
                     <RoleBasedRoute layout="user">
                       <UserPermissionsDashboard />
+                    </RoleBasedRoute>
+                  }
+                />
+
+                {/* My Usage dashboard (SHU-844) - Available to ALL users */}
+                <Route
+                  path="/usage"
+                  element={
+                    <RoleBasedRoute layout="user">
+                      <MyUsagePage />
                     </RoleBasedRoute>
                   }
                 />

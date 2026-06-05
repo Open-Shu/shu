@@ -4,7 +4,9 @@ import { formatCurrency, INCLUDED_USAGE_PER_SEAT_USD, USAGE_MARKUP_MULTIPLIER } 
 
 const PLACEHOLDER = '—';
 
-function KpiTile({ label, value, ariaLabel, valueColor, subline, bottom }) {
+// Exported so the per-user My Usage tiles (SHU-844) reuse the exact tile
+// presentation instead of duplicating the card markup.
+export function KpiTile({ label, value, ariaLabel, valueColor, subline, bottom }) {
   return (
     <Card variant="outlined" sx={{ height: '100%' }}>
       <CardContent>
