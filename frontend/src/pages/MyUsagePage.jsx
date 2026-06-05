@@ -130,70 +130,72 @@ function MyUsagePage() {
   const isPeriodKnown = Boolean(usage.data) && !usage.data.current_period_unknown;
 
   return (
-    <Box sx={{ p: { xs: 1.5, sm: 3 }, maxWidth: 1400, mx: 'auto' }}>
-      <PageHeader usageQuery={usage} lastUpdatedAt={lastUpdatedAt} onRefresh={refetch} timezone={timezone} />
+    <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+      <Box sx={{ p: { xs: 1.5, sm: 3 }, maxWidth: 1400, mx: 'auto' }}>
+        <PageHeader usageQuery={usage} lastUpdatedAt={lastUpdatedAt} onRefresh={refetch} timezone={timezone} />
 
-      <Stack spacing={3}>
-        <UpsellCard />
+        <Stack spacing={3}>
+          <UpsellCard />
 
-        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Stack spacing={2}>
-            <Typography variant="overline" sx={SECTION_HEADING_SX}>
-              Summary
-            </Typography>
-            {usage.isError ? (
-              <UsageErrorAlert onRefresh={refetch} />
-            ) : (
-              <MyUsageKpiTiles usageData={usage.data} isLoading={usage.isLoading} pool={pool} />
-            )}
-          </Stack>
-        </Paper>
+          <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+            <Stack spacing={2}>
+              <Typography variant="overline" sx={SECTION_HEADING_SX}>
+                Summary
+              </Typography>
+              {usage.isError ? (
+                <UsageErrorAlert onRefresh={refetch} />
+              ) : (
+                <MyUsageKpiTiles usageData={usage.data} isLoading={usage.isLoading} pool={pool} />
+              )}
+            </Stack>
+          </Paper>
 
-        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Stack spacing={2}>
-            <Typography variant="overline" sx={SECTION_HEADING_SX}>
-              Usage Over Time
-            </Typography>
-            {usage.isError ? (
-              <UsageErrorAlert onRefresh={refetch} />
-            ) : usage.isLoading ? (
-              <Skeleton variant="rounded" height={320} />
-            ) : isPeriodKnown ? (
-              <Suspense fallback={<Skeleton variant="rounded" height={320} />}>
-                <MyUsageChart byDay={usage.data?.by_day} modelsMap={modelsMap} />
-              </Suspense>
-            ) : (
-              <Box sx={{ py: 4, textAlign: 'center' }}>
-                <Typography variant="body2" color="text.secondary">
-                  Usage trends will appear here once a billing period is active.
-                </Typography>
-              </Box>
-            )}
-          </Stack>
-        </Paper>
+          <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+            <Stack spacing={2}>
+              <Typography variant="overline" sx={SECTION_HEADING_SX}>
+                Usage Over Time
+              </Typography>
+              {usage.isError ? (
+                <UsageErrorAlert onRefresh={refetch} />
+              ) : usage.isLoading ? (
+                <Skeleton variant="rounded" height={320} />
+              ) : isPeriodKnown ? (
+                <Suspense fallback={<Skeleton variant="rounded" height={320} />}>
+                  <MyUsageChart byDay={usage.data?.by_day} modelsMap={modelsMap} />
+                </Suspense>
+              ) : (
+                <Box sx={{ py: 4, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Usage trends will appear here once a billing period is active.
+                  </Typography>
+                </Box>
+              )}
+            </Stack>
+          </Paper>
 
-        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Stack spacing={2}>
-            <Typography variant="overline" sx={SECTION_HEADING_SX}>
-              Cost by Model
-            </Typography>
-            {usage.isError ? (
-              <UsageErrorAlert onRefresh={refetch} />
-            ) : (
-              <CostByModelTable usageQuery={usage} modelsMap={modelsMap} />
-            )}
-          </Stack>
-        </Paper>
+          <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+            <Stack spacing={2}>
+              <Typography variant="overline" sx={SECTION_HEADING_SX}>
+                Cost by Model
+              </Typography>
+              {usage.isError ? (
+                <UsageErrorAlert onRefresh={refetch} />
+              ) : (
+                <CostByModelTable usageQuery={usage} modelsMap={modelsMap} />
+              )}
+            </Stack>
+          </Paper>
 
-        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
-          <Stack spacing={2}>
-            <Typography variant="overline" sx={SECTION_HEADING_SX}>
-              Your Personal Knowledge Base
-            </Typography>
-            <PersonalKbStatsTile />
-          </Stack>
-        </Paper>
-      </Stack>
+          <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+            <Stack spacing={2}>
+              <Typography variant="overline" sx={SECTION_HEADING_SX}>
+                Your Personal Knowledge Base
+              </Typography>
+              <PersonalKbStatsTile />
+            </Stack>
+          </Paper>
+        </Stack>
+      </Box>
     </Box>
   );
 }
