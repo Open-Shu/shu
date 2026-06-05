@@ -17,8 +17,8 @@ Sections, in apply order:
      unique constraints on the SD-function lookup columns, and the
      SECURITY DEFINER family of pre-auth tenant resolvers.
 
-Revision: 009
-Revises: 008
+Revision: 009_00011
+Revises: r009_0001
 Create Date: 2026-05-15
 """
 
@@ -29,8 +29,20 @@ from alembic import op
 
 from shu.core.config import SELF_HOSTED_TENANT_UUID, DeploymentMode, get_settings_instance
 
-revision = "009"
-down_revision = "008"
+# Renamed from "009" → "009_00011" and re-slotted to run AFTER r009_0001 (was
+# down_revision="008"). This file was authored 2026-05-15 — four days after
+# r009_0001 (2026-05-11) had already shipped and stamped the deployed silo
+# tenants — but was inserted ahead of it with the lower "009" id, so those DBs
+# (stamped at r009_0001) never executed this DDL. Pointing down_revision at
+# r009_0001 makes this migration a descendant of the tenants' current head, so
+# `alembic upgrade` runs it on the next deploy; the "009_00011" id reflects
+# that chain position (immediately after r009_0001) instead of falsely sorting
+# before it. The rename is safe because no DB is stamped at exactly "009": the
+# deployed silo tenants are at r009_0001, and every other DB is at the head
+# r009_0006 (alembic_version records only the head, not intermediate history).
+# r009_0002 (which depends on this schema) now revises 009_00011.
+revision = "009_00011"
+down_revision = "r009_0001"
 branch_labels = None
 depends_on = None
 
