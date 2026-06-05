@@ -18,10 +18,13 @@ class TestRoleActivationConsistency:
     Property 6: Role and activation logic is consistent across providers.
 
     For any SSO provider (Google or Microsoft) and any email address, the role
-    determination and activation logic SHALL produce identical results. Specifically:
-    - If the user is the first user in the system, they SHALL be assigned admin role and be active
+    determination and activation logic SHALL produce identical results. With
+    admin_emails configured (as here — and as on every hosted silo tenant), that
+    list is authoritative (SHU-840):
     - If the email is in the configured admin_emails list, they SHALL be assigned admin role and be active
-    - Otherwise, they SHALL be assigned regular_user role and be inactive (requiring admin activation)
+    - Otherwise they SHALL be assigned regular_user role and be inactive (requiring admin activation),
+      including the first user — first-user-becomes-admin applies only to a self-hosted install with NO
+      configured admins.
 
     **Validates: Requirements 3.3, 3.4**
     """
@@ -48,10 +51,10 @@ class TestRoleActivationConsistency:
 
         **Validates: Requirements 3.3, 3.4**
 
-        This property verifies that for any provider and email combination:
-        1. First user always becomes admin and is active
-        2. Admin emails always become admin and are active
-        3. Regular users are assigned regular_user role and are inactive
+        This property verifies that for any provider and email combination, with
+        admin_emails configured (authoritative — SHU-840):
+        1. Admin emails become admin and are active
+        2. Everyone else — including the first user — is regular_user and inactive
         """
         from shu.auth.models import UserRole
         from shu.services.user_service import UserService
@@ -69,19 +72,17 @@ class TestRoleActivationConsistency:
         role = service.determine_user_role(email, is_first_user)
         is_active = service.is_active(role, is_first_user)
 
-        # Property assertions
-        if is_first_user:
-            # First user is always admin and active
-            assert role == UserRole.ADMIN, f"First user should be admin, got {role}"
-            assert is_active is True, "First user should be active"
-        elif is_admin_email:
-            # Admin email is always admin and active
+        # Property assertions. admin_emails is configured (non-empty), so it is
+        # authoritative (SHU-840): admin iff the email is on the list. is_first_user
+        # does NOT grant admin or activation here.
+        if is_admin_email:
             assert role == UserRole.ADMIN, f"Admin email should be admin, got {role}"
             assert is_active is True, "Admin email user should be active"
         else:
-            # Regular user is regular_user and inactive
-            assert role == UserRole.REGULAR_USER, f"Regular user should be regular_user, got {role}"
-            assert is_active is False, "Regular user should be inactive"
+            assert role == UserRole.REGULAR_USER, (
+                f"Non-admin email should be regular_user even as first user, got {role}"
+            )
+            assert is_active is False, "Non-admin user should be inactive"
 
     @given(
         _provider_key_1=st.sampled_from(["google", "microsoft"]),

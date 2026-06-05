@@ -21,8 +21,8 @@ class TestIsActive:
         service.settings.admin_emails = []
         return service
 
-    def test_first_user_always_active(self, user_service):
-        """First user is always active regardless of role or auto_activate setting."""
+    def test_first_user_active_when_no_admins_configured(self, user_service):
+        """First user is active (self-hosted bootstrap) when ADMIN_EMAILS is empty."""
         assert user_service.is_active(UserRole.REGULAR_USER, is_first_user=True) is True
 
     def test_admin_always_active(self, user_service):
@@ -46,6 +46,63 @@ class TestIsActive:
     def test_auto_activate_does_not_change_first_user_behavior(self, user_service):
         """First-user activation is unchanged when auto_activate is enabled."""
         user_service.settings.auto_activate_users = True
+        assert user_service.is_active(UserRole.REGULAR_USER, is_first_user=True) is True
+
+
+class TestAdminEmailsAuthoritative:
+    """SHU-840: when ADMIN_EMAILS is configured (every hosted silo tenant — the
+    CP seeds the customer's email at provision), that list is the sole authority
+    for admin + first-login activation. A stranger who races to register first
+    must not inherit admin, nor land active. First-user-becomes-admin and
+    first-user-auto-active remain only as the self-hosted, no-admins-configured
+    bootstrap."""
+
+    @pytest.fixture
+    def user_service(self):
+        service = UserService()
+        service.settings = MagicMock()
+        service.settings.auto_activate_users = False
+        service.settings.admin_emails = ["owner@acme.com"]
+        return service
+
+    def test_configured_admin_email_is_admin(self, user_service):
+        assert (
+            user_service.determine_user_role("owner@acme.com", is_first_user=False)
+            == UserRole.ADMIN
+        )
+
+    def test_configured_admin_email_match_is_case_insensitive(self, user_service):
+        assert (
+            user_service.determine_user_role("Owner@ACME.com", is_first_user=True)
+            == UserRole.ADMIN
+        )
+
+    def test_first_user_not_in_admin_list_is_regular(self, user_service):
+        # The hole: a stranger registering first on a fresh tenant whose
+        # ADMIN_EMAILS names the customer must NOT become admin.
+        assert (
+            user_service.determine_user_role("stranger@evil.com", is_first_user=True)
+            == UserRole.REGULAR_USER
+        )
+
+    def test_first_user_not_in_admin_list_is_inactive(self, user_service):
+        # ...and must not be auto-activated either — only the configured admin
+        # can activate them.
+        assert (
+            user_service.is_active(UserRole.REGULAR_USER, is_first_user=True) is False
+        )
+
+    def test_configured_admin_is_active(self, user_service):
+        assert user_service.is_active(UserRole.ADMIN, is_first_user=False) is True
+
+    def test_bootstrap_preserved_when_no_admins_configured(self, user_service):
+        # Self-hosted with no ADMIN_EMAILS: first user still bootstraps as an
+        # active admin.
+        user_service.settings.admin_emails = []
+        assert (
+            user_service.determine_user_role("anyone@self.host", is_first_user=True)
+            == UserRole.ADMIN
+        )
         assert user_service.is_active(UserRole.REGULAR_USER, is_first_user=True) is True
 
 

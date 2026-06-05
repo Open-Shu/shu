@@ -134,6 +134,11 @@ const AuthenticatedApp = () => {
         <Routes>
           <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          {/* URL-addressable registration so the CP welcome email can deep-link
+              new customers straight to the register form with their email
+              pre-filled (?email=). Falls back to AuthPage's catch-all login
+              for everything else. */}
+          <Route path="/register" element={<AuthPage initialMode="register" />} />
           <Route path="*" element={<AuthPage />} />
         </Routes>
       </Router>
