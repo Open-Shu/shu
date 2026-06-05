@@ -95,7 +95,15 @@ def _evaluate_tool_call_events(tool_event):
         "preview": False,
     }
     assert tool_event.additional_messages[0].content == OPENAI_ACTIONABLE_REASONING_ITEM.get("item")
-    assert tool_event.additional_messages[1].content == OPENAI_ACTIONABLE_FUNCTION_CALL.get("item")
+    # `arguments` is rewritten to json.dumps(args_dict) so the replay matches
+    # what we dispatched (provider streamers can truncate the raw value).
+    # Compare semantically rather than byte-exact for that field.
+    fc_msg = tool_event.additional_messages[1].content
+    expected_item = OPENAI_ACTIONABLE_FUNCTION_CALL["item"]
+    assert json.loads(fc_msg["arguments"]) == json.loads(expected_item["arguments"])
+    assert {k: v for k, v in fc_msg.items() if k != "arguments"} == {
+        k: v for k, v in expected_item.items() if k != "arguments"
+    }
     assert tool_event.additional_messages[2].metadata == {
         "type": "function_call_output",
         "call_id": OPENAI_ACTIONABLE_FUNCTION_CALL.get("item", {}).get("call_id", ""),
@@ -368,6 +376,90 @@ async def test_response_completed_with_only_reasoning_emits_error(responses_adap
     result = await responses_adapter.handle_provider_event(chunk)
     assert isinstance(result, ProviderErrorEventResult)
     assert "no text content" in result.content
+
+
+# DO-hosted reasoning models (DeepSeek etc.) stream raw reasoning text under
+# `response.reasoning_text.delta` instead of OpenAI's encrypted-summary
+# `response.reasoning_summary_text.delta`. Both variants must surface as a
+# reasoning delta so the UI renders the model's thinking.
+@pytest.mark.asyncio
+async def test_raw_reasoning_text_delta_surfaces_as_reasoning_event(responses_adapter):
+    chunk = {
+        "type": "response.reasoning_text.delta",
+        "sequence_number": 7,
+        "item_id": "rs_raw",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": "let me think...",
+    }
+
+    event = await responses_adapter.handle_provider_event(chunk)
+    assert isinstance(event, ProviderReasoningDeltaEventResult)
+    assert event.content == "let me think..."
+
+
+# Some provider streamers (notably DO's Gemma serving) ship a function_call
+# whose `arguments` value is truncated mid-string while still marking the
+# item `status: completed`. If the adapter replays that raw string in the
+# follow-up turn, the provider's own request parser 400s with
+# "Unterminated string starting at: line 1 column N". The adapter
+# canonicalizes `arguments` to json.dumps(args_dict) so the replay matches
+# what we actually dispatched (or {} when parsing failed).
+
+
+@pytest.mark.asyncio
+async def test_truncated_arguments_canonicalized_on_streaming_replay(responses_adapter, patch_plugin_calls):
+    truncated = {
+        "type": "response.output_item.done",
+        "item": {
+            "id": "fc_truncated",
+            "type": "function_call",
+            "status": "completed",
+            "name": "gmail_digest__list",
+            "call_id": "call_truncated",
+            "arguments": '{"op": "list", "query_filter": "is:unread in:inb',  # noqa: E501
+        },
+    }
+
+    assert await responses_adapter.handle_provider_event(truncated) is None
+    events = await responses_adapter.finalize_provider_events()
+    assert len(events) == 1
+
+    tool_event = events[0]
+    assert isinstance(tool_event, ProviderToolCallEventResult)
+
+    fc_msg = tool_event.additional_messages[0].content
+    # Truncated arguments fail to parse, so the dispatch fell back to {}.
+    # The replay must reflect that — not the original broken string.
+    assert json.loads(fc_msg["arguments"]) == {}
+    assert tool_event.tool_calls[0].args_dict == {}
+
+
+@pytest.mark.asyncio
+async def test_truncated_arguments_canonicalized_on_non_streaming_replay(responses_adapter, patch_plugin_calls):
+    payload = {
+        "status": "completed",
+        "usage": {"input_tokens": 5, "output_tokens": 5},
+        "output": [
+            {
+                "id": "fc_truncated",
+                "type": "function_call",
+                "status": "completed",
+                "name": "gmail_digest__list",
+                "call_id": "call_truncated",
+                "arguments": '{"op": "list", "query_filter": "is:unread in:inb',  # noqa: E501
+            },
+        ],
+    }
+
+    events = await responses_adapter.handle_provider_completion(payload)
+    assert len(events) == 1
+    tool_event = events[0]
+    assert isinstance(tool_event, ProviderToolCallEventResult)
+
+    fc_msg = tool_event.additional_messages[0].content
+    assert json.loads(fc_msg["arguments"]) == {}
+    assert tool_event.tool_calls[0].args_dict == {}
 
 
 # SHU-803 AC9e: ResponsesAdapter.cancel() POSTs to /responses/{id}/cancel

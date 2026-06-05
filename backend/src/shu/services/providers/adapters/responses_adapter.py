@@ -113,6 +113,21 @@ class ResponsesAdapter(BaseProviderAdapter):
 
         return ToolCallInstructions(plugin_name=plugin_name, operation=op, args_dict=args_dict)
 
+    def _canonicalize_function_call_arguments(
+        self,
+        function_call_messages: list[dict[str, Any]],
+        tool_calls: list[ToolCallInstructions],
+    ) -> None:
+        # Rewrite each function_call message's `arguments` field to the JSON
+        # form of what we actually dispatched. Some provider streamers
+        # (notably DO's Gemma serving) truncate `arguments` mid-string; if
+        # we replay the raw value, the next /responses request 400s with
+        # "Unterminated string starting at: line 1 column N". Keeping the
+        # replay self-consistent with the dispatch also guards against any
+        # future provider doing the same thing.
+        for msg, tool_call in zip(function_call_messages, tool_calls, strict=False):
+            msg["arguments"] = json.dumps(tool_call.args_dict)
+
     async def cancel(self) -> bool:
         """SHU-803 AC9e: POST to `/responses/{id}/cancel`.
 
@@ -356,7 +371,16 @@ class ResponsesAdapter(BaseProviderAdapter):
             self._streamed_text.append(content_delta)
             return ProviderContentDeltaEventResult(content=content_delta)
 
-        reasoning_delta = jmespath.search("type=='response.reasoning_summary_text.delta' && delta", chunk)
+        # OpenAI's Responses API emits two reasoning-delta event types:
+        # `response.reasoning_summary_text.delta` (the encrypted-elsewhere
+        # summary OpenAI surfaces) and `response.reasoning_text.delta`
+        # (raw reasoning text from a `reasoning`-type output item). OpenAI
+        # hosted models default to the summary variant; DO-hosted reasoning
+        # models (DeepSeek etc.) stream the raw variant instead. Handle both.
+        reasoning_delta = jmespath.search(
+            "(type=='response.reasoning_summary_text.delta' || type=='response.reasoning_text.delta') && delta",
+            chunk,
+        )
         if reasoning_delta:
             return ProviderReasoningDeltaEventResult(content=reasoning_delta)
 
@@ -421,6 +445,7 @@ class ResponsesAdapter(BaseProviderAdapter):
         function_call_reasoning_messages = self.function_call_reasoning_messages
         function_call_messages = self.function_call_messages
         tool_calls = list(map(self._get_function_call_arguments_from_response, self.function_call_messages))
+        self._canonicalize_function_call_arguments(function_call_messages, tool_calls)
         result_messages = [
             ChatMessage.build(
                 role="tool",
@@ -477,6 +502,7 @@ class ResponsesAdapter(BaseProviderAdapter):
 
         function_call_reasoning_messages = jmespath.search("output[?type=='reasoning']", data) or []
         tool_calls = list(map(self._get_function_call_arguments_from_response, function_call_messages))
+        self._canonicalize_function_call_arguments(function_call_messages, tool_calls)
         result_messages = [
             ChatMessage.build(
                 role="tool",
@@ -644,9 +670,9 @@ class ResponsesAdapter(BaseProviderAdapter):
             return {"role": role, "content": content_parts if content_parts else content}
 
         # Standard role/content message — bare string content. Verified
-        # against OpenAI, OpenRouter, and (for non-Gemma models) DigitalOcean
-        # on /v1/responses, single- and multi-turn, with prior-turn context
-        # preserved across the assistant replay.
+        # against OpenAI, OpenRouter, and DigitalOcean on /v1/responses,
+        # single- and multi-turn, with prior-turn context preserved across
+        # the assistant replay.
         return {"role": role, "content": content}
 
     async def set_messages_in_payload(self, messages: ChatContext, payload: dict[str, Any]) -> dict[str, Any]:

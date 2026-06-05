@@ -24,11 +24,7 @@ logger = get_logger(__name__)
 
 
 class DigitalOceanCompletionsAdapter(CompletionsAdapter):
-    """Adapter for DigitalOcean's /v1/chat/completions endpoint.
-
-    The unqualified `digitalocean` key/file/class are reserved for a
-    future Responses-based adapter once DO stabilizes that endpoint.
-    """
+    """Adapter for DigitalOcean's /v1/chat/completions endpoint."""
 
     def get_provider_information(self) -> ProviderInformation:
         return ProviderInformation(

@@ -6,6 +6,7 @@ Tests cover:
 - None knowledge_base_ids falls back to model config KBs
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -188,4 +189,32 @@ class TestUserIdThreadingFromMessageContext:
             "MessageContextBuilder must forward str(current_user.id) into "
             "execute_rag_queries so retrieval-side embedding llm_usage rows "
             "attribute to the originating user (SHU-718)."
+        )
+
+
+class TestMetadataSection:
+    """Tests for the conversation-metadata block prepended to every system prompt.
+
+    Surfaces today's date to the model so web_search-capable variants don't
+    bias queries toward their training-cutoff date.
+    """
+
+    def test_section_surfaces_time_and_user(self):
+        builder = _make_builder()
+
+        user = MagicMock()
+        user.name = "Test User"
+        user.email = "test@example.com"
+
+        fake_now = datetime(2026, 6, 5, 18, 53, 24, tzinfo=UTC)
+
+        with patch("shu.services.message_context_builder.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            section = builder._build_metadata_section(user)
+
+        mock_dt.now.assert_called_once_with(UTC)
+        assert section == (
+            "# Conversation metadata\n"
+            "- Current date/time (UTC): 2026-06-05T18:53:24Z\n"
+            "- User: Test User <test@example.com>"
         )

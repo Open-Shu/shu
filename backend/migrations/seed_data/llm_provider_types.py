@@ -65,6 +65,12 @@ PROVIDER_TYPE_DEFINITION_DEFAULTS: Iterable[Mapping[str, object]] = (
         "provider_adapter_name": "digitalocean_completions",
         "is_active": True,
     },
+    {
+        "key": "digitalocean",
+        "display_name": "DigitalOcean",
+        "provider_adapter_name": "digitalocean",
+        "is_active": True,
+    },
 )
 
 
