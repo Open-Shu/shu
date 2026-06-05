@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Box, Chip, Stack, Typography } from '@mui/material';
-import { LineChart } from '@mui/x-charts/LineChart';
+import { BarChart } from '@mui/x-charts/BarChart';
 
 import { buildDailySeries } from '../../utils/myUsageChart';
 import { formatCurrency } from '../../utils/billingFormatters';
 
 // Distinct, dark-theme-friendly categorical palette. Each model gets a stable
 // color by its index in the FULL series list (not the visible subset), so
-// colors don't reshuffle as lines are toggled. 16 entries — wider than
+// colors don't reshuffle as series are toggled. 16 entries — wider than
 // @mui/x-charts' default cycle, which repeated hues once more than ~8 models
 // were charted, making similar lines hard to tell apart.
 const SERIES_COLORS = [
@@ -30,13 +30,15 @@ const SERIES_COLORS = [
 ];
 
 /**
- * Daily cost-over-time chart for My Usage (SHU-844): one line per model with a
- * click-to-toggle legend. Imported lazily by MyUsagePage so @mui/x-charts and
- * its d3 vendor bundle stay code-split to this route.
+ * Daily cost chart for My Usage (SHU-844): one stacked bar per day, split by
+ * model, with a click-to-toggle legend. Stacked bars (not a line) because daily
+ * cost buckets are discrete — a line would imply continuity between days that
+ * doesn't exist. Imported lazily by MyUsagePage so @mui/x-charts and its d3
+ * vendor bundle stay code-split to this route.
  *
- * The toggle chips double as the legend (each carries its line's color dot), so
- * the chart's built-in legend is hidden — with many models it wrapped over the
- * plot area and y-axis labels.
+ * The toggle chips double as the legend (each carries its segment's color dot),
+ * so the chart's built-in legend is hidden — with many models it wrapped over
+ * the plot area and y-axis labels.
  */
 export default function MyUsageChart({ byDay, modelsMap }) {
   const { dates, series } = useMemo(() => buildDailySeries(byDay, modelsMap), [byDay, modelsMap]);
@@ -78,9 +80,16 @@ export default function MyUsageChart({ byDay, modelsMap }) {
       data: s.data,
       label: s.label,
       color: s.color,
-      showMark: false,
+      // Shared stack key → segments stack into one bar per day (height = daily total).
+      stack: 'cost',
       valueFormatter: (v) => (v === null || v === undefined ? '' : formatCurrency(v)),
     }));
+
+  // Slim the bars when only a few days are present (e.g. the start of a billing
+  // period) so they don't balloon to fill their band; let them fill out as days
+  // accrue. v7 has no absolute maxBarWidth (a v8 feature), so this gap ratio —
+  // bar width as a fraction of the band — is the available lever.
+  const categoryGapRatio = dates.length <= 3 ? 0.7 : 0.3;
 
   return (
     <Box>
@@ -106,14 +115,12 @@ export default function MyUsageChart({ byDay, modelsMap }) {
           );
         })}
       </Stack>
-      <LineChart
+      <BarChart
         height={300}
-        xAxis={[{ data: dates, scaleType: 'point', label: 'Day (UTC)' }]}
+        xAxis={[{ data: dates, scaleType: 'band', label: 'Day (UTC)', categoryGapRatio }]}
         yAxis={[{ valueFormatter: (v) => formatCurrency(v) }]}
         series={
-          chartSeries.length
-            ? chartSeries
-            : [{ data: dates.map(() => 0), label: 'No models selected', showMark: false }]
+          chartSeries.length ? chartSeries : [{ data: dates.map(() => 0), label: 'No models selected', stack: 'cost' }]
         }
         slotProps={{ legend: { hidden: true } }}
         margin={{ left: 72 }}
