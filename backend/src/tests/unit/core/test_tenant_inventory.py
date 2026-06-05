@@ -7,8 +7,8 @@ to hold:
    tenant-scoped (carries the ``tenant_id`` column from
    ``TenantScopedMixin``) or explicitly listed here as a shared catalog.
 2. ``_TENANT_SCOPED_TABLES`` / ``_COMPOSITE_FKS`` in
-   ``backend/migrations/versions/009_tenant_isolation.py`` — migration
-   009 freezes these so it stays deterministic on fresh installs that
+   ``backend/migrations/versions/009_00011_tenant_isolation.py`` — that
+   migration freezes these so it stays deterministic on fresh installs that
    land after later model edits.
 3. ``composite_fk_inventory.json`` next to the migrations — the
    committed snapshot of every tenant-scoped → tenant-scoped composite FK.
@@ -34,7 +34,7 @@ import shu.auth.models  # noqa: F401 - register every model on Base.metadata
 import shu.models  # noqa: F401 - same
 from shu.core.database import Base
 
-_MIGRATION = importlib.import_module("migrations.versions.009_tenant_isolation")
+_MIGRATION = importlib.import_module("migrations.versions.009_00011_tenant_isolation")
 
 # Anchored on __file__ so the tests run from any cwd (pytest, IDE, CI).
 _BACKEND_ROOT = Path(__file__).resolve().parents[4]
@@ -184,8 +184,8 @@ def test_009_frozen_table_list_matches_live_graph() -> None:
     """``_TENANT_SCOPED_TABLES`` + post-009 allowlist must cover the live graph.
 
     On drift:
-    * If 009 is still downgrade-able, edit ``_TENANT_SCOPED_TABLES`` in
-      ``backend/migrations/versions/009_tenant_isolation.py``.
+    * If 009_00011 is still downgrade-able, edit ``_TENANT_SCOPED_TABLES`` in
+      ``backend/migrations/versions/009_00011_tenant_isolation.py``.
     * Otherwise, write a new migration covering each table (tenant_id +
       index + FK to tenants(id) + RLS policy) and add it to
       ``_ALLOWED_POST_009_TABLES`` above.

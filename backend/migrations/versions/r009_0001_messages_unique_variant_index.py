@@ -1,7 +1,7 @@
 """Dedupe colliding (parent_message_id, variant_index) rows and add UNIQUE constraint.
 
 Revision ID: r009_0001
-Revises: 009
+Revises: 008
 Create Date: 2026-05-11
 
 SHU-759 — closes a pre-existing race in regen variant_index computation
@@ -30,7 +30,16 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "r009_0001"
-down_revision = "009"
+# Slotted directly after the 008 squash. 009 (tenant_isolation) was authored
+# AFTER this migration shipped (009 Create Date 2026-05-15 vs this one's
+# 2026-05-11) and was retroactively inserted *before* it in the chain — so
+# silo tenants already stamped at r009_0001 skipped 009's DDL entirely (the
+# tenants table / tenant_id columns / RLS policies were never created). That
+# migration is now renamed to "009_00011" and re-slotted to run *after*
+# r009_0001 (see 009_00011_tenant_isolation.py), which is safe because this
+# migration touches only messages(parent_message_id,
+# variant_index) and has no dependency on the tenant schema.
+down_revision = "008"
 branch_labels = None
 depends_on = None
 

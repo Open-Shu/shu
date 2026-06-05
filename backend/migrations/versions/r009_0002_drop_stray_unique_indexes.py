@@ -1,7 +1,7 @@
 """Drop stray pre-RLS unique indexes on tenant-scoped columns.
 
 Revision ID: r009_0002
-Revises: r009_0001
+Revises: 009_00011
 Create Date: 2026-05-21
 
 Before SHU-761, several tenant-scoped tables were created with
@@ -38,7 +38,12 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "r009_0002"
-down_revision = "r009_0001"
+# Revises 009_00011 (was r009_0001). The tenant_isolation migration (renamed
+# from "009") is now re-slotted between r009_0001 and this migration — see
+# 009_00011_tenant_isolation.py — so this DROP/SWAP of the legacy per-column
+# unique indexes still runs after it has created the composite (tenant_id,
+# <col>) UNIQUEs it depends on.
+down_revision = "009_00011"
 branch_labels = None
 depends_on = None
 
