@@ -37,16 +37,17 @@ IN_PERIOD = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
 
 
 def _patch_period():
-    """Patch the router's billing-state lookup to supply a known period.
+    """Patch the router's period resolver to a fixed, known period.
 
-    The endpoint only reads `state.current_period_start/end`, so a SimpleNamespace
-    is enough — no full BillingState needed. The self-hosted test env otherwise
-    returns HEALTHY_DEFAULT (no period → current_period_unknown)."""
+    Patching the resolver directly keeps the seeding tests deterministic and
+    bypasses the CP -> Stripe -> calendar-month fallback chain (Stripe is
+    configured in the dev container, so the real resolver would otherwise hit
+    it)."""
 
-    async def _fake_state():
-        return SimpleNamespace(current_period_start=PERIOD_START, current_period_end=PERIOD_END)
+    async def _fake_period(settings):
+        return PERIOD_START, PERIOD_END
 
-    return patch("shu.billing.router.get_current_billing_state", _fake_state)
+    return patch("shu.billing.router._resolve_usage_period", _fake_period)
 
 
 async def _seed_provider(db, *, system_managed: bool) -> str:
@@ -215,23 +216,33 @@ async def test_usage_me_excludes_byok(client, db, auth_headers):
         await _cleanup_seeded(db)
 
 
-async def test_usage_me_unknown_period(client, db, auth_headers):
-    """With no active billing period (default self-hosted test env), returns the unknown shape."""
+async def test_usage_me_defaults_to_calendar_month(client, db, auth_headers):
+    """When neither CP nor Stripe supplies a period, fall back to the current UTC calendar month."""
     headers, user_id = await create_active_user_with_id(client, auth_headers)
+
+    async def _no_cp_state():
+        return SimpleNamespace(current_period_start=None, current_period_end=None)
+
+    async def _no_stripe_period(settings):
+        return None
+
     try:
-        # No _patch_period(): get_current_billing_state -> HEALTHY_DEFAULT (no period).
-        resp = await client.get("/api/v1/billing/usage/me", headers=headers)
+        # CP has no period and the Stripe fallback is unavailable -> calendar-month default.
+        with (
+            patch("shu.billing.router.get_current_billing_state", _no_cp_state),
+            patch("shu.billing.router._stripe_subscription_period", _no_stripe_period),
+        ):
+            resp = await client.get("/api/v1/billing/usage/me", headers=headers)
         assert resp.status_code == 200, resp.text
         data = extract_data(resp)
-        assert data["current_period_unknown"] is True, data
-        assert data["period_start"] is None
-        assert data["period_end"] is None
-        assert data["total_input_tokens"] == 0
-        assert data["total_output_tokens"] == 0
-        assert data["total_cost_usd"] == 0.0
-        assert data["request_count"] == 0
-        assert data["by_model"] == []
-        assert data["by_day"] == []
+        # Period is always resolved now (never "unknown") — to the 1st of the current UTC month.
+        assert data["current_period_unknown"] is False, data
+        expected_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        assert data["period_start"].startswith(expected_start.date().isoformat()), data
+        # Fresh user has no usage in that window.
+        assert data["total_input_tokens"] == 0, data
+        assert data["total_cost_usd"] == 0.0, data
+        assert data["by_model"] == [], data
     finally:
         await cleanup_test_user(client, auth_headers, user_id)
         await _cleanup_seeded(db)
@@ -326,7 +337,7 @@ class BillingUsageMeTestSuite(BaseIntegrationTestSuite):
         return [
             test_usage_me_scopes_to_caller,
             test_usage_me_excludes_byok,
-            test_usage_me_unknown_period,
+            test_usage_me_defaults_to_calendar_month,
             test_usage_me_by_day_buckets,
             test_usage_me_requires_auth,
         ]
