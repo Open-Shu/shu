@@ -239,7 +239,7 @@ def upgrade() -> None:
         op.execute(
             f"""
             CREATE POLICY tenant_isolation ON {table}
-            AS PERMISSIVE FOR ALL TO shu_app
+            AS PERMISSIVE FOR ALL TO PUBLIC
             USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
             WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid)
             """
@@ -314,7 +314,7 @@ def downgrade() -> None:
         op.execute(
             f"""
             CREATE POLICY tenant_isolation ON {table}
-            AS PERMISSIVE FOR ALL TO shu_app
+            AS PERMISSIVE FOR ALL TO PUBLIC
             USING (tenant_id = current_setting('app.tenant_id', true))
             WITH CHECK (tenant_id = current_setting('app.tenant_id', true))
             """

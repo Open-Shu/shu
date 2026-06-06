@@ -506,7 +506,15 @@ def cmd_setup(
     if not execute_init_sql(url, admin_user, admin_password):
         return False
 
-    # Step 2: Run migrations (as app user)
+    # Step 1.5: Ensure the app/admin DB roles exist (dev / self-hosted only).
+    # Migration 009_00011 no longer creates roles — that is environment
+    # provisioning, not schema (SHU-846). They must exist before migrations,
+    # which run as the admin (BYPASSRLS) role. Hosted provisions roles via
+    # CP/Pulumi, not this script.
+    if not ensure_app_roles(url, admin_user, admin_password):
+        return False
+
+    # Step 2: Run migrations
     if not cmd_migrate(url):
         return False
 
@@ -631,6 +639,86 @@ def cmd_create_role(
             return True
     except psycopg2.Error as e:
         print(f"{LOG_PREFIX} Error creating role: {e}", file=sys.stderr)
+        return False
+    finally:
+        conn.close()
+
+
+def ensure_app_roles(
+    url: str,
+    admin_user: str | None = None,
+    admin_password: str | None = None,
+) -> bool:
+    """Provision the app + admin DB roles for local dev / self-hosted setups.
+
+    Migration 009_00011 used to create these roles (and grant to them) inline;
+    that is environment provisioning, not schema, and moved out here (SHU-846).
+    Hosted (silo/pooled) provisions roles via CP/Pulumi — this runs for the
+    docker-compose / from-scratch dev path only, invoked by ``cmd_setup``.
+
+    Roles + credentials are derived from the deployment's own DSNs:
+      * ``SHU_DATABASE_URL``  -> the app role (RLS-enforced, no BYPASSRLS).
+      * ``SHU_DB_ADMIN_URL``  -> the admin role (BYPASSRLS), optional.
+
+    The app role is made a MEMBER of the admin role so it inherits table access
+    (whatever the admin role owns or is granted — migrations run as the admin
+    role and own the schema) while keeping its own non-BYPASSRLS attribute. Role
+    attributes are not inherited through membership, so RLS still applies to the
+    app role. This avoids duplicating the schema's grant list in this script;
+    pooled production instead provisions explicit minimal grants via CP/Pulumi.
+
+    Idempotent: existing roles are left as-is; the GRANT is a no-op if already a
+    member. No-op (success) when ``SHU_DATABASE_URL`` carries no username.
+    """
+    app_parsed = urlparse(_normalize_url(os.getenv("SHU_DATABASE_URL") or url))
+    app_role, app_pw = app_parsed.username, app_parsed.password
+    if not app_role:
+        print(f"{LOG_PREFIX} Role bootstrap skipped: no username in SHU_DATABASE_URL", flush=True)
+        return True
+
+    admin_db_url = os.getenv("SHU_DB_ADMIN_URL")
+    admin_parsed = urlparse(_normalize_url(admin_db_url)) if admin_db_url else None
+    admin_role = admin_parsed.username if admin_parsed else None
+    admin_role_pw = admin_parsed.password if admin_parsed else None
+
+    for name in (app_role, admin_role):
+        if name is not None and not _validate_identifier(name):
+            print(f"{LOG_PREFIX} Error: invalid role name '{name}' in DSN", file=sys.stderr)
+            return False
+
+    superuser_url = _get_admin_url(url, admin_user, admin_password)
+    conn = _connect(superuser_url)
+    try:
+        with conn.cursor() as cur:
+            # Admin (BYPASSRLS) role first — the app role is granted into it below.
+            if admin_role:
+                cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (admin_role,))
+                if not cur.fetchone():
+                    cur.execute(
+                        sql.SQL("CREATE ROLE {} WITH LOGIN BYPASSRLS PASSWORD %s").format(
+                            sql.Identifier(admin_role)
+                        ),
+                        (admin_role_pw,),
+                    )
+                    print(f"{LOG_PREFIX} Role '{admin_role}' (BYPASSRLS) created", flush=True)
+
+            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_role,))
+            if not cur.fetchone():
+                cur.execute(
+                    sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD %s").format(sql.Identifier(app_role)),
+                    (app_pw,),
+                )
+                print(f"{LOG_PREFIX} Role '{app_role}' created", flush=True)
+
+            if admin_role:
+                # Membership: app inherits the admin role's table access; its own
+                # non-BYPASSRLS attribute means RLS still constrains it.
+                cur.execute(
+                    sql.SQL("GRANT {} TO {}").format(sql.Identifier(admin_role), sql.Identifier(app_role))
+                )
+        return True
+    except psycopg2.Error as e:
+        print(f"{LOG_PREFIX} Error provisioning app roles: {e}", file=sys.stderr)
         return False
     finally:
         conn.close()
