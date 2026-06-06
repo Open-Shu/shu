@@ -33,6 +33,7 @@ Create Date: 2026-05-15
 """
 
 import os
+import uuid
 
 import sqlalchemy as sa
 from alembic import op
@@ -385,11 +386,24 @@ def upgrade() -> None:
     # injection — a schema migration has no business validating the API port.
     deployment_mode = DeploymentMode(os.environ.get("SHU_DEPLOYMENT_MODE") or DeploymentMode.SELF_HOSTED.value)
     seed_tenant_id = os.environ.get("SHU_TENANT_ID") or None
-    if deployment_mode is DeploymentMode.SILO and not seed_tenant_id:
-        raise RuntimeError(
-            "SHU_TENANT_ID is required when SHU_DEPLOYMENT_MODE=silo — it is the "
-            "tenant_id seed and the NOT NULL DEFAULT backfilled onto existing rows."
-        )
+    if deployment_mode is DeploymentMode.SILO:
+        if not seed_tenant_id:
+            raise RuntimeError(
+                "SHU_TENANT_ID is required when SHU_DEPLOYMENT_MODE=silo — it is the "
+                "tenant_id seed and the NOT NULL DEFAULT backfilled onto existing rows."
+            )
+        # Must be a valid UUID: it is inserted as the tenants.id / tenant_id
+        # values, which r009_0003 later converts with ``::uuid``. A non-UUID
+        # would pass here and fail that cast mid-chain. get_settings_instance()
+        # used to enforce this; the narrow env read (SHU-846) replaced it, so
+        # validate explicitly here.
+        try:
+            uuid.UUID(seed_tenant_id)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"SHU_TENANT_ID must be a valid UUID (got {seed_tenant_id!r}); "
+                "r009_0003 casts tenant ids to uuid and would fail otherwise."
+            ) from exc
     tables = list(_TENANT_SCOPED_TABLES)
 
     # =========================================================================

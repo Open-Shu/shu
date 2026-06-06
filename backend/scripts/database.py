@@ -495,10 +495,12 @@ def cmd_setup(
     admin_user: str | None = None,
     admin_password: str | None = None,
 ) -> bool:
-    """Full database setup: init-db.sql + migrations + requirements check.
+    """Full database setup: init-db.sql + role bootstrap + migrations + requirements.
 
-    Admin credentials are used for init-db.sql (requires superuser for extensions).
-    Migrations run as the app user from the URL.
+    Admin credentials are used for init-db.sql (requires superuser for extensions)
+    and for the role bootstrap. Migrations run as the admin (BYPASSRLS) role from
+    SHU_DB_ADMIN_URL when configured (env.py's guard refuses the RLS-bound app
+    role), falling back to the provided URL when no admin DSN is set.
     """
     print(f"{LOG_PREFIX} Starting full database setup...", flush=True)
 
@@ -514,8 +516,14 @@ def cmd_setup(
     if not ensure_app_roles(url, admin_user, admin_password):
         return False
 
-    # Step 2: Run migrations
-    if not cmd_migrate(url):
+    # Step 2: Run migrations as the admin (BYPASSRLS) role when one is configured.
+    # _get_alembic_config writes whatever URL we pass into sqlalchemy.url, which
+    # env.py then uses verbatim — so to honor env.py's "prefer SHU_DB_ADMIN_URL"
+    # intent (and avoid its guard rejecting the RLS-bound app role) we must hand
+    # cmd_migrate the admin DSN explicitly. Falls back to the app URL (e.g. the
+    # docker-compose superuser) when SHU_DB_ADMIN_URL is unset.
+    migrate_url = _normalize_url(os.getenv("SHU_DB_ADMIN_URL") or url)
+    if not cmd_migrate(migrate_url):
         return False
 
     # Step 3: Check requirements
@@ -644,6 +652,41 @@ def cmd_create_role(
         conn.close()
 
 
+def _ensure_role(cur, name: str, password: str | None, *, bypassrls: bool) -> None:
+    """Create the role if missing; otherwise reconcile its LOGIN/BYPASSRLS flags.
+
+    BYPASSRLS is security-critical: an app role that wrongly HAS it silently
+    disables RLS (cross-tenant exposure), and an admin role that LACKS it can't
+    serve the bypass engine. So an existing role with wrong flags is ALTERed to
+    the correct state and the correction logged loudly, rather than left as-is.
+    Passwords on existing roles are not touched. Caller must have validated
+    ``name`` as a safe identifier; the BYPASSRLS/LOGIN keywords are static.
+    """
+    bypass_kw = "BYPASSRLS" if bypassrls else "NOBYPASSRLS"
+    cur.execute("SELECT rolcanlogin, rolbypassrls FROM pg_roles WHERE rolname = %s", (name,))
+    row = cur.fetchone()
+    if row is None:
+        cur.execute(
+            sql.SQL("CREATE ROLE {} WITH LOGIN " + bypass_kw + " PASSWORD %s").format(sql.Identifier(name)),
+            (password,),
+        )
+        print(f"{LOG_PREFIX} Role '{name}' created ({bypass_kw})", flush=True)
+        return
+
+    can_login, has_bypass = row
+    fixes: list[str] = []
+    if not can_login:
+        fixes.append("LOGIN")
+    if bool(has_bypass) != bypassrls:
+        fixes.append(bypass_kw)
+    if fixes:
+        cur.execute(sql.SQL("ALTER ROLE {} WITH " + " ".join(fixes)).format(sql.Identifier(name)))
+        print(
+            f"{LOG_PREFIX} WARNING: role '{name}' had incorrect attributes; reconciled ({' '.join(fixes)})",
+            flush=True,
+        )
+
+
 def ensure_app_roles(
     url: str,
     admin_user: str | None = None,
@@ -670,10 +713,12 @@ def ensure_app_roles(
     Idempotent: existing roles are left as-is; the GRANT is a no-op if already a
     member. No-op (success) when ``SHU_DATABASE_URL`` carries no username.
     """
-    app_parsed = urlparse(_normalize_url(os.getenv("SHU_DATABASE_URL") or url))
+    # Use the resolved app DSN (`url`) — NOT a fresh os.getenv — so a
+    # `--database-url` override is honored instead of silently re-reading the env.
+    app_parsed = urlparse(_normalize_url(url))
     app_role, app_pw = app_parsed.username, app_parsed.password
     if not app_role:
-        print(f"{LOG_PREFIX} Role bootstrap skipped: no username in SHU_DATABASE_URL", flush=True)
+        print(f"{LOG_PREFIX} Role bootstrap skipped: no username in the database URL", flush=True)
         return True
 
     admin_db_url = os.getenv("SHU_DB_ADMIN_URL")
@@ -691,24 +736,11 @@ def ensure_app_roles(
     try:
         with conn.cursor() as cur:
             # Admin (BYPASSRLS) role first — the app role is granted into it below.
+            # Each call creates the role if missing, else reconciles LOGIN/BYPASSRLS.
             if admin_role:
-                cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (admin_role,))
-                if not cur.fetchone():
-                    cur.execute(
-                        sql.SQL("CREATE ROLE {} WITH LOGIN BYPASSRLS PASSWORD %s").format(
-                            sql.Identifier(admin_role)
-                        ),
-                        (admin_role_pw,),
-                    )
-                    print(f"{LOG_PREFIX} Role '{admin_role}' (BYPASSRLS) created", flush=True)
+                _ensure_role(cur, admin_role, admin_role_pw, bypassrls=True)
 
-            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_role,))
-            if not cur.fetchone():
-                cur.execute(
-                    sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD %s").format(sql.Identifier(app_role)),
-                    (app_pw,),
-                )
-                print(f"{LOG_PREFIX} Role '{app_role}' created", flush=True)
+            _ensure_role(cur, app_role, app_pw, bypassrls=False)
 
             if admin_role:
                 # Membership: app inherits the admin role's table access; its own
