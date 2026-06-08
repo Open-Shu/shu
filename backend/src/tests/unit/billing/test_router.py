@@ -793,7 +793,7 @@ class TestGetCurrentUsage:
             patch(_P_GET_STATE_ROUTER, AsyncMock(return_value=state)),
             patch(_P_USAGE_PROVIDER_ROUTER, MagicMock(return_value=usage_provider)),
         ):
-            response = await get_current_usage(db=AsyncMock())
+            response = await get_current_usage(db=AsyncMock(), settings=MagicMock())
 
         body = _decode(response)
         assert body.get("current_period_unknown") is not True
@@ -804,21 +804,36 @@ class TestGetCurrentUsage:
         assert body["total_cost_usd"] == 1.23
 
     @pytest.mark.asyncio
-    async def test_unknown_period_response_when_wire_lacks_period_bounds(self):
-        """Cold-start / no-subscription wire (period bounds=None) → the
-        documented unknown-period response shape, not a crash.
+    async def test_calendar_month_fallback_when_wire_lacks_period_bounds(self):
+        """Cold-start / no-subscription wire (period bounds=None) and no Stripe
+        fallback → the current calendar month, not an unknown-period response
+        (SHU-844). Period resolution is CP -> Stripe -> calendar month, so the
+        CP-less dashboard stays usable.
         """
         from shu.billing.router import get_current_usage
 
         state = _make_state()  # period bounds default to None
+        usage_summary = MagicMock()
+        usage_summary.total_input_tokens = 0
+        usage_summary.total_output_tokens = 0
+        usage_summary.total_cost_usd = Decimal("0")
+        usage_summary.by_model = {}
+        usage_provider = MagicMock()
+        usage_provider.get_usage_summary = AsyncMock(return_value=usage_summary)
 
-        with patch(_P_GET_STATE_ROUTER, AsyncMock(return_value=state)):
-            response = await get_current_usage(db=AsyncMock())
+        with (
+            patch(_P_GET_STATE_ROUTER, AsyncMock(return_value=state)),
+            # Stripe fallback unavailable → falls through to the calendar month.
+            patch("shu.billing.router._stripe_subscription_period", AsyncMock(return_value=None)),
+            patch(_P_USAGE_PROVIDER_ROUTER, MagicMock(return_value=usage_provider)),
+        ):
+            response = await get_current_usage(db=AsyncMock(), settings=MagicMock())
 
         body = _decode(response)
-        assert body["current_period_unknown"] is True
-        assert body["period_start"] is None
-        assert body["period_end"] is None
+        # Period is always resolved now — never "unknown".
+        assert body["current_period_unknown"] is False
+        assert body["period_start"] is not None
+        assert body["period_end"] is not None
         assert body["total_input_tokens"] == 0
         assert body["total_output_tokens"] == 0
         assert body["total_cost_usd"] == 0.0
