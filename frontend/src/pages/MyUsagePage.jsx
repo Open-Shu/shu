@@ -3,6 +3,7 @@ import { Alert, Box, Button, IconButton, Paper, Skeleton, Stack, Tooltip, Typogr
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 import CostByModelTable from '../components/billing/CostByModelTable';
+import KbLimitsTile from '../components/billing/KbLimitsTile';
 import MyUsageKpiTiles from '../components/billing/MyUsageKpiTiles';
 import PersonalKbStatsTile from '../components/billing/PersonalKbStatsTile';
 import UpsellCard from '../components/billing/UpsellCard';
@@ -109,7 +110,9 @@ function UsageErrorAlert({ onRefresh }) {
  */
 function MyUsagePage() {
   const { usage, modelsMap, refetch, lastUpdatedAt } = useMyUsageData();
-  const { totalGrantAmount, remainingGrantAmount } = useBillingStatus();
+  // `limits`/`usage` are the tenant-wide KB caps + counts (aliased to avoid
+  // colliding with the per-user `usage` query above).
+  const { totalGrantAmount, remainingGrantAmount, limits: kbLimits, usage: kbUsage } = useBillingStatus();
 
   // Resolve the user's local timezone once for the period label.
   const timezone = useMemo(() => {
@@ -189,8 +192,9 @@ function MyUsagePage() {
           <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
             <Stack spacing={2}>
               <Typography variant="overline" sx={SECTION_HEADING_SX}>
-                Your Personal Knowledge Base
+                Knowledge Bases
               </Typography>
+              <KbLimitsTile usage={kbUsage} limits={kbLimits} />
               <PersonalKbStatsTile />
             </Stack>
           </Paper>
