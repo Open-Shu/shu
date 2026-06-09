@@ -6,6 +6,7 @@ import {
   ManageAccounts as AccountsIcon,
   Settings as SettingsIcon,
   Insights as UsageIcon,
+  SupportAgent as SupportAgentIcon,
 } from '@mui/icons-material';
 import { useFeatureEnabled } from '../config/featureFlags';
 
@@ -14,8 +15,9 @@ import { useFeatureEnabled } from '../config/featureFlags';
  * Shared user menu entries used in both UserLayout and AdminLayout.
  * Props:
  *  - onNavigate: (path: string) => void
+ *  - onContactSupport?: () => void — opens the Contact Support dialog
  */
-export default function UserMenuCommonItems({ onNavigate }) {
+export default function UserMenuCommonItems({ onNavigate, onContactSupport }) {
   const go = (path) => () => onNavigate && onNavigate(path);
   const canPlugins = useFeatureEnabled('plugins');
   return (
@@ -52,6 +54,14 @@ export default function UserMenuCommonItems({ onNavigate }) {
         </ListItemIcon>
         User Preferences
       </MenuItem>
+      {onContactSupport && (
+        <MenuItem onClick={onContactSupport}>
+          <ListItemIcon>
+            <SupportAgentIcon fontSize="small" />
+          </ListItemIcon>
+          Contact Support
+        </MenuItem>
+      )}
       <Divider />
     </>
   );
