@@ -83,11 +83,11 @@ describe('ContactSupportDialog', () => {
     expect(() => fireEvent.click(screen.getByRole('button', { name: /copy support email address/i }))).not.toThrow();
   });
 
-  it('navigates to /chat and closes when "Chat with Shu Bot" is clicked', () => {
+  it('navigates to /chat and closes when "Chat with Shu Assistant" is clicked', () => {
     const onClose = vi.fn();
     renderDialog({ onClose });
 
-    fireEvent.click(screen.getByRole('button', { name: /chat with shu bot/i }));
+    fireEvent.click(screen.getByRole('button', { name: /chat with shu assistant/i }));
 
     expect(mockNavigate).toHaveBeenCalledWith('/chat');
     expect(onClose).toHaveBeenCalled();

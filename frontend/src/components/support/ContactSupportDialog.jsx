@@ -18,7 +18,7 @@ import {
   Email as EmailIcon,
   ContentCopy as CopyIcon,
   Check as CheckIcon,
-  SmartToy as BotIcon,
+  AutoAwesome as AssistantIcon,
 } from '@mui/icons-material';
 
 import { SUPPORT_EMAIL } from '../../utils/constants';
@@ -32,8 +32,8 @@ const COPIED_RESET_MS = 2000;
  *
  * Lightweight, pure-frontend support entry point opened from the profile menu.
  * Surfaces the support address with copy + mailto actions, and a distinct
- * "Shu Bot" how-to-use-the-app stub that opens a new chat. This is NOT a
- * customer-support bot — the copy keeps the two paths clearly separated.
+ * "Shu Assistant" how-to-use-the-app stub that opens a new chat. This is NOT
+ * a customer-support assistant — the copy keeps the two paths clearly separated.
  *
  * Props:
  *  - open: boolean
@@ -77,7 +77,7 @@ export default function ContactSupportDialog({ open, onClose, user, appName = 'S
     }
   };
 
-  const handleChatWithBot = () => {
+  const handleChatWithAssistant = () => {
     onClose();
     navigate('/chat');
   };
@@ -124,16 +124,16 @@ export default function ContactSupportDialog({ open, onClose, user, appName = 'S
 
         <Stack spacing={1}>
           <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <BotIcon fontSize="small" />
+            <AssistantIcon fontSize="small" />
             Have a question on how to use the app?
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Try chatting with Shu Bot — a guide for getting around the app. For account or billing issues, email our
-            team above instead.
+            Try chatting with Shu Assistant — a guide for getting around the app. For account, billing, or technical
+            issues, email our team above instead.
           </Typography>
           <Box>
-            <Button variant="outlined" size="small" startIcon={<BotIcon />} onClick={handleChatWithBot}>
-              Chat with Shu Bot
+            <Button variant="outlined" size="small" startIcon={<AssistantIcon />} onClick={handleChatWithAssistant}>
+              Chat with Shu Assistant
             </Button>
           </Box>
         </Stack>
