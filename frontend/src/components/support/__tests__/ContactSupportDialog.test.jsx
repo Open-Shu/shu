@@ -22,6 +22,15 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
+// Build-time flag gating the Shu Assistant section. A getter lets each test
+// toggle it via the `mock`-prefixed holder before rendering.
+let mockAssistantEnabled = true;
+vi.mock('../../../config/featureFlags', () => ({
+  get SHU_ASSISTANT_ENABLED() {
+    return mockAssistantEnabled;
+  },
+}));
+
 const USER = { name: 'Eric Longville', email: 'eric@example.com', role: 'admin' };
 
 const renderDialog = (props = {}) =>
@@ -42,12 +51,13 @@ const renderDialog = (props = {}) =>
 
 beforeEach(() => {
   mockNavigate.mockClear();
+  mockAssistantEnabled = true;
 });
 
 describe('ContactSupportDialog', () => {
   it('renders the support address and version inline', () => {
     renderDialog();
-    expect(screen.getByText('support@openshu.ai')).toBeInTheDocument();
+    expect(screen.getByText('support@shu.ai')).toBeInTheDocument();
     expect(screen.getByText('v1.2.3 • abc1234')).toBeInTheDocument();
   });
 
@@ -55,7 +65,7 @@ describe('ContactSupportDialog', () => {
     renderDialog();
     const link = screen.getByRole('link', { name: /email us/i });
     const href = link.getAttribute('href');
-    expect(href).toMatch(/^mailto:support@openshu\.ai\?/);
+    expect(href).toMatch(/^mailto:support@shu\.ai\?/);
 
     const params = new URLSearchParams(new URL(href).search);
     expect(params.get('subject')).toBe('Shu Support Request');
@@ -73,7 +83,7 @@ describe('ContactSupportDialog', () => {
     renderDialog();
     fireEvent.click(screen.getByRole('button', { name: /copy support email address/i }));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('support@openshu.ai'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('support@shu.ai'));
   });
 
   it('does not throw when the Clipboard API is unavailable', () => {
@@ -91,5 +101,15 @@ describe('ContactSupportDialog', () => {
 
     expect(mockNavigate).toHaveBeenCalledWith('/chat');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('hides the Shu Assistant section when the flag is disabled', () => {
+    mockAssistantEnabled = false;
+    renderDialog();
+
+    // Support contact path remains; the assistant entry is gone.
+    expect(screen.getByText('support@shu.ai')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /chat with shu assistant/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/have a question on how to use the app/i)).not.toBeInTheDocument();
   });
 });

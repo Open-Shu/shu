@@ -22,6 +22,7 @@ import {
 } from '@mui/icons-material';
 
 import { SUPPORT_EMAIL } from '../../utils/constants';
+import { SHU_ASSISTANT_ENABLED } from '../../config/featureFlags';
 import log from '../../utils/log';
 
 // How long the Copy button shows its "Copied" confirmation before resetting.
@@ -120,23 +121,27 @@ export default function ContactSupportDialog({ open, onClose, user, appName = 'S
           )}
         </Stack>
 
-        <Divider sx={{ my: 2 }} />
+        {SHU_ASSISTANT_ENABLED && (
+          <>
+            <Divider sx={{ my: 2 }} />
 
-        <Stack spacing={1}>
-          <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <AssistantIcon fontSize="small" />
-            Have a question on how to use the app?
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Try chatting with Shu Assistant — a guide for getting around the app. For account, billing, or technical
-            issues, email our team above instead.
-          </Typography>
-          <Box>
-            <Button variant="outlined" size="small" startIcon={<AssistantIcon />} onClick={handleChatWithAssistant}>
-              Chat with Shu Assistant
-            </Button>
-          </Box>
-        </Stack>
+            <Stack spacing={1}>
+              <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <AssistantIcon fontSize="small" />
+                Have a question on how to use the app?
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Try chatting with Shu Assistant — a guide for getting around the app. For account, billing, or technical
+                issues, email our team above instead.
+              </Typography>
+              <Box>
+                <Button variant="outlined" size="small" startIcon={<AssistantIcon />} onClick={handleChatWithAssistant}>
+                  Chat with Shu Assistant
+                </Button>
+              </Box>
+            </Stack>
+          </>
+        )}
       </DialogContent>
 
       <DialogActions>

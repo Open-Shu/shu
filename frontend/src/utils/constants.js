@@ -591,7 +591,7 @@ export {
 // Customer-support contact address surfaced in the Contact Support dialog.
 // White-label deployments override it via the VITE_SUPPORT_EMAIL build-time
 // env var; defaults to the canonical Shu support inbox when unset.
-export const SUPPORT_EMAIL = import.meta.env.VITE_SUPPORT_EMAIL || 'support@openshu.ai';
+export const SUPPORT_EMAIL = import.meta.env.VITE_SUPPORT_EMAIL || 'support@shu.ai';
 
 export const getThemeConfig = (mode = 'light', branding, userFontPref = null) => {
   const resolved = resolveBranding(branding);
