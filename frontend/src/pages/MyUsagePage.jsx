@@ -112,7 +112,13 @@ function MyUsagePage() {
   const { usage, modelsMap, refetch, lastUpdatedAt } = useMyUsageData();
   // `limits`/`usage` are the tenant-wide KB caps + counts (aliased to avoid
   // colliding with the per-user `usage` query above).
-  const { totalGrantAmount, remainingGrantAmount, limits: kbLimits, usage: kbUsage } = useBillingStatus();
+  const {
+    totalGrantAmount,
+    remainingGrantAmount,
+    usageMarkupMultiplier,
+    limits: kbLimits,
+    usage: kbUsage,
+  } = useBillingStatus();
 
   // Resolve the user's local timezone once for the period label.
   const timezone = useMemo(() => {
@@ -148,7 +154,12 @@ function MyUsagePage() {
               {usage.isError ? (
                 <UsageErrorAlert onRefresh={refetch} />
               ) : (
-                <MyUsageKpiTiles usageData={usage.data} isLoading={usage.isLoading} pool={pool} />
+                <MyUsageKpiTiles
+                  usageData={usage.data}
+                  isLoading={usage.isLoading}
+                  pool={pool}
+                  markup={usageMarkupMultiplier}
+                />
               )}
             </Stack>
           </Paper>

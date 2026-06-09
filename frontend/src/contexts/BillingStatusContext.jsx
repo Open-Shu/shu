@@ -32,6 +32,10 @@ const HEALTHY_STATE = {
   totalGrantAmount: null,
   remainingGrantAmount: null,
   seatPriceUsd: null,
+  // Markup multiplier (e.g. 1.3) applied to provider cost for billed figures.
+  // null when the backend supplied none → consumers fall back to the
+  // USAGE_MARKUP_MULTIPLIER constant.
+  usageMarkupMultiplier: null,
   userCount: 0,
   // SHU-773: the backend omits these blocks on self-hosted (no control plane).
   // null is the "unknown → don't gate" signal consumers key off of.
@@ -72,6 +76,7 @@ export const BillingStatusProvider = ({ children }) => {
         totalGrantAmount: parseDecimalField(data.total_grant_amount),
         remainingGrantAmount: parseDecimalField(data.remaining_grant_amount),
         seatPriceUsd: parseDecimalField(data.seat_price_usd),
+        usageMarkupMultiplier: parseDecimalField(data.usage_markup_multiplier),
         userCount: data.user_count ?? 0,
         // Absent on self-hosted responses → null, which useEntitlement reads
         // as "all enabled" so dev/self-hosted UIs keep showing every page.
@@ -115,6 +120,7 @@ export const BillingStatusProvider = ({ children }) => {
     totalGrantAmount: status.totalGrantAmount,
     remainingGrantAmount: status.remainingGrantAmount,
     seatPriceUsd: status.seatPriceUsd,
+    usageMarkupMultiplier: status.usageMarkupMultiplier,
     userCount: status.userCount,
     entitlements: status.entitlements,
     limits: status.limits,

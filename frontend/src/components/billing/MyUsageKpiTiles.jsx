@@ -1,7 +1,12 @@
 import { Box, LinearProgress, Skeleton, Tooltip } from '@mui/material';
 
 import { KpiTile, pickUsedColor } from './KpiTiles';
-import { formatCompactTokens, formatCurrency, formatFullTokens } from '../../utils/billingFormatters';
+import {
+  formatCompactTokens,
+  formatCurrency,
+  formatFullTokens,
+  USAGE_MARKUP_MULTIPLIER,
+} from '../../utils/billingFormatters';
 
 const PLACEHOLDER = '—';
 
@@ -9,9 +14,11 @@ const PLACEHOLDER = '—';
  * KPI tiles for the per-user My Usage dashboard (SHU-844).
  *
  * Volume tiles (Your Usage Cost / Requests / Tokens) come from the per-user
- * `/billing/usage/me` payload. "Your Usage Cost" is the raw provider cost —
- * the same basis as the reused Cost by Model table — not a marked-up figure
- * (non-admins are not sent the markup multiplier).
+ * `/billing/usage/me` payload. "Your Usage Cost" is shown in BILLED dollars
+ * (provider cost × markup) so it reconciles with the billed Shared Pool and
+ * matches the admin dashboard; the raw provider cost + markup % are noted in
+ * the sub-line. The reused Cost by Model table and time chart stay at raw
+ * provider cost (same as the admin page), which the sub-line accounts for.
  *
  * The Shared Pool tile is tenant-level context from BillingStatusContext
  * (`pool` prop). It renders only when a pool is present (CP configured); when
@@ -19,7 +26,7 @@ const PLACEHOLDER = '—';
  * "across all seats & shared activity" because the pool spans every seat plus
  * system/shared usage, so a user's own cost is expected to be a subset.
  */
-export default function MyUsageKpiTiles({ usageData, isLoading, pool }) {
+export default function MyUsageKpiTiles({ usageData, isLoading, pool, markup }) {
   const data = usageData || {};
   const isPeriodUnknown = data.current_period_unknown === true;
 
@@ -27,13 +34,23 @@ export default function MyUsageKpiTiles({ usageData, isLoading, pool }) {
   const requests = isPeriodUnknown ? null : (data.request_count ?? 0);
   const totalTokens = isPeriodUnknown ? null : (data.total_input_tokens ?? 0) + (data.total_output_tokens ?? 0);
 
+  // Bill the headline: provider cost × markup. The live rate arrives via the
+  // `markup` prop (/billing/subscription); fall back to the published constant
+  // when CP supplied none (self-hosted / pre-Stripe).
+  const markupMultiplier = typeof markup === 'number' && markup > 0 ? markup : USAGE_MARKUP_MULTIPLIER;
+  const markupPercent = Math.round((markupMultiplier - 1) * 100);
+  const billedCost = cost === null ? null : cost * markupMultiplier;
+
   const tiles = [
     {
       key: 'cost',
       label: 'Your Usage Cost',
-      value: cost === null ? PLACEHOLDER : formatCurrency(cost),
-      ariaLabel: cost === null ? 'Your usage cost: not available' : `Your usage cost: ${formatCurrency(cost)}`,
-      subline: 'this billing period',
+      value: billedCost === null ? PLACEHOLDER : formatCurrency(billedCost),
+      ariaLabel:
+        billedCost === null ? 'Your usage cost: not available' : `Your usage cost: ${formatCurrency(billedCost)}`,
+      // When there's spend, explain the billed headline vs the raw provider
+      // cost (which the chart/table show); otherwise just note the period.
+      subline: cost > 0 ? `${formatCurrency(cost)} provider cost, billed at +${markupPercent}%` : 'this billing period',
     },
     {
       key: 'requests',

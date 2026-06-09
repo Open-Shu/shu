@@ -175,7 +175,6 @@ _ADMIN_ONLY_KEYS = (
     "current_period_end",
     "cancel_at_period_end",
     "canceled_at",
-    "usage_markup_multiplier",
 )
 
 _FULL_BILLING_CONFIG = {
@@ -225,7 +224,6 @@ class TestSubscriptionAdminBlock:
         assert body["current_period_start"] == "2026-01-01T00:00:00+00:00"
         assert body["current_period_end"] == "2026-02-01T00:00:00+00:00"
         assert body["cancel_at_period_end"] is False
-        assert body["usage_markup_multiplier"] == 1.3
 
     @pytest.mark.asyncio
     @patch(_P_USER_COUNT)
@@ -259,6 +257,9 @@ _TRIAL_PAYLOAD_KEYS = (
     "total_grant_amount",
     "remaining_grant_amount",
     "seat_price_usd",
+    # SHU-844: the markup rate is no longer admin-gated — non-admins need it so
+    # the per-user My Usage cost can render in billed dollars (raw × markup).
+    "usage_markup_multiplier",
     "entitlements",
     "limits",
 )
@@ -286,6 +287,7 @@ class TestSubscriptionTrialAndEntitlements:
                 seat_price_usd=Decimal("20.00"),
                 limits=LimitSet(document_count_limit=100, kb_count_limit=5),
                 hard_cap=True,
+                usage_markup_multiplier=Decimal("1.3"),
             )
         )
 
@@ -303,6 +305,8 @@ class TestSubscriptionTrialAndEntitlements:
         assert body["total_grant_amount"] == "50.00"
         assert body["remaining_grant_amount"] == "12.34"
         assert body["seat_price_usd"] == "20.00"
+        # Markup rate reaches non-admins (SHU-844) so per-user cost bills correctly.
+        assert body["usage_markup_multiplier"] == 1.3
         assert body["entitlements"] == {
             "chat": True,
             "plugins": True,

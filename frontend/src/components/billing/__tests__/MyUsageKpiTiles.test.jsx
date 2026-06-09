@@ -11,11 +11,12 @@ import { render, screen } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 
 import MyUsageKpiTiles from '../MyUsageKpiTiles';
+import { formatCurrency, USAGE_MARKUP_MULTIPLIER } from '../../../utils/billingFormatters';
 
-const renderTiles = (usageData, isLoading = false, pool = null) =>
+const renderTiles = (usageData, isLoading = false, pool = null, markup = undefined) =>
   render(
     <ThemeProvider theme={createTheme()}>
-      <MyUsageKpiTiles usageData={usageData} isLoading={isLoading} pool={pool} />
+      <MyUsageKpiTiles usageData={usageData} isLoading={isLoading} pool={pool} markup={markup} />
     </ThemeProvider>
   );
 
@@ -39,9 +40,18 @@ describe('MyUsageKpiTiles', () => {
       expect(screen.queryByText('Shared Pool')).not.toBeInTheDocument();
     });
 
-    it('formats cost as currency', () => {
-      renderTiles(usage({ total_cost_usd: 12.34 }), false, null);
-      expect(screen.getByText('$12.34')).toBeInTheDocument();
+    it('bills the cost at the live markup and explains it in the sub-line', () => {
+      renderTiles(usage({ total_cost_usd: 10 }), false, null, 1.5);
+      expect(screen.getByText('$15.00')).toBeInTheDocument(); // 10 × 1.5
+      expect(screen.getByText('$10.00 provider cost, billed at +50%')).toBeInTheDocument();
+    });
+
+    it('falls back to the default markup when none is supplied', () => {
+      renderTiles(usage({ total_cost_usd: 10 }), false, null);
+      const billed = 10 * USAGE_MARKUP_MULTIPLIER;
+      const pct = Math.round((USAGE_MARKUP_MULTIPLIER - 1) * 100);
+      expect(screen.getByText(formatCurrency(billed))).toBeInTheDocument();
+      expect(screen.getByText(`$10.00 provider cost, billed at +${pct}%`)).toBeInTheDocument();
     });
 
     it('formats requests with thousands separators', () => {

@@ -34,8 +34,11 @@ const SERIES_COLORS = [
 // re-runs internal layout effects when its prop identities change, so keeping
 // them stable avoids needless re-renders.
 const seriesValueFormatter = (v) => (v === null || v === undefined ? '' : formatCurrency(v));
-const Y_AXIS = [{ valueFormatter: (v) => formatCurrency(v) }];
-const CHART_MARGIN = { left: 72 };
+// width: v8 ellipsizes y-axis tick labels that don't fit the axis's own width
+// (ChartsYAxis/shortenLabels). Sub-cent costs render 4 decimals ($0.0019); the
+// 45px default truncated them to "$0.0…", so widen the axis to fit. In v8 the
+// axis reserves this width itself, so no left chart margin is needed.
+const Y_AXIS = [{ valueFormatter: (v) => formatCurrency(v), width: 72 }];
 
 // Format a "YYYY-MM-DD" UTC day key into a short axis label like "Jun 1". v8
 // drops x-axis tick labels that would overlap their neighbour
@@ -187,7 +190,6 @@ export default function MyUsageChart({ byDay, modelsMap }) {
         series={chartSeries}
         hideLegend
         skipAnimation={mountedRef.current}
-        margin={CHART_MARGIN}
       />
     </Box>
   );

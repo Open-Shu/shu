@@ -240,6 +240,12 @@ async def get_subscription_status(
         "total_grant_amount": str(state.total_grant_amount),
         "remaining_grant_amount": str(remaining_grant_amount),
         "seat_price_usd": str(state.seat_price_usd),
+        # Markup rate (e.g. 1.3 == +30%) applied to provider cost to get billed
+        # dollars. Not sensitive — it's the published pricing — and non-admins
+        # need it so the per-user My Usage cost reads in billed dollars like the
+        # shared pool (SHU-844). None when CP supplied no rate; the client then
+        # falls back to the USAGE_MARKUP_MULTIPLIER constant.
+        "usage_markup_multiplier": usage_markup_multiplier,
     }
 
     # SHU-773: entitlement / limit / usage blocks ship only when CP is
@@ -262,7 +268,6 @@ async def get_subscription_status(
                 "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
                 "cancel_at_period_end": state.cancel_at_period_end,
                 "canceled_at": state.canceled_at.isoformat() if state.canceled_at else None,
-                "usage_markup_multiplier": usage_markup_multiplier,
             }
         )
 
