@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -238,8 +238,13 @@ async def test_usage_me_defaults_to_calendar_month(client, db, auth_headers):
         data = extract_data(resp)
         # Period is always resolved now (never "unknown") — to the 1st of the current UTC month.
         assert data["current_period_unknown"] is False, data
-        expected_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        assert data["period_start"].startswith(expected_start.date().isoformat()), data
+        # Structural invariants of the calendar-month start, parsed from the
+        # response — avoids a re-sampled now() racing the request across a UTC
+        # month boundary.
+        period_start = datetime.fromisoformat(data["period_start"])
+        assert period_start.day == 1, data
+        assert period_start.hour == period_start.minute == period_start.second == period_start.microsecond == 0, data
+        assert period_start.utcoffset() == timedelta(0), data  # UTC
         # Fresh user has no usage in that window.
         assert data["total_input_tokens"] == 0, data
         assert data["total_cost_usd"] == 0.0, data

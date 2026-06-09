@@ -1,5 +1,5 @@
 import { useQuery } from 'react-query';
-import { Box, Card, CardContent, Grid, Skeleton, Stack, Typography } from '@mui/material';
+import { Alert, Box, Button, Card, CardContent, Grid, Skeleton, Stack, Typography } from '@mui/material';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 
 import { knowledgeBaseAPI, extractDataFromResponse } from '../../services/api';
@@ -30,10 +30,35 @@ function Stat({ label, value }) {
  * personal KB yet.
  */
 export default function PersonalKbStatsTile() {
-  const { data: kb, isLoading } = useQuery(['my-usage:personal-kb'], fetchPersonalKb, { staleTime: 60_000 });
+  const {
+    data: kb,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery(['my-usage:personal-kb'], fetchPersonalKb, {
+    staleTime: 60_000,
+  });
 
   if (isLoading) {
     return <Skeleton variant="rounded" height={120} />;
+  }
+
+  // Distinguish a fetch failure from a successful "no KB" response — otherwise a
+  // transient API/network error would render the onboarding copy and tell a user
+  // who has a KB to go create one.
+  if (isError) {
+    return (
+      <Alert
+        severity="warning"
+        action={
+          <Button color="inherit" size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        }
+      >
+        We couldn&apos;t load your Personal Knowledge Base stats.
+      </Alert>
+    );
   }
 
   if (!kb) {
