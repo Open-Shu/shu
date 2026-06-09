@@ -4,8 +4,14 @@
  * Mirrors useUsageData but hits the self-scoped `/billing/usage/me` endpoint
  * and drops the subscription/seat queries — the per-user page gets its
  * plan/pool context from BillingStatusContext (already polled app-wide), not a
- * second subscription fetch. Models + providers are fetched to resolve
- * model_id → display name for the reused Cost by Model table and the chart.
+ * second subscription fetch. Models are fetched to resolve model_id → display
+ * name for the reused Cost by Model table and the chart.
+ *
+ * Provider names are intentionally NOT resolved here. `/llm/providers` is
+ * admin-only, but this page is visible to ALL roles, so fetching it 403s for
+ * non-admins (and there is no role-open endpoint that returns provider names).
+ * `/llm/models` is open to every authenticated user and carries the display
+ * name — the primary label — so the provider sub-label is simply omitted here.
  *
  * Query keys are namespaced under `my-usage:` so they don't collide with the
  * admin dashboard's `billing-`/`cost-usage:` caches, which use the same
@@ -19,37 +25,35 @@ import { billingAPI, llmAPI, extractDataFromResponse } from '../services/api';
 
 const USAGE_KEY = ['my-usage:usage'];
 const MODELS_KEY = ['my-usage:llm-models'];
-const PROVIDERS_KEY = ['my-usage:llm-providers'];
 
 const REFERENCE_STALE_MS = 5 * 60 * 1000;
 
 const fetchMyUsage = () => billingAPI.getMyUsage().then(extractDataFromResponse);
 const fetchModels = () => llmAPI.getModels().then(extractDataFromResponse);
-const fetchProviders = () => llmAPI.getProviders().then(extractDataFromResponse);
 
 export function useMyUsageData() {
   const queryClient = useQueryClient();
 
   const usage = useQuery(USAGE_KEY, fetchMyUsage, { staleTime: 0 });
   const models = useQuery(MODELS_KEY, fetchModels, { staleTime: REFERENCE_STALE_MS });
-  const providers = useQuery(PROVIDERS_KEY, fetchProviders, { staleTime: REFERENCE_STALE_MS });
 
   const modelsMap = useMemo(() => {
     const map = new Map();
     const modelsList = Array.isArray(models.data) ? models.data : [];
-    const providersList = Array.isArray(providers.data) ? providers.data : [];
-    const providerNamesById = new Map(providersList.map((p) => [p.id, p.name]));
     for (const model of modelsList) {
       if (!model || !model.id) {
         continue;
       }
       map.set(model.id, {
         display_name: model.display_name || model.model_name || null,
-        provider_name: providerNamesById.get(model.provider_id) || null,
+        // Provider name is only available via the admin-only /llm/providers
+        // endpoint, which this all-roles page can't call — left null so
+        // CostByModelTable omits the provider sub-label.
+        provider_name: null,
       });
     }
     return map;
-  }, [models.data, providers.data]);
+  }, [models.data]);
 
   const refetch = useCallback(() => {
     queryClient.invalidateQueries(USAGE_KEY);
@@ -58,7 +62,7 @@ export function useMyUsageData() {
   return {
     usage,
     modelsMap,
-    modelsLoading: models.isLoading || providers.isLoading,
+    modelsLoading: models.isLoading,
     refetch,
     lastUpdatedAt: usage.dataUpdatedAt || 0,
   };
