@@ -3,7 +3,8 @@
 Verifies the per-user "My Usage" endpoint:
 - scopes strictly to the requesting user (one user never sees another's usage),
 - excludes BYOK (is_system_managed=False) providers,
-- returns the current_period_unknown shape when there's no active period,
+- falls back to the current UTC calendar month when neither CP nor Stripe
+  supplies a billing period (so the response always has a resolved period),
 - buckets the by_day series per UTC day per model.
 
 Framework: the custom async runner (NOT pytest). Test functions take
