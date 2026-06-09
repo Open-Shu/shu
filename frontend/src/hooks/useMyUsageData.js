@@ -29,7 +29,11 @@ const MODELS_KEY = ['my-usage:llm-models'];
 const REFERENCE_STALE_MS = 5 * 60 * 1000;
 
 const fetchMyUsage = () => billingAPI.getMyUsage().then(extractDataFromResponse);
-const fetchModels = () => llmAPI.getModels().then(extractDataFromResponse);
+// `model_type: 'all'` — My Usage reports billable embedding/OCR rows too, and
+// /llm/models defaults to chat-only, so the full catalog is needed to resolve
+// non-chat model_ids to live display names (otherwise they fall back to the
+// usage row's snapshot model_name).
+const fetchModels = () => llmAPI.getModels(null, 'all').then(extractDataFromResponse);
 
 export function useMyUsageData() {
   const queryClient = useQueryClient();
