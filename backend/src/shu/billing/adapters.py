@@ -9,6 +9,7 @@ Provides:
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -78,6 +79,64 @@ class DailyModelUsageImpl:
     request_count: int
     # See UsageRecordImpl.model_name — same snapshot semantics.
     model_name: str | None = None
+
+
+# Chart-series cap for the My Usage time-series. Beyond this many distinct
+# models in a period, the smallest-spend models are folded into a single
+# "Other models" bucket so the stacked chart / legend stays readable and the
+# payload bounded (SHU-844 AC: top-N + "other" if extreme). Generous enough
+# that a typical user (a handful of models) sees every model unchanged.
+_MAX_CHART_MODELS = 10
+_OTHER_MODEL_ID = "__other__"
+_OTHER_MODEL_NAME = "Other models"
+
+
+def _bound_daily_models(rows: list[DailyModelUsageImpl], limit: int) -> list[DailyModelUsageImpl]:
+    """Cap daily rows at the top ``limit`` models by period cost.
+
+    Models outside the top ``limit`` (ranked by total cost over the period) are
+    folded into one ``_OTHER_MODEL_ID`` bucket per day — summing tokens, cost,
+    and request counts so each day's stacked total is preserved. Keyed by
+    ``model_id`` to match how the frontend pivots rows into per-model series.
+
+    No-op when the distinct-model count is within ``limit`` (the common case),
+    so only pathological model churn is bounded. Row order is irrelevant to the
+    consumer (it re-buckets by model and sorts days), so folded rows are simply
+    appended.
+    """
+    totals: dict[str, Decimal] = defaultdict(Decimal)
+    for row in rows:
+        totals[row.model_id] += row.cost_usd
+    if len(totals) <= limit:
+        return rows
+
+    # Rank by (cost, model_id) so ties resolve deterministically.
+    top_ids = {mid for mid, _ in sorted(totals.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)[:limit]}
+
+    kept: list[DailyModelUsageImpl] = []
+    other_by_day: dict[datetime, DailyModelUsageImpl] = {}
+    for row in rows:
+        if row.model_id in top_ids:
+            kept.append(row)
+            continue
+        agg = other_by_day.get(row.day)
+        if agg is None:
+            other_by_day[row.day] = DailyModelUsageImpl(
+                day=row.day,
+                model_id=_OTHER_MODEL_ID,
+                model_name=_OTHER_MODEL_NAME,
+                input_tokens=row.input_tokens,
+                output_tokens=row.output_tokens,
+                cost_usd=row.cost_usd,
+                request_count=row.request_count,
+            )
+        else:
+            agg.input_tokens += row.input_tokens
+            agg.output_tokens += row.output_tokens
+            agg.cost_usd += row.cost_usd
+            agg.request_count += row.request_count
+
+    return kept + list(other_by_day.values())
 
 
 # =============================================================================
@@ -238,8 +297,9 @@ class UsageProviderImpl:
         Powers the My Usage time-series chart (SHU-844). Days are bucketed with
         ``date_trunc('day', created_at)``; ``created_at`` is stored UTC-naive,
         so buckets are UTC calendar days — the frontend labels them as such.
-        Returns the raw per-(day, model) rows; the frontend pivots them into
-        per-model chart series.
+        Returns per-(day, model) rows, capped at the top ``_MAX_CHART_MODELS``
+        models by period cost (the rest folded into an "Other models" bucket);
+        the frontend pivots them into per-model chart series.
         """
         day = func.date_trunc("day", LLMUsage.created_at).label("day")
         result = await self._db.execute(
@@ -258,7 +318,7 @@ class UsageProviderImpl:
             .order_by(day)
         )
 
-        return [
+        rows = [
             DailyModelUsageImpl(
                 day=row.day,
                 model_id=row.model_id or "unknown",
@@ -271,6 +331,7 @@ class UsageProviderImpl:
             )
             for row in result
         ]
+        return _bound_daily_models(rows, _MAX_CHART_MODELS)
 
 
 # =============================================================================

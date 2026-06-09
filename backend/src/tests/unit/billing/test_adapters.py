@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.billing.adapters import (
+    _OTHER_MODEL_ID,
+    _OTHER_MODEL_NAME,
+    DailyModelUsageImpl,
     UsageProviderImpl,
+    _bound_daily_models,
     create_cycle_rollover_callback,
     get_billing_config,
     get_user_count,
@@ -26,8 +30,8 @@ def _make_billing_state(**kwargs) -> BillingState:
     state.current_period_end = kwargs.get("current_period_end", datetime(2026, 5, 1, tzinfo=UTC))
     state.cancel_at_period_end = kwargs.get("cancel_at_period_end", False)
     state.last_reported_total = kwargs.get("last_reported_total", 0)
-    state.last_reported_period_start = kwargs.get("last_reported_period_start", None)
-    state.payment_failed_at = kwargs.get("payment_failed_at", None)
+    state.last_reported_period_start = kwargs.get("last_reported_period_start")
+    state.payment_failed_at = kwargs.get("payment_failed_at")
     state.user_limit_enforcement = kwargs.get("user_limit_enforcement", "soft")
     return state
 
@@ -335,3 +339,60 @@ class TestCreateCycleRolloverCallback:
             await callback("cus_1", "sub_1", "in_1", "evt_1", reason)
 
         seat_service.rollover.assert_not_awaited()
+
+
+def _daily(day_n: int, model_id: str, cost, in_tok: int = 0, out_tok: int = 0, reqs: int = 1) -> DailyModelUsageImpl:
+    return DailyModelUsageImpl(
+        day=datetime(2026, 6, day_n, tzinfo=UTC),
+        model_id=model_id,
+        model_name=model_id,
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        cost_usd=Decimal(str(cost)),
+        request_count=reqs,
+    )
+
+
+class TestBoundDailyModels:
+    """Top-N + 'Other models' fold for the My Usage chart (SHU-844)."""
+
+    def test_noop_when_within_limit(self):
+        """At or under the limit, rows pass through untouched (the common case)."""
+        rows = [_daily(1, "a", 1), _daily(1, "b", 2), _daily(2, "a", 3)]
+        result = _bound_daily_models(rows, limit=5)
+        assert result == rows
+        assert all(r.model_id != _OTHER_MODEL_ID for r in result)
+
+    def test_folds_lowest_spend_models_into_other(self):
+        """Beyond the limit, the smallest-spend models collapse into one bucket."""
+        rows = [_daily(1, "a", 10), _daily(1, "b", 8), _daily(1, "c", 3), _daily(1, "d", 1)]
+        result = _bound_daily_models(rows, limit=2)
+
+        kept = [r for r in result if r.model_id != _OTHER_MODEL_ID]
+        other = [r for r in result if r.model_id == _OTHER_MODEL_ID]
+        assert {r.model_id for r in kept} == {"a", "b"}  # top 2 by cost
+        assert len(other) == 1
+        assert other[0].model_name == _OTHER_MODEL_NAME
+        assert other[0].cost_usd == Decimal("4")  # 3 + 1
+
+    def test_other_bucket_aggregates_per_day(self):
+        """Folded models sum into one 'Other' row per day, preserving daily totals."""
+        rows = [
+            _daily(1, "top", 100),
+            _daily(2, "top", 100),
+            _daily(1, "x", 5, in_tok=10, out_tok=20, reqs=2),
+            _daily(2, "x", 4, in_tok=8, out_tok=16, reqs=1),
+            _daily(1, "y", 3, in_tok=2, out_tok=4, reqs=1),
+        ]
+        result = _bound_daily_models(rows, limit=1)
+
+        other = {r.day.day: r for r in result if r.model_id == _OTHER_MODEL_ID}
+        assert set(other) == {1, 2}
+        # day 1: x + y
+        assert other[1].cost_usd == Decimal("8")
+        assert other[1].input_tokens == 12
+        assert other[1].output_tokens == 24
+        assert other[1].request_count == 3
+        # day 2: x only
+        assert other[2].cost_usd == Decimal("4")
+        assert other[2].request_count == 1
