@@ -28,6 +28,9 @@ def _build_default_payload(settings: Settings) -> dict[str, object]:
         "dark_favicon_url": settings.branding_default_dark_favicon_url,
         "light_topbar_text_color": None,
         "dark_topbar_text_color": None,
+        "assistant_avatar_mode": "curated",
+        "assistant_avatar_curated_id": "shu_feather",
+        "assistant_avatar_asset_url": None,
         "brand_font_family": None,
         "brand_heading_font_family": None,
         "updated_at": None,
@@ -102,11 +105,41 @@ class BrandingService:
             ):
                 raise ValueError(f"Invalid hex color format for {color_field}")
 
+        # Snapshot the prior asset URL BEFORE the merge loop. The loop pops
+        # the key when the update sets it to None, which would otherwise hide
+        # the URL from the cleanup logic below and leave the file orphaned.
+        prior_avatar_asset_url = stored.get("assistant_avatar_asset_url")
+
         for key, value in update_data.items():
             if value is None:
                 stored.pop(key, None)
             else:
                 stored[key] = value
+
+        # Avatar asset cleanup: the prior custom-mode upload is orphaned
+        # unless the final state still references it. Covers three cases:
+        #   - mode goes from "custom" to "curated"/"none"
+        #   - assistant_avatar_asset_url is explicitly set to None while
+        #     mode stays "custom"
+        #   - assistant_avatar_asset_url is replaced with a different URL
+        #     (the prior URL's file is no longer referenced)
+        final_avatar_mode = stored.get("assistant_avatar_mode")
+        final_avatar_url = stored.get("assistant_avatar_asset_url")
+        prior_still_active = (
+            prior_avatar_asset_url is not None
+            and final_avatar_mode == "custom"
+            and final_avatar_url == prior_avatar_asset_url
+        )
+        # Defer the file deletion until AFTER the DB upsert succeeds — if the
+        # upsert raises, the DB still points to prior_avatar_asset_url and we
+        # must not delete its file or we'd leave a broken-image URL behind.
+        orphan_to_delete: str | None = None
+        if prior_avatar_asset_url and not prior_still_active:
+            orphan_to_delete = prior_avatar_asset_url
+            # Keep stored state coherent: when mode is no longer "custom"
+            # the URL field shouldn't carry a stale value either.
+            if final_avatar_mode != "custom":
+                stored.pop("assistant_avatar_asset_url", None)
 
         now = datetime.now(UTC).isoformat()
         stored["updated_at"] = now
@@ -114,6 +147,10 @@ class BrandingService:
             stored["updated_by"] = user_id
 
         await self._system_settings.upsert(self.SETTINGS_KEY, stored)
+
+        if orphan_to_delete:
+            self._remove_local_asset(orphan_to_delete)
+
         return await self.get_branding()
 
     async def save_asset(
@@ -140,10 +177,10 @@ class BrandingService:
 
         """
         asset_type = asset_type.lower()
-        if asset_type not in {"favicon", "dark_favicon"}:
+        if asset_type not in {"favicon", "dark_favicon", "assistant_avatar"}:
             raise ValueError("Unsupported asset type")
 
-        self._validate_asset(filename=filename, file_bytes=file_bytes)
+        self._validate_asset(filename=filename, file_bytes=file_bytes, asset_type=asset_type)
 
         extension = Path(filename).suffix.lower()
         asset_filename = f"{asset_type}_{uuid.uuid4().hex}{extension}"
@@ -158,21 +195,35 @@ class BrandingService:
 
         public_url = f"{self.settings.api_v1_prefix}/settings/branding/assets/{asset_filename}"
 
-        # Get current branding to find old asset
+        # Get current branding to find old asset. Defer the file deletion
+        # until AFTER update_branding succeeds — otherwise a DB write failure
+        # would leave the DB pointing at the now-deleted old_url (broken
+        # image in chat). Note: for assistant_avatar, update_branding's own
+        # orphan-cleanup also targets old_url, so this post-success call is
+        # redundant-but-harmless (idempotent via missing_ok=True). For
+        # favicon/dark_favicon, this is the only cleanup path.
         current = await self.get_branding()
         old_url = self._get_old_asset_url(current, asset_type)
-        self._remove_local_asset(old_url, exclude_filename=asset_filename)
 
         # Update configuration
         field_name = self._asset_type_to_field_name(asset_type)
-        update = BrandingSettingsUpdate(**{field_name: public_url})
+        update_fields: dict[str, object] = {field_name: public_url}
+        # An avatar upload implicitly switches mode to "custom" so the chat
+        # renders the new image rather than the previously-selected curated
+        # icon.
+        if asset_type == "assistant_avatar":
+            update_fields["assistant_avatar_mode"] = "custom"
+        update = BrandingSettingsUpdate(**update_fields)
 
         try:
-            return await self.update_branding(update, user_id=user_id)
+            branding = await self.update_branding(update, user_id=user_id)
         except Exception:
             # Roll back to prior state and delete uploaded asset if update fails.
             asset_path.unlink(missing_ok=True)
             raise
+
+        self._remove_local_asset(old_url, exclude_filename=asset_filename)
+        return branding
 
     def resolve_asset_path(self, filename: str) -> Path:
         safe_name = Path(filename).name
@@ -199,12 +250,15 @@ class BrandingService:
     def _default_payload(self) -> dict[str, object]:
         return _build_default_payload(self.settings)
 
-    def _validate_asset(self, *, filename: str, file_bytes: bytes) -> None:
+    def _validate_asset(self, *, filename: str, file_bytes: bytes, asset_type: str = "favicon") -> None:
         if not filename:
             raise ValueError("Filename is required")
 
         extension = Path(filename).suffix.lower().lstrip(".")
-        allowed = {ext.lower() for ext in self.settings.branding_allowed_favicon_extensions}
+        if asset_type == "assistant_avatar":
+            allowed = {ext.lower() for ext in self.settings.branding_allowed_avatar_extensions}
+        else:
+            allowed = {ext.lower() for ext in self.settings.branding_allowed_favicon_extensions}
 
         if extension not in allowed:
             raise ValueError(f"Invalid file type '.{extension}'. Allowed types: {', '.join(sorted(allowed))}")
@@ -272,6 +326,7 @@ class BrandingService:
         mapping = {
             "favicon": "favicon_url",
             "dark_favicon": "dark_favicon_url",
+            "assistant_avatar": "assistant_avatar_asset_url",
         }
         return mapping[asset_type]
 

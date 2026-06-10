@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shu.billing.cp_client import HEALTHY_DEFAULT, BillingState
-from shu.billing.entitlements import EntitlementDeniedError, EntitlementSet, LimitSet
+from shu.billing.entitlements import (
+    EntitlementDeniedError,
+    EntitlementSet,
+    LimitExceededError,
+    LimitSet,
+)
 
 
 def _make_state(**overrides) -> BillingState:
@@ -21,8 +26,6 @@ def _make_state(**overrides) -> BillingState:
         payment_failed_at=None,
         payment_grace_days=0,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -33,16 +36,20 @@ def _make_state(**overrides) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
     base.update(overrides)
     return BillingState(**base)
 from shu.billing.enforcement import (
     SubscriptionInactiveError,
-    TrialCapExhaustedError,
+    HardCapExhaustedError,
     UserLimitStatus,
+    assert_document_count_under_limit,
     assert_entitlement,
+    assert_kb_count_under_limit,
     assert_subscription_active,
     check_user_limit,
+    document_count_batch,
     get_current_billing_state,
     require_entitlement,
 )
@@ -252,10 +259,10 @@ class TestAssertSubscriptionActive:
         await assert_subscription_active()
 
     @pytest.mark.asyncio
-    async def test_healthy_default_in_cache_fails_closed_via_trial_cap(self, install_stub_cache):
+    async def test_healthy_default_in_cache_fails_closed_via_hard_cap(self, install_stub_cache):
         """Cold-start CP outage on a configured tenant: cache hands out
-        `HEALTHY_DEFAULT`, which has `is_trial=True` and no period anchor
-        (Task 10.1 fail-closed posture). The trial-cap branch trips on the
+        `HEALTHY_DEFAULT`, which has `hard_cap=True` and no period anchor
+        (Task 10.1 fail-closed posture). The hard-cap branch trips on the
         missing-period-start guard before any usage query runs.
 
         Distinct from `test_no_cache_does_not_raise` — that's the
@@ -264,7 +271,7 @@ class TestAssertSubscriptionActive:
         """
         install_stub_cache(HEALTHY_DEFAULT)
 
-        with pytest.raises(TrialCapExhaustedError):
+        with pytest.raises(HardCapExhaustedError):
             await assert_subscription_active()
 
     @pytest.mark.asyncio
@@ -309,8 +316,8 @@ class TestAssertSubscriptionActive:
         assert err.details["grace_deadline"] == expected_deadline.isoformat()
 
 
-# Trial-cap branch — `assert_subscription_active` opens a short-lived
-# session via `get_async_session_local()` only when `state.is_trial=True`,
+# Hard-cap branch — `assert_subscription_active` opens a short-lived
+# session via `get_async_session_local()` only when `state.hard_cap=True`,
 # then aggregates `LLMUsage` totals via `UsageProviderImpl.get_usage_summary`
 # anchored on the wire's `current_period_start`. Patches below mock those two
 # touchpoints (DB session + usage provider) so the tests don't need a real DB.
@@ -329,15 +336,19 @@ def _trialing_state(
     # Default markup=1.0 keeps existing assertions in raw-dollar terms.
     # The markup-aware test class below passes an explicit multiplier
     # (or None to verify the configured-default fallback path).
+    #
+    # `current_period_end` is what HardCapExhaustedError now reports as the
+    # `period_end` detail (SHU-813 / L2 rename) — pinning it here keeps that
+    # error detail deterministic across tests.
     return _make_state(
-        is_trial=True,
-        trial_deadline=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
         total_grant_amount=total_grant,
         remaining_grant_amount=total_grant,
         seat_price_usd=Decimal("20.00"),
         usage_markup_multiplier=usage_markup_multiplier,
         current_period_start=current_period_start,
+        current_period_end=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
         subscription_status=subscription_status,
+        hard_cap=True,
     )
 
 
@@ -376,20 +387,55 @@ def _usage_provider_returning(total_cost: Decimal) -> MagicMock:
     return cls
 
 
-class TestAssertSubscriptionActiveTrialCap:
-    """Trial-cap branch of the consolidated assertion."""
+class TestAssertSubscriptionActiveHardCap:
+    """Hard-cap branch of the consolidated assertion."""
 
     @pytest.mark.asyncio
-    async def test_is_trial_false_with_active_status_does_not_raise(self, install_stub_cache):
-        """Non-trial tenant with an active subscription_status passes through
-        the cancel gate and short-circuits before the trial-cap branch.
+    async def test_hard_cap_false_with_active_status_does_not_raise(self, install_stub_cache):
+        """Non-capped tenant with an active subscription_status passes through
+        the cancel gate and short-circuits before the hard-cap branch.
         """
-        install_stub_cache(_make_state(subscription_status="active"))
+        install_stub_cache(_make_state(subscription_status="active", hard_cap=False))
 
-        # No session needed — non-trial short-circuits before the usage query.
+        # No session needed — non-capped short-circuits before the usage query.
         with patch(_P_SESSION_LOCAL) as session_local:
             await assert_subscription_active()
             session_local.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_free_tier_non_trialing_hard_cap_enforces_usage(self, install_stub_cache):
+        """Free-tier tenant past trial window: `subscription_status` is no
+        longer `trialing`, but the tier-intrinsic `hard_cap=True` (CP unifies
+        free + trialing into the same wire signal) must still trip the cap.
+
+        The pre-SHU-813 gate keyed on `is_trial` alone would have let this
+        tenant rack up unbounded LLM spend. This test pins the new behavior.
+        """
+        install_stub_cache(
+            _make_state(
+                subscription_status="active",
+                current_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+                current_period_end=datetime(2026, 6, 1, tzinfo=UTC),
+                total_grant_amount=Decimal("5.00"),
+                remaining_grant_amount=Decimal("5.00"),
+                usage_markup_multiplier=Decimal("1.0"),
+                hard_cap=True,
+            )
+        )
+
+        with (
+            patch(_P_SESSION_LOCAL, _session_local_factory()),
+            patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("5.00"))),
+        ):
+            with pytest.raises(HardCapExhaustedError) as exc_info:
+                await assert_subscription_active()
+
+        # `period_end` (SHU-813 L2) — must be non-null for a free-tier
+        # non-trialing tenant so the frontend can render "budget resets on …"
+        # for the cap-exhausted surface. The pre-rename `trial_deadline` was
+        # always None outside `trialing`, which gave the free-tier UI nothing
+        # to anchor on.
+        assert exc_info.value.details["period_end"] == "2026-06-01T00:00:00+00:00"
 
     @pytest.mark.asyncio
     async def test_canceled_subscription_status_raises_subscription_inactive(self, install_stub_cache):
@@ -415,53 +461,56 @@ class TestAssertSubscriptionActiveTrialCap:
             await assert_subscription_active()
 
     @pytest.mark.asyncio
-    async def test_at_or_above_cap_raises_trial_cap_exhausted(self, install_stub_cache):
+    async def test_at_or_above_cap_raises_hard_cap_exhausted(self, install_stub_cache):
         """Boundary is `total >= grant` — equality blocks too. A tenant
         sitting exactly at the budget shouldn't get one more call through.
         """
         install_stub_cache(_trialing_state(total_grant=Decimal("50.00")))
-        trial_deadline = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
+        period_end = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
 
         with (
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("50.00"))),
         ):
-            with pytest.raises(TrialCapExhaustedError) as exc_info:
+            with pytest.raises(HardCapExhaustedError) as exc_info:
                 await assert_subscription_active()
 
         err = exc_info.value
-        assert err.error_code == "trial_usage_exhausted"
+        assert err.error_code == "hard_cap_exhausted"
         assert err.status_code == 402
-        assert err.details["trial_deadline"] == trial_deadline.isoformat()
+        # `period_end` (SHU-813 L2 rename, was `trial_deadline`) — sourced
+        # from `current_period_end` so it's non-null in the free-tier case too.
+        assert err.details["period_end"] == period_end.isoformat()
         assert err.details["total_grant_amount"] == "50.00"
 
     @pytest.mark.asyncio
     async def test_missing_period_start_fails_closed(self, install_stub_cache):
         """Wire-side `current_period_start` is None — usage summary needs a
         period boundary, can't compute. Silent bypass would let unbounded
-        trial spend through, so we treat this as exhausted.
+        spend through, so we treat this as exhausted.
         """
         install_stub_cache(_trialing_state(current_period_start=None))
 
-        with pytest.raises(TrialCapExhaustedError):
+        with pytest.raises(HardCapExhaustedError):
             await assert_subscription_active()
 
     @pytest.mark.asyncio
-    async def test_payment_failure_takes_precedence_over_trial_cap(self, install_stub_cache):
-        """A `past_due` tenant who's also trialing must see the
-        payment-failure surface (the binding gate), not the trial one.
-        Trial-cap branch must not even open a session.
+    async def test_payment_failure_takes_precedence_over_hard_cap(self, install_stub_cache):
+        """A `past_due` tenant who's also hard-capped must see the
+        payment-failure surface (the binding gate), not the cap one.
+        Hard-cap branch must not even open a session.
         """
         install_stub_cache(
             _make_state(
                 openrouter_key_disabled=True,
                 payment_failed_at=datetime(2026, 1, 1, tzinfo=UTC),
                 payment_grace_days=7,
-                is_trial=True,
-                trial_deadline=datetime(2026, 5, 30, tzinfo=UTC),
+                subscription_status="trialing",
+                current_period_end=datetime(2026, 5, 30, tzinfo=UTC),
                 total_grant_amount=Decimal("50.00"),
                 remaining_grant_amount=Decimal("50.00"),
                 seat_price_usd=Decimal("20.00"),
+                hard_cap=True,
             )
         )
 
@@ -472,8 +521,8 @@ class TestAssertSubscriptionActiveTrialCap:
 
     @pytest.mark.asyncio
     async def test_self_hosted_bypass_does_not_open_session(self, install_stub_cache):
-        """`HEALTHY_DEFAULT.is_trial=True` (cold-start fail-closed posture)
-        would route self-hosted dev tenants into the trial-cap branch
+        """`HEALTHY_DEFAULT.hard_cap=True` (cold-start fail-closed posture)
+        would route self-hosted dev tenants into the hard-cap branch
         without the explicit cache=None bypass at the top of the function.
         Pinning that bypass here keeps dev usable.
         """
@@ -499,7 +548,7 @@ class TestAssertSubscriptionActiveTrialCap:
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
         ):
-            with pytest.raises(TrialCapExhaustedError):
+            with pytest.raises(HardCapExhaustedError):
                 await assert_subscription_active()
 
     @pytest.mark.asyncio
@@ -547,7 +596,7 @@ class TestAssertSubscriptionActiveTrialCap:
             patch(_P_SESSION_LOCAL, _session_local_factory()),
             patch(_P_USAGE_PROVIDER, _usage_provider_returning(Decimal("40.00"))),
         ):
-            with pytest.raises(TrialCapExhaustedError):
+            with pytest.raises(HardCapExhaustedError):
                 await assert_subscription_active()
 
 
@@ -636,3 +685,245 @@ class TestRequireEntitlement:
         install_stub_cache(_state_with_entitlements(plugins=True))
         dep = require_entitlement("plugins")
         await dep()  # no raise
+
+
+# Resource limit enforcement — `assert_kb_count_under_limit` and
+# `assert_document_count_under_limit` each read the cached BillingState,
+# acquire a per-tenant FOR UPDATE lock, and raise `LimitExceededError`
+# when the live count is at or over the cap. The two helpers differ only
+# in which `LimitSet` field they read and which model they count, so the
+# behavior is exercised once via parametrization rather than duplicated.
+
+
+def _state_with_limits(**overrides) -> BillingState:
+    """Healthy non-trial state with custom limit caps."""
+    return _make_state(limits=LimitSet(**overrides))
+
+
+def _db_returning_count(count: int) -> AsyncMock:
+    """AsyncSession mock where `await db.execute(...).scalar()` yields `count`."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar.return_value = count
+    db.execute.return_value = result
+    return db
+
+
+_LIMIT_HELPER_PARAMS = [
+    pytest.param(
+        assert_kb_count_under_limit,
+        "kb_count_limit",
+        "kb_count",
+        id="kb_count",
+    ),
+    pytest.param(
+        assert_document_count_under_limit,
+        "document_count_limit",
+        "document_count",
+        id="document_count",
+    ),
+]
+
+
+@pytest.mark.parametrize(("helper", "cap_field", "expected_limit_key"), _LIMIT_HELPER_PARAMS)
+class TestAssertCountUnderLimit:
+    """Behavior of `assert_kb_count_under_limit` and `assert_document_count_under_limit`."""
+
+    @pytest.mark.asyncio
+    async def test_self_hosted_bypass_is_no_op(
+        self, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        """Cache singleton missing → no enforcement and no DB access.
+        Mirrors `assert_entitlement`'s bypass so dev environments aren't
+        gated on a CP that isn't configured. The fixture's autouse reset
+        leaves the slot as None when `_install` is not called.
+        """
+        db = AsyncMock()
+        await helper(db)
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_under_cap_does_not_raise(
+        self, mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+        db = _db_returning_count(3)
+
+        await helper(db)
+
+        mock_lock.assert_awaited_once_with(db)
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_at_cap_raises_with_typed_details(
+        self, _mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+        db = _db_returning_count(5)
+
+        with pytest.raises(LimitExceededError) as exc_info:
+            await helper(db)
+
+        err = exc_info.value
+        assert err.error_code == "limit_exceeded"
+        assert err.status_code == 403
+        assert err.details == {"limit": expected_limit_key, "cap": 5, "current": 5}
+        assert err.limit == expected_limit_key
+        assert err.cap == 5
+        assert err.current == 5
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_over_cap_raises(
+        self, _mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+        db = _db_returning_count(7)
+
+        with pytest.raises(LimitExceededError) as exc_info:
+            await helper(db)
+
+        assert exc_info.value.cap == 5
+        assert exc_info.value.current == 7
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_zero_cap_blocks_even_at_zero_count(
+        self, _mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        """HEALTHY_DEFAULT ships limits=(0,0); the strict-zeros decision
+        (SHU-776) means even a brand-new tenant at count=0 is blocked
+        until CP supplies real caps. Pins the fail-closed posture against
+        the count-vs-cap branch.
+        """
+        install_stub_cache(_state_with_limits(**{cap_field: 0}))
+        db = _db_returning_count(0)
+
+        with pytest.raises(LimitExceededError) as exc_info:
+            await helper(db)
+
+        assert exc_info.value.cap == 0
+        assert exc_info.value.current == 0
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_acquires_lock_before_counting(
+        self, mock_lock, install_stub_cache, helper, cap_field, expected_limit_key
+    ):
+        """FOR UPDATE must be held before the count query, otherwise two
+        concurrent creates at current=cap-1 could both pass the check.
+        """
+        install_stub_cache(_state_with_limits(**{cap_field: 5}))
+
+        call_order: list[str] = []
+
+        async def _record_lock(_db):
+            call_order.append("lock")
+
+        mock_lock.side_effect = _record_lock
+
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar.return_value = 3
+
+        async def _record_execute(*_args, **_kwargs):
+            call_order.append("execute")
+            return result
+
+        db.execute.side_effect = _record_execute
+
+        await helper(db)
+
+        assert call_order == ["lock", "execute"]
+
+
+class TestDocumentCountBatch:
+    """`document_count_batch()` counts the DB once per batch (SHU-776 M1) but
+    still tracks remaining capacity in memory, so a batch can't push its own
+    inserts past the cap.
+    """
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_counts_once_then_tracks_in_memory(self, mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(0)  # plenty of headroom (remaining=5)
+
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+            await assert_document_count_under_limit(db)
+            await assert_document_count_under_limit(db)
+
+        # The DB was counted (and locked) exactly once for the whole batch.
+        assert db.execute.await_count == 1
+        mock_lock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_cap_minus_one_allows_one_then_blocks(self, _mock_lock, install_stub_cache):
+        """current=cap-1 with two new docs in one batch: the first lands, the
+        second is rejected — the batch can't overshoot via its own inserts.
+        """
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(4)  # remaining = 1
+
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)  # consumes the last slot
+            with pytest.raises(LimitExceededError):
+                await assert_document_count_under_limit(db)
+
+        # Still only one DB count — the second rejection is in-memory.
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_per_call_outside_batch(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(3)
+
+        await assert_document_count_under_limit(db)
+        await assert_document_count_under_limit(db)
+
+        # No batch scope (e.g. a direct upload) → each call re-checks: hard cap.
+        assert db.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_at_cap_blocks_every_item_in_batch(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(5)  # remaining = 0
+
+        async with document_count_batch():
+            with pytest.raises(LimitExceededError) as first:
+                await assert_document_count_under_limit(db)
+            # remaining stays 0, so the next item is rejected in-memory.
+            with pytest.raises(LimitExceededError):
+                await assert_document_count_under_limit(db)
+
+        assert first.value.details == {"limit": "document_count", "cap": 5, "current": 5}
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_bypass_when_cache_missing(self, _mock_lock, install_stub_cache):
+        # No cache installed → self-hosted bypass; the batch never touches the DB.
+        db = _db_returning_count(0)
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+            await assert_document_count_under_limit(db)
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+    async def test_batch_scope_resets_after_exit(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_limits(document_count_limit=5))
+        db = _db_returning_count(0)
+
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+        # Outside the scope again → next batch re-seeds from a fresh count.
+        async with document_count_batch():
+            await assert_document_count_under_limit(db)
+
+        assert db.execute.await_count == 2

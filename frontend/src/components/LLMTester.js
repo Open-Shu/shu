@@ -31,7 +31,7 @@ import {
   PlayArrow as TestIcon,
   ContentCopy as CopyIcon,
   ExpandMore as ExpandMoreIcon,
-  SmartToy as ModelIcon,
+  Memory as ModelIcon,
   Psychology as PromptIcon,
   Storage as KnowledgeBaseIcon,
   Settings as SettingsIcon,

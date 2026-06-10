@@ -29,8 +29,6 @@ def _disabled_billing_state(payment_failed_at: datetime) -> BillingState:
         payment_failed_at=payment_failed_at,
         payment_grace_days=7,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -41,6 +39,7 @@ def _disabled_billing_state(payment_failed_at: datetime) -> BillingState:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
 from shu.core.config import get_config_manager_dependency
 from tests.unit.api.conftest import make_app_with_router

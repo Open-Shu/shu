@@ -147,8 +147,8 @@ export const ThemeProvider = ({ children }) => {
     [userFontFamily, branding.brandFontFamily]
   );
   const resolvedHeadingFontFamily = useMemo(
-    () => resolveHeadingFontFamily(branding.brandHeadingFontFamily),
-    [branding.brandHeadingFontFamily]
+    () => resolveHeadingFontFamily(branding.brandHeadingFontFamily, userFontFamily, branding.brandFontFamily),
+    [branding.brandHeadingFontFamily, userFontFamily, branding.brandFontFamily]
   );
   const resolvedFontScale = useMemo(() => resolveFontSizeScale(userFontScale), [userFontScale]);
 

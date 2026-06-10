@@ -31,23 +31,40 @@ class PluginRegistry:
         self._manifest = self._loader.discover()
         self._cache.clear()
 
-    async def full_refresh(self, session: AsyncSession) -> None:
-        """Async refresh: discover filesystem plugins and MCP connections."""
-        self.refresh()
-        await self._refresh_mcp(session)
+    async def full_refresh(self, session: AsyncSession) -> bool:
+        """Async refresh: discover filesystem plugins and MCP connections.
 
-    async def _refresh_mcp(self, session: AsyncSession) -> None:
-        """Load MCP plugin records from the database and merge into the manifest."""
+        Returns the MCP-refresh success flag so ``sync()`` can avoid purging
+        ``mcp:`` definitions it was unable to enumerate.
+        """
+        self.refresh()
+        return await self._refresh_mcp(session)
+
+    async def _refresh_mcp(self, session: AsyncSession) -> bool:
+        """Load MCP plugin records from the database and merge into the manifest.
+
+        Returns True on success, False if the load failed — so a transient MCP
+        failure leaves the manifest without ``mcp:`` entries but does NOT make the
+        sync purge mistake that absence for "deleted on disk" and wipe every
+        MCP plugin definition.
+        """
         from ..services.mcp_service import McpService
 
         try:
             service = McpService(session)
             records = await service.generate_all_plugin_records()
         except Exception:
-            logger.warning("Failed to refresh MCP plugin records")
-            return
+            # Roll back so a failed MCP query doesn't leave the shared session in
+            # an aborted transaction — otherwise every subsequent statement in
+            # sync() fails with InFailedSQLTransactionError, masking this as the
+            # real cause. exc_info=True so the actual failure lands in the log,
+            # not a detail-less "Failed to refresh MCP plugin records".
+            logger.warning("Failed to refresh MCP plugin records", exc_info=True)
+            await session.rollback()
+            return False
         for record in records:
             self._manifest[record.name] = record
+        return True
 
     def get_manifest(self, refresh_if_empty: bool = True) -> dict[str, PluginRecord]:
         """Return current manifest; optionally refresh if empty.
@@ -71,25 +88,30 @@ class PluginRegistry:
         created = 0
         updated = 0
         purged = 0
-        await self.full_refresh(session)
+        mcp_ok = await self.full_refresh(session)
         discovered_names = set(self._manifest.keys())
-        # Upsert discovered plugins
+        # Upsert discovered plugins. Each plugin is isolated in its own try/except:
+        # on failure we log the real error (with traceback) and roll back so the
+        # next plugin starts on a clean transaction. Without this, one failed write
+        # left the shared session aborted and every later plugin's SELECT raised
+        # InFailedSQLTransactionError — surfacing a generic "current transaction is
+        # aborted" while the originating error was swallowed.
         for name, record in self._manifest.items():
-            res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
-            row = res.scalars().first()
-            if name.startswith("mcp:"):
-                c, u = await self._sync_mcp_definition(name, record, row, session)
-                created += c
-                updated += u
-            elif not row:
-                # load plugin to fetch schema
-                try:
-                    plugin = self._loader.load(record)
-                except Exception as e:
-                    logger.warning("Skipping plugin '%s' during sync: %s", name, e)
-                    continue
-                row = PluginDefinition(name=name, version=getattr(record, "version", "1"), enabled=False)
-                try:
+            try:
+                res = await session.execute(select(PluginDefinition).where(PluginDefinition.name == name))
+                row = res.scalars().first()
+                if name.startswith("mcp:"):
+                    c, u = await self._sync_mcp_definition(name, record, row, session)
+                    created += c
+                    updated += u
+                elif not row:
+                    # load plugin to fetch schema
+                    try:
+                        plugin = self._loader.load(record)
+                    except Exception as e:
+                        logger.warning("Skipping plugin '%s' during sync: %s", name, e)
+                        continue
+                    row = PluginDefinition(name=name, version=getattr(record, "version", "1"), enabled=False)
                     out_schema = None
                     try:
                         get_out = getattr(plugin, "get_output_schema", None)
@@ -98,13 +120,11 @@ class PluginRegistry:
                         out_schema = None
                     if out_schema:
                         row.output_schema = out_schema
-                finally:
                     session.add(row)
                     await session.commit()
                     created += 1
-            else:
-                # update output_schema if available
-                try:
+                else:
+                    # update output_schema if available
                     plugin = self._loader.load(record)
                     out_schema = None
                     try:
@@ -116,24 +136,36 @@ class PluginRegistry:
                         row.output_schema = out_schema
                         await session.commit()
                         updated += 1
-                except Exception:
-                    # non-fatal, continue
-                    pass
-        # Purge DB rows not present on disk or MCP anymore
+            except Exception:
+                # One plugin's failure must not poison the shared session for the
+                # rest. Log the real cause and roll back so the loop continues on a
+                # clean transaction instead of cascading aborted-transaction errors.
+                logger.warning("Failed to sync plugin '%s'", name, exc_info=True)
+                await session.rollback()
+                continue
+        # Purge DB rows not present on disk or MCP anymore. If the MCP refresh
+        # failed, the manifest has no ``mcp:`` entries — so skip purging ``mcp:``
+        # rows, otherwise a transient MCP load failure would delete every MCP
+        # plugin definition (their absence from ``discovered_names`` is a refresh
+        # failure, not a real "removed" signal). Filesystem rows are unaffected.
         try:
             res = await session.execute(select(PluginDefinition))
             all_rows = res.scalars().all()
             for r in all_rows:
-                if r.name not in discovered_names:
-                    try:
-                        await session.delete(r)
-                        await session.commit()
-                        purged += 1
-                    except Exception:
-                        # best-effort purge
-                        await session.rollback()
+                if r.name in discovered_names:
+                    continue
+                if r.name.startswith("mcp:") and not mcp_ok:
+                    continue
+                try:
+                    await session.delete(r)
+                    await session.commit()
+                    purged += 1
+                except Exception:
+                    # best-effort purge
+                    logger.warning("Failed to purge stale plugin '%s'", r.name, exc_info=True)
+                    await session.rollback()
         except Exception:
-            pass
+            logger.warning("Plugin purge scan failed", exc_info=True)
 
         return {
             "created": created,

@@ -1,6 +1,6 @@
 # Backend API RBAC
 
-_Last updated: 2025-11-20_
+_Last updated: 2026-06-02_
 
 This document summarizes backend API endpoints and their effective access control:
 - **Public** – no authentication; allowed by `AuthenticationMiddleware.public_paths/public_prefixes`.
@@ -71,7 +71,9 @@ Role/KB-gating is mixed; key patterns:
 - `POST /knowledge-bases` – **Power user+**.
 - `GET /knowledge-bases/{kb_id}` – **Power user+** _and_ **KB Query (default)** (`require_kb_query_default`).
 - `PUT /knowledge-bases/{kb_id}` – **Power user+** _and_ **KB Manage (default)** (`require_kb_manage_default`).
-- `DELETE /knowledge-bases/{kb_id}` – **Power user+** _and_ **KB Delete (default)** (`require_kb_delete_default`).
+- `DELETE /knowledge-bases/{kb_id}` – **KB-gated** (`require_kb_delete_access`): admin, KB owner, or explicit `kb.delete` PBAC grant. Personal (`is_personal`) KBs may be deleted **only by an admin** (e.g. offboarding/cleanup); the owner and `kb.delete` grantees get `403 PERSONAL_KB_DELETE_NOT_ALLOWED`. Power user no longer has blanket delete.
+- `POST /knowledge-bases/{kb_id}/documents/upload` – **KB-gated** (`require_kb_write_access`): admin, power user, KB owner, or `kb.write` PBAC grant.
+- `DELETE /knowledge-bases/{kb_id}/documents/{document_id}` – **KB-gated** (`require_kb_delete_access`): admin, KB owner, or `kb.delete` PBAC grant (power user has no blanket delete); manually-uploaded docs only.
 - `POST /knowledge-bases/{kb_id}/status`, `PUT /{kb_id}/rag-config` – **KB Manage (default)**.
 - `GET /knowledge-bases/{kb_id}/summary`, `/rag-config`, `/documents`, `/documents/{document_id}`, `/documents/{document_id}/chunks`, `/documents/extraction-summary` – **KB Query (default)**.
 - `GET /knowledge-bases/by-source-type/{source_type}` – **Authenticated (any user)** (`get_current_user`).

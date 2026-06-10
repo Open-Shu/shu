@@ -15,6 +15,7 @@ PluginFeedSource and by API manual-trigger endpoints.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
@@ -27,6 +28,7 @@ from ..core.config import get_settings_instance
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..plugins.registry import REGISTRY
+from .plugin_execution import plugin_dispatch_allowed
 from .plugin_execution_runner import ONE_SHOT_FEED_PARAMS  # noqa: F401
 from .scheduler_service import TICK_HISTORY  # noqa: F401
 
@@ -46,18 +48,54 @@ class PluginsSchedulerService:
         Creates PluginExecution records for tracking and idempotency, then enqueues
         jobs to QueueBackend with INGESTION WorkloadType for worker processing.
 
-        Returns: {"due": n, "enqueued": m, "skipped_no_owner": k, "skipped_missing_plugin": j, "queue_enqueued": p}
+        Returns a tally keyed by outcome (see `_claim_one_due_schedule`).
         """
         from ..core.queue_backend import get_queue_backend
 
-        now = datetime.now(UTC)
-        # Claim due schedules with row-level locks to avoid duplicates across workers
+        due_scheds = await self._claim_due_schedules(limit)
+        degraded_mcp = await self._get_degraded_mcp_connections(due_scheds)
+
+        # Get queue backend for job enqueueing; fall back to DB-only if unavailable.
+        try:
+            queue_backend = await get_queue_backend()
+        except Exception as e:
+            logger.error(f"Failed to get queue backend: {e}")
+            queue_backend = None
+
+        counts: Counter[str] = Counter()
+        for s in due_scheds:
+            outcome = await self._claim_one_due_schedule(
+                s,
+                degraded_mcp=degraded_mcp,
+                fallback_user_id=fallback_user_id,
+                queue_backend=queue_backend,
+            )
+            counts[outcome] += 1
+
+        await self.db.commit()
+        # `queue_enqueued` is the subset of enqueued executions that reached the
+        # queue; both outcomes count toward the `enqueued` total.
+        return {
+            "due": len(due_scheds),
+            "enqueued": counts["enqueued"] + counts["queue_enqueued"],
+            "queue_enqueued": counts["queue_enqueued"],
+            "skipped_no_owner": counts["skipped_no_owner"],
+            "skipped_missing_plugin": counts["skipped_missing_plugin"],
+            "skipped_already_enqueued": counts["skipped_already_enqueued"],
+            "skipped_degraded": counts["skipped_degraded"],
+            "skipped_entitlement": counts["skipped_entitlement"],
+        }
+
+    async def _claim_due_schedules(self, limit: int | None) -> list[PluginFeed]:
+        """Select enabled, due feeds with row-level locks (SKIP LOCKED) so
+        concurrent schedulers/workers don't claim the same feed.
+        """
         q = (
             select(PluginFeed)
             .where(
                 and_(
                     PluginFeed.enabled == True,  # noqa: E712
-                    or_(PluginFeed.next_run_at.is_(None), PluginFeed.next_run_at <= now),
+                    or_(PluginFeed.next_run_at.is_(None), PluginFeed.next_run_at <= datetime.now(UTC)),
                 )
             )
             .with_for_update(skip_locked=True)
@@ -65,80 +103,73 @@ class PluginsSchedulerService:
         if limit and limit > 0:
             q = q.limit(int(limit))
         res = await self.db.execute(q)
-        due_scheds = list(res.scalars().all())
-        enqueued = 0
-        queue_enqueued = 0
-        skipped_no_owner = 0
-        skipped_missing_plugin = 0
-        skipped_already_enqueued = 0
-        skipped_degraded = 0
-        degraded_mcp = await self._get_degraded_mcp_connections(due_scheds)
+        return list(res.scalars().all())
 
-        # Get queue backend for job enqueueing
-        try:
-            queue_backend = await get_queue_backend()
-        except Exception as e:
-            logger.error(f"Failed to get queue backend: {e}")
-            # Fall back to database-only mode if queue is unavailable
-            queue_backend = None
+    async def _claim_one_due_schedule(
+        self,
+        s: PluginFeed,
+        *,
+        degraded_mcp: set[str],
+        fallback_user_id: str | None,
+        queue_backend,
+    ) -> str:
+        """Process one due feed and return its outcome key.
 
-        for s in due_scheds:
-            # Skip degraded MCP connections — advance next_run_at to avoid re-selecting every tick
-            if s.plugin_name in degraded_mcp:
-                logger.warning("Skipping feed '%s': MCP connection is degraded", s.plugin_name)
-                s.schedule_next()
-                skipped_degraded += 1
-                continue
-
-            # Skip if plugin no longer exists or is disabled
-            plugin = await REGISTRY.resolve(s.plugin_name, self.db)
-            if not plugin:
-                skipped_missing_plugin += 1
-                continue
-
-            has_owner = bool(s.owner_user_id)
-            if not has_owner and not fallback_user_id:
-                # Owner is required for background runs; skip enqueue and count
-                skipped_no_owner += 1
-                continue
-            runner_user_id = str(s.owner_user_id) if has_owner else str(fallback_user_id)
-
-            # Idempotency guard: skip enqueue if an execution is already pending or running for this schedule
-            try:
-                exists_q = (
-                    select(PluginExecution.id)
-                    .where(
-                        (PluginExecution.schedule_id == s.id)
-                        & (PluginExecution.status.in_([PluginExecutionStatus.PENDING, PluginExecutionStatus.RUNNING]))
-                    )
-                    .limit(1)
-                )
-                exists_res = await self.db.execute(exists_q)
-                if exists_res.scalar_one_or_none() is not None:
-                    # Advance schedule window anyway to avoid tight loops; next tick will enqueue
-                    s.schedule_next()
-                    skipped_already_enqueued += 1
-                    continue
-            except Exception:
-                # Best-effort idempotency guard; fall through to enqueue
-                pass
-
-            queued = await self._create_and_enqueue_execution(s, runner_user_id, queue_backend)
-            if queued:
-                queue_enqueued += 1
+        Advances the schedule window on every outcome except `skipped_missing_plugin`
+        and `skipped_no_owner` (which leave it due so a fixed feed retries). On a
+        successful enqueue returns `queue_enqueued` when the job reached the queue,
+        else `enqueued`.
+        """
+        if s.plugin_name in degraded_mcp:
+            logger.warning("Skipping feed '%s': MCP connection is degraded", s.plugin_name)
             s.schedule_next()
-            enqueued += 1
+            return "skipped_degraded"
 
-        await self.db.commit()
-        return {
-            "due": len(due_scheds),
-            "enqueued": enqueued,
-            "queue_enqueued": queue_enqueued,
-            "skipped_no_owner": skipped_no_owner,
-            "skipped_missing_plugin": skipped_missing_plugin,
-            "skipped_already_enqueued": skipped_already_enqueued,
-            "skipped_degraded": skipped_degraded,
-        }
+        # SHU-773: skip feeds the tenant is no longer entitled to run (e.g. an
+        # mcp: feed after mcp_servers is revoked) so we don't churn executions
+        # the runner would only reject.
+        if not await plugin_dispatch_allowed(s.plugin_name):
+            logger.info("Skipping feed '%s': plugin entitlement revoked", s.plugin_name)
+            s.schedule_next()
+            return "skipped_entitlement"
+
+        plugin = await REGISTRY.resolve(s.plugin_name, self.db)
+        if not plugin:
+            return "skipped_missing_plugin"
+
+        has_owner = bool(s.owner_user_id)
+        if not has_owner and not fallback_user_id:
+            return "skipped_no_owner"
+        runner_user_id = str(s.owner_user_id) if has_owner else str(fallback_user_id)
+
+        if await self._has_active_execution(s):
+            # Advance the window anyway to avoid tight loops; next tick will enqueue.
+            s.schedule_next()
+            return "skipped_already_enqueued"
+
+        queued = await self._create_and_enqueue_execution(s, runner_user_id, queue_backend)
+        s.schedule_next()
+        return "queue_enqueued" if queued else "enqueued"
+
+    async def _has_active_execution(self, schedule: PluginFeed) -> bool:
+        """Return True if a PENDING/RUNNING execution already exists for this schedule.
+
+        Best-effort idempotency guard — on query error returns False so the
+        caller falls through to enqueue rather than silently dropping the run.
+        """
+        try:
+            q = (
+                select(PluginExecution.id)
+                .where(
+                    (PluginExecution.schedule_id == schedule.id)
+                    & (PluginExecution.status.in_([PluginExecutionStatus.PENDING, PluginExecutionStatus.RUNNING]))
+                )
+                .limit(1)
+            )
+            res = await self.db.execute(q)
+            return res.scalar_one_or_none() is not None
+        except Exception:
+            return False
 
     async def _get_degraded_mcp_connections(self, due_scheds: list) -> set[str]:
         """Batch-check MCP connection health and return degraded plugin names."""

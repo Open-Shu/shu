@@ -12,8 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fastapi.testclient import TestClient
+
+from shu.api.experiences import router as experiences_router
 from shu.api.experiences import run_experience
 from shu.core.exceptions import AuthorizationError, NotFoundError
+from tests.unit.api.conftest import assert_entitlement_denied, entitlement_state, gated_app
 
 
 def _mock_user(*, is_admin: bool = False, user_id: str = "user-1", is_active: bool = True):
@@ -143,3 +147,12 @@ class TestManualRunSharedGuard:
         body = response.body.decode()
         assert "not found" in body
         assert "EXPERIENCE_NOT_FOUND" in body
+
+
+class TestExperiencesEntitlementGate:
+    """SHU-773: the whole experiences surface is gated on the experiences entitlement."""
+
+    def test_experiences_off_returns_403(self, install_stub_cache):
+        install_stub_cache(entitlement_state(experiences=False))
+        with TestClient(gated_app(experiences_router)) as client:
+            assert assert_entitlement_denied(client.get("/api/v1/experiences"), "experiences")

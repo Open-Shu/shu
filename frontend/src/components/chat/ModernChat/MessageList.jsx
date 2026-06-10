@@ -2,6 +2,8 @@ import React, { forwardRef, useImperativeHandle, useMemo, useRef, useCallback } 
 import { Box, Skeleton } from '@mui/material';
 import MessageItem from './MessageItem';
 import { CHAT_SCROLL_TOP_THRESHOLD, CHAT_SCROLL_BOTTOM_THRESHOLD, CHAT_WINDOW_SIZE } from './utils/chatConfig';
+import { useTheme as useAppTheme } from '../../../contexts/ThemeContext';
+import { resolveBranding } from '../../../utils/brandingUtils';
 
 const MessageList = React.memo(
   forwardRef(function MessageList(
@@ -38,6 +40,29 @@ const MessageList = React.memo(
     ref
   ) {
     const items = useMemo(() => (Array.isArray(messages) ? messages : []), [messages]);
+    const { branding } = useAppTheme();
+    // Read branding once at this level and derive a memo-stable avatarConfig
+    // so MessageItem's React.memo doesn't churn on unrelated branding context
+    // updates. resolveBranding runs every render (it's cheap) but the memo
+    // deps are the resolved PRIMITIVES (string/null) — not the parent branding
+    // object — so unrelated changes (font, color, favicon) don't invalidate
+    // the memo. avatarConfig keeps the same reference across renders unless
+    // one of these four backing values actually changes.
+    const resolved = resolveBranding(branding);
+    const avatarConfig = useMemo(
+      () => ({
+        mode: resolved.assistantAvatarMode || 'curated',
+        curatedId: resolved.assistantAvatarCuratedId || 'shu_feather',
+        assetUrl: resolved.assistantAvatarAssetUrl || null,
+        appName: resolved.appName || 'Assistant',
+      }),
+      [
+        resolved.assistantAvatarMode,
+        resolved.assistantAvatarCuratedId,
+        resolved.assistantAvatarAssetUrl,
+        resolved.appName,
+      ]
+    );
     const scrollRef = useRef(null);
     const lastBottomStateRef = useRef(true);
     const topLoadArmedRef = useRef(false);
@@ -189,7 +214,7 @@ const MessageList = React.memo(
               const isSideBySide = sideBySideParents?.has?.(parentId);
               return (
                 <MessageItem
-                  key={message.id}
+                  key={message.streamSlotId || message.id}
                   message={message}
                   isLast={isLastGlobal}
                   user={user}
@@ -209,6 +234,7 @@ const MessageList = React.memo(
                   isSideBySide={!!isSideBySide}
                   onToggleSideBySide={onToggleSideBySide}
                   onToggleReasoning={onToggleReasoning}
+                  avatarConfig={avatarConfig}
                 />
               );
             })}

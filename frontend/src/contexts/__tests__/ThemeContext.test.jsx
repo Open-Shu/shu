@@ -132,12 +132,30 @@ describe('ThemeContext typography cascade', () => {
     await waitFor(() => expect(screen.getByTestId('resolvedFontFamily').textContent).toBe('atkinson-hyperlegible'));
   });
 
-  it('heading font ignores user pref (admin-only)', async () => {
+  it('admin brand heading wins over user body font', async () => {
     renderWithBrandingAndPrefs({
       branding: { brand_heading_font_family: 'lexend' },
       prefs: { font_family: 'atkinson-hyperlegible' },
     });
     await waitFor(() => expect(screen.getByTestId('resolvedHeadingFontFamily').textContent).toBe('lexend'));
+  });
+
+  it('heading inherits user body font when no admin heading is set', async () => {
+    renderWithBrandingAndPrefs({
+      branding: {},
+      prefs: { font_family: 'atkinson-hyperlegible' },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('resolvedHeadingFontFamily').textContent).toBe('atkinson-hyperlegible')
+    );
+  });
+
+  it('heading inherits brand body font when no admin heading and no user pick', async () => {
+    renderWithBrandingAndPrefs({
+      branding: { brand_font_family: 'space-grotesk' },
+      prefs: {},
+    });
+    await waitFor(() => expect(screen.getByTestId('resolvedHeadingFontFamily').textContent).toBe('space-grotesk'));
   });
 });
 

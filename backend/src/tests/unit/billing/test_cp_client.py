@@ -56,8 +56,6 @@ _MIN_PAYLOAD: dict[str, Any] = {
         "model_config_management": False,
         "mcp_servers": False,
     },
-    "is_trial": False,
-    "trial_deadline": None,
     "total_grant_amount": 0,
     "remaining_grant_amount": 0,
     "seat_price_usd": 0,
@@ -71,6 +69,11 @@ _MIN_PAYLOAD: dict[str, Any] = {
     "cancel_at_period_end": False,
     "canceled_at": None,
     "usage_markup_multiplier": None,
+    # SHU-813: single enforcement signal for the LLM-call cap. False here so
+    # the minimal payload models a non-capped tenant; capped scenarios opt in
+    # via override. CP always emits it (no default-omit), so this field is
+    # required on the wire — surfaced by the missing-field test below.
+    "hard_cap": False,
 }
 
 
@@ -150,8 +153,6 @@ async def test_200_with_null_payment_failed_at_returns_billing_state() -> None:
         payment_failed_at=None,
         payment_grace_days=7,
         entitlements=EntitlementSet(),
-        is_trial=False,
-        trial_deadline=None,
         total_grant_amount=Decimal(0),
         remaining_grant_amount=Decimal(0),
         seat_price_usd=Decimal(0),
@@ -162,6 +163,7 @@ async def test_200_with_null_payment_failed_at_returns_billing_state() -> None:
         cancel_at_period_end=False,
         canceled_at=None,
         usage_markup_multiplier=None,
+        hard_cap=False,
     )
 
 
@@ -267,8 +269,6 @@ async def test_malformed_json_raises_cp_malformed_response() -> None:
         "payment_failed_at",
         "payment_grace_days",
         "entitlements",
-        "is_trial",
-        "trial_deadline",
         "total_grant_amount",
         "remaining_grant_amount",
         "seat_price_usd",
@@ -281,6 +281,10 @@ async def test_malformed_json_raises_cp_malformed_response() -> None:
         "cancel_at_period_end",
         "canceled_at",
         "usage_markup_multiplier",
+        # SHU-813: required on the wire so an old CP version that doesn't
+        # know about hard_cap surfaces as CpMalformedResponse rather than
+        # silently bypassing the LLM-cap gate.
+        "hard_cap",
     ],
 )
 async def test_missing_field_raises_cp_malformed_response(missing_field: str) -> None:
@@ -337,12 +341,10 @@ async def test_list_payload_raises_cp_malformed_response() -> None:
         {"payment_failed_at": "2026-04-30T12:34:56"},
         # Non-string for the datetime field
         {"payment_failed_at": 1714478096},
-        # is_trial type drift
-        {"is_trial": "true"},
-        # Naive trial_deadline
-        {"trial_deadline": "2026-05-30T12:34:56"},
-        # Unix timestamp for trial_deadline
-        {"trial_deadline": 1714478096},
+        # hard_cap type drift — StrictBool rejects strings and ints; a
+        # truthy "false" would otherwise silently disable the LLM-cap gate.
+        {"hard_cap": "true"},
+        {"hard_cap": 1},
         # Negative grant amount → contract violation
         {"total_grant_amount": -1},
         # Negative remaining grant
@@ -376,9 +378,8 @@ async def test_list_payload_raises_cp_malformed_response() -> None:
         "negative-grace-days",
         "naive-datetime",
         "int-for-datetime",
-        "string-for-is-trial",
-        "naive-trial-deadline",
-        "int-for-trial-deadline",
+        "string-for-hard-cap",
+        "int-for-hard-cap",
         "negative-total-grant",
         "negative-remaining-grant",
         "negative-seat-price",
@@ -408,6 +409,11 @@ async def test_type_drift_raises_cp_malformed_response(overrides: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_200_populates_entitlements_and_trial_fields_from_payload() -> None:
+    """Round-trip wire fields + verify the derived trial accessors.
+
+    `is_trial` and `trial_deadline` were dropped from the wire (SHU-813)
+    and re-derived from `subscription_status` and `current_period_end`.
+    """
     payload = _payload(
         entitlements={
             "chat": True,
@@ -417,11 +423,13 @@ async def test_200_populates_entitlements_and_trial_fields_from_payload() -> Non
             "model_config_management": True,
             "mcp_servers": False,
         },
-        is_trial=True,
-        trial_deadline="2026-05-30T12:00:00Z",
+        subscription_status="trialing",
+        current_period_start="2026-05-01T00:00:00Z",
+        current_period_end="2026-05-30T12:00:00Z",
         total_grant_amount="50.00",
         remaining_grant_amount="42.50",
         seat_price_usd="20.00",
+        hard_cap=True,
     )
     http_client = _http_client_returning(_ok_response(payload))
 
@@ -437,6 +445,53 @@ async def test_200_populates_entitlements_and_trial_fields_from_payload() -> Non
     assert state.total_grant_amount == Decimal("50.00")
     assert state.remaining_grant_amount == Decimal("42.50")
     assert state.seat_price_usd == Decimal("20.00")
+    assert state.hard_cap is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_value", "expected_is_trial"),
+    [
+        ("trialing", True),
+        ("active", False),
+        ("past_due", False),
+        ("canceled", False),
+        ("unpaid", False),
+        (None, False),
+    ],
+)
+async def test_is_trial_property_derives_from_subscription_status(
+    status_value: str | None, expected_is_trial: bool
+) -> None:
+    """Derived `is_trial` mirrors `subscription_status == "trialing"`.
+
+    Pins the SHU-813 contract: the deprecated wire fields stay off the wire
+    and the accessor that replaces them only treats `trialing` as a trial.
+    """
+    payload = _payload(subscription_status=status_value)
+    http_client = _http_client_returning(_ok_response(payload))
+
+    state = await _make_client(http_client).fetch_billing_state()
+
+    assert state.is_trial is expected_is_trial
+
+
+@pytest.mark.asyncio
+async def test_trial_deadline_returns_none_outside_trialing() -> None:
+    """`current_period_end` outside `trialing` is the regular cycle end, not
+    a trial deadline — the derived accessor must hide it.
+    """
+    payload = _payload(
+        subscription_status="active",
+        current_period_start="2026-05-01T00:00:00Z",
+        current_period_end="2026-06-01T00:00:00Z",
+    )
+    http_client = _http_client_returning(_ok_response(payload))
+
+    state = await _make_client(http_client).fetch_billing_state()
+
+    assert state.is_trial is False
+    assert state.trial_deadline is None
 
 
 @pytest.mark.asyncio
@@ -503,6 +558,37 @@ async def test_unknown_extra_field_is_ignored_for_forward_compat() -> None:
 
     assert state.openrouter_key_disabled is False
     assert not hasattr(state, "future_field_we_dont_know_about")
+
+
+@pytest.mark.asyncio
+async def test_deprecated_trial_fields_from_old_cp_are_ignored() -> None:
+    """Rollout lock for the SHU-813 wire shape change.
+
+    CP still emits `is_trial` and `trial_deadline` for the migration window
+    (they were dropped from this tenant's schema but kept upstream). The
+    parser must ignore both — and the derived `is_trial` / `trial_deadline`
+    accessors must read from `subscription_status` / `current_period_end`,
+    not the legacy wire fields. Without this lock, a CP rollback that
+    re-emits a different value for those fields could silently flip the
+    tenant's view of trial state.
+    """
+    # Wire-side mismatch: legacy `is_trial=True` but `subscription_status`
+    # is `"active"`. The derived accessor must trust `subscription_status`,
+    # not the legacy boolean — otherwise an old CP version's stale wire
+    # field could override the new source of truth.
+    payload = _payload(
+        is_trial=True,
+        trial_deadline="2026-05-30T12:00:00Z",
+        subscription_status="active",
+        current_period_start="2026-05-01T00:00:00Z",
+        current_period_end="2026-06-01T00:00:00Z",
+    )
+    http_client = _http_client_returning(_ok_response(payload))
+
+    state = await _make_client(http_client).fetch_billing_state()
+
+    assert state.is_trial is False
+    assert state.trial_deadline is None
 
 
 # Trial-action POST endpoints — `post_upgrade_now` and `post_cancel_subscription`

@@ -21,6 +21,7 @@ from ..core.response import ShuResponse
 from ..models.plugin_execution import PluginExecution, PluginExecutionStatus
 from ..models.plugin_feed import PluginFeed
 from ..plugins.registry import REGISTRY
+from ..services.plugin_execution import assert_plugin_entitlement
 from ..services.plugin_identity import compute_identity_status
 from ..services.plugins_feed_policy import enforce_feed_op
 
@@ -60,6 +61,8 @@ async def admin_create_schedule(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_power_user),
 ):
+    await assert_plugin_entitlement(body.plugin_name)
+
     owner_id = str(body.owner_user_id) if body.owner_user_id else str(admin.id)
 
     params = enforce_feed_op(body.plugin_name, dict(body.params or {}))
@@ -142,6 +145,7 @@ async def admin_update_schedule(
         raise HTTPException(status_code=404, detail="schedule not found")
 
     if body.plugin_name is not None and body.plugin_name != sched.plugin_name:
+        await assert_plugin_entitlement(body.plugin_name)
         plugin = await REGISTRY.resolve(body.plugin_name, db)
         if not plugin:
             raise HTTPException(
@@ -239,6 +243,8 @@ async def admin_run_schedule_now(
         raise HTTPException(status_code=404, detail="schedule not found")
     if not sched.enabled:
         raise HTTPException(status_code=400, detail="schedule is disabled")
+
+    await assert_plugin_entitlement(sched.plugin_name)
 
     # Enqueue one execution immediately
     exec_rec = PluginExecution(

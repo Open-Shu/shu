@@ -89,16 +89,32 @@ describe('resolveFontFamily cascade', () => {
 });
 
 describe('resolveHeadingFontFamily cascade', () => {
-  it('returns the shipped default when brand pref is null', () => {
-    expect(resolveHeadingFontFamily(null)).toBe(SHIPPED_DEFAULT_FONT);
+  it('returns the shipped default when nothing is set', () => {
+    expect(resolveHeadingFontFamily(null, null, null)).toBe(SHIPPED_DEFAULT_FONT);
   });
 
-  it('returns the brand pref when set', () => {
-    expect(resolveHeadingFontFamily('space-grotesk')).toBe('space-grotesk');
+  it('returns the admin heading pref when set, regardless of user/brand body', () => {
+    expect(resolveHeadingFontFamily('space-grotesk', 'atkinson-hyperlegible', 'lexend')).toBe('space-grotesk');
   });
 
-  it('ignores an unknown brand pref and falls back to shipped default', () => {
-    expect(resolveHeadingFontFamily('wingdings')).toBe(SHIPPED_DEFAULT_FONT);
+  it('falls back to user body pref when no admin heading is set', () => {
+    expect(resolveHeadingFontFamily(null, 'atkinson-hyperlegible', null)).toBe('atkinson-hyperlegible');
+  });
+
+  it('user body beats brand body for heading fallback (matches body cascade)', () => {
+    expect(resolveHeadingFontFamily(null, 'atkinson-hyperlegible', 'space-grotesk')).toBe('atkinson-hyperlegible');
+  });
+
+  it('falls back to brand body when no admin heading and no user pick', () => {
+    expect(resolveHeadingFontFamily(null, null, 'space-grotesk')).toBe('space-grotesk');
+  });
+
+  it('ignores an unknown brand-heading pref and falls through to the body cascade', () => {
+    expect(resolveHeadingFontFamily('wingdings', 'atkinson-hyperlegible', null)).toBe('atkinson-hyperlegible');
+  });
+
+  it('falls back to shipped default when everything in the cascade is unknown or null', () => {
+    expect(resolveHeadingFontFamily('wingdings', 'comic-sans', null)).toBe(SHIPPED_DEFAULT_FONT);
   });
 });
 

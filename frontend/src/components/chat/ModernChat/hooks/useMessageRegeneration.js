@@ -4,6 +4,7 @@ import log from '../../../../utils/log';
 import { getMessagesFromCache, rebuildCache } from '../utils/chatCache';
 import { iterateSSE, tryParseJSON } from '../utils/sseParser';
 import { PLACEHOLDER_THINKING } from '../utils/chatConfig';
+import { derivePool } from '../utils/thinkingPhrases';
 import { makeStreamToken } from './useChatStreaming';
 
 const useMessageRegeneration = ({
@@ -108,6 +109,13 @@ const useMessageRegeneration = ({
       setStreamingConversationId?.(conversationId);
       setStreamingStarted?.(false);
 
+      // SHU-805: regen placeholders need the same stable-identity +
+      // operation-aware-pool fields as the main streaming path, or
+      // MessageList/MessageItem will remount on the temp→server-id
+      // swap (cutting off the StreamingFeather settle) and RAG-context
+      // regens will fall back to default-Shu verbs.
+      const placeholderThinkingPool = derivePool({ selectedKBIds });
+
       queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
         const existing = getMessagesFromCache(oldData);
         const placeholder = {
@@ -121,6 +129,8 @@ const useMessageRegeneration = ({
           parent_message_id: parentId,
           suppressSideBySide: true,
           variant_index: Number.MAX_SAFE_INTEGER,
+          streamSlotId: tempId,
+          thinkingPool: placeholderThinkingPool,
         };
 
         try {
@@ -311,6 +321,12 @@ const useMessageRegeneration = ({
             };
             queryClient.setQueryData(['conversation-messages', conversationId], (oldData) => {
               const existing = getMessagesFromCache(oldData);
+              // SHU-805: preserve streamSlotId across the temp→server-id
+              // swap so the MessageList/MessageItem React key stays
+              // stable and the StreamingFeather settle animation can
+              // play before unmount.
+              const placeholderMsg = existing.find((m) => m.id === tempId);
+              const preservedSlotId = placeholderMsg?.streamSlotId || tempId;
               const withoutPlaceholders = existing.filter((m) => {
                 if (!m?.isPlaceholder) {
                   return true;
@@ -323,7 +339,7 @@ const useMessageRegeneration = ({
                   mergedMap.set(m.id, m);
                 }
               });
-              mergedMap.set(created.id, created);
+              mergedMap.set(created.id, { ...created, streamSlotId: preservedSlotId });
               const merged = Array.from(mergedMap.values());
               return rebuildCache(oldData, merged);
             });

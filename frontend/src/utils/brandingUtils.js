@@ -28,6 +28,9 @@ export const defaultBranding = {
   darkTopbarTextColor: null,
   lightThemeOverrides: {},
   darkThemeOverrides: {},
+  assistantAvatarMode: 'curated',
+  assistantAvatarCuratedId: 'shu_feather',
+  assistantAvatarAssetUrl: null,
   brandFontFamily: null,
   brandHeadingFontFamily: null,
   updatedAt: null,
@@ -52,6 +55,11 @@ export const resolveBranding = (branding) => {
     darkTopbarTextColor: raw.darkTopbarTextColor ?? raw.dark_topbar_text_color ?? null,
     lightThemeOverrides: toPlainObject(raw.lightThemeOverrides ?? raw.light_theme_overrides) || {},
     darkThemeOverrides: toPlainObject(raw.darkThemeOverrides ?? raw.dark_theme_overrides) || {},
+    assistantAvatarMode: raw.assistantAvatarMode ?? raw.assistant_avatar_mode ?? defaultBranding.assistantAvatarMode,
+    assistantAvatarCuratedId:
+      raw.assistantAvatarCuratedId ?? raw.assistant_avatar_curated_id ?? defaultBranding.assistantAvatarCuratedId,
+    assistantAvatarAssetUrl:
+      raw.assistantAvatarAssetUrl ?? raw.assistant_avatar_asset_url ?? defaultBranding.assistantAvatarAssetUrl,
     brandFontFamily: raw.brandFontFamily ?? raw.brand_font_family ?? null,
     brandHeadingFontFamily: raw.brandHeadingFontFamily ?? raw.brand_heading_font_family ?? null,
     updatedAt: raw.updatedAt ?? raw.updated_at ?? defaultBranding.updatedAt,

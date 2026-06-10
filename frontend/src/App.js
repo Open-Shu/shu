@@ -50,6 +50,7 @@ import { PLUGINS_ENABLED, MCP_ENABLED, EXPERIENCES_ENABLED } from './config/feat
 // Theme Context
 import { ThemeProvider as CustomThemeProvider, useTheme } from './contexts/ThemeContext';
 import { BillingStatusProvider } from './contexts/BillingStatusContext';
+import FeatureGate from './components/FeatureGate';
 import PaymentBanner from './components/PaymentBanner';
 import TrialBanner from './components/TrialBanner';
 
@@ -133,6 +134,11 @@ const AuthenticatedApp = () => {
         <Routes>
           <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          {/* URL-addressable registration so the CP welcome email can deep-link
+              new customers straight to the register form with their email
+              pre-filled (?email=). Falls back to AuthPage's catch-all login
+              for everything else. */}
+          <Route path="/register" element={<AuthPage initialMode="register" />} />
           <Route path="*" element={<AuthPage />} />
         </Routes>
       </Router>
@@ -187,9 +193,11 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/dashboard"
                     element={
-                      <RoleBasedRoute layout="user">
-                        <DashboardPage />
-                      </RoleBasedRoute>
+                      <FeatureGate feature="experiences">
+                        <RoleBasedRoute layout="user">
+                          <DashboardPage />
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -197,9 +205,11 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/dashboard/experience/:experienceId"
                     element={
-                      <RoleBasedRoute layout="user">
-                        <ExperienceDetailPage />
-                      </RoleBasedRoute>
+                      <FeatureGate feature="experiences">
+                        <RoleBasedRoute layout="user">
+                          <ExperienceDetailPage />
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -219,9 +229,11 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/settings/connected-accounts"
                     element={
-                      <RoleBasedRoute layout="user">
-                        <ConnectedAccountsPage />
-                      </RoleBasedRoute>
+                      <FeatureGate feature="plugins">
+                        <RoleBasedRoute layout="user">
+                          <ConnectedAccountsPage />
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -300,21 +312,25 @@ const AuthenticatedApp = () => {
                 <Route
                   path="/admin/llm-providers"
                   element={
-                    <RoleBasedRoute adminOnly>
-                      <ProtectedRoute requiredRole="admin">
-                        <LLMProviders />
-                      </ProtectedRoute>
-                    </RoleBasedRoute>
+                    <FeatureGate feature="providers">
+                      <RoleBasedRoute adminOnly>
+                        <ProtectedRoute requiredRole="admin">
+                          <LLMProviders />
+                        </ProtectedRoute>
+                      </RoleBasedRoute>
+                    </FeatureGate>
                   }
                 />
                 <Route
                   path="/admin/model-configurations"
                   element={
-                    <RoleBasedRoute adminOnly>
-                      <ProtectedRoute requiredRole="power_user">
-                        <ModelConfigurations />
-                      </ProtectedRoute>
-                    </RoleBasedRoute>
+                    <FeatureGate feature="modelConfigs">
+                      <RoleBasedRoute adminOnly>
+                        <ProtectedRoute requiredRole="power_user">
+                          <ModelConfigurations />
+                        </ProtectedRoute>
+                      </RoleBasedRoute>
+                    </FeatureGate>
                   }
                 />
                 <Route
@@ -361,9 +377,11 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/admin/plugins"
                     element={
-                      <RoleBasedRoute adminOnly>
-                        <PluginsAdmin />
-                      </RoleBasedRoute>
+                      <FeatureGate feature="plugins">
+                        <RoleBasedRoute adminOnly>
+                          <PluginsAdmin />
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -371,9 +389,11 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/admin/mcp"
                     element={
-                      <RoleBasedRoute adminOnly>
-                        <McpAdmin />
-                      </RoleBasedRoute>
+                      <FeatureGate feature="mcp">
+                        <RoleBasedRoute adminOnly>
+                          <McpAdmin />
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -381,9 +401,11 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/admin/feeds"
                     element={
-                      <RoleBasedRoute adminOnly>
-                        <PluginsAdminFeeds />
-                      </RoleBasedRoute>
+                      <FeatureGate feature="plugins">
+                        <RoleBasedRoute adminOnly>
+                          <PluginsAdminFeeds />
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -391,11 +413,13 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/admin/experiences"
                     element={
-                      <RoleBasedRoute adminOnly>
-                        <ProtectedRoute requiredRole="admin">
-                          <ExperiencesAdmin />
-                        </ProtectedRoute>
-                      </RoleBasedRoute>
+                      <FeatureGate feature="experiences">
+                        <RoleBasedRoute adminOnly>
+                          <ProtectedRoute requiredRole="admin">
+                            <ExperiencesAdmin />
+                          </ProtectedRoute>
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -403,11 +427,13 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/admin/experiences/new"
                     element={
-                      <RoleBasedRoute adminOnly>
-                        <ProtectedRoute requiredRole="admin">
-                          <ExperienceEditor />
-                        </ProtectedRoute>
-                      </RoleBasedRoute>
+                      <FeatureGate feature="experiences">
+                        <RoleBasedRoute adminOnly>
+                          <ProtectedRoute requiredRole="admin">
+                            <ExperienceEditor />
+                          </ProtectedRoute>
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}
@@ -415,11 +441,13 @@ const AuthenticatedApp = () => {
                   <Route
                     path="/admin/experiences/:experienceId/edit"
                     element={
-                      <RoleBasedRoute adminOnly>
-                        <ProtectedRoute requiredRole="admin">
-                          <ExperienceEditor />
-                        </ProtectedRoute>
-                      </RoleBasedRoute>
+                      <FeatureGate feature="experiences">
+                        <RoleBasedRoute adminOnly>
+                          <ProtectedRoute requiredRole="admin">
+                            <ExperienceEditor />
+                          </ProtectedRoute>
+                        </RoleBasedRoute>
+                      </FeatureGate>
                     }
                   />
                 )}

@@ -16,6 +16,7 @@ from shu.core.logging import get_logger
 from ..api.dependencies import get_db
 from ..auth.models import User
 from ..auth.rbac import get_current_user, require_admin
+from ..billing.enforcement import require_entitlement
 from ..core.exceptions import (
     LLMProviderError,
     ModelLockedError,
@@ -37,6 +38,12 @@ from ..services.providers.adapter_base import ProviderAdapterContext, get_adapte
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
+
+# SHU-773: provider CRUD / discovery / sync and provider-type reads require the
+# provider_management entitlement. Attached per-route (not router-wide) because
+# /models and /health must stay open — the chat model picker reads them on tiers
+# without provider management.
+_provider_mgmt = Depends(require_entitlement("provider_management"))
 
 
 # Pydantic models for API requests/responses
@@ -204,7 +211,11 @@ def _provider_to_response(db_session: AsyncSession, provider: LLMProvider) -> LL
 
 
 # Provider management endpoints
-@router.get("/providers", response_model=SuccessResponse[list[LLMProviderResponse]])
+@router.get(
+    "/providers",
+    response_model=SuccessResponse[list[LLMProviderResponse]],
+    dependencies=[_provider_mgmt],
+)
 async def list_providers(current_user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """List all LLM providers."""
     try:
@@ -220,6 +231,7 @@ async def list_providers(current_user: User = Depends(require_admin), db: AsyncS
     "/providers",
     response_model=SuccessResponse[LLMProviderResponse],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[_provider_mgmt],
 )
 async def create_provider(
     provider_data: LLMProviderCreate,
@@ -243,7 +255,11 @@ async def create_provider(
         )
 
 
-@router.get("/providers/{provider_id}", response_model=SuccessResponse[LLMProviderResponse])
+@router.get(
+    "/providers/{provider_id}",
+    response_model=SuccessResponse[LLMProviderResponse],
+    dependencies=[_provider_mgmt],
+)
 async def get_provider(
     provider_id: str,
     current_user: User = Depends(require_admin),
@@ -263,7 +279,11 @@ async def get_provider(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get LLM provider")
 
 
-@router.put("/providers/{provider_id}", response_model=SuccessResponse[LLMProviderResponse])
+@router.put(
+    "/providers/{provider_id}",
+    response_model=SuccessResponse[LLMProviderResponse],
+    dependencies=[_provider_mgmt],
+)
 async def update_provider(
     provider_id: str,
     provider_data: LLMProviderUpdate,
@@ -287,7 +307,7 @@ async def update_provider(
         )
 
 
-@router.delete("/providers/{provider_id}")
+@router.delete("/providers/{provider_id}", dependencies=[_provider_mgmt])
 async def delete_provider(
     provider_id: str,
     current_user: User = Depends(require_admin),
@@ -312,7 +332,7 @@ async def delete_provider(
         )
 
 
-@router.post("/providers/{provider_id}/test")
+@router.post("/providers/{provider_id}/test", dependencies=[_provider_mgmt])
 async def test_provider(
     provider_id: str,
     current_user: User = Depends(require_admin),
@@ -369,7 +389,7 @@ async def list_models(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list LLM models")
 
 
-@router.get("/providers/{provider_id}/discover-models")
+@router.get("/providers/{provider_id}/discover-models", dependencies=[_provider_mgmt])
 async def discover_provider_models(
     provider_id: str,
     current_user: User = Depends(require_admin),
@@ -394,7 +414,7 @@ async def discover_provider_models(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to discover models")
 
 
-@router.post("/providers/{provider_id}/sync-models")
+@router.post("/providers/{provider_id}/sync-models", dependencies=[_provider_mgmt])
 async def sync_provider_models(
     provider_id: str,
     selected_models: list[str] | None = None,
@@ -441,7 +461,7 @@ async def sync_provider_models(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to sync models")
 
 
-@router.delete("/providers/{provider_id}/models/{model_id}")
+@router.delete("/providers/{provider_id}/models/{model_id}", dependencies=[_provider_mgmt])
 async def disable_provider_model(
     provider_id: str,
     model_id: str,
@@ -472,7 +492,11 @@ async def disable_provider_model(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to disable model")
 
 
-@router.post("/providers/{provider_id}/models", response_model=SuccessResponse[LLMModelResponse])
+@router.post(
+    "/providers/{provider_id}/models",
+    response_model=SuccessResponse[LLMModelResponse],
+    dependencies=[_provider_mgmt],
+)
 async def create_model(
     provider_id: str,
     model_data: LLMModelCreate,
@@ -495,6 +519,7 @@ async def create_model(
 @router.get(
     "/provider-types",
     response_model=SuccessResponse[list[ProviderTypeDefinitionListItem]],
+    dependencies=[_provider_mgmt],
 )
 async def list_provider_types(
     current_user: User = Depends(require_admin),
@@ -509,6 +534,7 @@ async def list_provider_types(
 @router.get(
     "/provider-types/{key}",
     response_model=SuccessResponse[ProviderTypeDefinitionSchema],
+    dependencies=[_provider_mgmt],
 )
 async def get_provider_type_definition(
     key: str,

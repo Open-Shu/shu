@@ -2,11 +2,11 @@ import React from 'react';
 import { MenuItem, ListItemIcon, Divider } from '@mui/material';
 import {
   Security as SecurityIcon,
-  SmartToy as ChatIcon,
+  ChatBubbleOutline as ChatIcon,
   ManageAccounts as AccountsIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';
-import { PLUGINS_ENABLED } from '../config/featureFlags';
+import { useFeatureEnabled } from '../config/featureFlags';
 
 /**
  * UserMenuCommonItems
@@ -16,6 +16,7 @@ import { PLUGINS_ENABLED } from '../config/featureFlags';
  */
 export default function UserMenuCommonItems({ onNavigate }) {
   const go = (path) => () => onNavigate && onNavigate(path);
+  const canPlugins = useFeatureEnabled('plugins');
   return (
     <>
       <MenuItem onClick={go('/chat')}>
@@ -30,7 +31,7 @@ export default function UserMenuCommonItems({ onNavigate }) {
         </ListItemIcon>
         My Permissions
       </MenuItem>
-      {PLUGINS_ENABLED && (
+      {canPlugins && (
         <MenuItem onClick={go('/settings/connected-accounts')}>
           <ListItemIcon>
             <AccountsIcon fontSize="small" />

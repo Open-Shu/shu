@@ -5,9 +5,12 @@ These tests cover knowledge base CRUD operations, document management,
 and the complete knowledge base lifecycle.
 """
 
-from shu.core.logging import get_logger
+import asyncio
+import hashlib
 import sys
+import uuid
 from collections.abc import Callable
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import text
 
@@ -15,8 +18,41 @@ from integ.base_integration_test import BaseIntegrationTestSuite
 from integ.expected_error_context import (
     expect_duplicate_errors,
 )
+from integ.helpers.auth import create_active_user_headers, create_active_user_with_id
+from integ.response_utils import extract_data
+from shu.core.logging import get_logger
+from shu.services.document_service import DocumentService
+from shu.services.ingestion_service import manual_upload_source_id
 
 logger = get_logger(__name__)
+
+# SHU-817: personal-KB document management (delete authz, re-ingest, GET /personal)
+# exercised through the real API.
+_TXT = ("kbnotes.txt", b"Personal Knowledge management test content.\n", "text/plain")
+
+
+async def _kb_create(client, headers, name):
+    resp = await client.post(
+        "/api/v1/knowledge-bases",
+        json={"name": name, "description": "SHU-817 test KB", "sync_enabled": False},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return extract_data(resp)["id"]
+
+
+async def _kb_upload(client, headers, kb_id, file_tuple=_TXT):
+    return await client.post(
+        f"/api/v1/knowledge-bases/{kb_id}/documents/upload",
+        files={"files": file_tuple},
+        headers=headers,
+    )
+
+
+async def _kb_doc_total(client, headers, kb_id):
+    resp = await client.get(f"/api/v1/knowledge-bases/{kb_id}/documents", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return extract_data(resp).get("total", 0)
 
 
 async def test_health_endpoint(client, db, auth_headers):
@@ -210,8 +246,11 @@ async def test_create_knowledge_base_duplicate_name(client, db, auth_headers):
         }
 
         response2 = await client.post("/api/v1/knowledge-bases", json=kb_data2, headers=auth_headers)
-        # Should fail since duplicate names aren't allowed
-        assert response2.status_code in [400, 500]  # Accept either 400 or 500 for duplicate names
+        # A duplicate name collides on the derived slug, which the service rejects with
+        # ConflictError -> 409 (knowledge_base_service.create raises "...already exists").
+        assert response2.status_code == 409, (
+            f"duplicate KB name must be rejected with 409 CONFLICT: {response2.status_code} {response2.text}"
+        )
 
     logger.info("=== EXPECTED TEST OUTPUT: Duplicate name test completed successfully ===")
 
@@ -273,6 +312,394 @@ async def test_knowledge_base_embedding_models(client, db, auth_headers):
         assert data["embedding_model"] == model
 
 
+async def test_personal_kb_owner_regular_user_can_delete_own_document(client, db, auth_headers):
+    """SHU-817 S1: a regular-user KB owner can delete their own document (previously 403)."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    up = await _kb_upload(client, reg, kb_id)
+    assert up.status_code == 200, up.text
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}", headers=reg)
+    assert d.status_code == 204, f"owner delete should succeed without 403: {d.status_code} {d.text}"
+    assert await _kb_doc_total(client, reg, kb_id) == 0
+    logger.info("Test passed: regular-user owner deleted their own personal-KB doc (no 403)")
+
+
+async def test_kb_delete_denied_for_power_user_without_grant(client, db, auth_headers):
+    """SHU-817 S1: power_user without kb.delete is denied (404) on a KB they don't own."""
+    logger.info(
+        "=== EXPECTED TEST OUTPUT: a 404 is expected when a power_user without kb.delete "
+        "deletes another user's document ==="
+    )
+    kb_id = await _kb_create(client, auth_headers, f"Test KBDelete Authz KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    assert up.status_code == 200, up.text
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    pu = await create_active_user_headers(client, auth_headers, role="power_user")
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}", headers=pu)
+    assert d.status_code == 404, f"power_user without kb.delete must be denied (404): {d.status_code} {d.text}"
+    assert await _kb_doc_total(client, auth_headers, kb_id) == 1, "document must survive the denied delete"
+    logger.info("=== EXPECTED TEST OUTPUT: power_user delete correctly denied with 404 ===")
+
+
+async def test_personal_kb_delete_denied_for_owner(client, db, auth_headers):
+    """SHU-817: a personal KB is an owner-scoped singleton; its owner (a non-admin) cannot
+    delete it (403). Only admins can — see test_personal_kb_deletable_by_admin."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 403 PERSONAL_KB_DELETE_NOT_ALLOWED is expected ===")
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    kb_id = extract_data(ensure)["id"]
+
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=reg)
+    assert d.status_code == 403, f"owner delete of personal KB should be 403: {d.status_code} {d.text}"
+    assert d.json().get("error", {}).get("code") == "PERSONAL_KB_DELETE_NOT_ALLOWED", d.text
+    logger.info("=== EXPECTED TEST OUTPUT: owner delete of personal KB correctly rejected with 403 ===")
+
+
+async def test_personal_kb_deletable_by_admin(client, db, auth_headers):
+    """SHU-817: an admin CAN delete a personal KB (offboarding / cleanup). Without this
+    path the KB is un-deletable and orphans on owner deletion."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    # Admin (auth_headers) deletes another user's personal KB.
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
+    assert d.status_code == 204, f"admin should be able to delete a personal KB (204): {d.status_code} {d.text}"
+
+    # It's gone — the owner's GET /personal returns null again.
+    g = await client.get("/api/v1/knowledge-bases/personal", headers=reg)
+    assert g.status_code == 200 and g.json().get("data") is None, f"personal KB should be gone: {g.text}"
+    logger.info("Test passed: admin deleted a user's personal KB")
+
+
+async def test_deleting_user_cascades_personal_kb(client, db, auth_headers):
+    """SHU-817: deleting a user removes their personal KB instead of orphaning it.
+
+    owner_id is ON DELETE SET NULL (org KBs intentionally outlive their owner), so without
+    the explicit cascade in user_service.delete_user the personal KB would be left behind
+    with a NULL owner and could only be removed by an admin.
+    """
+    headers, user_id = await create_active_user_with_id(client, auth_headers, role="regular_user")
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=headers)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    d = await client.delete(f"/api/v1/auth/users/{user_id}", headers=auth_headers)
+    assert d.status_code in (200, 204), f"admin user delete should succeed: {d.status_code} {d.text}"
+
+    # Fresh snapshot, then confirm the personal KB was deleted with its owner, not orphaned.
+    await db.rollback()
+    row = await db.execute(text("SELECT id FROM knowledge_bases WHERE id = :id"), {"id": kb_id})
+    assert row.scalar_one_or_none() is None, "personal KB must be deleted with its owner, not orphaned"
+    logger.info("Test passed: deleting a user cascades their personal KB")
+
+
+async def test_reingest_missing_document_returns_404(client, db, auth_headers):
+    """SHU-817 R3: re-ingesting a non-existent document is a clean 404."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 404 is expected for re-ingesting a missing document ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest 404 KB {uuid.uuid4().hex[:8]}")
+    r = await client.post(
+        f"/api/v1/knowledge-bases/{kb_id}/documents/{uuid.uuid4().hex}/reingest", headers=auth_headers
+    )
+    assert r.status_code == 404, f"expected 404, got {r.status_code}: {r.text}"
+    logger.info("=== EXPECTED TEST OUTPUT: reingest of missing document correctly returned 404 ===")
+
+
+async def test_reingest_busy_document_returns_409(client, db, auth_headers):
+    """SHU-817 R3 / Scenario A: a still-processing document cannot be re-ingested (409)."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 409 DOCUMENT_BUSY is expected for a processing document ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest Busy KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    # Force a clearly non-terminal state so the result is independent of any worker.
+    await db.execute(text("UPDATE documents SET processing_status='extracting' WHERE id=:id"), {"id": doc_id})
+    await db.commit()
+
+    r = await client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest", headers=auth_headers)
+    assert r.status_code == 409, f"expected 409 busy, got {r.status_code}: {r.text}"
+    assert r.json().get("error", {}).get("code") == "DOCUMENT_BUSY", r.text
+    logger.info("=== EXPECTED TEST OUTPUT: reingest of busy document correctly returned 409 ===")
+
+
+async def test_get_personal_knowledge_base_returns_null_then_kb(client, db, auth_headers):
+    """SHU-817 R5: GET /personal returns null before provisioning, then the ensured KB."""
+    reg = await create_active_user_headers(client, auth_headers, role="regular_user")
+
+    g0 = await client.get("/api/v1/knowledge-bases/personal", headers=reg)
+    assert g0.status_code == 200, g0.text
+    assert g0.json().get("data") is None, f"fresh user should have no personal KB yet: {g0.text}"
+
+    ensure = await client.post("/api/v1/knowledge-bases/personal", headers=reg)
+    assert ensure.status_code in (200, 201), ensure.text
+    kb_id = extract_data(ensure)["id"]
+
+    g1 = await client.get("/api/v1/knowledge-bases/personal", headers=reg)
+    assert g1.status_code == 200, g1.text
+    data = extract_data(g1)
+    assert data and data["id"] == kb_id, f"GET /personal should return the ensured KB: {data}"
+    assert data["is_personal"] is True, data
+    logger.info("Test passed: GET /personal returns null then the ensured personal KB")
+
+
+async def test_document_preview_exposes_synopsis_and_type(client, db, auth_headers):
+    """SHU-817 F2: GET /preview exposes synopsis + document_type for the preview slide-over."""
+    kb_id = await _kb_create(client, auth_headers, f"Test Preview KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    assert up.status_code == 200, up.text
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    r = await client.get(
+        f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/preview", headers=auth_headers
+    )
+    assert r.status_code == 200, r.text
+    data = extract_data(r)
+    # Keys are present even before profiling completes (values may be null).
+    assert "synopsis" in data, data
+    assert "document_type" in data, data
+    assert "preview" in data and "processing_info" in data, data
+    logger.info("Test passed: /preview exposes synopsis + document_type")
+
+
+_TXT2 = ("kbnotes2.txt", b"Second personal-knowledge management test doc.\n", "text/plain")
+
+
+async def test_kb_delete_pbac_grant_matrix(client, db, auth_headers):
+    """SHU-817 Risk 7: an explicit kb.delete grant lets a non-owner delete; kb.write alone does NOT."""
+    from shu.services.policy_engine import POLICY_CACHE
+
+    logger.info("=== EXPECTED TEST OUTPUT: a 404 is expected when a kb.write-only user (no kb.delete) deletes ===")
+    # Admin creates a KB with two distinct docs; look up the slug (the PBAC resource).
+    kb_id = await _kb_create(client, auth_headers, f"Test PBAC Delete KB {uuid.uuid4().hex[:8]}")
+    up1 = await _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT)
+    up2 = await _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT2)
+    assert up1.status_code == 200 and up2.status_code == 200, (up1.text, up2.text)
+    doc1 = extract_data(up1)["results"][0]["document_id"]
+    doc2 = extract_data(up2)["results"][0]["document_id"]
+
+    await db.rollback()
+    slug = (await db.execute(text("SELECT slug FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+
+    # One user, two grant phases (avoids consuming two billing seats): we add
+    # kb.write first (delete denied), then add kb.delete (delete allowed).
+    headers, user_id = await create_active_user_with_id(client, auth_headers, role="regular_user")
+
+    async def _grant(actions, resource_slug=None):
+        resp = await client.post(
+            "/api/v1/policies",
+            json={
+                "name": f"Test grant {'-'.join(a.replace('.', '') for a in actions)} {uuid.uuid4().hex[:8]}",
+                "effect": "allow",
+                "bindings": [{"actor_type": "user", "actor_id": user_id}],
+                "statements": [{"actions": actions, "resources": [f"kb:{resource_slug or slug}"]}],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        POLICY_CACHE.invalidate()  # mirror the framework's own cache reset so the grant takes effect
+
+    # (1) kb.write ONLY (+read) must NOT grant delete → 404; the doc survives.
+    await _grant(["kb.read", "kb.write"])
+    d_denied = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc2}", headers=headers)
+    assert d_denied.status_code == 404, f"kb.write-only must NOT grant delete (404): {d_denied.status_code} {d_denied.text}"
+    assert await _kb_doc_total(client, auth_headers, kb_id) == 2, "doc must survive the denied delete"
+    logger.info("=== EXPECTED TEST OUTPUT: kb.write-only delete correctly denied with 404 ===")
+
+    # (2) Adding an explicit kb.delete grant to the same user → delete now succeeds (204).
+    await _grant(["kb.delete"])
+    d_ok = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc1}", headers=headers)
+    assert d_ok.status_code == 204, f"kb.delete grantee should delete (204): {d_ok.status_code} {d_ok.text}"
+
+    # (3) Regression (SHU-817): a kb.delete-only grant WITHOUT kb.read must still
+    # work. The delete routes authorize via require_kb_delete_access and must not
+    # re-enter the kb.read-gated getter (which would 404 a delete-only grantee).
+    # A fresh KB isolates the grant — PBAC resources are per-slug, so the KB-A
+    # grants above don't leak onto it, leaving this user with delete-and-nothing-else.
+    kb_b = await _kb_create(client, auth_headers, f"Test PBAC DeleteOnly KB {uuid.uuid4().hex[:8]}")
+    up_b = await _kb_upload(client, auth_headers, kb_b, file_tuple=_TXT)
+    assert up_b.status_code == 200, up_b.text
+    doc_b = extract_data(up_b)["results"][0]["document_id"]
+
+    await db.rollback()
+    slug_b = (await db.execute(text("SELECT slug FROM knowledge_bases WHERE id = :id"), {"id": kb_b})).scalar_one()
+
+    await _grant(["kb.delete"], resource_slug=slug_b)  # delete ONLY — no kb.read/kb.write on KB-B
+    d_doc = await client.delete(f"/api/v1/knowledge-bases/{kb_b}/documents/{doc_b}", headers=headers)
+    assert d_doc.status_code == 204, (
+        f"kb.delete-only (no kb.read) must delete a doc (204), not 404: {d_doc.status_code} {d_doc.text}"
+    )
+    # The same delete-only grant must also delete the (non-personal) KB itself.
+    d_kb = await client.delete(f"/api/v1/knowledge-bases/{kb_b}", headers=headers)
+    assert d_kb.status_code == 204, (
+        f"kb.delete-only (no kb.read) must delete the KB (204), not 404: {d_kb.status_code} {d_kb.text}"
+    )
+    logger.info("kb.delete-only grant (no kb.read) correctly deleted both a doc and the KB")
+
+
+async def test_delete_while_indexing_leaves_no_orphans(client, db, auth_headers):
+    """SHU-817 Risk 2 / Scenario B: deleting a non-terminal doc is allowed and leaves no orphan chunks."""
+    kb_id = await _kb_create(client, auth_headers, f"Test DeleteMidPipeline KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    # Force a clearly non-terminal (mid-pipeline) status, independent of any worker.
+    await db.execute(text("UPDATE documents SET processing_status='embedding' WHERE id = :id"), {"id": doc_id})
+    await db.commit()
+
+    # Delete is allowed anytime (Decision 14) — the non-terminal state must not block it.
+    d = await client.delete(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}", headers=auth_headers)
+    assert d.status_code == 204, f"delete of a mid-pipeline doc should succeed (204): {d.status_code} {d.text}"
+
+    # The doc and any chunks it owned are gone — no orphans (documents→chunks ON DELETE CASCADE).
+    await db.rollback()
+    doc_row = (await db.execute(text("SELECT id FROM documents WHERE id = :id"), {"id": doc_id})).scalar_one_or_none()
+    assert doc_row is None, "document row must be deleted"
+    orphans = (
+        await db.execute(text("SELECT count(*) FROM document_chunks WHERE document_id = :id"), {"id": doc_id})
+    ).scalar_one()
+    assert orphans == 0, f"no orphan chunks should remain, found {orphans}"
+    logger.info("Test passed: deleting a mid-pipeline doc is allowed and leaves no orphan chunks")
+
+
+async def test_reingest_no_content_returns_422(client, db, auth_headers):
+    """SHU-817 R3: re-ingesting a doc with no extracted content asks for a re-upload (422)."""
+    logger.info("=== EXPECTED TEST OUTPUT: a 422 REINGEST_REQUIRES_REUPLOAD is expected for an empty-content doc ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest NoContent KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    await db.execute(
+        text("UPDATE documents SET processing_status='error', content='' WHERE id = :id"), {"id": doc_id}
+    )
+    await db.commit()
+
+    r = await client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest", headers=auth_headers)
+    assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text}"
+    assert r.json().get("error", {}).get("code") == "REINGEST_REQUIRES_REUPLOAD", r.text
+    logger.info("=== EXPECTED TEST OUTPUT: reingest of empty-content doc correctly returned 422 ===")
+
+
+async def test_reingest_from_content_requeues_embedding(client, db, auth_headers):
+    """SHU-817 R3: a failed doc that still has stored content re-runs the embed pipeline (no re-upload)."""
+    kb_id = await _kb_create(client, auth_headers, f"Test Reingest FromContent KB {uuid.uuid4().hex[:8]}")
+    up = await _kb_upload(client, auth_headers, kb_id)
+    doc_id = extract_data(up)["results"][0]["document_id"]
+
+    # Errored doc that retains extracted content → re-ingestable from stored content.
+    await db.execute(
+        text(
+            "UPDATE documents SET processing_status='error', processing_error='boom', "
+            "content='Some extracted content.' WHERE id = :id"
+        ),
+        {"id": doc_id},
+    )
+    await db.commit()
+
+    r = await client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest", headers=auth_headers)
+    assert r.status_code in (200, 201, 202), f"reingest from content should succeed: {r.status_code} {r.text}"
+
+    # The doc was reset out of the error state and re-queued (workers-off leaves it at
+    # 'embedding'; workers-on may advance it) — either way it left 'error' and cleared the error.
+    await db.rollback()
+    row = (
+        await db.execute(
+            text("SELECT processing_status, processing_error FROM documents WHERE id = :id"), {"id": doc_id}
+        )
+    ).first()
+    assert row is not None and row[0] != "error", f"reingest should reset the doc out of error, got {row}"
+    assert row[1] is None, "reingest should clear processing_error"
+    logger.info("Test passed: reingest from stored content re-queued the embed pipeline")
+
+
+async def test_concurrent_same_name_upload_counts_once(client, db, auth_headers):
+    """SHU-817: two concurrent same-name uploads leave exactly ONE document and bump
+    the KB's denormalized document_count by 1, not 2.
+
+    Patching get_document_by_source_id to None drives both requests past the
+    'still processing' / existing pre-checks into create_or_get_document, so the
+    unique constraint + idempotent return resolve the race. The loser must report
+    created=False so adjust_document_stats isn't bumped twice (Claim 2).
+    """
+    logger.info("=== EXPECTED TEST OUTPUT: an IntegrityError may be logged when the losing insert races ===")
+    kb_id = await _kb_create(client, auth_headers, f"Test Concurrent Upload {uuid.uuid4().hex[:8]}")
+
+    await db.rollback()
+    base = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+
+    with (
+        patch.object(DocumentService, "get_document_by_source_id", AsyncMock(return_value=None)),
+        expect_duplicate_errors(),
+    ):
+        r1, r2 = await asyncio.gather(
+            _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT),
+            _kb_upload(client, auth_headers, kb_id, file_tuple=_TXT),
+        )
+    assert r1.status_code == 200 and r2.status_code == 200, (r1.text, r2.text)
+
+    sid = manual_upload_source_id(_TXT[0])
+    await db.rollback()
+    rows = (
+        await db.execute(
+            text("SELECT count(*) FROM documents WHERE knowledge_base_id = :kb AND source_id = :sid"),
+            {"kb": kb_id, "sid": sid},
+        )
+    ).scalar_one()
+    assert rows == 1, f"concurrent same-name uploads must leave exactly one row, got {rows}"
+
+    count = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+    assert count == base + 1, f"document_count must increment by 1, not {count - base} (Claim 2 over-count)"
+    logger.info("=== EXPECTED TEST OUTPUT: concurrent same-name upload counted exactly once ===")
+
+
+async def test_concurrent_loser_different_bytes_not_dropped(client, db, auth_headers):
+    """SHU-817: a same-name upload that loses the insert race (create_or_get returns the
+    existing row) must apply ITS bytes via the update path — not be silently dropped
+    behind 'Already added' (Claim 1) — and must not double-count (Claim 2).
+
+    Seeding the row then patching get_document_by_source_id to None deterministically
+    drives the second upload into the create_or_get idempotent-return (loser) branch.
+    """
+    kb_id = await _kb_create(client, auth_headers, f"Test Concurrent Diff {uuid.uuid4().hex[:8]}")
+    winner = ("dup.txt", b"winner-bytes-original", "text/plain")
+    loser = ("dup.txt", b"loser-bytes-CHANGED-and-longer", "text/plain")
+
+    up = await _kb_upload(client, auth_headers, kb_id, file_tuple=winner)
+    assert up.status_code == 200, up.text
+
+    await db.rollback()
+    base = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+
+    # Force the loser past the route + ingest entry checks into create_or_get_document,
+    # which finds the seeded row by the dedup key and returns (existing, created=False).
+    with patch.object(DocumentService, "get_document_by_source_id", AsyncMock(return_value=None)):
+        up2 = await _kb_upload(client, auth_headers, kb_id, file_tuple=loser)
+    assert up2.status_code == 200, up2.text
+    res2 = extract_data(up2)["results"][0]
+    assert res2["action"] == "updated", f"race-loser with different bytes must update, not '{res2.get('action')}': {res2}"
+
+    sid = manual_upload_source_id("dup.txt")
+    await db.rollback()
+    row = (
+        await db.execute(
+            text("SELECT count(*), max(source_hash) FROM documents WHERE knowledge_base_id = :kb AND source_id = :sid"),
+            {"kb": kb_id, "sid": sid},
+        )
+    ).first()
+    assert row[0] == 1, f"still exactly one row, got {row[0]}"
+    assert row[1] == hashlib.sha256(loser[1]).hexdigest(), "the loser's bytes must be applied, not dropped"
+
+    count = (await db.execute(text("SELECT document_count FROM knowledge_bases WHERE id = :id"), {"id": kb_id})).scalar_one()
+    assert count == base, f"an idempotent-return update must not increment document_count (was +{count - base})"
+    logger.info("Test passed: concurrent-loser different-bytes upload applied in place, not dropped or double-counted")
+
+
 class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
     """Integration test suite for knowledge base functionality."""
 
@@ -289,6 +716,21 @@ class KnowledgeBaseIntegrationTestSuite(BaseIntegrationTestSuite):
             test_create_knowledge_base_invalid_data,
             test_unauthorized_access,
             test_knowledge_base_embedding_models,
+            test_personal_kb_owner_regular_user_can_delete_own_document,
+            test_kb_delete_denied_for_power_user_without_grant,
+            test_personal_kb_delete_denied_for_owner,
+            test_personal_kb_deletable_by_admin,
+            test_deleting_user_cascades_personal_kb,
+            test_kb_delete_pbac_grant_matrix,
+            test_delete_while_indexing_leaves_no_orphans,
+            test_reingest_missing_document_returns_404,
+            test_reingest_busy_document_returns_409,
+            test_reingest_no_content_returns_422,
+            test_reingest_from_content_requeues_embedding,
+            test_get_personal_knowledge_base_returns_null_then_kb,
+            test_document_preview_exposes_synopsis_and_type,
+            test_concurrent_same_name_upload_counts_once,
+            test_concurrent_loser_different_bytes_not_dropped,
         ]
 
     def get_suite_name(self) -> str:

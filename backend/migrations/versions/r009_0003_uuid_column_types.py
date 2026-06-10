@@ -68,6 +68,7 @@ not partial-re-runnable (temp tables drop at session end). Use
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -133,6 +134,33 @@ def _touched_tables_sql() -> str:
 
 def upgrade() -> None:
     """tenants.id + every tenant_id column → uuid."""
+
+    # 0. Guard the bare ALTERs below against a missing / already-converted
+    #    schema (DB_MIGRATION_POLICY §Policy — never issue an unguarded ALTER):
+    #    * tenants.id absent  → 009_00011 (this migration's schema prerequisite)
+    #      never ran. With 009_00011 re-slotted ahead of r009_0002 that can't
+    #      happen on a forward upgrade; if it does the chain is broken, so fail
+    #      loud with a
+    #      pointer rather than the opaque `relation "tenants" does not exist`.
+    #    * tenants.id already uuid → the conversion ran before; re-run is a
+    #      no-op (makes the migration re-runnable after a stamp-only recovery).
+    bind = op.get_bind()
+    id_type = bind.execute(
+        sa.text(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_name = :t AND column_name = 'id'"
+        ),
+        {"t": _TENANTS_TABLE},
+    ).scalar()
+    if id_type is None:
+        raise RuntimeError(
+            f'relation "{_TENANTS_TABLE}" / its id column is missing — migration '
+            "009_00011 (tenant_isolation) must run before r009_0003. The revision "
+            "chain is 008 → r009_0001 → 009_00011 → r009_0002 → r009_0003; check "
+            "down_revisions."
+        )
+    if id_type == "uuid":
+        return
 
     # 1. Snapshot every FK touching one of our tables. Captures both the
     #    composite FKs from 009 (the (col, tenant_id) → (id, tenant_id)
@@ -211,7 +239,7 @@ def upgrade() -> None:
         op.execute(
             f"""
             CREATE POLICY tenant_isolation ON {table}
-            AS PERMISSIVE FOR ALL TO shu_app
+            AS PERMISSIVE FOR ALL TO PUBLIC
             USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
             WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid)
             """
@@ -286,7 +314,7 @@ def downgrade() -> None:
         op.execute(
             f"""
             CREATE POLICY tenant_isolation ON {table}
-            AS PERMISSIVE FOR ALL TO shu_app
+            AS PERMISSIVE FOR ALL TO PUBLIC
             USING (tenant_id = current_setting('app.tenant_id', true))
             WITH CHECK (tenant_id = current_setting('app.tenant_id', true))
             """

@@ -18,6 +18,7 @@ from typing import Annotated
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shu.api.dependencies import get_db
@@ -47,10 +48,23 @@ from shu.billing.stripe_client import StripeClient, StripeClientError
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
 from shu.core.tenant import UnknownStripeCustomerError, tenant_context_for_stripe_customer
+from shu.models.document import Document
+from shu.models.knowledge_base import KnowledgeBase
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+async def _kb_and_document_counts(db: AsyncSession) -> tuple[int, int]:
+    """Return the tenant's (kb_count, document_count) for the usage block.
+
+    Both queries are tenant-scoped by RLS — same totals the SHU-776 caps are
+    enforced against, so the frontend can render "X of Y" without a second call.
+    """
+    kb_count = (await db.execute(select(func.count(KnowledgeBase.id)))).scalar() or 0
+    document_count = (await db.execute(select(func.count(Document.id)))).scalar() or 0
+    return kb_count, document_count
 
 
 # =============================================================================
@@ -222,12 +236,21 @@ async def get_subscription_status(
         "service_paused": state.openrouter_key_disabled,
         "is_trial": state.is_trial,
         "trial_deadline": state.trial_deadline.isoformat() if state.trial_deadline else None,
+        "hard_cap": state.hard_cap,
         "total_grant_amount": str(state.total_grant_amount),
         "remaining_grant_amount": str(remaining_grant_amount),
         "seat_price_usd": str(state.seat_price_usd),
-        "entitlements": state.entitlements.model_dump(),
-        "limits": state.limits.model_dump(),
     }
+
+    # SHU-773: entitlement / limit / usage blocks ship only when CP is
+    # configured. On self-hosted (no cache singleton) they're omitted entirely
+    # — the frontend treats absence as "all enabled / unlimited" so every page
+    # stays visible. Both admin and non-admin callers get these.
+    if await get_billing_state_cache() is not None:
+        kb_count, document_count = await _kb_and_document_counts(db)
+        payload["entitlements"] = state.entitlements.model_dump()
+        payload["limits"] = state.limits.model_dump()
+        payload["usage"] = {"kb_count": kb_count, "document_count": document_count}
 
     if user.can_manage_users():
         payload.update(

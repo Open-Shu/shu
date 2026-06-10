@@ -12,15 +12,16 @@ Coverage focus:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from sqlalchemy.exc import DBAPIError, NoResultFound
 
 from shu.core.config import SELF_HOSTED_TENANT_UUID
 from shu.core.tenant import (
+    MissingTenantContextError,
     UnknownStripeCustomerError,
     UserTenantNotFoundError,
     _is_no_data_found,
@@ -190,6 +191,46 @@ async def test_context_resets_to_prior_value_on_clean_exit() -> None:
         async with tenant_context_for_email("x@example.com"):
             assert tenant_context.get(None) == SELF_HOSTED_TENANT_UUID
     assert tenant_context.get(None) == prior
+
+
+@pytest.mark.asyncio
+async def test_uuid_tenant_id_is_normalized_to_str_in_context() -> None:
+    """SHU-823 regression: a uuid.UUID tenant_id (e.g. from a raw SELECT over
+    the uuid-typed tenants.id, or a worker job payload) must be coerced to str
+    before landing in tenant_context. The contextvar is ``str | None`` and the
+    before_flush guard compares it against the str ``Uuid(as_uuid=False)``
+    column; a UUID context made `str != UUID` true on every tenant-scoped flush
+    and broke the scheduler fan-out."""
+    tid = uuid.UUID(SELF_HOSTED_TENANT_UUID)
+    async with tenant_context_for_tenant_id(tid) as resolved:
+        ctx = tenant_context.get(None)
+        assert isinstance(ctx, str)
+        assert ctx == SELF_HOSTED_TENANT_UUID
+        # The yielded value is normalized too, so callers that capture it
+        # (e.g. for logging or as a dict key) get the same str representation.
+        assert isinstance(resolved, str)
+        assert resolved == SELF_HOSTED_TENANT_UUID
+
+
+@pytest.mark.asyncio
+async def test_empty_string_tenant_id_routes_like_none() -> None:
+    """SHU-825 + review: an empty-string tenant_id must be treated exactly like None
+    — routed to deployment-mode resolution, NOT taken as a literal explicit tenant
+    (which previously collapsed to a None context that silently mis-ran jobs). In
+    self-hosted it resolves to the deployment tenant; in multi-tenant it raises the
+    same MissingTenantContextError that makes an empty-tenant worker job a poison
+    pill. Either way it never lands a literal '' in the contextvar (which would 500
+    on ''::uuid via the begin hook)."""
+    # Self-hosted: '' resolves to the deployment tenant, identical to None.
+    with patch("shu.core.tenant.get_settings_instance", return_value=_settings("self_hosted")):
+        async with tenant_context_for_tenant_id("") as resolved:
+            assert resolved == SELF_HOSTED_TENANT_UUID
+            assert tenant_context.get(None) == SELF_HOSTED_TENANT_UUID
+    # Multi-tenant: '' carries no credential, so it raises (poison-pill path), same as None.
+    with patch("shu.core.tenant.get_settings_instance", return_value=_settings("multi_tenant")):
+        with pytest.raises(MissingTenantContextError):
+            async with tenant_context_for_tenant_id(""):
+                pytest.fail("empty-string tenant must not yield a usable context in multi-tenant")
 
 
 @pytest.mark.asyncio

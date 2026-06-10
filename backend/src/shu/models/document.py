@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, ClassVar
 from uuid import uuid4
 
-from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Column, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 from typing_extensions import TypedDict
@@ -107,6 +107,12 @@ class Document(TenantScopedMixin, BaseModel):
     """
 
     __tablename__ = "documents"
+
+    # Composite index supporting newest-first, per-KB document pagination
+    # (filter knowledge_base_id, ORDER BY created_at) used by the in-chat doc
+    # list (SHU-817 F1). The single-column knowledge_base_id index alone forces
+    # a sort within the KB's rows.
+    __table_args__ = (Index("ix_documents_kb_created_at", "knowledge_base_id", "created_at"),)
 
     # Foreign key to knowledge base
     knowledge_base_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)

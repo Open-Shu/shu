@@ -243,6 +243,13 @@ class Settings(BaseSettings):
         default_factory=lambda: ["ico", "png", "svg", "webp"],
         alias="SHU_BRANDING_ALLOWED_FAVICON_EXTENSIONS",
     )
+    # Avatar uploads exclude SVG: a future render-mode switch from <img> to
+    # inline <svg> for currentColor theming would re-open the script/event-
+    # handler XSS vector. Curated SVGs we ship are safe; user uploads aren't.
+    branding_allowed_avatar_extensions: list[str] = Field(
+        default_factory=lambda: ["png", "jpg", "jpeg", "webp"],
+        alias="SHU_BRANDING_ALLOWED_AVATAR_EXTENSIONS",
+    )
     branding_max_asset_size_bytes: int = Field(2 * 1024 * 1024, alias="SHU_BRANDING_MAX_ASSET_SIZE_BYTES")
 
     # Policy-Based Access Control (PBAC)
@@ -1385,7 +1392,7 @@ class ConfigurationManager:
 
         Returns
         -------
-            Dict[str, Any]: Dictionary with keys `memory_depth`, `memory_similarity_threshold`, `theme`, `language`, and `timezone`, resolved with priority: user_prefs → model_config → kb_config → global defaults.
+            Dict[str, Any]: Dictionary with keys `memory_depth`, `memory_similarity_threshold`, `theme`, `language`, `timezone`, `font_family`, `font_size_scale`, and `auto_attach_personal_kb`, resolved with priority: user_prefs → model_config → kb_config → global defaults.
 
         """
         return {
@@ -1401,6 +1408,9 @@ class ConfigurationManager:
             # Typography preferences (null = inherit from branding / shipped default)
             "font_family": (user_prefs or {}).get("font_family"),
             "font_size_scale": (user_prefs or {}).get("font_size_scale"),
+            # Chat: auto-attach Personal Knowledge to new chats (SHU-817 S4; default ON,
+            # mirrors the model column default so the PATCH-create / GET-no-row paths agree).
+            "auto_attach_personal_kb": (user_prefs or {}).get("auto_attach_personal_kb", True),
         }
 
     # Full Document Escalation Methods

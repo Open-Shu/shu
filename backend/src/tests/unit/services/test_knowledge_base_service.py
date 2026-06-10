@@ -873,3 +873,188 @@ class TestResolvePersonalKbSlugToken:
         user.name = "###"
         user.email = ""
         assert resolve_personal_kb_slug_token(user) == "user"
+
+
+# SHU-776: kb_count_limit enforcement on the two KB-creation paths. Both go
+# through `assert_kb_count_under_limit`, which bypasses when no billing cache
+# is installed — that's why every test above (no cache) is unaffected.
+
+_P_STATE_SERVICE = "shu.billing.state_service.BillingStateService.get_for_update"
+
+
+def _state_with_kb_limit(cap: int):
+    """HEALTHY_DEFAULT with the KB cap overridden — only `limits` is read."""
+    import dataclasses
+
+    from shu.billing.cp_client import HEALTHY_DEFAULT
+    from shu.billing.entitlements import LimitSet
+
+    return dataclasses.replace(HEALTHY_DEFAULT, limits=LimitSet(kb_count_limit=cap))
+
+
+def _set_kb_count(mock_db, count: int) -> None:
+    """Make `await mock_db.execute(...).scalar()` return `count` (the cap query)."""
+    result = MagicMock()
+    result.scalar.return_value = count
+    mock_db.execute = AsyncMock(return_value=result)
+
+
+@patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+class TestCreateKnowledgeBaseLimit:
+    """create_knowledge_base honours kb_count_limit when a billing cache is present."""
+
+    @pytest.mark.asyncio
+    async def test_at_cap_raises_and_writes_nothing(self, _mock_lock, install_stub_cache):
+        from shu.billing.entitlements import LimitExceededError
+
+        install_stub_cache(_state_with_kb_limit(2))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        _set_kb_count(mock_db, 2)
+
+        with pytest.raises(LimitExceededError):
+            await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_under_cap_creates(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_kb_limit(5))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        _set_kb_count(mock_db, 3)
+
+        await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
+        assert len(captured) == 1
+
+    @pytest.mark.asyncio
+    async def test_at_cap_duplicate_name_is_conflict_not_limit(self, _mock_lock, install_stub_cache):
+        """A same-name re-create at the cap is a 409 conflict, not limit_exceeded —
+        the conflict check runs before the cap gate so we don't report 'out of
+        quota' for a request that wouldn't add a row.
+        """
+        from shu.core.exceptions import ConflictError
+
+        install_stub_cache(_state_with_kb_limit(2))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        service._get_kb_by_slug = AsyncMock(return_value=MagicMock(name="ExistingNamedKB"))
+        _set_kb_count(mock_db, 2)
+
+        with pytest.raises(ConflictError):
+            await service.create_knowledge_base(KnowledgeBaseCreate(name="Project Alpha"), owner_id="user-1")
+        assert captured == []
+
+
+@patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+class TestEnsurePersonalKnowledgeBaseLimit:
+    """ensure_personal_knowledge_base counts personal KBs against the cap, but
+    only when provisioning a new one — an existing KB returns before the gate."""
+
+    @pytest.mark.asyncio
+    async def test_new_personal_kb_at_cap_raises(self, _mock_lock, install_stub_cache):
+        from shu.billing.entitlements import LimitExceededError
+
+        install_stub_cache(_state_with_kb_limit(2))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+        _set_kb_count(mock_db, 2)
+
+        mock_settings = MagicMock()
+        mock_settings.personal_kb_rag_fetch_full_documents = True
+        with patch("shu.core.config.get_settings_instance", return_value=mock_settings):
+            with pytest.raises(LimitExceededError):
+                await service.ensure_personal_knowledge_base(
+                    owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+                )
+        assert captured == []
+
+    @pytest.mark.asyncio
+    async def test_existing_personal_kb_bypasses_cap(self, _mock_lock, install_stub_cache):
+        """Cap=0 blocks all new KBs, but a user who already has a personal KB
+        must still get it back — the idempotent return precedes the gate.
+        """
+        install_stub_cache(_state_with_kb_limit(0))
+        mock_db = AsyncMock()
+        captured = []
+        service = _build_service_capturing_add(mock_db, captured)
+
+        existing_kb = MagicMock(name="ExistingPersonalKB")
+        existing_kb.is_personal = True
+        existing_kb.owner_id = "user-1"
+        service._get_personal_kb_by_owner = AsyncMock(return_value=existing_kb)
+
+        result = await service.ensure_personal_knowledge_base(
+            owner_id="user-1", display_name="Eric's Knowledge", slug_token="eric"
+        )
+        assert result is existing_kb
+        assert captured == []
+
+
+class TestReingestDocumentEnqueueFailure:
+    """SHU-817: a failed embed enqueue must not strand the doc in non-terminal EMBEDDING."""
+
+    @pytest.mark.asyncio
+    async def test_enqueue_failure_marks_error_and_reraises(self):
+        """If enqueue_job raises after the EMBEDDING commit, reingest_document must
+        flip the document to a terminal ERROR (with the transient embed-enqueue
+        prefix, so a re-upload retries) and surface a structured retryable 503 — never
+        leave it wedged in EMBEDDING with no job behind it (which the 409 busy guard /
+        re-upload skip would then lock out permanently, with no document-level reaper
+        to recover).
+        """
+        from shu.core.exceptions import ShuException
+        from shu.models.document import DocumentStatus
+        from shu.services.ingestion_service import _ERR_ENQUEUE_EMBEDDING, _is_transient_error
+
+        # A manually-uploaded, already-processed doc with stored content passes the
+        # source_type / busy / empty-content guards, so execution reaches the enqueue.
+        mock_document = MagicMock()
+        mock_document.source_type = "plugin:manual_upload"
+        mock_document.is_processed = True
+        mock_document.has_error = False
+        mock_document.content = "stored extracted content"
+        mock_document.update_status = MagicMock()
+        mock_document.processing_error = None
+
+        select_result = MagicMock()
+        select_result.scalar_one_or_none = MagicMock(return_value=mock_document)
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=select_result)
+        mock_db.commit = AsyncMock()
+
+        service = KnowledgeBaseService(mock_db)
+
+        with (
+            patch("shu.core.queue_backend.get_queue_backend", AsyncMock(return_value=MagicMock())),
+            patch(
+                "shu.core.workload_routing.enqueue_job",
+                AsyncMock(side_effect=RuntimeError("Redis unavailable")),
+            ),
+            pytest.raises(ShuException) as exc_info,
+        ):
+            await service.reingest_document("kb-1", "doc-1", user_id="user-1")
+
+        # The raw queue error is translated into a structured, retryable 503 envelope
+        # (not a generic 500), with the original cause preserved for logs/debugging.
+        assert exc_info.value.error_code == "DOCUMENT_REINGEST_ENQUEUE_ERROR"
+        assert exc_info.value.status_code == 503
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+        # The doc is set EMBEDDING for immediate UI feedback, then flipped to terminal
+        # ERROR when the enqueue fails — not left stranded in EMBEDDING.
+        statuses = [call.args[0] for call in mock_document.update_status.call_args_list]
+        assert statuses[0] == DocumentStatus.EMBEDDING
+        assert statuses[-1] == DocumentStatus.ERROR, "enqueue failure must flip the doc to terminal ERROR"
+
+        # The error carries the transient embed-enqueue prefix, so a same-name re-upload
+        # re-ingests rather than being skipped as a deterministic failure.
+        assert mock_document.processing_error.startswith(_ERR_ENQUEUE_EMBEDDING)
+        assert _is_transient_error(mock_document.processing_error), "enqueue failure must stay retryable"
+
+        # Both the EMBEDDING commit and the ERROR commit must have landed.
+        assert mock_db.commit.await_count >= 2

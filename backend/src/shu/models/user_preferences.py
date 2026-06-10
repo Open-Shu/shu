@@ -6,7 +6,7 @@ memory configuration, and other customizable features.
 
 from typing import Any
 
-from sqlalchemy import JSON, Column, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Column, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from .base import BaseModel, TenantScopedMixin
@@ -45,6 +45,10 @@ class UserPreferences(TenantScopedMixin, BaseModel):
     # Typography preferences (nullable — null = inherit from branding / shipped default)
     font_family = Column(String(50), nullable=True)
     font_size_scale = Column(String(20), nullable=True)
+
+    # Chat behavior (SHU-817) — when True (default), the user's Personal Knowledge KB
+    # is auto-attached to new chats; toggled off, the user attaches it manually per chat.
+    auto_attach_personal_kb = Column(Boolean, default=True, nullable=False, server_default="true")
 
     # Advanced Settings (JSON for flexibility)
     advanced_settings = Column(JSON, nullable=True)  # Additional custom settings
@@ -108,5 +112,7 @@ class UserPreferences(TenantScopedMixin, BaseModel):
             # Typography (null = inherit from branding / shipped default)
             "font_family": None,
             "font_size_scale": None,
+            # Chat behavior
+            "auto_attach_personal_kb": True,
             "advanced_settings": {},
         }

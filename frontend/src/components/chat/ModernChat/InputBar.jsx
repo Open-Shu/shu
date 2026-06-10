@@ -17,11 +17,12 @@ import {
 import {
   Add as AddIcon,
   AttachFile as AttachmentIcon,
-  SmartToy as BotIcon,
+  Extension as PluginIcon,
   Send as SendIcon,
   Stop as StopIcon,
   Hub as EnsembleIcon,
   LibraryBooks as LibraryBooksIcon,
+  Psychology as PsychologyIcon,
 } from '@mui/icons-material';
 import BrainIcon from './BrainIcon';
 import BrainPopover from './BrainPopover';
@@ -58,9 +59,23 @@ const InputBar = React.memo(function InputBar({
   personalKBLoading = false,
   personalKBUploading = false,
   personalKBErrors = [],
+  personalKBLastUploadSummary = null,
   onUploadToPersonalKB,
   onRetryPersonalKBFile,
   onDismissPersonalKBError,
+  personalKBDocs = [],
+  personalKBDocsLoading = false,
+  personalKBDocsFetching = false,
+  personalKBDocsError = false,
+  personalKBIndexing = false,
+  personalKBHasMoreDocs = false,
+  onFetchMorePersonalKBDocs,
+  personalKBFetchingMoreDocs = false,
+  onRefreshPersonalKBDocs,
+  onDeletePersonalKBDoc,
+  onReingestPersonalKBDoc,
+  personalKBAutoAttach = true,
+  onTogglePersonalKBAutoAttach,
   // SHU-803: Send button morphs into Stop while the current conversation
   // has an in-flight stream. `canStop` is false during the ~10-50ms
   // window after Send before stream_start arrives — disabled state with
@@ -221,16 +236,37 @@ const InputBar = React.memo(function InputBar({
     } else if (!personalKBUploading && wasUploadingRef.current) {
       wasUploadingRef.current = false;
       const newErrors = Math.max(0, personalKBErrors.length - errorCountAtStartRef.current);
-      if (newErrors === 0) {
-        setToast({ severity: 'success', message: 'Got it — ask me about this anytime' });
-      } else {
+      if (newErrors > 0) {
         setToast({
           severity: 'error',
           message: `${newErrors} file${newErrors === 1 ? '' : 's'} need attention — check the brain icon`,
         });
+      } else {
+        // Report what happened without over-promising readiness (Decision 15): the
+        // file is received + indexing here. The "now searchable" moment is signaled
+        // separately by the row flipping to Ready + the brain success-pulse.
+        const s = personalKBLastUploadSummary;
+        // Priority: lead with the positive action, then the specific skip reason —
+        // never collapse a still-indexing re-upload ('processing') or an in-batch
+        // duplicate into "Already saved", which means something different to the user.
+        let message = 'Added — indexing now';
+        if (s) {
+          if (s.added > 0) {
+            message = 'Added — indexing now';
+          } else if (s.updated > 0) {
+            message = s.updated === 1 ? 'Updated — re-indexing now' : `Updated ${s.updated} files — re-indexing now`;
+          } else if (s.processing > 0) {
+            message = "Already being added — re-upload once it's ready";
+          } else if (s.duplicateInBatch > 0) {
+            message = 'Skipped a duplicate filename — kept one copy';
+          } else if (s.alreadySaved > 0) {
+            message = 'Already saved — no changes';
+          }
+        }
+        setToast({ severity: 'success', message });
       }
     }
-  }, [personalKBUploading, personalKBErrors]);
+  }, [personalKBUploading, personalKBErrors, personalKBLastUploadSummary]);
 
   return (
     <Box
@@ -246,10 +282,10 @@ const InputBar = React.memo(function InputBar({
             position: 'absolute',
             inset: 0,
             zIndex: 10,
-            bgcolor: 'rgba(25, 118, 210, 0.08)',
+            bgcolor: 'action.hover',
             border: 2,
             borderStyle: 'dashed',
-            borderColor: 'primary.main',
+            borderColor: 'secondary.main',
             borderRadius: 2,
             display: 'flex',
             alignItems: 'center',
@@ -257,7 +293,7 @@ const InputBar = React.memo(function InputBar({
             pointerEvents: 'none',
           }}
         >
-          <Typography variant="h6" color="primary.main" fontWeight={600}>
+          <Typography variant="h6" color="secondary.main" fontWeight={600}>
             Drop to add to Personal Knowledge
           </Typography>
         </Box>
@@ -289,16 +325,21 @@ const InputBar = React.memo(function InputBar({
 
       {selectedKBs && selectedKBs.length > 0 && (
         <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-          {selectedKBs.map((kb) => (
-            <Chip
-              key={kb.id}
-              label={kb.name}
-              color="secondary"
-              onDelete={onRemoveKB ? () => onRemoveKB(kb.id) : undefined}
-              variant="outlined"
-              icon={<LibraryBooksIcon />}
-            />
-          ))}
+          {selectedKBs.map((kb) => {
+            // Distinguish the auto-attached Personal Knowledge chip from other
+            // attached KBs with the brain glyph + a filled variant (SHU-817 R4).
+            const isPersonal = kb.is_personal === true || (personalKB && kb.id === personalKB.id);
+            return (
+              <Chip
+                key={kb.id}
+                label={kb.name}
+                color="secondary"
+                onDelete={onRemoveKB ? () => onRemoveKB(kb.id) : undefined}
+                variant={isPersonal ? 'filled' : 'outlined'}
+                icon={isPersonal ? <PsychologyIcon /> : <LibraryBooksIcon />}
+              />
+            );
+          })}
         </Box>
       )}
 
@@ -363,7 +404,7 @@ const InputBar = React.memo(function InputBar({
               }}
             >
               <ListItemIcon>
-                <BotIcon fontSize="small" />
+                <PluginIcon fontSize="small" />
               </ListItemIcon>
               Use a plugin
             </MenuItem>
@@ -385,6 +426,7 @@ const InputBar = React.memo(function InputBar({
         <BrainIcon
           kb={personalKB}
           uploading={personalKBUploading}
+          indexing={personalKBIndexing}
           errorCount={personalKBErrors.length}
           dragActive={dragActive}
           onClick={handleBrainClick}
@@ -513,6 +555,18 @@ const InputBar = React.memo(function InputBar({
         onUpload={handleBrainUpload}
         onRetry={onRetryPersonalKBFile}
         onDismissError={onDismissPersonalKBError}
+        docs={personalKBDocs}
+        docsLoading={personalKBDocsLoading}
+        docsFetching={personalKBDocsFetching}
+        docsError={personalKBDocsError}
+        hasMoreDocs={personalKBHasMoreDocs}
+        fetchMoreDocs={onFetchMorePersonalKBDocs}
+        fetchingMoreDocs={personalKBFetchingMoreDocs}
+        onRefreshDocs={onRefreshPersonalKBDocs}
+        onDeleteDoc={onDeletePersonalKBDoc}
+        onReingestDoc={onReingestPersonalKBDoc}
+        autoAttach={personalKBAutoAttach}
+        onToggleAutoAttach={onTogglePersonalKBAutoAttach}
       />
 
       <Snackbar

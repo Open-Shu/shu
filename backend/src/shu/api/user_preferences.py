@@ -53,6 +53,7 @@ def _build_preferences_response(
             "timezone": preferences.timezone,
             "font_family": preferences.font_family,
             "font_size_scale": preferences.font_size_scale,
+            "auto_attach_personal_kb": preferences.auto_attach_personal_kb,
             "advanced_settings": preferences.advanced_settings or {},
         }
     else:
@@ -66,6 +67,7 @@ def _build_preferences_response(
             "timezone": defaults["timezone"],
             "font_family": defaults.get("font_family"),
             "font_size_scale": defaults.get("font_size_scale"),
+            "auto_attach_personal_kb": defaults.get("auto_attach_personal_kb", True),
             "advanced_settings": defaults.get("advanced_settings") or {},
         }
 

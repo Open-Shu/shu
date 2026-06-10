@@ -297,3 +297,92 @@ describe('useMessageRegeneration — SHU-803 Stop-during-regen wiring', () => {
     expect(startedCalls).toContain(false);
   });
 });
+
+/**
+ * SHU-805 follow-up coverage. The original SHU-805 commit added two
+ * fields to the main streaming-path placeholders — `streamSlotId` (for
+ * stable React identity across the placeholder→finalMessage id swap)
+ * and `thinkingPool` (for operation-aware verb selection) — but missed
+ * the regenerate path, which has its own placeholder construction.
+ * These tests pin the fix so the regen path can't silently drift back.
+ */
+describe('useMessageRegeneration — SHU-805 streamSlotId + thinkingPool', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('stamps streamSlotId and a default thinkingPool on the regen placeholder', () => {
+    chatRegenerateAPI.streamRegenerate.mockReturnValueOnce(
+      new Promise(() => {
+        /* never resolves — we only observe the synchronous prelude */
+      })
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderUseRegeneration(queryClient);
+
+    act(() => {
+      result.current.handleRegenerate(TARGET_MESSAGE_ID, PARENT_ID);
+    });
+
+    const messages = getMessagesFromQueryCache(queryClient, CONVERSATION_ID);
+    const placeholder = messages.find((m) => m && m.isPlaceholder && m.role === 'assistant');
+    expect(placeholder).toBeDefined();
+    expect(placeholder.streamSlotId).toBe(placeholder.id);
+    expect(placeholder.thinkingPool).toBe('default');
+  });
+
+  it('derives thinkingPool="rag" when KBs are selected on the regen call', () => {
+    chatRegenerateAPI.streamRegenerate.mockReturnValueOnce(
+      new Promise(() => {
+        /* never resolves */
+      })
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderUseRegeneration(queryClient, { selectedKBIds: ['kb-1', 'kb-2'] });
+
+    act(() => {
+      result.current.handleRegenerate(TARGET_MESSAGE_ID, PARENT_ID);
+    });
+
+    const messages = getMessagesFromQueryCache(queryClient, CONVERSATION_ID);
+    const placeholder = messages.find((m) => m && m.isPlaceholder && m.role === 'assistant');
+    expect(placeholder).toBeDefined();
+    expect(placeholder.thinkingPool).toBe('rag');
+  });
+
+  it('preserves the regen placeholder streamSlotId across the final_message id swap', async () => {
+    const SERVER_FINAL_ID = 'server-msg-final-shu805';
+    chatRegenerateAPI.streamRegenerate.mockResolvedValueOnce(
+      makeMockResponse([
+        { event: 'stream_start', content: { stream_id: STREAM_ID } },
+        { event: 'content_delta', text: 'partial' },
+        {
+          event: 'final_message',
+          content: {
+            id: SERVER_FINAL_ID,
+            role: 'assistant',
+            parent_message_id: PARENT_ID,
+            content: 'partial answer',
+          },
+        },
+        '[DONE]',
+      ])
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderUseRegeneration(queryClient);
+
+    await act(async () => {
+      await result.current.handleRegenerate(TARGET_MESSAGE_ID, PARENT_ID);
+    });
+
+    const messages = getMessagesFromQueryCache(queryClient, CONVERSATION_ID);
+    const finalMsg = messages.find((m) => m && m.id === SERVER_FINAL_ID);
+    expect(finalMsg).toBeDefined();
+    // streamSlotId must be the ORIGINAL placeholder id (regen-temp-*)
+    // not the server-assigned id — that's the whole point of the
+    // preservation: MessageList keys on streamSlotId || id, so it
+    // needs to stay stable across the swap.
+    expect(finalMsg.streamSlotId).toMatch(/^regen-temp-/);
+    expect(finalMsg.streamSlotId).not.toBe(SERVER_FINAL_ID);
+  });
+});

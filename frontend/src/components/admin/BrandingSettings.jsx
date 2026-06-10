@@ -10,6 +10,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Snackbar,
   Stack,
   TextField,
   Typography,
@@ -18,11 +19,20 @@ import {
 import PaletteIcon from '@mui/icons-material/Palette';
 import { brandingAPI, extractDataFromResponse, formatError } from '../../services/api';
 import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
+import { DRAWER_CONTENT_CENTER_OFFSET } from '../../layouts/constants';
 import { resolveBranding } from '../../utils/brandingUtils';
 import { getThemeConfig } from '../../utils/constants';
 import { FONT_FAMILIES } from '../../utils/typography';
 import log from '../../utils/log';
 import PageHelpHeader from '../PageHelpHeader';
+import AssistantAvatarSection from './branding/AssistantAvatarSection';
+
+// Auto-hide window for success toasts. Errors set autoHideDuration={null}
+// so the user must dismiss them explicitly. Follow-up: when the global
+// NotificationProvider lands, this constant moves into that module's
+// defaults (alongside SHORT/DEFAULT/LONG values to standardise the
+// 3000/4000/6000ms inconsistency across the codebase).
+const SNACKBAR_AUTOHIDE_MS = 6000;
 
 const BRAND_FONT_INHERIT = '__default__';
 
@@ -75,6 +85,13 @@ const BrandingSettings = () => {
   const [formState, setFormState] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
+  // snackContent shadows `status` but stays populated through the Snackbar's
+  // exit transition. Without it, the Alert's severity falls back to 'info'
+  // (default) for one frame as status clears, producing a blue flash mid-fade.
+  const [snackContent, setSnackContent] = useState(null);
+  if (status && status !== snackContent) {
+    setSnackContent(status);
+  }
   const [uploadingLightFavicon, setUploadingLightFavicon] = useState(false);
   const [uploadingDarkFavicon, setUploadingDarkFavicon] = useState(false);
 
@@ -184,6 +201,12 @@ const BrandingSettings = () => {
     setStatus(null);
     setSaving(true);
     try {
+      // Every branding field this UI manages must be nulled here. Forgetting
+      // one means "Reset to Defaults" silently leaves it untouched and the
+      // success message lies. Avatar fields specifically: passing
+      // assistant_avatar_mode: null removes the key from stored — backend's
+      // update_branding then sees final_mode !== 'custom' and triggers the
+      // orphan-asset cleanup (deletes any uploaded file from disk).
       const response = await brandingAPI.updateBranding({
         app_name: null,
         favicon_url: null,
@@ -194,6 +217,9 @@ const BrandingSettings = () => {
         dark_theme_overrides: null,
         brand_font_family: null,
         brand_heading_font_family: null,
+        assistant_avatar_mode: null,
+        assistant_avatar_curated_id: null,
+        assistant_avatar_asset_url: null,
       });
       const data = extractDataFromResponse(response);
       const resolved = resolveBranding(data);
@@ -299,11 +325,43 @@ const BrandingSettings = () => {
           ]}
         />
 
-        {status && (
-          <Alert severity={status.type} onClose={() => setStatus(null)}>
-            {status.message}
+        {/* Snackbar renders via Portal to document.body so status messages
+            from sections deep in the form (e.g., the Avatar upload-reject
+            toast) appear at the viewport edge regardless of scroll position.
+            Errors stay until dismissed; successes auto-hide after 6s.
+            Follow-up: promote to a global NotificationProvider used by every
+            admin page (see ticket for the wider list). */}
+        <Snackbar
+          open={!!status}
+          autoHideDuration={status?.type === 'error' ? null : SNACKBAR_AUTOHIDE_MS}
+          onClose={(_event, reason) => {
+            if (reason === 'clickaway') {
+              return;
+            }
+            setStatus(null);
+          }}
+          TransitionProps={{ onExited: () => setSnackContent(null) }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          sx={{
+            // AdminLayout switches the drawer from temporary overlay to
+            // persistent push at the md breakpoint
+            // (`useMediaQuery(theme.breakpoints.down('md'))` — see
+            // AdminLayout.js). Apply the centering offset at the same
+            // breakpoint so xs+sm (where the drawer is overlay) keep the
+            // default viewport-centered position, and md+ (where the
+            // drawer pushes content) gets the half-drawer compensation.
+            transform: { md: `translateX(calc(-50% + ${DRAWER_CONTENT_CENTER_OFFSET}px))` },
+          }}
+        >
+          <Alert
+            severity={snackContent?.type || 'info'}
+            onClose={() => setStatus(null)}
+            variant="filled"
+            sx={{ width: '100%' }}
+          >
+            {snackContent?.message}
           </Alert>
-        )}
+        </Snackbar>
 
         <Paper sx={{ p: 3 }}>
           <Stack spacing={2}>
@@ -424,6 +482,8 @@ const BrandingSettings = () => {
             </Stack>
           </Paper>
         </Stack>
+
+        <AssistantAvatarSection branding={branding} setBranding={setBranding} setStatus={setStatus} />
 
         <Paper sx={{ p: 3 }}>
           <Stack spacing={2}>

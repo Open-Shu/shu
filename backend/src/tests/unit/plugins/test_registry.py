@@ -39,6 +39,71 @@ def _scalar_result(value):
     return result
 
 
+class TestSyncIsolation:
+    """SHU-825: one plugin's failure must roll back and continue, not abort sync."""
+
+    @pytest.mark.asyncio
+    async def test_sync_isolates_failing_plugin_and_continues(self):
+        """Two plugins both take the create path; the first plugin's commit raises.
+        The loop must roll back and still process the second, instead of leaving the
+        shared transaction aborted and cascading InFailedSQLTransactionError."""
+        registry = PluginRegistry()
+        registry._manifest = {"plug_a": MagicMock(version="1"), "plug_b": MagicMock(version="1")}
+        # Don't let full_refresh rebuild/clear the manifest or hit the MCP table.
+        registry.full_refresh = AsyncMock()
+        # Loader returns a plugin with no output schema so both take the create path.
+        dummy = MagicMock()
+        dummy.get_output_schema = MagicMock(return_value=None)
+        registry._loader.load = MagicMock(return_value=dummy)
+
+        no_row = MagicMock()
+        no_row.scalars.return_value.first.return_value = None
+        no_row.scalars.return_value.all.return_value = []  # empty purge scan
+
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=no_row)
+        session.add = MagicMock()
+        session.rollback = AsyncMock()
+        # First plugin's commit fails; second succeeds.
+        session.commit = AsyncMock(side_effect=[RuntimeError("commit boom on first plugin"), None])
+
+        stats = await registry.sync(session)
+
+        # The failure was isolated: rolled back, and the second plugin still committed.
+        assert session.rollback.await_count >= 1, "failing plugin must roll back the session"
+        assert session.commit.await_count == 2, "second plugin must still be attempted after the first fails"
+        assert stats["created"] == 1, "exactly the surviving plugin should be created"
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_mcp_purge_when_refresh_failed(self):
+        """SHU-825 + review: if the MCP refresh fails, the manifest has no mcp:
+        entries — sync must NOT purge existing mcp: definitions, or a transient MCP
+        load failure would wipe every MCP plugin. Stale non-mcp rows are still purged."""
+        registry = PluginRegistry()
+        registry._manifest = {}  # no filesystem plugins discovered for this test
+        # full_refresh reports MCP refresh failure.
+        registry.full_refresh = AsyncMock(return_value=False)
+
+        existing_mcp = MagicMock()
+        existing_mcp.name = "mcp:server-a"
+        stale_fs = MagicMock()
+        stale_fs.name = "stale_fs_plugin"
+        purge_scan = MagicMock()
+        purge_scan.scalars.return_value.all.return_value = [existing_mcp, stale_fs]
+
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=purge_scan)
+        session.delete = AsyncMock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+
+        await registry.sync(session)
+
+        deleted = [call.args[0] for call in session.delete.await_args_list]
+        assert existing_mcp not in deleted, "mcp: definition must NOT be purged when MCP refresh failed"
+        assert stale_fs in deleted, "stale non-mcp definition should still be purged"
+
+
 class TestResolveMcp:
     """Verify resolve() handles mcp: plugins via McpPluginAdapter."""
 

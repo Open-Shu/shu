@@ -54,3 +54,91 @@ class TestProcessAndUpdateChunks:
         private_fetch_mock.assert_not_awaited()
         document.update_content_stats.assert_called_once_with(2, 11, 0)
         assert result == (2, 11, 0)
+
+
+# SHU-776: document_count_limit enforcement on create_document. The gate runs
+# only for genuinely new documents — an existing (idempotent) row returns
+# first, leaving the count unchanged. Self-hosted (no cache) bypasses entirely.
+
+_P_STATE_SERVICE = "shu.billing.state_service.BillingStateService.get_for_update"
+_P_KB_VERIFY = "shu.utils.KnowledgeBaseVerifier.verify_exists"
+_P_FROM_ORM = "shu.services.document_service.DocumentResponse.from_orm"
+
+
+def _doc_create(**overrides):
+    from shu.schemas.document import DocumentCreate
+
+    base = dict(
+        title="Doc",
+        file_type="txt",
+        source_type="manual",
+        source_id="src-1",
+        knowledge_base_id="kb-1",
+        content="hello world",
+    )
+    base.update(overrides)
+    return DocumentCreate(**base)
+
+
+def _state_with_doc_limit(cap: int):
+    import dataclasses
+
+    from shu.billing.cp_client import HEALTHY_DEFAULT
+    from shu.billing.entitlements import LimitSet
+
+    return dataclasses.replace(HEALTHY_DEFAULT, limits=LimitSet(document_count_limit=cap))
+
+
+def _db_for_create(count: int, existing=None) -> AsyncMock:
+    """db mock: existing-doc lookup → `existing`; cap count query → `count`."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = existing
+    result.scalar.return_value = count
+    db.execute = AsyncMock(return_value=result)
+    db.add = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
+
+
+@patch(_P_STATE_SERVICE, new_callable=AsyncMock)
+class TestCreateDocumentLimit:
+    """create_document honours document_count_limit when a billing cache is present."""
+
+    @pytest.mark.asyncio
+    async def test_at_cap_raises_and_adds_nothing(self, _mock_lock, install_stub_cache):
+        from shu.billing.entitlements import LimitExceededError
+
+        install_stub_cache(_state_with_doc_limit(10))
+        db = _db_for_create(count=10)
+        service = DocumentService(db)
+
+        with patch(_P_KB_VERIFY, new=AsyncMock()):
+            with pytest.raises(LimitExceededError):
+                await service.create_document(_doc_create())
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_under_cap_creates(self, _mock_lock, install_stub_cache):
+        install_stub_cache(_state_with_doc_limit(10))
+        db = _db_for_create(count=3)
+        service = DocumentService(db)
+
+        with patch(_P_KB_VERIFY, new=AsyncMock()), patch(_P_FROM_ORM, return_value=MagicMock()):
+            await service.create_document(_doc_create())
+        db.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_existing_document_bypasses_cap(self, _mock_lock, install_stub_cache):
+        """Re-ingesting an existing doc returns it without the cap check: the
+        count is unchanged, so even cap=0 must not block this path.
+        """
+        install_stub_cache(_state_with_doc_limit(0))
+        db = _db_for_create(count=0, existing=MagicMock())
+        service = DocumentService(db)
+
+        with patch(_P_KB_VERIFY, new=AsyncMock()), patch(_P_FROM_ORM, return_value="existing-response"):
+            result = await service.create_document(_doc_create())
+        assert result == "existing-response"
+        db.add.assert_not_called()

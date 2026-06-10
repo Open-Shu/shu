@@ -34,7 +34,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import { getBrandingAppName } from '../utils/constants';
-import { PLUGINS_ENABLED, EXPERIENCES_ENABLED } from '../config/featureFlags';
+import { useFeatureEnabled } from '../config/featureFlags';
 import PageHelpHeader from './PageHelpHeader';
 import { setupAPI, extractDataFromResponse } from '../services/api';
 
@@ -163,6 +163,13 @@ const QuickStart = () => {
     return setupStatus[statusKey] === true;
   };
 
+  // SHU-773: cards/links for a feature show only when its build-time flag AND
+  // the tenant entitlement both allow it (resolved by useFeatureEnabled).
+  const canPlugins = useFeatureEnabled('plugins');
+  const canExperiences = useFeatureEnabled('experiences');
+  const canProviderMgmt = useFeatureEnabled('providers');
+  const canModelConfig = useFeatureEnabled('modelConfigs');
+
   const gettingStartedSections = [
     {
       title: 'LLM Providers',
@@ -172,6 +179,7 @@ const QuickStart = () => {
       path: '/admin/llm-providers',
       priority: 'Start Here',
       statusKey: 'llm_provider_configured',
+      featureFlag: canProviderMgmt,
     },
     {
       title: 'Model Configurations',
@@ -181,6 +189,7 @@ const QuickStart = () => {
       path: '/admin/model-configurations',
       priority: 'Step 2',
       statusKey: 'model_configuration_created',
+      featureFlag: canModelConfig,
     },
     {
       title: 'Knowledge Bases',
@@ -207,7 +216,7 @@ const QuickStart = () => {
       path: '/admin/plugins',
       priority: 'Step 5',
       statusKey: 'plugins_enabled',
-      featureFlag: PLUGINS_ENABLED,
+      featureFlag: canPlugins,
     },
     {
       title: 'Plugin Feeds',
@@ -217,7 +226,7 @@ const QuickStart = () => {
       path: '/admin/feeds',
       priority: 'Step 6',
       statusKey: 'plugin_feed_created',
-      featureFlag: PLUGINS_ENABLED,
+      featureFlag: canPlugins,
     },
     {
       title: 'Experiences',
@@ -227,7 +236,7 @@ const QuickStart = () => {
       path: '/admin/experiences',
       priority: 'Step 7',
       statusKey: 'experience_created',
-      featureFlag: EXPERIENCES_ENABLED,
+      featureFlag: canExperiences,
     },
   ];
 
@@ -268,7 +277,7 @@ const QuickStart = () => {
         'Run an AI-powered daily briefing that summarizes your calendar, email, and chat. Experimental demo feature.',
       icon: <BriefingIcon />,
       path: '/admin/briefing',
-      featureFlag: EXPERIENCES_ENABLED,
+      featureFlag: canExperiences,
     },
     {
       title: 'Query Tester',
@@ -338,7 +347,7 @@ const QuickStart = () => {
           'Start by configuring an LLM Provider with your API key (OpenAI, Anthropic, Ollama, etc.)',
           'Create a Model Configuration to define which AI model powers your assistant',
           'Create a Knowledge Base to store documents your assistant can reference',
-          ...(PLUGINS_ENABLED ? ['Enable Plugins to connect external services and power automated data feeds'] : []),
+          ...(canPlugins ? ['Enable Plugins to connect external services and power automated data feeds'] : []),
           'Use the Query Tester and LLM Tester to verify everything is working correctly',
         ]}
         defaultExpanded={true}
@@ -362,7 +371,7 @@ const QuickStart = () => {
               A searchable collection of documents. Used for RAG to give your AI context about your data.
             </Typography>
           </Grid>
-          {PLUGINS_ENABLED && (
+          {canPlugins && (
             <Grid item xs={12} md={4}>
               <Typography variant="body2" sx={{ fontWeight: 500 }}>
                 Plugin
@@ -372,7 +381,7 @@ const QuickStart = () => {
               </Typography>
             </Grid>
           )}
-          {PLUGINS_ENABLED && (
+          {canPlugins && (
             <Grid item xs={12} md={4}>
               <Typography variant="body2" sx={{ fontWeight: 500 }}>
                 Feed

@@ -595,10 +595,11 @@ export const getThemeConfig = (mode = 'light', branding, userFontPref = null) =>
   const config = mergeDeep(base, overrides);
 
   // Apply resolved typography (SHU-811): user body font → brand body font → shipped default;
-  // heading font cascades brand only. Font size scale lives on the HTML root
-  // (via ThemeContext) so all rem-based sizes in this theme scale with it.
+  // heading inherits the resolved body when no brand-heading override exists.
+  // Font size scale lives on the HTML root (via ThemeContext) so all rem-based
+  // sizes in this theme scale with it.
   const bodyKey = resolveFontFamily(userFontPref, resolved.brandFontFamily);
-  const headingKey = resolveHeadingFontFamily(resolved.brandHeadingFontFamily);
+  const headingKey = resolveHeadingFontFamily(resolved.brandHeadingFontFamily, userFontPref, resolved.brandFontFamily);
   const bodyStack = getFontStack(bodyKey);
   const headingStack = getFontStack(headingKey);
   if (config.typography) {

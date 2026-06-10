@@ -13,24 +13,47 @@ Sections, in apply order:
      ``tenants(id)`` validated NOT-VALID-then-VALIDATE for self-hosted /
      silo backfill safety. DEFAULT literal per deployment mode keeps the
      ALTER metadata-only on PG 11+.
-  C. ``shu_admin`` (BYPASSRLS) and ``shu_app`` (no BYPASSRLS) roles, grants,
-     unique constraints on the SD-function lookup columns, and the
+  C. Unique constraints on the SD-function lookup columns, and the
      SECURITY DEFINER family of pre-auth tenant resolvers.
 
-Revision: 009
-Revises: 008
+This migration is SCHEMA ONLY. Database roles and their grants are NOT created
+here — that is environment provisioning, not schema:
+  * local dev / self-hosted: ``scripts/database.py setup`` creates the roles.
+  * hosted silo: the app connects as the per-tenant ``tenant_<slug>`` role
+    (owns its tables; RLS enforces via FORCE + the ``app.tenant_id`` GUC), so
+    no extra role exists. The RLS policy is ``TO PUBLIC`` (role-agnostic) so it
+    applies to whatever non-BYPASSRLS role connects.
+  * pooled (SHU-758, not yet built): CP/Pulumi provisions the shared app role,
+    a minimal-privilege BYPASSRLS system role, and the per-table grants +
+    SECURITY-DEFINER function ownership. THAT is where the role wiring lives.
+
+Revision: 009_00011
+Revises: r009_0001
 Create Date: 2026-05-15
 """
 
 import os
+import uuid
 
 import sqlalchemy as sa
 from alembic import op
 
-from shu.core.config import SELF_HOSTED_TENANT_UUID, DeploymentMode, get_settings_instance
+from shu.core.config import SELF_HOSTED_TENANT_UUID, DeploymentMode
 
-revision = "009"
-down_revision = "008"
+# Renamed from "009" → "009_00011" and re-slotted to run AFTER r009_0001 (was
+# down_revision="008"). This file was authored 2026-05-15 — four days after
+# r009_0001 (2026-05-11) had already shipped and stamped the deployed silo
+# tenants — but was inserted ahead of it with the lower "009" id, so those DBs
+# (stamped at r009_0001) never executed this DDL. Pointing down_revision at
+# r009_0001 makes this migration a descendant of the tenants' current head, so
+# `alembic upgrade` runs it on the next deploy; the "009_00011" id reflects
+# that chain position (immediately after r009_0001) instead of falsely sorting
+# before it. The rename is safe because no DB is stamped at exactly "009": the
+# deployed silo tenants are at r009_0001, and every other DB is at the head
+# r009_0006 (alembic_version records only the head, not intermediate history).
+# r009_0002 (which depends on this schema) now revises 009_00011.
+revision = "009_00011"
+down_revision = "r009_0001"
 branch_labels = None
 depends_on = None
 
@@ -162,25 +185,6 @@ def _resolve_default(mode: DeploymentMode, tenant_id: str | None) -> str | None:
     raise RuntimeError(f"Unknown deployment mode: {mode!r}")
 
 
-def _read_password(env_var: str) -> str:
-    # CREATE ROLE PASSWORD doesn't accept bind parameters, so we interpolate.
-    # Doubling single quotes is the standard Postgres string-literal escape.
-    #
-    # Required, not optional: a missing env var would create a LOGIN-capable role
-    # with whatever hardcoded fallback we shipped — i.e. a well-known credential
-    # for anyone able to reach the DB port. Local dev injects these via
-    # `make migrate-local-lab`; production via the deploy pipeline. Either way,
-    # absence is a misconfiguration we want to fail on, not paper over.
-    value = os.environ.get(env_var)
-    if not value:
-        raise RuntimeError(
-            f"{env_var} is required to create the shu_admin / shu_app roles. "
-            "Set it in the deploy environment (or the `make migrate-local-lab` target for dev) "
-            "before running this migration."
-        )
-    return value.replace("'", "''")
-
-
 # ----------------------------------------------------------------------------
 # Idempotency helpers
 #
@@ -223,8 +227,95 @@ def _replace_policy(table: str, policy: str, body: str) -> None:
     op.execute(f"CREATE POLICY {policy} ON {table} {body}")
 
 
+def _defuse_orphan_composite_fk_refs() -> None:
+    """Convert dangling child→parent references into a VALIDATE-compatible state.
+
+    The pre-009 schema had gaps where child columns lacked a foreign key to
+    their parent (notably ``knowledge_bases.owner_id`` → ``users.id``). That
+    allowed legitimate operations — e.g. spinning up a privileged user to
+    ingest a corpus, then deleting the user once done — to leave child rows
+    pointing at a parent that no longer exists. The data in the child row is
+    real and worth keeping; the dangling reference is the lie.
+
+    For each composite FK we're about to validate:
+      * If the child column is NULLABLE: set dangling refs to NULL. The
+        composite FK is satisfied vacuously by a NULL child column (SQL
+        MATCH SIMPLE), so VALIDATE then passes without touching the row's
+        other data.
+      * If the child column is NOT NULL: there is no clean recovery — the
+        row literally cannot exist without a valid parent. Collect every
+        such case and raise ONE error listing all of them, so the operator
+        sees the full remediation list rather than fixing-and-rerunning one
+        constraint at a time.
+
+    Idempotent: a re-run finds zero orphans (we just nulled them) and exits
+    silently.
+    """
+    bind = op.get_bind()
+    nulled: list[tuple[str, str, int]] = []
+    blocked: list[tuple[str, str, str, str, int]] = []
+
+    for child, child_col, parent, parent_col in _COMPOSITE_FKS:
+        is_nullable = bind.execute(
+            sa.text(
+                "SELECT is_nullable = 'YES' FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+            ),
+            {"t": child, "c": child_col},
+        ).scalar()
+
+        orphan_count = bind.execute(
+            sa.text(
+                f"SELECT COUNT(*) FROM {child} c "
+                f"WHERE c.{child_col} IS NOT NULL "
+                f"  AND NOT EXISTS ("
+                f"    SELECT 1 FROM {parent} p "
+                f"    WHERE p.tenant_id = c.tenant_id AND p.{parent_col} = c.{child_col}"
+                f"  )"
+            )
+        ).scalar()
+
+        if not orphan_count:
+            continue
+
+        if is_nullable:
+            bind.execute(
+                sa.text(
+                    f"UPDATE {child} SET {child_col} = NULL "
+                    f"WHERE {child_col} IS NOT NULL "
+                    f"  AND NOT EXISTS ("
+                    f"    SELECT 1 FROM {parent} p "
+                    f"    WHERE p.tenant_id = {child}.tenant_id AND p.{parent_col} = {child}.{child_col}"
+                    f"  )"
+                )
+            )
+            nulled.append((child, child_col, orphan_count))
+        else:
+            blocked.append((child, child_col, parent, parent_col, orphan_count))
+
+    for child, child_col, n in nulled:
+        print(
+            f"[009] Nulled {n} orphan ref(s) in {child}.{child_col} "
+            f"(nullable; parent row missing — data preserved, ownership cleared)",
+            flush=True,
+        )
+
+    if blocked:
+        lines = [
+            "Composite FK validation would fail: NOT NULL child columns reference",
+            "missing parent rows. The migration cannot auto-resolve these because",
+            "the row cannot exist without a valid parent. Resolve manually, then",
+            "re-run. Orphan inventory:",
+        ]
+        for child, child_col, parent, parent_col, n in blocked:
+            lines.append(f"  - {child}.{child_col} -> {parent}({parent_col}): {n} orphan(s)")
+        raise RuntimeError("\n".join(lines))
+
+
 # Section C SQL kept as a single string so the function bodies (which include
-# $$ delimiters) read naturally alongside their grants.
+# $$ delimiters) read naturally. Only the function definitions + REVOKE-from-
+# PUBLIC hardening live here; ownership (to a BYPASSRLS role) and EXECUTE grants
+# are deployment role-wiring, provisioned outside this migration.
 _SD_FUNCTIONS_SQL = r"""
 -- tenant_for_user_id: authenticated request, post-JWT-decode lookup.
 CREATE OR REPLACE FUNCTION tenant_for_user_id(p_user_id text)
@@ -234,9 +325,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
 AS $$ SELECT tenant_id FROM users WHERE id = p_user_id $$;
-ALTER FUNCTION tenant_for_user_id(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_user_id(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION tenant_for_user_id(text) TO shu_app;
 
 -- tenant_for_email: login / password-reset request / SSO callback.
 CREATE OR REPLACE FUNCTION tenant_for_email(p_email text)
@@ -246,9 +335,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
 AS $$ SELECT tenant_id FROM users WHERE email = p_email $$;
-ALTER FUNCTION tenant_for_email(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_email(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION tenant_for_email(text) TO shu_app;
 
 -- tenant_for_reset_token: argument is the sha256 hex digest, never the
 -- plaintext. Returns NULL on miss so all five tenant_for_* lookups behave
@@ -263,9 +350,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
 AS $$ SELECT tenant_id FROM password_reset_token WHERE token_hash = p_token_hash $$;
-ALTER FUNCTION tenant_for_reset_token(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_reset_token(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION tenant_for_reset_token(text) TO shu_app;
 
 -- tenant_for_verification_token: same sha256-hash convention as reset_token.
 -- Plain SQL so all five tenant_for_* lookups return NULL on miss uniformly.
@@ -276,9 +361,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
 AS $$ SELECT tenant_id FROM users WHERE email_verification_token_hash = p_hash $$;
-ALTER FUNCTION tenant_for_verification_token(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_verification_token(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION tenant_for_verification_token(text) TO shu_app;
 
 -- tenant_for_stripe_customer: webhook arrives with the customer id and no
 -- Shu user context. Plain SQL is fine since billing_state has at most one
@@ -290,14 +373,37 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 STABLE
 AS $$ SELECT tenant_id FROM billing_state WHERE stripe_customer_id = p_customer_id $$;
-ALTER FUNCTION tenant_for_stripe_customer(text) OWNER TO shu_admin;
 REVOKE ALL ON FUNCTION tenant_for_stripe_customer(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION tenant_for_stripe_customer(text) TO shu_app;
 """
 
 
 def upgrade() -> None:
-    settings = get_settings_instance()
+    # Seed identity comes from the deployment env directly, NOT the full app
+    # Settings object. This migration must depend only on the DB connection plus
+    # the two values it actually uses (deployment mode + tenant id). Loading
+    # Settings here previously coupled the migration to every app config field
+    # and crashed in hosted on the Kubernetes service-link `SHU_API_PORT=tcp://…`
+    # injection — a schema migration has no business validating the API port.
+    deployment_mode = DeploymentMode(os.environ.get("SHU_DEPLOYMENT_MODE") or DeploymentMode.SELF_HOSTED.value)
+    seed_tenant_id = os.environ.get("SHU_TENANT_ID") or None
+    if deployment_mode is DeploymentMode.SILO:
+        if not seed_tenant_id:
+            raise RuntimeError(
+                "SHU_TENANT_ID is required when SHU_DEPLOYMENT_MODE=silo — it is the "
+                "tenant_id seed and the NOT NULL DEFAULT backfilled onto existing rows."
+            )
+        # Must be a valid UUID: it is inserted as the tenants.id / tenant_id
+        # values, which r009_0003 later converts with ``::uuid``. A non-UUID
+        # would pass here and fail that cast mid-chain. get_settings_instance()
+        # used to enforce this; the narrow env read (SHU-846) replaced it, so
+        # validate explicitly here.
+        try:
+            uuid.UUID(seed_tenant_id)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"SHU_TENANT_ID must be a valid UUID (got {seed_tenant_id!r}); "
+                "r009_0003 casts tenant ids to uuid and would fail otherwise."
+            ) from exc
     tables = list(_TENANT_SCOPED_TABLES)
 
     # =========================================================================
@@ -310,7 +416,7 @@ def upgrade() -> None:
         ")"
     )
 
-    seed_id = _resolve_default(settings.deployment_mode, settings.tenant_id)
+    seed_id = _resolve_default(deployment_mode, seed_tenant_id)
     if seed_id is not None:
         # ON CONFLICT DO NOTHING keeps re-runs against partially-seeded DBs idempotent.
         op.execute(
@@ -320,7 +426,7 @@ def upgrade() -> None:
     # =========================================================================
     # B. tenant_id columns + indexes + FK constraints
     # =========================================================================
-    column_default = _resolve_default(settings.deployment_mode, settings.tenant_id)
+    column_default = _resolve_default(deployment_mode, seed_tenant_id)
 
     for table_name in tables:
         if column_default is not None:
@@ -461,108 +567,14 @@ def upgrade() -> None:
             )
 
     # =========================================================================
-    # C. Roles + grants + unique lookup constraints + SECURITY DEFINER functions
-    # =========================================================================
-    admin_pw = _read_password("SHU_ADMIN_DB_PASSWORD")
-    app_pw = _read_password("SHU_APP_DB_PASSWORD")
-
-    # CREATE ROLE has no IF NOT EXISTS. Roles are cluster-wide and persist
-    # past DB drops, so DO blocks keep re-runs idempotent.
-    op.execute(
-        f"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'shu_admin') THEN
-                CREATE ROLE shu_admin WITH LOGIN BYPASSRLS PASSWORD '{admin_pw}';
-            END IF;
-        END $$;
-        """
-    )
-    op.execute(
-        f"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'shu_app') THEN
-                CREATE ROLE shu_app WITH LOGIN PASSWORD '{app_pw}';
-            END IF;
-        END $$;
-        """
-    )
-
-    db_name = op.get_bind().execute(sa.text("SELECT current_database()")).scalar()
-
-    op.execute(f'GRANT CONNECT ON DATABASE "{db_name}" TO shu_app')
-    op.execute(f'GRANT CONNECT ON DATABASE "{db_name}" TO shu_admin')
-    op.execute("GRANT USAGE ON SCHEMA public TO shu_app")
-    op.execute("GRANT USAGE ON SCHEMA public TO shu_admin")
-
-    for table_name in tables:
-        op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table_name} TO shu_app")
-    op.execute("GRANT SELECT ON tenants TO shu_app")
-
-    # Global tables — RLS-exempt but still touched by request-path code, so
-    # shu_app needs the right grants or routine requests will 'permission
-    # denied' after cutover. Verbs are the minimum each table actually needs:
-    #   llm_providers, llm_models — admin UI provider/model CRUD (DML)
-    #   plugin_definitions        — plugin registry sync on startup writes rows (DML)
-    #   llm_provider_type_definitions — read-only at runtime; seeded by migrations (SELECT)
-    # If a future global table is added, its grants belong alongside its
-    # CREATE TABLE migration, not here. (``system_settings`` is tenant-scoped
-    # — its grants come from the per-table loop above.)
-    for table_name in ("llm_providers", "llm_models", "plugin_definitions"):
-        op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table_name} TO shu_app")
-    op.execute("GRANT SELECT ON llm_provider_type_definitions TO shu_app")
-
-    # Sequences cover Identity columns and legacy autoincrement PKs.
-    op.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO shu_app")
-
-    # Future objects created by shu_admin in later migrations auto-inherit
-    # the right grants — no need to chase them table-by-table.
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE shu_admin IN SCHEMA public "
-        "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO shu_app"
-    )
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE shu_admin IN SCHEMA public "
-        "GRANT USAGE, SELECT ON SEQUENCES TO shu_app"
-    )
-
-    # BYPASSRLS gives shu_admin a read path past RLS but not table privileges.
-    # The SD functions below read these tables under shu_admin ownership.
-    op.execute("GRANT SELECT ON users TO shu_admin")
-    op.execute("GRANT SELECT ON password_reset_token TO shu_admin")
-    op.execute("GRANT SELECT ON billing_state TO shu_admin")
-
-    # Catalog / tenant-provisioning writes — shu_admin owns operator-only
-    # operations that need to write across tenants: seeding the ``tenants``
-    # catalog, creating the first admin user for a new tenant, stubbing the
-    # per-tenant ``billing_state`` row. These are CLI / control-plane paths
-    # (e.g. ``backend/scripts/seed_tenant.py``), not request-path code.
+    # C. Unique lookup constraints + SECURITY DEFINER functions
     #
-    # SELECT is included alongside the write verbs because ``INSERT ... ON
-    # CONFLICT DO NOTHING`` (the idempotent shape these scripts use) needs
-    # SELECT on the conflict target to check existence — INSERT alone errors
-    # with "permission denied for table".
-    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON tenants TO shu_admin")
-    op.execute("GRANT INSERT, UPDATE ON users TO shu_admin")
-    op.execute("GRANT INSERT, UPDATE ON billing_state TO shu_admin")
-
-    # shu_app needs to read ``alembic_version`` because the API's startup
-    # schema-baseline check (``verify_schema_version`` in main.py) queries
-    # it before serving traffic. Alembic creates the table itself the first
-    # time a migration runs, so no GRANT happens automatically — we add it
-    # here, gated on the table existing (skipped if alembic was never used).
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT FROM pg_class WHERE relname = 'alembic_version') THEN
-                GRANT SELECT ON alembic_version TO shu_app;
-                GRANT SELECT ON alembic_version TO shu_admin;
-            END IF;
-        END $$;
-        """
-    )
+    # Role creation and grants used to live here. They are deployment role-
+    # wiring, not schema, and have moved out: local dev / self-hosted create the
+    # roles in `scripts/database.py setup`; hosted silo connects as the per-
+    # tenant role (no extra role); pooled (SHU-758) provisions the shared app +
+    # BYPASSRLS system roles and their grants via CP/Pulumi. See module docstring.
+    # =========================================================================
 
     # Unique constraints on SD-function lookup columns — the functions return
     # a single row via WHERE col = $1, so the schema must enforce that.
@@ -601,6 +613,13 @@ def upgrade() -> None:
     # row to reference a parent in a different tenant — Postgres refuses the
     # insert. The existing single-column FK stays in place alongside.
     # =========================================================================
+
+    # Pre-flight: defuse dangling refs left by pre-009 schema gaps (e.g.
+    # knowledge_bases.owner_id had no FK to users.id, so deleting a user
+    # silently orphaned their KBs). Nullable child columns get their dangling
+    # refs nulled; NOT NULL columns fail loud with the full inventory.
+    _defuse_orphan_composite_fk_refs()
+
     inventory = list(_COMPOSITE_FKS)
 
     parent_uniques = sorted({(parent, parent_col) for _, _, parent, parent_col in inventory})
@@ -663,7 +682,7 @@ def upgrade() -> None:
         # ENABLE / FORCE are idempotent in Postgres — no guard needed.
         op.execute(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY")
         # FORCE so even the table owner can't bypass the policy — only roles
-        # with BYPASSRLS (shu_admin) get through.
+        # with BYPASSRLS get through.
         op.execute(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY")
         # CREATE POLICY would fail on a re-run; drop-then-create is the
         # standard idempotent shape and also lets us pick up policy-body
@@ -672,7 +691,12 @@ def upgrade() -> None:
             table_name,
             "tenant_isolation",
             (
-                "AS PERMISSIVE FOR ALL TO shu_app "
+                # TO PUBLIC (role-agnostic): the policy applies to whatever
+                # non-BYPASSRLS role connects — the per-tenant role in silo, the
+                # shared app role in pooled — so the schema doesn't hardcode a
+                # role name that may not exist in a given deployment. BYPASSRLS
+                # roles still bypass; the app.tenant_id GUC is the filter.
+                "AS PERMISSIVE FOR ALL TO PUBLIC "
                 "USING (tenant_id = current_setting('app.tenant_id', true)) "
                 "WITH CHECK (tenant_id = current_setting('app.tenant_id', true))"
             ),
@@ -750,50 +774,9 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_password_reset_token_token_hash")
     op.execute("CREATE INDEX ix_password_reset_token_token_hash ON password_reset_token (token_hash)")
 
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT FROM pg_class WHERE relname = 'alembic_version') THEN
-                REVOKE SELECT ON alembic_version FROM shu_app;
-                REVOKE SELECT ON alembic_version FROM shu_admin;
-            END IF;
-        END $$;
-        """
-    )
-    op.execute("REVOKE INSERT, UPDATE ON billing_state FROM shu_admin")
-    op.execute("REVOKE INSERT, UPDATE ON users FROM shu_admin")
-    op.execute("REVOKE SELECT, INSERT, UPDATE, DELETE ON tenants FROM shu_admin")
-    op.execute("REVOKE SELECT ON billing_state FROM shu_admin")
-    op.execute("REVOKE SELECT ON password_reset_token FROM shu_admin")
-    op.execute("REVOKE SELECT ON users FROM shu_admin")
-
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE shu_admin IN SCHEMA public "
-        "REVOKE USAGE, SELECT ON SEQUENCES FROM shu_app"
-    )
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE shu_admin IN SCHEMA public "
-        "REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM shu_app"
-    )
-    op.execute("REVOKE USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public FROM shu_app")
-    op.execute("REVOKE SELECT ON llm_provider_type_definitions FROM shu_app")
-    for table_name in ("llm_providers", "llm_models", "plugin_definitions"):
-        op.execute(f"REVOKE SELECT, INSERT, UPDATE, DELETE ON {table_name} FROM shu_app")
-    op.execute("REVOKE SELECT ON tenants FROM shu_app")
-    for table_name in tables:
-        op.execute(f"REVOKE SELECT, INSERT, UPDATE, DELETE ON {table_name} FROM shu_app")
-
-    db_name = op.get_bind().execute(sa.text("SELECT current_database()")).scalar()
-    op.execute("REVOKE USAGE ON SCHEMA public FROM shu_admin")
-    op.execute("REVOKE USAGE ON SCHEMA public FROM shu_app")
-    op.execute(f'REVOKE CONNECT ON DATABASE "{db_name}" FROM shu_admin')
-    op.execute(f'REVOKE CONNECT ON DATABASE "{db_name}" FROM shu_app')
-
-    op.execute("DROP OWNED BY shu_app")
-    op.execute("DROP ROLE IF EXISTS shu_app")
-    op.execute("DROP OWNED BY shu_admin")
-    op.execute("DROP ROLE IF EXISTS shu_admin")
+    # Roles and grants are no longer created by this migration (they are
+    # environment provisioning — see the module docstring and upgrade's
+    # Section C), so there is nothing to revoke or drop here.
 
     # Reverse section B
     for table_name in tables:
