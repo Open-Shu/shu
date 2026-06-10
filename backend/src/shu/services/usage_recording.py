@@ -115,7 +115,7 @@ class UsageRecorder:
         self,
         *,
         provider_id: str,
-        model_id: str,
+        model_id: str | None = None,
         request_type: str,
         user_id: str | None = None,
         input_tokens: int = 0,
@@ -241,7 +241,7 @@ class UsageRecorder:
         *,
         commit: bool,
         provider_id: str,
-        model_id: str,
+        model_id: str | None,
         user_id: str | None,
         request_type: str,
         input_tokens: int,
@@ -263,7 +263,10 @@ class UsageRecorder:
         inside a nested savepoint (caller-owned session).
         """
         provider = await session.get(LLMProvider, provider_id)
-        model = await session.get(LLMModel, model_id)
+        # SHU-816: tool-call usage rows have no model — request_type
+        # discriminates them. Skip the model lookup so SQLAlchemy
+        # doesn't get a None primary key.
+        model = await session.get(LLMModel, model_id) if model_id is not None else None
 
         input_cost, output_cost, total_cost = self._cost_resolver.resolve(
             model=model,

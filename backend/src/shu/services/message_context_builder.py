@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,7 +89,7 @@ class MessageContextBuilder:
         kb_access_verified: bool = False,
     ) -> tuple[ChatContext, list[dict]]:
         """Build message context using model configuration with conditional RAG + attachments."""
-        system_sections: list[str] = []
+        system_sections: list[str] = [self._build_metadata_section(current_user)]
         active_model_config = model_configuration_override or getattr(conversation, "model_configuration", None)
 
         base_prompt = await self._get_base_system_prompt(conversation, active_model_config)
@@ -190,6 +191,42 @@ class MessageContextBuilder:
         except Exception as e:
             logger.warning(f"Failed to attach conversation attachments to messages: {e}")
             return [ChatMessage.from_message(m, []) for m in messages]
+
+    def _build_metadata_section(self, current_user: User) -> str:
+        """Build the runtime metadata block prepended to every system prompt.
+
+        Surfaces facts the model can't infer from the conversation itself
+        so it can address the user directly and ground temporal reasoning
+        in "now" rather than its training-cutoff date.
+
+        Currently surfaces:
+        - Current date/time in UTC. Without it, web_search-capable variants
+          bias queries to their training cutoff (observed: DO Gemma searched
+          "February 2025" against a real June 2026 clock and then flagged
+          real current results as "suspicious / future-dated").
+        - User identity (name, email) so the model can address the user
+          directly instead of hedging with "the user".
+
+        Re-evaluated on every call so long-running conversations don't
+        freeze on the date they started.
+
+        Extend this method (not the caller) when adding more runtime
+        context — centralizing ordering / formatting keeps the system
+        prompt's leading block consistent across every chat entrypoint.
+        """
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return "\n".join(
+            [
+                "# Conversation metadata",
+                f"- Current date/time (UTC): {now}",
+                # TODO: organization name from BrandingService.get_branding().app_name.
+                # TODO: user-local time. UserPreferences.timezone exists but
+                # the UI rarely sets it correctly today.
+                # TODO: locale (language, region). Affects unit conventions,
+                # date formats, and currency the model defaults to.
+                f"- User: {current_user.name} <{current_user.email}>",
+            ]
+        )
 
     async def _get_base_system_prompt(
         self,

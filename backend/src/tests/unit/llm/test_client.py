@@ -11,16 +11,18 @@ Tests the enhanced error handling functionality including:
 **Validates: Requirements 4.3, 4.5, 4.6, 4.7, 4.8**
 """
 
+import types
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from tests.unit.conftest import disabled_billing_state
 
 from shu.billing.enforcement import SubscriptionInactiveError
 from shu.llm.client import UnifiedLLMClient
+from shu.models.plugin_execution import CallableTool
 from shu.services.error_sanitization import ErrorSanitizer, SanitizedError
-from tests.unit.conftest import disabled_billing_state
 
 
 class TestExtractHttpErrorDetails:
@@ -42,12 +44,11 @@ class TestExtractHttpErrorDetails:
         mock_request = MagicMock()
         mock_request.url = "https://api.example.com/v1/chat/completions"
 
-        error = httpx.HTTPStatusError(
+        return httpx.HTTPStatusError(
             message=f"HTTP {status_code}",
             request=mock_request,
             response=mock_response,
         )
-        return error
 
     def test_extract_openai_style_error(self) -> None:
         """Test extraction from OpenAI-style error response."""
@@ -633,3 +634,192 @@ class TestChatCompletionSubscriptionGate:
             await client.chat_completion(messages=MagicMock(), model="gpt-4o")
 
         client.provider_adapter.inject_model_parameter.assert_not_called()
+
+
+class TestInternalToolToggles:
+    """Tests for SHU-816 chat-pipeline `int:*` extraction and tool injection."""
+
+    @staticmethod
+    def _build_client(monkeypatch):
+        """Build a UnifiedLLMClient with the heavy I/O paths stubbed out.
+
+        We bypass ``get_adapter_from_provider`` (which would try to resolve
+        a real adapter from a registered provider type) and the ``httpx``
+        client construction. The point of these tests is the pipeline glue
+        between ``_build_tool_context`` and the adapter — not network /
+        adapter selection.
+        """
+        fake_adapter = types.SimpleNamespace()
+        fake_adapter.get_api_base_url = lambda: "https://example.test"
+        fake_adapter.get_authorization_header = lambda: {"scheme": "bearer", "headers": {}}
+        # internal_tool_router is patched per-test.
+        fake_adapter.internal_tool_router = types.SimpleNamespace()
+        # inject_tool_payload is patched per-test to capture its args.
+        fake_adapter.inject_tool_payload = AsyncMock()
+
+        monkeypatch.setattr(
+            "shu.llm.client.get_adapter_from_provider",
+            lambda *a, **kw: fake_adapter,
+        )
+
+        provider = types.SimpleNamespace(
+            id="prov-1",
+            name="test-provider",
+            provider_type="digitalocean_completions",
+            config={},
+            api_endpoint="https://example.test",
+        )
+        client = UnifiedLLMClient(
+            db_session=None,
+            provider=provider,
+            conversation_owner_id="user-1",
+        )
+        return client, fake_adapter
+
+    @pytest.mark.asyncio
+    async def test_build_tool_context_appends_enabled_internal_tools(self, monkeypatch):
+        client, fake_adapter = self._build_client(monkeypatch)
+
+        # Stub the agent-tools walk so we don't need a real DB session.
+        monkeypatch.setattr(
+            "shu.llm.client.build_agent_tools",
+            AsyncMock(return_value=[]),
+        )
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+        monkeypatch.setattr("shu.llm.client.get_async_session_local", lambda: _FakeSession)
+
+        fake_callable = CallableTool(
+            name="int",
+            op="web_search",
+            plugin=None,
+            schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            title="Web Search",
+        )
+        fake_adapter.internal_tool_router.get_callable = lambda name: (
+            fake_callable if name == "int:web_search" else None
+        )
+
+        await client._build_tool_context(
+            payload={"existing": True},
+            tools_enabled=True,
+            internal_tool_toggles={"int:web_search": True},
+        )
+
+        # inject_tool_payload was called once; the first arg is the tools list.
+        fake_adapter.inject_tool_payload.assert_awaited_once()
+        tools_arg, _ = fake_adapter.inject_tool_payload.await_args.args
+        assert len(tools_arg) == 1
+        assert tools_arg[0].name == "int"
+        assert tools_arg[0].op == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_build_tool_context_skips_disabled_toggles(self, monkeypatch):
+        client, fake_adapter = self._build_client(monkeypatch)
+
+        monkeypatch.setattr(
+            "shu.llm.client.build_agent_tools",
+            AsyncMock(return_value=[]),
+        )
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+        monkeypatch.setattr("shu.llm.client.get_async_session_local", lambda: _FakeSession)
+
+        get_callable_calls: list[str] = []
+        fake_adapter.internal_tool_router.get_callable = lambda name: (
+            get_callable_calls.append(name) or None
+        )
+
+        await client._build_tool_context(
+            payload={},
+            tools_enabled=True,
+            internal_tool_toggles={"int:web_search": False},
+        )
+
+        # Disabled toggle must not even trigger a router lookup.
+        assert get_callable_calls == []
+        fake_adapter.inject_tool_payload.assert_awaited_once()
+        tools_arg, _ = fake_adapter.inject_tool_payload.await_args.args
+        assert tools_arg == []
+
+    @pytest.mark.asyncio
+    async def test_build_tool_context_skips_unknown_tool_with_warning(self, monkeypatch, caplog):
+        client, fake_adapter = self._build_client(monkeypatch)
+
+        monkeypatch.setattr(
+            "shu.llm.client.build_agent_tools",
+            AsyncMock(return_value=[]),
+        )
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+        monkeypatch.setattr("shu.llm.client.get_async_session_local", lambda: _FakeSession)
+
+        # Router doesn't recognize this name — get_callable returns None.
+        fake_adapter.internal_tool_router.get_callable = lambda name: None
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            await client._build_tool_context(
+                payload={},
+                tools_enabled=True,
+                internal_tool_toggles={"int:nonexistent": True},
+            )
+
+        # The unknown tool is skipped — the tools list is empty.
+        fake_adapter.inject_tool_payload.assert_awaited_once()
+        tools_arg, _ = fake_adapter.inject_tool_payload.await_args.args
+        assert tools_arg == []
+        # And a warning is logged so operators notice stale model configs.
+        assert any("int:nonexistent" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_build_tool_context_returns_early_when_tools_disabled(self, monkeypatch):
+        client, fake_adapter = self._build_client(monkeypatch)
+
+        monkeypatch.setattr(
+            "shu.llm.client.build_agent_tools",
+            AsyncMock(return_value=[]),
+        )
+
+        # Even with int:* toggles enabled, tools_enabled=False short-circuits.
+        result = await client._build_tool_context(
+            payload={"x": 1},
+            tools_enabled=False,
+            internal_tool_toggles={"int:web_search": True},
+        )
+
+        assert result == {"x": 1}
+        fake_adapter.inject_tool_payload.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_build_tool_context_returns_early_when_no_owner(self, monkeypatch):
+        client, fake_adapter = self._build_client(monkeypatch)
+        client.conversation_owner_id = None
+
+        result = await client._build_tool_context(
+            payload={"x": 1},
+            tools_enabled=True,
+            internal_tool_toggles={"int:web_search": True},
+        )
+
+        assert result == {"x": 1}
+        fake_adapter.inject_tool_payload.assert_not_awaited()
