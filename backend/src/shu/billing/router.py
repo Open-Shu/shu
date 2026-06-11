@@ -44,7 +44,7 @@ from shu.billing.seat_service import (
     get_seat_service,
 )
 from shu.billing.service import BillingService, CustomerMismatchError
-from shu.billing.stripe_client import StripeClient, StripeClientError
+from shu.billing.stripe_client import StripeClient, StripeClientError, find_seat_item, resolve_period_end
 from shu.core.logging import get_logger
 from shu.core.response import ShuResponse
 from shu.core.tenant import UnknownStripeCustomerError, tenant_context_for_stripe_customer
@@ -240,6 +240,12 @@ async def get_subscription_status(
         "total_grant_amount": str(state.total_grant_amount),
         "remaining_grant_amount": str(remaining_grant_amount),
         "seat_price_usd": str(state.seat_price_usd),
+        # Markup rate (e.g. 1.3 == +30%) applied to provider cost to get billed
+        # dollars. Not sensitive — it's the published pricing — and non-admins
+        # need it so the per-user My Usage cost reads in billed dollars like the
+        # shared pool (SHU-844). None when CP supplied no rate; the client then
+        # falls back to the USAGE_MARKUP_MULTIPLIER constant.
+        "usage_markup_multiplier": usage_markup_multiplier,
     }
 
     # SHU-773: entitlement / limit / usage blocks ship only when CP is
@@ -262,7 +268,6 @@ async def get_subscription_status(
                 "current_period_end": state.current_period_end.isoformat() if state.current_period_end else None,
                 "cancel_at_period_end": state.cancel_at_period_end,
                 "canceled_at": state.canceled_at.isoformat() if state.canceled_at else None,
-                "usage_markup_multiplier": usage_markup_multiplier,
             }
         )
 
@@ -395,6 +400,64 @@ async def cancel_trial(
 # =============================================================================
 
 
+def _calendar_month_period() -> tuple[datetime, datetime]:
+    """Last-resort usage period: the current UTC calendar month, [1st, next-1st).
+
+    Used only when neither CP nor Stripe can supply a period, so the usage
+    dashboards still show recent activity rather than rendering blank.
+    """
+    start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+    return start, end
+
+
+async def _stripe_subscription_period(settings: BillingSettings) -> tuple[datetime, datetime] | None:
+    """Resolve the active Stripe subscription's current period, or None.
+
+    Fallback for CP-less deployments (SHU-844): when CP doesn't supply a period
+    but Stripe is configured, read it straight from the subscription. The
+    2026-03-25 API moved current_period_* onto the seat item, so prefer that
+    (resolve_period_end handles the same for the end). Best-effort — any Stripe
+    hiccup returns None so a read-only usage view falls back rather than 502s.
+    """
+    if not settings.is_configured or not settings.subscription_id:
+        return None
+    try:
+        subscription = await StripeClient(settings).get_subscription(settings.subscription_id)
+        if subscription is None:
+            return None
+        seat_item = find_seat_item(subscription)
+        end_ts = resolve_period_end(subscription, seat_item)
+        start_ts = (
+            seat_item["current_period_start"]
+            if seat_item is not None and "current_period_start" in seat_item
+            else subscription["current_period_start"]
+        )
+        return datetime.fromtimestamp(int(start_ts), UTC), datetime.fromtimestamp(int(end_ts), UTC)
+    except (StripeClientError, stripe.StripeError, KeyError, ValueError, TypeError) as exc:
+        logger.warning("Stripe usage-period fallback failed; using calendar-month default", extra={"error": str(exc)})
+        return None
+
+
+async def _resolve_usage_period(settings: BillingSettings) -> tuple[datetime, datetime]:
+    """Resolve the usage period with graceful fallback: CP -> Stripe -> calendar month.
+
+    Since SHU-774 the period comes from the CP-sourced BillingState. CP-less
+    deployments (self-hosted with Stripe, or pure dev) otherwise have no period
+    and the usage dashboards render blank, so fall back to the live Stripe
+    subscription period, then to the current calendar month (SHU-844). The
+    returned period is always populated — callers no longer special-case an
+    "unknown period" branch.
+    """
+    state = await get_current_billing_state()
+    if state.current_period_start and state.current_period_end:
+        return state.current_period_start, state.current_period_end
+    stripe_period = await _stripe_subscription_period(settings)
+    if stripe_period is not None:
+        return stripe_period
+    return _calendar_month_period()
+
+
 @router.get(
     "/usage",
     summary="Get current usage",
@@ -403,34 +466,14 @@ async def cancel_trial(
 )
 async def get_current_usage(
     db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[BillingSettings, Depends(get_billing_settings_dependency)],
 ) -> JSONResponse:
-    """Get usage for the current billing period.
+    """Get tenant-wide usage for the current billing period.
 
-    Returns an unknown-period response with empty totals when the billing
-    period hasn't been populated yet (no subscription webhook received yet).
-    Otherwise returns total tokens used, breakdown by model, and estimated
-    cost for the active subscription period.
+    Period resolution falls back CP -> Stripe -> calendar month so the
+    dashboard still renders for CP-less deployments (SHU-844).
     """
-    # Period bounds come from the CP-sourced BillingState (SHU-774); the
-    # local billing_state columns aren't written anymore after the webhook
-    # persistence callbacks were lifted.
-    state = await get_current_billing_state()
-    period_start = state.current_period_start
-    period_end = state.current_period_end
-
-    if not (period_start and period_end):
-        return ShuResponse.success(
-            {
-                "current_period_unknown": True,
-                "period_start": None,
-                "period_end": None,
-                "total_input_tokens": 0,
-                "total_output_tokens": 0,
-                "total_cost_usd": 0.0,
-                "by_model": [],
-            }
-        )
-
+    period_start, period_end = await _resolve_usage_period(settings)
     usage_provider = UsageProviderImpl(db)
     summary = await usage_provider.get_usage_summary(period_start, period_end)
 
@@ -438,6 +481,7 @@ async def get_current_usage(
     # Display precision is fine; billing precision is preserved internally.
     return ShuResponse.success(
         {
+            "current_period_unknown": False,
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
             "total_input_tokens": summary.total_input_tokens,
@@ -453,6 +497,72 @@ async def get_current_usage(
                     "request_count": m.request_count,
                 }
                 for m in summary.by_model.values()
+            ],
+        }
+    )
+
+
+@router.get(
+    "/usage/me",
+    summary="Get the current user's own usage",
+    description="Get the authenticated user's own token usage and cost for the current billing period.",
+)
+async def get_my_usage(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[BillingSettings, Depends(get_billing_settings_dependency)],
+) -> JSONResponse:
+    """Get the requesting user's own usage for the current billing period.
+
+    Available to ANY authenticated user (SHU-844) — scoped server-side to
+    ``user.id`` with no client-supplied user parameter, so one user can never
+    read another's usage. RLS additionally scopes to the tenant. Mirrors the
+    admin ``/usage`` payload (so the frontend can reuse CostByModelTable) and
+    adds a ``by_day`` per-(day, model) series for the time chart. BYOK usage is
+    excluded — only Shu-managed (billable) providers count, matching ``/usage``.
+    Period resolution falls back CP -> Stripe -> calendar month (SHU-844).
+    """
+    period_start, period_end = await _resolve_usage_period(settings)
+
+    # llm_usage.user_id is stored as a string (the recorder str()s the owner id);
+    # str() here keeps the comparison aligned regardless of the User.id type.
+    scoped_user_id = str(user.id)
+    provider = UsageProviderImpl(db)
+    summary = await provider.get_usage_summary(period_start, period_end, user_id=scoped_user_id)
+    daily = await provider.get_daily_usage_for_user(scoped_user_id, period_start, period_end)
+    request_count = sum(m.request_count for m in summary.by_model.values())
+
+    return ShuResponse.success(
+        {
+            "current_period_unknown": False,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "total_input_tokens": summary.total_input_tokens,
+            "total_output_tokens": summary.total_output_tokens,
+            "total_cost_usd": float(summary.total_cost_usd),
+            "request_count": request_count,
+            "by_model": [
+                {
+                    "model_id": m.model_id,
+                    "model_name": m.model_name,
+                    "input_tokens": m.input_tokens,
+                    "output_tokens": m.output_tokens,
+                    "cost_usd": float(m.cost_usd),
+                    "request_count": m.request_count,
+                }
+                for m in summary.by_model.values()
+            ],
+            "by_day": [
+                {
+                    "date": d.day.date().isoformat(),
+                    "model_id": d.model_id,
+                    "model_name": d.model_name,
+                    "input_tokens": d.input_tokens,
+                    "output_tokens": d.output_tokens,
+                    "cost_usd": float(d.cost_usd),
+                    "request_count": d.request_count,
+                }
+                for d in daily
             ],
         }
     )

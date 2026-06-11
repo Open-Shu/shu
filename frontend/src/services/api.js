@@ -296,6 +296,9 @@ export const authAPI = {
 // Billing endpoints (subscription state, seat management, Cost & Usage dashboard)
 export const billingAPI = {
   getUsage: () => api.get('/billing/usage'),
+  // Per-user self usage for the "My Usage" dashboard (SHU-844). Scoped
+  // server-side to the caller — no user id param.
+  getMyUsage: () => api.get('/billing/usage/me'),
   getSubscription: () => api.get('/billing/subscription'),
   getPortalUrl: () => api.get('/billing/portal'),
   releaseSeat: () => api.post('/billing/seats/release'),
@@ -420,9 +423,14 @@ export const llmAPI = {
   getProviderType: (key) => api.get(`/llm/provider-types/${encodeURIComponent(key)}`),
 
   // Model management
-  getModels: (providerId = null) =>
+  // modelType: omit for chat-only (the endpoint default), or pass 'all' to
+  // include embedding/OCR models (e.g. usage dashboards that report them).
+  getModels: (providerId = null, modelType = null) =>
     api.get('/llm/models', {
-      params: providerId ? { provider_id: providerId } : {},
+      params: {
+        ...(providerId ? { provider_id: providerId } : {}),
+        ...(modelType ? { model_type: modelType } : {}),
+      },
     }),
   createModel: (providerId, data) => api.post(`/llm/providers/${providerId}/models`, data),
 

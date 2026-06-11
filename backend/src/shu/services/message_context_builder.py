@@ -147,6 +147,7 @@ class MessageContextBuilder:
             conversation=conversation,
             max_tokens=effective_max_tokens,
             recent_message_limit_override=recent_messages_limit,
+            user_id=str(current_user.id),
         )
 
         return ChatContext(system_prompt=combined_system, messages=chat_messages), all_source_metadata
