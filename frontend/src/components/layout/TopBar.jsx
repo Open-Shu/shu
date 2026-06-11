@@ -7,6 +7,7 @@ import { useTheme as useAppTheme } from '../../contexts/ThemeContext';
 import { getBrandingAppName, getBrandingFaviconUrlForTheme, getTopbarTextColor } from '../../utils/constants';
 import UserMenuCommonItems from '../UserMenuCommonItems.jsx';
 import UserAvatar from '../shared/UserAvatar.jsx';
+import ContactSupportDialog from '../support/ContactSupportDialog.jsx';
 import useVersion from '../../hooks/useVersion';
 
 /**
@@ -38,6 +39,7 @@ const TopBar = ({
   const { displayVersion } = useVersion();
 
   const [anchorEl, setAnchorEl] = React.useState(null);
+  const [contactSupportOpen, setContactSupportOpen] = React.useState(false);
   const handleUserMenuOpen = (e) => setAnchorEl(e.currentTarget);
   const handleUserMenuClose = () => setAnchorEl(null);
   const handleLogout = () => {
@@ -157,6 +159,10 @@ const TopBar = ({
               handleUserMenuClose();
               navigate(path);
             }}
+            onContactSupport={() => {
+              handleUserMenuClose();
+              setContactSupportOpen(true);
+            }}
           />
           {showAdminLink && canAccessAdmin && (
             <MenuItem onClick={handleAdminPanel}>
@@ -187,6 +193,14 @@ const TopBar = ({
             </MenuItem>
           )}
         </Menu>
+
+        <ContactSupportDialog
+          open={contactSupportOpen}
+          onClose={() => setContactSupportOpen(false)}
+          user={user}
+          appName={appDisplayName}
+          version={displayVersion}
+        />
       </Toolbar>
     </AppBar>
   );

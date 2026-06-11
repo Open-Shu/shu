@@ -24,6 +24,11 @@ export const PLUGINS_ENABLED = parseBoolean('VITE_PLUGINS_ENABLED', true);
 export const MCP_ENABLED = parseBoolean('VITE_MCP_ENABLED', true);
 export const EXPERIENCES_ENABLED = parseBoolean('VITE_EXPERIENCES_ENABLED', true);
 
+// Shu Assistant (how-to chat) entry in the Contact Support dialog. Defaults OFF:
+// the seeded assistant model config does not exist yet, so showing it would drop
+// users into an empty chat. Flip to 'true' once the assistant ships (SHU-857 follow-up).
+export const SHU_ASSISTANT_ENABLED = parseBoolean('VITE_SHU_ASSISTANT_ENABLED', false);
+
 // Single source of truth for feature gating. Each entry pairs the build-time
 // env flag with the runtime entitlement keys (from the billing API). To gate a
 // new feature, add one row here and reference its key via `useFeatureEnabled`.
