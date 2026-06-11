@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { MemoryRouter } from 'react-router-dom';
@@ -49,9 +49,17 @@ const renderDialog = (props = {}) =>
     </ThemeProvider>
   );
 
+// Capture the original clipboard so the tests that stub it (Copy / unavailable
+// cases) don't leak a mutated global to anything added later in this file.
+const originalClipboard = navigator.clipboard;
+
 beforeEach(() => {
   mockNavigate.mockClear();
   mockAssistantEnabled = true;
+});
+
+afterEach(() => {
+  Object.assign(navigator, { clipboard: originalClipboard });
 });
 
 describe('ContactSupportDialog', () => {
