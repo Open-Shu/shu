@@ -1,7 +1,7 @@
 """Add font_family and font_size_scale columns to user_preferences.
 
-Revision ID: r009_0005
-Revises: r009_0004
+Revision ID: r009_0008
+Revises: r009_0007
 Create Date: 2026-05-27
 
 SHU-811 — adds per-user typography preferences. Both columns are
@@ -17,8 +17,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "r009_0005"
-down_revision = "r009_0004"
+revision = "r009_0008"
+down_revision = "r009_0007"
 branch_labels = None
 depends_on = None
 
