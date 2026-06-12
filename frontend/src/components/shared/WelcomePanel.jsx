@@ -74,6 +74,7 @@ const WelcomePanel = React.memo(function WelcomePanel({
   selectedModelConfig,
   onModelChange,
   modelsLoading = false,
+  modelSwitchInProgress = false,
   personalKB = null,
   personalKBLoading = false,
   onSeedPrompt,
@@ -218,7 +219,7 @@ const WelcomePanel = React.memo(function WelcomePanel({
                   availableModelConfigs={availableModelConfigs}
                   selectedModelConfig={selectedModelConfig}
                   onModelChange={onModelChange}
-                  disabled={modelsLoading}
+                  disabled={modelsLoading || modelSwitchInProgress}
                 />
                 <Typography variant="caption" color="text.secondary">
                   Choose the model that answers you

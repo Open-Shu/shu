@@ -83,6 +83,11 @@ describe('WelcomePanel', () => {
     expect(screen.queryByText(/\d+ docs?/)).not.toBeInTheDocument();
   });
 
+  it('disables the model selector while a model switch is in flight', () => {
+    renderPanel({ modelSwitchInProgress: true });
+    expect(screen.getByRole('combobox')).toHaveAttribute('aria-disabled', 'true');
+  });
+
   it('uses a safe anonymous greeting (no empty-name artifact) when user is missing', () => {
     renderPanel({ user: null });
     const heading = screen.getByRole('heading', { level: 4 }).textContent;

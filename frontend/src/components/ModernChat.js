@@ -842,13 +842,19 @@ const ModernChat = () => {
     }
   }, [isPinnedToBottom, scheduleScrollToBottom, windowMessageCount]);
 
-  // New-chat empty-state welcome (SHU-873). Tracks the conversation whose
-  // welcome overlay has been dismissed. We dismiss as soon as a stream starts or
-  // a message appears, and keep it dismissed for that conversation — so a failed
-  // first send doesn't pop the welcome back over a now-"used" chat (decision:
-  // hide on send, keep hidden). Switching to a different empty conversation
-  // re-shows it (the dismissed id no longer matches).
-  const [welcomeDismissedConvId, setWelcomeDismissedConvId] = useState(null);
+  // New-chat empty-state welcome (SHU-873). Tracks the SET of conversations whose
+  // welcome overlay has been dismissed this session. We dismiss as soon as a
+  // stream starts or a message appears, and keep it dismissed — so a failed first
+  // send doesn't pop the welcome back over a now-"used" chat (decision: hide on
+  // send, keep hidden). A Set (not a single id) so dismissing chat B never
+  // "un-dismisses" chat A; switching to a genuinely new empty chat still shows it.
+  const [welcomeDismissedConvIds, setWelcomeDismissedConvIds] = useState(() => new Set());
+  const dismissWelcomeFor = useCallback((convId) => {
+    if (!convId) {
+      return;
+    }
+    setWelcomeDismissedConvIds((prev) => (prev.has(convId) ? prev : new Set(prev).add(convId)));
+  }, []);
   useEffect(() => {
     const convId = selectedConversation?.id;
     if (!convId) {
@@ -862,16 +868,16 @@ const ModernChat = () => {
     const hasOwnMessages =
       windowMessages.length > 0 && windowMessages.every((m) => !m?.conversation_id || m.conversation_id === convId);
     if (isStreamingForSelectedConversation || hasOwnMessages) {
-      setWelcomeDismissedConvId(convId);
+      dismissWelcomeFor(convId);
     }
-  }, [selectedConversation?.id, isStreamingForSelectedConversation, windowMessages]);
+  }, [selectedConversation?.id, isStreamingForSelectedConversation, windowMessages, dismissWelcomeFor]);
 
   const showEmptyChatWelcome =
     WELCOME_PERSONALITY_ENABLED &&
     Boolean(selectedConversation) &&
     windowMessageCount === 0 &&
     !loadingMessages &&
-    welcomeDismissedConvId !== selectedConversation?.id;
+    !welcomeDismissedConvIds.has(selectedConversation?.id);
 
   const handleBottomStateChange = useCallback(
     (atBottom) => {
@@ -1047,9 +1053,9 @@ const ModernChat = () => {
       const seed = pendingSeedPromptRef.current;
       pendingSeedPromptRef.current = null;
       applySeedPrompt(seed);
-      setWelcomeDismissedConvId(selectedConversation.id);
+      dismissWelcomeFor(selectedConversation.id);
     }
-  }, [selectedConversation, applySeedPrompt]);
+  }, [selectedConversation, applySeedPrompt, dismissWelcomeFor]);
 
   useEffect(() => {
     const initialMsg = searchParams.get('initialMessage');
@@ -1625,6 +1631,9 @@ const ModernChat = () => {
     selectedModelConfig,
     onModelChange: handleModelConfigChange,
     modelsLoading: loadingConfigs || loadingModels,
+    // Lock the panel selector during an in-flight switch, matching the header
+    // selector — otherwise overlapping switches can race the rollback logic.
+    modelSwitchInProgress: switchModelMutation.isLoading,
     personalKB,
     personalKBLoading,
     onSeedPrompt: handleSeedPrompt,
