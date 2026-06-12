@@ -51,7 +51,7 @@ import {
   CHAT_PLUGINS_ENABLED,
   LONG_CONVERSATION_THRESHOLD,
 } from './chat/ModernChat/utils/chatConfig';
-import { useFeatureEnabled } from '../config/featureFlags';
+import { useFeatureEnabled, WELCOME_PERSONALITY_ENABLED } from '../config/featureFlags';
 
 const SIDE_CALL_NOT_CONFIGURED_TOOLTIP =
   'Side-caller agent not configured. Configure a model configuration and set it as the side-caller to restore conversation naming and summary generation functionality.';
@@ -75,6 +75,9 @@ const ModernChat = () => {
   const messageListRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
+  // Seed text from a welcome starter chip, applied to the composer once a new
+  // conversation mounts (landing screen). Prefill only — never auto-sends.
+  const pendingSeedPromptRef = useRef(null);
   const isPinnedToBottomRef = useRef(true);
   const clearEnsembleModeRef = useRef(() => {});
   const { markFreshConversation, clearFreshConversation, isConversationFresh } = useFreshConversations();
@@ -166,7 +169,12 @@ const ModernChat = () => {
   } = useConversationData({
     summaryQuery,
     onQueryError: (message) => setError(message),
-    onMutationError: (message) => setError(message),
+    onMutationError: (message) => {
+      setError(message);
+      // Drop any stashed starter-chip seed so a later successful create doesn't
+      // inherit a prompt the user intended for the failed one.
+      pendingSeedPromptRef.current = null;
+    },
     markFreshConversation,
   });
 
@@ -801,6 +809,20 @@ const ModernChat = () => {
     return handleStopStream(activeStreamingMessage);
   }, [activeStreamingMessage, handleStopStream]);
 
+  // Apply welcome starter-chip text to the composer (prefill only; the user
+  // edits and sends). Shared by the empty-state path (prefill now) and the
+  // landing-screen path (prefill once the new conversation mounts).
+  const applySeedPrompt = useCallback(
+    (prompt) => {
+      if (!prompt) {
+        return;
+      }
+      handleInputChange({ target: { value: prompt } });
+      setTimeout(() => inputRef.current?.focus(), 80);
+    },
+    [handleInputChange]
+  );
+
   const {
     visibleMessages: windowMessages,
     expandWindow,
@@ -819,6 +841,27 @@ const ModernChat = () => {
       scheduleScrollToBottom('auto');
     }
   }, [isPinnedToBottom, scheduleScrollToBottom, windowMessageCount]);
+
+  // New-chat empty-state welcome (SHU-873). Tracks the conversation whose
+  // welcome overlay has been dismissed. We dismiss as soon as a stream starts or
+  // a message appears, and keep it dismissed for that conversation — so a failed
+  // first send doesn't pop the welcome back over a now-"used" chat (decision:
+  // hide on send, keep hidden). Switching to a different empty conversation
+  // re-shows it (the dismissed id no longer matches).
+  const [welcomeDismissedConvId, setWelcomeDismissedConvId] = useState(null);
+  useEffect(() => {
+    const convId = selectedConversation?.id;
+    if (convId && (isStreamingForSelectedConversation || windowMessageCount > 0)) {
+      setWelcomeDismissedConvId(convId);
+    }
+  }, [selectedConversation?.id, isStreamingForSelectedConversation, windowMessageCount]);
+
+  const showEmptyChatWelcome =
+    WELCOME_PERSONALITY_ENABLED &&
+    Boolean(selectedConversation) &&
+    windowMessageCount === 0 &&
+    !loadingMessages &&
+    welcomeDismissedConvId !== selectedConversation?.id;
 
   const handleBottomStateChange = useCallback(
     (atBottom) => {
@@ -983,6 +1026,16 @@ const ModernChat = () => {
     }
   }, [selectedConversation]);
 
+  // Apply a stashed starter-chip seed to the composer once the freshly created
+  // conversation mounts (landing-screen path). Prefill only — no auto-send.
+  useEffect(() => {
+    if (selectedConversation && pendingSeedPromptRef.current) {
+      const seed = pendingSeedPromptRef.current;
+      pendingSeedPromptRef.current = null;
+      applySeedPrompt(seed);
+    }
+  }, [selectedConversation, applySeedPrompt]);
+
   useEffect(() => {
     const initialMsg = searchParams.get('initialMessage');
     if (initialMsg && initialMsg !== pendingInitialMessageRef.current) {
@@ -1126,6 +1179,27 @@ const ModernChat = () => {
     });
   };
 
+  // Welcome starter-chip click. On an existing (empty) conversation, prefill the
+  // composer now; on the landing screen, create a conversation first, then
+  // prefill once it mounts (the pendingSeedPromptRef effect above). The chip is
+  // disabled in the panel while a create is in flight, guarding double-create.
+  const handleSeedPrompt = useCallback(
+    (prompt) => {
+      if (!prompt) {
+        return;
+      }
+      if (selectedConversationRef.current) {
+        applySeedPrompt(prompt);
+      } else {
+        pendingSeedPromptRef.current = prompt;
+        handleCreateConversation();
+      }
+    },
+    // handleCreateConversation is a per-render closure intentionally read live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applySeedPrompt]
+  );
+
   const handleModelConfigChange = (event) => {
     const newConfigId = event.target.value;
     selectPreferredModelConfig(newConfigId);
@@ -1204,6 +1278,11 @@ const ModernChat = () => {
 
   const handleSelectConversation = useCallback(
     (conversation) => {
+      // Abandon any in-flight landing starter-chip seed: the user has manually
+      // chosen a conversation, so the seed must not land on it. The seed only
+      // ever applies to the conversation auto-created by the chip (via the
+      // lastCreatedConversation -> selectedConversation path).
+      pendingSeedPromptRef.current = null;
       setSelectedConversation(conversation);
       setStreamingConversationId(null);
       setStreamingStarted(false);
@@ -1521,9 +1600,27 @@ const ModernChat = () => {
     disableModelSelect: !selectedConversation || isStreamingForSelectedConversation,
   };
 
+  const welcomePanelProps = {
+    user,
+    appDisplayName,
+    availableModelConfigs,
+    selectedModelConfig,
+    onModelChange: handleModelConfigChange,
+    modelsLoading: loadingConfigs || loadingModels,
+    personalKB,
+    personalKBLoading,
+    onSeedPrompt: handleSeedPrompt,
+    onCreateConversation: handleCreateConversation,
+    createDisabled: createConversationDisabled,
+    canStartChat: Boolean(getSelectedConfig()),
+  };
+
   return (
     <ModernChatView
       appDisplayName={appDisplayName}
+      welcomePanelProps={welcomePanelProps}
+      welcomePersonalityEnabled={WELCOME_PERSONALITY_ENABLED}
+      showEmptyChatWelcome={showEmptyChatWelcome}
       selectedConversation={selectedConversation}
       error={error}
       setError={setError}

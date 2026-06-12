@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Button, Paper, Alert, Drawer, Stack, Typography, useMediaQuery } from '@mui/material';
+import { Box, Button, Paper, Alert, Drawer, Stack, Typography, Fade, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { Add as AddIcon, ChatBubbleOutline as ChatIcon, Dashboard as DashboardIcon } from '@mui/icons-material';
 
@@ -20,11 +20,16 @@ import RenameConversationDialog from './RenameConversationDialog';
 import DeleteConversationDialog from './DeleteConversationDialog';
 import ChatSettingsDialog from './ChatSettingsDialog';
 import LongConversationDialog from './LongConversationDialog';
+import WelcomePanel from '../../shared/WelcomePanel';
 
 const SIDEBAR_WIDTH = 300;
+const WELCOME_FADE_MS = 320;
 
 const ModernChatView = ({
   appDisplayName,
+  welcomePanelProps,
+  welcomePersonalityEnabled,
+  showEmptyChatWelcome,
   selectedConversation,
   error,
   setError,
@@ -55,6 +60,7 @@ const ModernChatView = ({
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const navigate = useNavigate();
   const canExperiences = useFeatureEnabled('experiences');
 
@@ -98,11 +104,37 @@ const ModernChatView = ({
 
               <AutomationMenu {...automationMenuProps} />
 
-              <MessageList
-                ref={messageListRef}
-                key={selectedConversation?.id || 'no-conversation'}
-                {...messageListProps}
-              />
+              <Box sx={{ position: 'relative', flexGrow: 1, minHeight: 0, display: 'flex' }}>
+                <MessageList
+                  ref={messageListRef}
+                  key={selectedConversation?.id || 'no-conversation'}
+                  {...messageListProps}
+                />
+
+                {welcomePersonalityEnabled && (
+                  <Fade
+                    in={Boolean(showEmptyChatWelcome)}
+                    appear={false}
+                    unmountOnExit
+                    timeout={reduceMotion ? 0 : WELCOME_FADE_MS}
+                  >
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflowY: 'auto',
+                        p: 2,
+                        bgcolor: 'background.default',
+                      }}
+                    >
+                      <WelcomePanel variant="empty-chat" {...welcomePanelProps} />
+                    </Box>
+                  </Fade>
+                )}
+              </Box>
 
               <PluginRunPanel {...pluginRunPanelProps} />
 
@@ -143,8 +175,21 @@ const ModernChatView = ({
               <EnsembleModeDialog {...ensembleDialogProps} />
               <KBPickerDialog {...kbPickerDialogProps} />
             </>
+          ) : welcomePersonalityEnabled ? (
+            <Box
+              sx={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflowY: 'auto',
+                p: 4,
+              }}
+            >
+              <WelcomePanel variant="landing" {...welcomePanelProps} />
+            </Box>
           ) : (
-            /* Welcome screen - shown when no conversation is selected */
+            /* Welcome screen (personality layer off) - shown when no conversation is selected */
             <Box
               sx={{
                 flex: 1,

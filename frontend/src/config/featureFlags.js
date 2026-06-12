@@ -29,6 +29,12 @@ export const EXPERIENCES_ENABLED = parseBoolean('VITE_EXPERIENCES_ENABLED', true
 // users into an empty chat. Flip to 'true' once the assistant ships (SHU-857 follow-up).
 export const SHU_ASSISTANT_ENABLED = parseBoolean('VITE_SHU_ASSISTANT_ENABLED', false);
 
+// Welcoming personality layer on the chat landing + new-chat empty state
+// (animated feather, name greeting, rotating copy, clickable starter chips,
+// model/Personal-KB call-outs). Defaults ON; flip to 'false' as a kill switch to
+// restore the minimal landing screen and a blank new-chat pane (SHU-873).
+export const WELCOME_PERSONALITY_ENABLED = parseBoolean('VITE_WELCOME_PERSONALITY', true);
+
 // Single source of truth for feature gating. Each entry pairs the build-time
 // env flag with the runtime entitlement keys (from the billing API). To gate a
 // new feature, add one row here and reference its key via `useFeatureEnabled`.
