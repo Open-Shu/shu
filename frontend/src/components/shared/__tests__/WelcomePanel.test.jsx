@@ -28,6 +28,7 @@ const renderPanel = (props = {}) =>
         variant="landing"
         user={{ name: 'Eric Longville', email: 'eric@example.com' }}
         appDisplayName="Bad Hops LLC"
+        brandingLoaded
         availableModelConfigs={MODELS}
         selectedModelConfig="m1"
         onModelChange={vi.fn()}
@@ -64,6 +65,22 @@ describe('WelcomePanel', () => {
     const { container } = renderPanel();
     expect(container.querySelector('svg')).toBeTruthy();
     expect(screen.getByText('Bad Hops LLC')).toBeInTheDocument();
+  });
+
+  it('hides the org name until branding has loaded (no "Shu" placeholder flash)', () => {
+    renderPanel({ brandingLoaded: false, appDisplayName: 'Shu' });
+    expect(screen.queryByText('Shu')).not.toBeInTheDocument();
+  });
+
+  it('shows the Personal KB document count when it has documents', () => {
+    renderPanel({ personalKB: { id: 'pk', document_count: 3 } });
+    expect(screen.getByText(/3 docs/)).toBeInTheDocument();
+  });
+
+  it('does not mark an existing-but-empty Personal KB as ready', () => {
+    renderPanel({ personalKB: { id: 'pk', document_count: 0 } });
+    expect(screen.getByText('Add to Personal Knowledge')).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ docs?/)).not.toBeInTheDocument();
   });
 
   it('uses a safe anonymous greeting (no empty-name artifact) when user is missing', () => {

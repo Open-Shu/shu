@@ -60,7 +60,7 @@ const ModernChat = () => {
   const theme = useMuiTheme();
   const chatStyles = useMemo(() => createChatStyles(theme), [theme]);
   const attachmentChipSx = attachmentChipStyles;
-  const { branding } = useAppTheme();
+  const { branding, brandingLoaded } = useAppTheme();
   const appDisplayName = getBrandingAppName(branding);
 
   // Chat plugin controls require the build flag (CHAT_PLUGINS_ENABLED, which
@@ -851,10 +851,20 @@ const ModernChat = () => {
   const [welcomeDismissedConvId, setWelcomeDismissedConvId] = useState(null);
   useEffect(() => {
     const convId = selectedConversation?.id;
-    if (convId && (isStreamingForSelectedConversation || windowMessageCount > 0)) {
+    if (!convId) {
+      return;
+    }
+    // Count only messages that actually belong to this conversation. The messages
+    // query uses keepPreviousData (useMessageStream), so right after switching
+    // from a non-empty conversation to a freshly-created empty one, the window
+    // still briefly holds the PREVIOUS conversation's messages. Dismissing on that
+    // stale count would suppress the empty-state welcome for the new chat forever.
+    const hasOwnMessages =
+      windowMessages.length > 0 && windowMessages.every((m) => !m?.conversation_id || m.conversation_id === convId);
+    if (isStreamingForSelectedConversation || hasOwnMessages) {
       setWelcomeDismissedConvId(convId);
     }
-  }, [selectedConversation?.id, isStreamingForSelectedConversation, windowMessageCount]);
+  }, [selectedConversation?.id, isStreamingForSelectedConversation, windowMessages]);
 
   const showEmptyChatWelcome =
     WELCOME_PERSONALITY_ENABLED &&
@@ -1028,11 +1038,16 @@ const ModernChat = () => {
 
   // Apply a stashed starter-chip seed to the composer once the freshly created
   // conversation mounts (landing-screen path). Prefill only — no auto-send.
+  // Also dismiss the empty-state welcome for this conversation: the user already
+  // picked a starter on the landing screen, so re-showing the same welcome over
+  // the new chat would be a redundant double-welcome. (The plain "New Chat" hero,
+  // which leaves no seed, still gets the empty-state welcome.)
   useEffect(() => {
     if (selectedConversation && pendingSeedPromptRef.current) {
       const seed = pendingSeedPromptRef.current;
       pendingSeedPromptRef.current = null;
       applySeedPrompt(seed);
+      setWelcomeDismissedConvId(selectedConversation.id);
     }
   }, [selectedConversation, applySeedPrompt]);
 
@@ -1183,22 +1198,24 @@ const ModernChat = () => {
   // composer now; on the landing screen, create a conversation first, then
   // prefill once it mounts (the pendingSeedPromptRef effect above). The chip is
   // disabled in the panel while a create is in flight, guarding double-create.
-  const handleSeedPrompt = useCallback(
-    (prompt) => {
-      if (!prompt) {
-        return;
-      }
-      if (selectedConversationRef.current) {
-        applySeedPrompt(prompt);
-      } else {
-        pendingSeedPromptRef.current = prompt;
-        handleCreateConversation();
-      }
-    },
-    // handleCreateConversation is a per-render closure intentionally read live.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [applySeedPrompt]
-  );
+  //
+  // Intentionally NOT memoized: handleCreateConversation is a fresh per-render
+  // closure over availableModelConfigs / preferredModelConfig, so a useCallback
+  // here would freeze an early-render create (which sees zero configs before they
+  // load) and the chip would error instead of creating once configs arrive.
+  // welcomePanelProps is rebuilt every render anyway, so a stable identity buys
+  // nothing.
+  const handleSeedPrompt = (prompt) => {
+    if (!prompt) {
+      return;
+    }
+    if (selectedConversationRef.current) {
+      applySeedPrompt(prompt);
+    } else {
+      pendingSeedPromptRef.current = prompt;
+      handleCreateConversation();
+    }
+  };
 
   const handleModelConfigChange = (event) => {
     const newConfigId = event.target.value;
@@ -1603,6 +1620,7 @@ const ModernChat = () => {
   const welcomePanelProps = {
     user,
     appDisplayName,
+    brandingLoaded,
     availableModelConfigs,
     selectedModelConfig,
     onModelChange: handleModelConfigChange,

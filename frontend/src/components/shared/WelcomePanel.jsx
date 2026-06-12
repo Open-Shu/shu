@@ -29,22 +29,27 @@ const buildGreeting = (template, name) => {
   return name ? template.named.replace('{name}', name) : template.anon;
 };
 
-// Personal KB call-out copy/colour by state (loading / present / absent).
+// Personal KB call-out copy/colour by state. Mirrors BrainIcon's empty/ready
+// logic (docCount = kb?.document_count || 0; empty = no kb OR zero docs) so an
+// existing-but-empty KB isn't mislabeled "ready" — it has nothing to ground
+// answers in yet.
 const getKbAffordance = (personalKB, loading) => {
   if (loading) {
     return { label: 'Personal Knowledge…', color: 'default', tooltip: 'Loading your Personal Knowledge…' };
   }
-  if (personalKB) {
+  const docCount = personalKB?.document_count || 0;
+  if (docCount > 0) {
     return {
-      label: 'Personal Knowledge ready',
+      label: `Personal Knowledge · ${docCount} doc${docCount === 1 ? '' : 's'}`,
       color: 'secondary',
-      tooltip: 'Your Personal Knowledge is attached to new chats.',
+      tooltip: 'Attached to new chats — ask me about your documents.',
     };
   }
+  // No KB yet, or one that exists but has no documents — both prompt the user to add files.
   return {
-    label: 'Set up Personal Knowledge',
+    label: 'Add to Personal Knowledge',
     color: 'default',
-    tooltip: 'Attach documents with the brain icon in the composer to build your Personal Knowledge.',
+    tooltip: 'Add documents with the brain icon in the composer, then ask me about them.',
   };
 };
 
@@ -64,6 +69,7 @@ const WelcomePanel = React.memo(function WelcomePanel({
   variant = 'landing',
   user,
   appDisplayName,
+  brandingLoaded = false,
   availableModelConfigs = [],
   selectedModelConfig,
   onModelChange,
@@ -129,7 +135,10 @@ const WelcomePanel = React.memo(function WelcomePanel({
           gap: 2,
         }}
       >
-        {appDisplayName && (
+        {/* Only show the org name once branding has actually loaded — ThemeContext
+            seeds it to the default "Shu", so rendering before load would flash that
+            placeholder (AC #17). */}
+        {brandingLoaded && appDisplayName && (
           <Typography variant="overline" sx={{ color: 'text.secondary', letterSpacing: 2, lineHeight: 1 }}>
             {appDisplayName}
           </Typography>

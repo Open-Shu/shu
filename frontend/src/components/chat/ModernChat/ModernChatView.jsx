@@ -180,12 +180,21 @@ const ModernChatView = ({
               sx={{
                 flex: 1,
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
                 overflowY: 'auto',
                 p: 4,
               }}
             >
+              {/* Surface create failures (e.g. a landing starter-chip / New Chat
+                  create that fails) — the composer Alert only exists in the
+                  selected-conversation branch, so the landing screen needs its own. */}
+              {error && (
+                <Alert severity="error" sx={{ mb: 3, width: '100%', maxWidth: 720 }} onClose={() => setError(null)}>
+                  {error}
+                </Alert>
+              )}
               <WelcomePanel variant="landing" {...welcomePanelProps} />
             </Box>
           ) : (
